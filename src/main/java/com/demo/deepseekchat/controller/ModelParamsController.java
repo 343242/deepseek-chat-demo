@@ -3,6 +3,7 @@ package com.demo.deepseekchat.controller;
 import com.demo.deepseekchat.model.dto.ModelParamsDTO;
 import com.demo.deepseekchat.service.ModelParamsService;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -18,6 +19,7 @@ import java.util.Map;
  */
 @RestController
 @RequestMapping("/api/models")
+@PreAuthorize("hasAuthority('model:config')")
 public class ModelParamsController {
 
     private final ModelParamsService modelParamsService;

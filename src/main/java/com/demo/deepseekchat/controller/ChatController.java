@@ -7,6 +7,7 @@ import com.demo.deepseekchat.service.ChatService;
 import com.demo.deepseekchat.service.ModelService;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Flux;
 
@@ -24,6 +25,7 @@ import java.util.Map;
  */
 @RestController
 @RequestMapping("/api")
+@PreAuthorize("hasAuthority('chat:send')")
 public class ChatController {
 
     private final ModelService modelService;

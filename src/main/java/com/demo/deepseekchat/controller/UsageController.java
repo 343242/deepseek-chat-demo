@@ -4,6 +4,7 @@ import com.demo.deepseekchat.model.dto.TokenUsageDTO;
 import com.demo.deepseekchat.model.dto.UsageStats;
 import com.demo.deepseekchat.service.UsageService;
 import org.springframework.format.annotation.DateTimeFormat;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
@@ -18,6 +19,7 @@ import java.util.List;
  */
 @RestController
 @RequestMapping("/api/usage")
+@PreAuthorize("hasAuthority('usage:view')")
 public class UsageController {
 
     private final UsageService usageService;

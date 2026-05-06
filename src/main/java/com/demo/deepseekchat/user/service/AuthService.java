@@ -329,6 +329,25 @@ public class AuthService {
             .collect(Collectors.toList());
     }
 
+    public LoginResponse.UserInfo updateProfile(Long userId, UserUpdateRequest request) {
+        SysUser user = sysUserMapper.selectOne(
+            new LambdaQueryWrapper<SysUser>()
+                .eq(SysUser::getId, userId)
+                .eq(SysUser::getDeleted, 0)
+        );
+        if (user == null) {
+            throw new IllegalArgumentException("用户不存在");
+        }
+
+        if (request.nickname() != null) user.setNickname(request.nickname());
+        if (request.email() != null) user.setEmail(request.email());
+        if (request.phone() != null) user.setPhone(request.phone());
+        if (request.avatar() != null) user.setAvatar(request.avatar());
+        sysUserMapper.updateById(user);
+
+        return getCurrentUser(userId);
+    }
+
     private String extractTokenId(String token) {
         // Use a hash of the token as the tokenId for Redis key uniqueness
         return Integer.toHexString(token.hashCode());

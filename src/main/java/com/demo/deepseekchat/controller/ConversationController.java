@@ -4,6 +4,7 @@ import com.demo.deepseekchat.model.dto.ConversationMessage;
 import com.demo.deepseekchat.model.dto.ConversationSummary;
 import com.demo.deepseekchat.service.ConversationService;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -19,6 +20,7 @@ import java.util.Map;
  */
 @RestController
 @RequestMapping("/api/conversations")
+@PreAuthorize("hasAuthority('conversation:manage')")
 public class ConversationController {
 
     private final ConversationService conversationService;

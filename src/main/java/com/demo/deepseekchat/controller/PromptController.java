@@ -4,6 +4,7 @@ import com.demo.deepseekchat.model.dto.SystemPromptDTO;
 import com.demo.deepseekchat.model.dto.SystemPromptUpdateRequest;
 import com.demo.deepseekchat.service.SystemPromptService;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -19,6 +20,7 @@ import java.util.Map;
  */
 @RestController
 @RequestMapping("/api/prompts")
+@PreAuthorize("hasAuthority('prompt:manage')")
 public class PromptController {
 
     private final SystemPromptService promptService;

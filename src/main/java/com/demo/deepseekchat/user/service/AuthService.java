@@ -312,16 +312,12 @@ public class AuthService {
         boolean isAdmin = roles.stream()
                 .anyMatch(r -> "ADMIN".equalsIgnoreCase(r.getRoleName()));
 
-        if (isAdmin) {
-            permissions = new HashSet<>(Set.of("*:*"));
-        } else {
-            for (Long roleId : roleIds) {
-                var perms = sysRolePermissionMapper.selectPermissionsByRoleId(roleId);
-                for (var p : perms) {
-                    // P0-1: use permissionName (matches @PreAuthorize checks)
-                    if (p.getPermissionName() != null) {
-                        permissions.add(p.getPermissionName());
-                    }
+        // Load all permission names for all roles
+        for (Long roleId : roleIds) {
+            var perms = sysRolePermissionMapper.selectPermissionsByRoleId(roleId);
+            for (var p : perms) {
+                if (p.getPermissionName() != null) {
+                    permissions.add(p.getPermissionName());
                 }
             }
         }

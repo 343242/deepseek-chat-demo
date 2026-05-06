@@ -87,8 +87,13 @@ public class TokenCacheService {
 
     public void revokeRefreshToken(String refreshToken) {
         String hash = sha256Hex(refreshToken);
-        redisTemplate.delete("auth:refresh:" + hash);
-        // Best-effort removal from reverse index — full cleanup done in revokeAllTokens
+        String key = "auth:refresh:" + hash;
+        String val = redisTemplate.opsForValue().get(key);
+        if (val != null) {
+            redisTemplate.delete(key);
+            // Clean up reverse index
+            redisTemplate.opsForSet().remove("auth:user_refresh:" + val, hash);
+        }
     }
 
     // --- Revoke All (SCAN-based) ---

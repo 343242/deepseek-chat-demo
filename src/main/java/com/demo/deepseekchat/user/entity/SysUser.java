@@ -16,6 +16,7 @@ public class SysUser {
     private Integer status;
     @TableField(fill = FieldFill.INSERT)
     private OffsetDateTime createdAt;
+    @TableField(fill = FieldFill.INSERT_UPDATE)
     private OffsetDateTime updatedAt;
     @TableLogic
     private Integer deleted;

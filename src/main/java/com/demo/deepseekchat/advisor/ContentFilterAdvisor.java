@@ -11,6 +11,7 @@ import org.springframework.ai.chat.client.advisor.api.BaseAdvisor;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.Message;
 import org.springframework.ai.chat.messages.UserMessage;
+import org.springframework.ai.chat.metadata.ChatGenerationMetadata;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.model.Generation;
 
@@ -22,7 +23,7 @@ import java.util.List;
  * <p>
  * 依赖 ContentFilterService 接口，解耦具体敏感词实现。
  * - before：检测用户输入，包含敏感词则拒绝
- * - after：过滤模型输出，替换敏感词
+ * - after：过滤模型输出，替换敏感词（保留原始元数据）
  */
 public class ContentFilterAdvisor implements BaseAdvisor {
 
@@ -51,7 +52,8 @@ public class ContentFilterAdvisor implements BaseAdvisor {
 
         if (userMessage != null && contentFilterService.containsSensitiveContent(userMessage)) {
             List<String> found = contentFilterService.findAll(userMessage);
-            log.warn("Sensitive words detected in user input: {}", found);
+            // 只记录命中数量，不打印具体敏感词（避免日志泄露隐私）
+            log.warn("Sensitive words detected in user input: {} word(s) found", found.size());
             throw new ContentFilteredException(BLOCKED_MESSAGE);
         }
 
@@ -72,7 +74,9 @@ public class ContentFilterAdvisor implements BaseAdvisor {
                 String filtered = contentFilterService.replace(content);
                 log.info("Filtered sensitive words in model output");
                 AssistantMessage newMessage = new AssistantMessage(filtered);
-                filteredGenerations.add(new Generation(newMessage));
+                // 保留原始 Generation 的元数据（finishReason、usage 等）
+                ChatGenerationMetadata metadata = generation.getMetadata();
+                filteredGenerations.add(new Generation(newMessage, metadata));
             } else {
                 filteredGenerations.add(generation);
             }

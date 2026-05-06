@@ -11,5 +11,7 @@ public record ModelInfo(
     String id,
     String object,
     long created,
-    String owned_by
+
+    @JsonProperty("owned_by")
+    String ownedBy
 ) {}

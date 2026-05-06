@@ -23,14 +23,14 @@ public class ChatClientFactory {
     }
 
     /**
-     * 为指定模型 ID 创建 ChatClient
+     * 为指定模型 ID 创建 ChatClient（使用默认 temperature）
      */
     public ChatClient create(String modelId) {
-        return create(modelId, properties.chat().temperature());
+        return create(modelId, null);
     }
 
     /**
-     * 为指定模型 ID 创建 ChatClient，自定义 temperature
+     * 为指定模型 ID 创建 ChatClient，可自定义 temperature
      */
     public ChatClient create(String modelId, Double temperature) {
         DeepSeekApi deepSeekApi = DeepSeekApi.builder()
@@ -39,13 +39,17 @@ public class ChatClientFactory {
                 .completionsPath("/chat/completions")
                 .build();
 
+        // properties.chat() 保证非 null（DeepSeekProperties 构造函数已兜底）
+        DeepSeekProperties.ChatOptions chatOpts = properties.chat();
+
         DeepSeekChatOptions.Builder optionsBuilder = DeepSeekChatOptions.builder()
                 .model(modelId);
 
-        if (temperature != null) {
-            optionsBuilder.temperature(temperature);
+        // temperature：优先使用参数传入，其次使用配置
+        Double temp = temperature != null ? temperature : chatOpts.temperature();
+        if (temp != null) {
+            optionsBuilder.temperature(temp);
         }
-        DeepSeekProperties.ChatOptions chatOpts = properties.chat();
         if (chatOpts.topP() != null) {
             optionsBuilder.topP(chatOpts.topP());
         }

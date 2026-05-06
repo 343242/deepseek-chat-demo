@@ -1,69 +1,54 @@
 package com.demo.deepseekchat.exception;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
-import java.util.Map;
+import com.demo.deepseekchat.model.dto.ErrorResponse;
 
 /**
  * 全局异常处理器
  * <p>
- * 将业务异常转为友好的 HTTP 响应。
+ * 将业务异常转为统一的 {@link ErrorResponse} 格式。
  * 依赖独立异常类，不依赖任何 Advisor 或具体实现类。
  */
 @RestControllerAdvice
 public class GlobalExceptionHandler {
 
+    private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
+
     @ExceptionHandler(RateLimitExceededException.class)
-    public ResponseEntity<Map<String, Object>> handleRateLimit(RateLimitExceededException e) {
+    public ResponseEntity<ErrorResponse> handleRateLimit(RateLimitExceededException e) {
         return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
-                .body(Map.of(
-                        "error", "rate_limit_exceeded",
-                        "message", e.getMessage(),
-                        "status", 429
-                ));
+                .body(new ErrorResponse("rate_limit_exceeded", e.getMessage(), 429));
     }
 
     @ExceptionHandler(ContentFilteredException.class)
-    public ResponseEntity<Map<String, Object>> handleContentFilter(ContentFilteredException e) {
+    public ResponseEntity<ErrorResponse> handleContentFilter(ContentFilteredException e) {
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                .body(Map.of(
-                        "error", "content_filtered",
-                        "message", e.getMessage(),
-                        "status", 400
-                ));
+                .body(new ErrorResponse("content_filtered", e.getMessage(), 400));
     }
 
     @ExceptionHandler(ModelNotFoundException.class)
-    public ResponseEntity<Map<String, Object>> handleModelNotFound(ModelNotFoundException e) {
+    public ResponseEntity<ErrorResponse> handleModelNotFound(ModelNotFoundException e) {
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
-                .body(Map.of(
-                        "error", "model_not_found",
-                        "message", e.getMessage(),
-                        "modelId", e.getModelId(),
-                        "status", 404
-                ));
+                .body(new ErrorResponse("model_not_found", e.getMessage(), 404));
     }
 
     @ExceptionHandler(IllegalArgumentException.class)
-    public ResponseEntity<Map<String, Object>> handleIllegalArgument(IllegalArgumentException e) {
+    public ResponseEntity<ErrorResponse> handleIllegalArgument(IllegalArgumentException e) {
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                .body(Map.of(
-                        "error", "bad_request",
-                        "message", e.getMessage(),
-                        "status", 400
-                ));
+                .body(new ErrorResponse("bad_request", e.getMessage(), 400));
     }
 
     @ExceptionHandler(Exception.class)
-    public ResponseEntity<Map<String, Object>> handleGeneric(Exception e) {
+    public ResponseEntity<ErrorResponse> handleGeneric(Exception e) {
+        // 记录异常堆栈，便于线上排障
+        log.error("Unhandled exception", e);
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
-                .body(Map.of(
-                        "error", "internal_error",
-                        "message", "服务内部错误，请稍后重试",
-                        "status", 500
-                ));
+                .body(new ErrorResponse("internal_error", "服务内部错误，请稍后重试", 500));
     }
 }

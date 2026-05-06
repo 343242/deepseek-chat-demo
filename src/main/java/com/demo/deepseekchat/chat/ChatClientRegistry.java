@@ -8,28 +8,45 @@ import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.stereotype.Component;
 
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * ChatClient 注册中心
  * <p>
  * 管理所有已注册的 ChatClient 实例。
  * 单一职责：只负责存储和查询，不管创建。
+ * <p>
+ * 线程安全：registry 使用 volatile 引用 + 不可变 Map 保证读操作的线程安全。
  */
 @Component
 public class ChatClientRegistry {
 
     private static final Logger log = LoggerFactory.getLogger(ChatClientRegistry.class);
 
-    private final Map<String, ChatClient> registry = new ConcurrentHashMap<>();
+    private volatile Map<String, ChatClient> registry = Collections.emptyMap();
     private volatile List<ModelInfo> cachedModels = Collections.emptyList();
 
     /**
-     * 注册一个 ChatClient
+     * 注册一个 ChatClient（单个追加）
      */
     public void register(String modelId, ChatClient chatClient) {
-        registry.put(modelId, chatClient);
+        Map<String, ChatClient> newMap = new LinkedHashMap<>(registry);
+        newMap.put(modelId, chatClient);
+        this.registry = Collections.unmodifiableMap(newMap);
         log.debug("Registered ChatClient for model: {}", modelId);
+    }
+
+    /**
+     * 原子替换所有注册（用于刷新场景）
+     * <p>
+     * 不会出现清空后重建失败的中间状态。
+     *
+     * @param newClients 新的模型→ChatClient 映射
+     * @param newModels  新的模型信息列表
+     */
+    public void replaceAll(Map<String, ChatClient> newClients, List<ModelInfo> newModels) {
+        this.registry = Collections.unmodifiableMap(new LinkedHashMap<>(newClients));
+        this.cachedModels = List.copyOf(newModels);
+        log.info("Registry replaced: {} models", registry.size());
     }
 
     /**
@@ -48,22 +65,14 @@ public class ChatClientRegistry {
      * 获取所有已注册的模型 ID
      */
     public Set<String> getAvailableModelIds() {
-        return Collections.unmodifiableSet(registry.keySet());
+        return registry.keySet();
     }
 
     /**
-     * 清空所有注册
-     */
-    public void clear() {
-        registry.clear();
-        cachedModels = Collections.emptyList();
-    }
-
-    /**
-     * 缓存模型详情列表
+     * 缓存模型详情列表（defensive copy）
      */
     public void setCachedModels(List<ModelInfo> models) {
-        this.cachedModels = Collections.unmodifiableList(models);
+        this.cachedModels = List.copyOf(models);
     }
 
     /**

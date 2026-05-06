@@ -1,24 +1,32 @@
 package com.demo.deepseekchat.config;
 
-import com.demo.deepseekchat.advisor.*;
 import com.demo.deepseekchat.advisor.ContentFilterAdvisor;
+import com.demo.deepseekchat.advisor.RateLimitAdvisor;
+import com.demo.deepseekchat.advisor.RateLimiter;
+import com.demo.deepseekchat.advisor.TokenBucketLimiter;
 import com.demo.deepseekchat.content.ContentFilterService;
 import com.demo.deepseekchat.content.SensitiveWordFilterService;
-import org.springframework.ai.chat.client.advisor.api.BaseAdvisor;
+import org.springframework.ai.chat.memory.ChatMemory;
+import org.springframework.ai.chat.memory.ChatMemoryRepository;
+import org.springframework.ai.chat.memory.MessageWindowChatMemory;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.scheduling.annotation.EnableScheduling;
+import org.springframework.scheduling.annotation.Scheduled;
 
 import java.time.Duration;
-import java.util.List;
 
 /**
  * Advisor 编排配置
  * <p>
  * 集中管理所有 Advisor 的创建和注册。
- * ChatService 通过注入 List<BaseAdvisor> 自动获取所有已注册的 Advisor，
+ * ChatService 通过注入 List&lt;BaseAdvisor&gt; 自动获取所有已注册的 Advisor，
  * 无需关心具体类型和数量。
+ * <p>
+ * 同时管理 ChatMemory Bean 和令牌桶定时清理。
  */
 @Configuration
+@EnableScheduling
 public class AdvisorAutoConfiguration {
 
     // ==================== 限流 ====================
@@ -33,6 +41,18 @@ public class AdvisorAutoConfiguration {
         return new RateLimitAdvisor(rateLimiter);
     }
 
+    /**
+     * 每小时清理一次空闲令牌桶，防止内存无限增长
+     */
+    @Scheduled(fixedRate = 3600000)
+    public void cleanupIdleBuckets(TokenBucketLimiter limiter) {
+        int removed = limiter.cleanIdleBuckets();
+        if (removed > 0) {
+            org.slf4j.LoggerFactory.getLogger(AdvisorAutoConfiguration.class)
+                    .info("Cleaned up {} idle token buckets, remaining: {}", removed, limiter.bucketCount());
+        }
+    }
+
     // ==================== 内容安全 ====================
 
     @Bean
@@ -43,5 +63,22 @@ public class AdvisorAutoConfiguration {
     @Bean
     public ContentFilterAdvisor contentFilterAdvisor(ContentFilterService contentFilterService) {
         return new ContentFilterAdvisor(contentFilterService);
+    }
+
+    // ==================== 对话记忆 ====================
+
+    /**
+     * 使用 JDBC 持久化 ChatMemory（PostgreSQL）
+     * <p>
+     * ChatMemoryRepository 由 spring-ai-starter-model-chat-memory-repository-jdbc
+     * 自动配置为 JdbcChatMemoryRepository，支持 PostgreSQL 方言。
+     * 启动时自动建表（initialize-schema=always）。
+     */
+    @Bean
+    public ChatMemory chatMemory(ChatMemoryRepository chatMemoryRepository) {
+        return MessageWindowChatMemory.builder()
+                .chatMemoryRepository(chatMemoryRepository)
+                .maxMessages(20)
+                .build();
     }
 }

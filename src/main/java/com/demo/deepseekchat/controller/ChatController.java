@@ -6,17 +6,21 @@ import com.demo.deepseekchat.model.dto.ModelInfo;
 import com.demo.deepseekchat.service.ChatService;
 import com.demo.deepseekchat.service.ModelService;
 import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Flux;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * 聊天 API 控制器
  * <p>
  * GET  /api/models        - 获取可用模型列表
  * POST /api/chat           - 阻塞式聊天
- * GET  /api/chat/stream    - SSE 流式聊天
+ * GET  /api/chat/stream    - SSE 流式聊天（query params）
+ * POST /api/chat/stream    - SSE 流式聊天（JSON body）
+ * POST /api/models/refresh - 刷新模型列表
  */
 @RestController
 @RequestMapping("/api")
@@ -43,20 +47,19 @@ public class ChatController {
      */
     @PostMapping("/chat")
     public ChatResponse chat(@RequestBody ChatRequest request) {
+        validateChatRequest(request);
         return chatService.chat(request);
     }
 
     /**
-     * SSE 流式聊天
-     * <p>
-     * 使用 GET 请求 + query params 方便 SSE 客户端测试，
-     * 也支持 POST + body 方式
+     * SSE 流式聊天（GET 方式，方便 SSE 客户端测试）
      */
     @GetMapping(value = "/chat/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<String> chatStreamGet(
             @RequestParam String model,
             @RequestParam String message,
             @RequestParam(defaultValue = "default") String conversationId) {
+        validateParams(model, message);
         ChatRequest request = new ChatRequest(model, message, conversationId);
         return chatService.chatStream(request);
     }
@@ -66,6 +69,7 @@ public class ChatController {
      */
     @PostMapping(value = "/chat/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<String> chatStreamPost(@RequestBody ChatRequest request) {
+        validateChatRequest(request);
         return chatService.chatStream(request);
     }
 
@@ -73,8 +77,30 @@ public class ChatController {
      * 刷新模型列表
      */
     @PostMapping("/models/refresh")
-    public String refreshModels() {
-        modelService.refreshModels();
-        return "Models refreshed";
+    public ResponseEntity<Map<String, Object>> refreshModels() {
+        boolean success = modelService.refreshModels();
+        if (success) {
+            return ResponseEntity.ok(Map.of("message", "Models refreshed successfully"));
+        }
+        return ResponseEntity.internalServerError().body(Map.of(
+                "message", "Failed to refresh models, existing models remain available"));
+    }
+
+    private void validateChatRequest(ChatRequest request) {
+        if (request.model() == null || request.model().isBlank()) {
+            throw new IllegalArgumentException("model 不能为空");
+        }
+        if (request.message() == null || request.message().isBlank()) {
+            throw new IllegalArgumentException("message 不能为空");
+        }
+    }
+
+    private void validateParams(String model, String message) {
+        if (model == null || model.isBlank()) {
+            throw new IllegalArgumentException("model 不能为空");
+        }
+        if (message == null || message.isBlank()) {
+            throw new IllegalArgumentException("message 不能为空");
+        }
     }
 }

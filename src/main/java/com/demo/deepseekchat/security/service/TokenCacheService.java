@@ -3,13 +3,18 @@ package com.demo.deepseekchat.security.service;
 import com.demo.deepseekchat.security.config.JwtProperties;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.data.redis.core.Cursor;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.ScanOptions;
 import org.springframework.stereotype.Service;
 
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Instant;
 import java.util.*;
 import java.util.concurrent.TimeUnit;
-import java.util.stream.Collectors;
+import java.util.HexFormat;
 
 @Service
 public class TokenCacheService {
@@ -46,32 +51,67 @@ public class TokenCacheService {
         return Boolean.TRUE.equals(redisTemplate.hasKey(key));
     }
 
-    // --- Refresh Token ---
+    // --- Refresh Token (SHA-256 hashed) ---
+
+    /**
+     * SHA-256 hash of the refresh token, returned as lowercase hex.
+     */
+    private String sha256Hex(String token) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest(token.getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(hash);
+        } catch (NoSuchAlgorithmException e) {
+            throw new RuntimeException("SHA-256 not available", e);
+        }
+    }
 
     public void storeRefreshToken(String refreshToken, Long userId) {
-        String key = "auth:refresh:" + refreshToken;
+        String hash = sha256Hex(refreshToken);
+        String key = "auth:refresh:" + hash;
         redisTemplate.opsForValue().set(key, String.valueOf(userId),
             jwtProperties.refreshExpiration(), TimeUnit.SECONDS);
+
+        // Add to reverse index: auth:user_refresh:{userId} → Set<sha256Hex>
+        String indexKey = "auth:user_refresh:" + userId;
+        redisTemplate.opsForSet().add(indexKey, hash);
+        redisTemplate.expire(indexKey, jwtProperties.refreshExpiration(), TimeUnit.SECONDS);
     }
 
     public Long getUserIdByRefreshToken(String refreshToken) {
-        String key = "auth:refresh:" + refreshToken;
+        String hash = sha256Hex(refreshToken);
+        String key = "auth:refresh:" + hash;
         String val = redisTemplate.opsForValue().get(key);
         return val != null ? Long.parseLong(val) : null;
     }
 
     public void revokeRefreshToken(String refreshToken) {
-        redisTemplate.delete("auth:refresh:" + refreshToken);
+        String hash = sha256Hex(refreshToken);
+        redisTemplate.delete("auth:refresh:" + hash);
+        // Best-effort removal from reverse index — full cleanup done in revokeAllTokens
     }
 
-    // --- Revoke All ---
+    // --- Revoke All (SCAN-based) ---
 
     public void revokeAllTokens(Long userId) {
+        // 1. Revoke access tokens via SCAN (replaces KEYS)
         String pattern = jwtProperties.redisPrefix() + userId + ":*";
-        Set<String> keys = redisTemplate.keys(pattern);
-        if (keys != null && !keys.isEmpty()) {
-            redisTemplate.delete(keys);
+        ScanOptions scanOptions = ScanOptions.scanOptions().match(pattern).count(100).build();
+        try (Cursor<String> cursor = redisTemplate.scan(scanOptions)) {
+            while (cursor.hasNext()) {
+                redisTemplate.delete(cursor.next());
+            }
         }
+
+        // 2. Revoke all refresh tokens via reverse index
+        String indexKey = "auth:user_refresh:" + userId;
+        Set<String> hashes = redisTemplate.opsForSet().members(indexKey);
+        if (hashes != null && !hashes.isEmpty()) {
+            for (String hash : hashes) {
+                redisTemplate.delete("auth:refresh:" + hash);
+            }
+        }
+        redisTemplate.delete(indexKey);
     }
 
     // --- Permission Cache ---

@@ -7,8 +7,6 @@ import com.demo.deepseekchat.model.entity.ModelParams;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Duration;
@@ -30,10 +28,9 @@ public class ModelParamsService {
     private final Cache<String, ModelParams> paramsCache;
 
     public ModelParamsService(ModelParamsMapper mapper,
-                              PlatformTransactionManager transactionManager) {
+                              TransactionTemplate transactionTemplate) {
         this.mapper = mapper;
-        this.transactionTemplate = new TransactionTemplate(transactionManager);
-        this.transactionTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRED);
+        this.transactionTemplate = transactionTemplate;
         this.paramsCache = Caffeine.newBuilder()
                 .expireAfterWrite(Duration.ofSeconds(30))
                 .maximumSize(200)

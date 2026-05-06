@@ -7,8 +7,6 @@ import com.demo.deepseekchat.model.entity.SystemPrompt;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.PlatformTransactionManager;
-import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Duration;
@@ -30,10 +28,9 @@ public class SystemPromptService {
     private final Cache<String, String> promptCache;
 
     public SystemPromptService(SystemPromptMapper mapper,
-                               PlatformTransactionManager transactionManager) {
+                               TransactionTemplate transactionTemplate) {
         this.mapper = mapper;
-        this.transactionTemplate = new TransactionTemplate(transactionManager);
-        this.transactionTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRED);
+        this.transactionTemplate = transactionTemplate;
         this.promptCache = Caffeine.newBuilder()
                 .expireAfterWrite(Duration.ofSeconds(30))
                 .maximumSize(200)

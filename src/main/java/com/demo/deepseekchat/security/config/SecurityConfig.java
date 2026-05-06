@@ -1,7 +1,8 @@
 package com.demo.deepseekchat.security.config;
 
+import com.demo.deepseekchat.model.dto.ErrorResponse;
 import com.demo.deepseekchat.security.filter.JwtAuthenticationFilter;
-import com.demo.deepseekchat.security.util.JwtTokenProvider;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -27,9 +28,11 @@ import java.util.List;
 public class SecurityConfig {
 
     private final JwtAuthenticationFilter jwtAuthFilter;
+    private final ObjectMapper objectMapper;
 
-    public SecurityConfig(JwtAuthenticationFilter jwtAuthFilter) {
+    public SecurityConfig(JwtAuthenticationFilter jwtAuthFilter, ObjectMapper objectMapper) {
         this.jwtAuthFilter = jwtAuthFilter;
+        this.objectMapper = objectMapper;
     }
 
     @Bean
@@ -49,12 +52,14 @@ public class SecurityConfig {
                 .authenticationEntryPoint((req, res, authEx) -> {
                     res.setStatus(401);
                     res.setContentType("application/json;charset=UTF-8");
-                    res.getWriter().write("{\"error\":\"未认证\",\"message\":\"请先登录\"}");
+                    ErrorResponse body = new ErrorResponse("unauthorized", "请先登录", 401);
+                    res.getWriter().write(objectMapper.writeValueAsString(body));
                 })
                 .accessDeniedHandler((req, res, accessEx) -> {
                     res.setStatus(403);
                     res.setContentType("application/json;charset=UTF-8");
-                    res.getWriter().write("{\"error\":\"权限不足\",\"message\":\"您没有执行此操作的权限\"}");
+                    ErrorResponse body = new ErrorResponse("forbidden", "您没有执行此操作的权限", 403);
+                    res.getWriter().write(objectMapper.writeValueAsString(body));
                 })
             )
             .build();
@@ -63,11 +68,6 @@ public class SecurityConfig {
     @Bean
     public PasswordEncoder passwordEncoder() {
         return new BCryptPasswordEncoder(10);
-    }
-
-    @Bean
-    public JwtTokenProvider jwtTokenProvider(JwtProperties jwtProperties) {
-        return new JwtTokenProvider(jwtProperties);
     }
 
     @Bean

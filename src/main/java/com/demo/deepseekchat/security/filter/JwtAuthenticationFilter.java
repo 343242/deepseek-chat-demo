@@ -2,6 +2,7 @@ package com.demo.deepseekchat.security.filter;
 
 import com.demo.deepseekchat.security.service.TokenCacheService;
 import com.demo.deepseekchat.security.util.JwtTokenProvider;
+import com.demo.deepseekchat.security.util.SecurityUtils;
 import com.demo.deepseekchat.user.service.AuthService;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -11,7 +12,6 @@ import org.springframework.security.authentication.UsernamePasswordAuthenticatio
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.stereotype.Component;
-import org.springframework.util.StringUtils;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
@@ -37,7 +37,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     protected void doFilterInternal(HttpServletRequest request,
                                     HttpServletResponse response,
                                     FilterChain filterChain) throws ServletException, IOException {
-        String token = extractToken(request);
+        String token = SecurityUtils.extractToken(request);
 
         if (token != null && jwtTokenProvider.validateToken(token)) {
             try {
@@ -49,9 +49,9 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
                 Long userId = jwtTokenProvider.getUserIdFromToken(token);
 
-                // Check token revocation
-                String tokenId = Integer.toHexString(token.hashCode());
-                if (!tokenCacheService.isAccessTokenValid(userId, tokenId)) {
+                // Check token revocation using jti (P2-11: stable ID)
+                String tokenId = jwtTokenProvider.getJtiFromToken(token);
+                if (tokenId == null || !tokenCacheService.isAccessTokenValid(userId, tokenId)) {
                     filterChain.doFilter(request, response);
                     return;
                 }
@@ -89,13 +89,5 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
         }
 
         filterChain.doFilter(request, response);
-    }
-
-    private String extractToken(HttpServletRequest request) {
-        String bearer = request.getHeader("Authorization");
-        if (StringUtils.hasText(bearer) && bearer.startsWith("Bearer ")) {
-            return bearer.substring(7);
-        }
-        return null;
     }
 }

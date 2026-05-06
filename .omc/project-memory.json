@@ -58,38 +58,38 @@
   "hotPaths": [
     {
       "path": "",
-      "accessCount": 7,
-      "lastAccessed": 1778085786095,
+      "accessCount": 27,
+      "lastAccessed": 1778088442554,
       "type": "directory"
     },
     {
-      "path": "pom.xml",
-      "accessCount": 4,
-      "lastAccessed": 1778085751424,
+      "path": "src/main/java/com/demo/deepseekchat/exception/GlobalExceptionHandler.java",
+      "accessCount": 7,
+      "lastAccessed": 1778088454579,
       "type": "file"
     },
     {
       "path": "src/main/resources/application.yml",
-      "accessCount": 4,
-      "lastAccessed": 1778085751460,
+      "accessCount": 7,
+      "lastAccessed": 1778088463587,
+      "type": "file"
+    },
+    {
+      "path": "pom.xml",
+      "accessCount": 5,
+      "lastAccessed": 1778088324914,
+      "type": "file"
+    },
+    {
+      "path": "src/main/java/com/demo/deepseekchat/controller/ChatController.java",
+      "accessCount": 5,
+      "lastAccessed": 1778088454638,
       "type": "file"
     },
     {
       "path": "src/main/java/com/demo/deepseekchat/DeepseekChatApplication.java",
       "accessCount": 4,
       "lastAccessed": 1778085751486,
-      "type": "file"
-    },
-    {
-      "path": "src/main/java/com/demo/deepseekchat/controller/ChatController.java",
-      "accessCount": 4,
-      "lastAccessed": 1778085761489,
-      "type": "file"
-    },
-    {
-      "path": "src/main/java/com/demo/deepseekchat/exception/GlobalExceptionHandler.java",
-      "accessCount": 4,
-      "lastAccessed": 1778085761749,
       "type": "file"
     },
     {
@@ -213,6 +213,12 @@
       "type": "file"
     },
     {
+      "path": "src/main/java/com/demo/deepseekchat/controller/ConversationController.java",
+      "accessCount": 3,
+      "lastAccessed": 1778088454656,
+      "type": "file"
+    },
+    {
       "path": "src/main/java/com/demo/deepseekchat/repository/ModelParamsRepository.java",
       "accessCount": 2,
       "lastAccessed": 1778085761410,
@@ -252,12 +258,6 @@
       "path": "src/main/java/com/demo/deepseekchat/service/SystemPromptService.java",
       "accessCount": 2,
       "lastAccessed": 1778085768840,
-      "type": "file"
-    },
-    {
-      "path": "src/main/java/com/demo/deepseekchat/controller/ConversationController.java",
-      "accessCount": 2,
-      "lastAccessed": 1778085777847,
       "type": "file"
     },
     {

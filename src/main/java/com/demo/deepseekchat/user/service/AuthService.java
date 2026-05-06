@@ -1,6 +1,7 @@
 package com.demo.deepseekchat.user.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.demo.deepseekchat.exception.RateLimitExceededException;
 import com.demo.deepseekchat.security.config.JwtProperties;
 import com.demo.deepseekchat.security.service.TokenCacheService;
 import com.demo.deepseekchat.security.util.JwtTokenProvider;
@@ -56,9 +57,9 @@ public class AuthService {
     }
 
     public LoginResponse login(String username, String password, String ip) {
-        // 1. IP rate limit check
+        // 1. IP rate limit check (P1-8: RateLimitExceededException → 429)
         if (tokenCacheService.isLoginRateLimited(ip)) {
-            throw new IllegalArgumentException("登录尝试过于频繁，请5分钟后再试");
+            throw new RateLimitExceededException("登录尝试过于频繁，请5分钟后再试");
         }
         tokenCacheService.incrementLoginAttempts(ip);
 
@@ -96,8 +97,8 @@ public class AuthService {
         String accessToken = jwtTokenProvider.generateAccessToken(user.getId(), roleNames);
         String refreshToken = jwtTokenProvider.generateRefreshToken(user.getId());
 
-        // 8. Store in Redis
-        String tokenId = extractTokenId(accessToken);
+        // 8. Store in Redis (P2-11: use jti as tokenId)
+        String tokenId = jwtTokenProvider.getJtiFromToken(accessToken);
         tokenCacheService.storeAccessToken(user.getId(), tokenId, roleNames);
         tokenCacheService.storeRefreshToken(refreshToken, user.getId());
 
@@ -217,8 +218,8 @@ public class AuthService {
         // 6. Revoke old refresh token (rotation)
         tokenCacheService.revokeRefreshToken(refreshToken);
 
-        // 7. Store new tokens
-        String tokenId = extractTokenId(newAccessToken);
+        // 7. Store new tokens (P2-11: jti)
+        String tokenId = jwtTokenProvider.getJtiFromToken(newAccessToken);
         tokenCacheService.storeAccessToken(userId, tokenId, roleNames);
         tokenCacheService.storeRefreshToken(newRefreshToken, userId);
 
@@ -294,22 +295,33 @@ public class AuthService {
         tokenCacheService.markUserStatus(userId, "disabled");
     }
 
+    /**
+     * P0-1 修复：使用 permissionName 而非 resourceKey 作为 GrantedAuthority
+     */
     public Set<String> loadUserPermissions(Long userId) {
         List<Long> roleIds = sysUserRoleMapper.selectRoleIdsByUserId(userId);
+        if (roleIds == null || roleIds.isEmpty()) {
+            tokenCacheService.cacheUserPermissions(userId, Set.of());
+            return Set.of();
+        }
+
         Set<String> permissions = new HashSet<>();
 
-        for (Long roleId : roleIds) {
-            // Check if ADMIN role
-            SysRole role = sysRoleMapper.selectById(roleId);
-            if (role != null && "ADMIN".equalsIgnoreCase(role.getRoleName())) {
-                permissions = new HashSet<>(Set.of("*:*"));
-                break;
-            }
+        // P2-14: batch query roles to eliminate N+1
+        List<SysRole> roles = sysRoleMapper.selectBatchIds(roleIds);
+        boolean isAdmin = roles.stream()
+                .anyMatch(r -> "ADMIN".equalsIgnoreCase(r.getRoleName()));
 
-            var perms = sysRolePermissionMapper.selectPermissionsByRoleId(roleId);
-            for (var p : perms) {
-                if (p.getResourceKey() != null) {
-                    permissions.add(p.getResourceKey());
+        if (isAdmin) {
+            permissions = new HashSet<>(Set.of("*:*"));
+        } else {
+            for (Long roleId : roleIds) {
+                var perms = sysRolePermissionMapper.selectPermissionsByRoleId(roleId);
+                for (var p : perms) {
+                    // P0-1: use permissionName (matches @PreAuthorize checks)
+                    if (p.getPermissionName() != null) {
+                        permissions.add(p.getPermissionName());
+                    }
                 }
             }
         }
@@ -318,15 +330,18 @@ public class AuthService {
         return permissions;
     }
 
+    /**
+     * P2-14: batch query role names instead of N+1 selectById
+     */
     private List<String> getRoleNames(List<Long> roleIds) {
         if (roleIds == null || roleIds.isEmpty()) {
             return List.of();
         }
-        return roleIds.stream()
-            .map(sysRoleMapper::selectById)
-            .filter(Objects::nonNull)
-            .map(SysRole::getRoleName)
-            .collect(Collectors.toList());
+        List<SysRole> roles = sysRoleMapper.selectBatchIds(roleIds);
+        return roles.stream()
+                .filter(Objects::nonNull)
+                .map(SysRole::getRoleName)
+                .collect(Collectors.toList());
     }
 
     public LoginResponse.UserInfo updateProfile(Long userId, UserUpdateRequest request) {
@@ -346,10 +361,5 @@ public class AuthService {
         sysUserMapper.updateById(user);
 
         return getCurrentUser(userId);
-    }
-
-    private String extractTokenId(String token) {
-        // Use a hash of the token as the tokenId for Redis key uniqueness
-        return Integer.toHexString(token.hashCode());
     }
 }

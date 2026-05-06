@@ -1,6 +1,9 @@
 package com.demo.deepseekchat.model.entity;
 
-import jakarta.persistence.*;
+import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
+import com.baomidou.mybatisplus.annotation.TableId;
+import com.baomidou.mybatisplus.annotation.TableName;
 import java.time.LocalDateTime;
 
 /**
@@ -8,40 +11,35 @@ import java.time.LocalDateTime;
  * <p>
  * 记录每次 API 调用的 token 消耗和耗时，用于统计和成本追踪。
  */
-@Entity
-@Table(name = "token_usage", indexes = {
-        @Index(name = "idx_token_usage_model", columnList = "model_id"),
-        @Index(name = "idx_token_usage_conversation", columnList = "conversation_id"),
-        @Index(name = "idx_token_usage_created_at", columnList = "created_at")
-})
+@TableName("token_usage")
 public class TokenUsage {
 
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @TableId(type = IdType.AUTO)
     private Long id;
 
-    @Column(name = "conversation_id", nullable = false, length = 100)
+    @TableField("conversation_id")
     private String conversationId;
 
-    @Column(name = "model_id", nullable = false, length = 100)
+    @TableField("model_id")
     private String modelId;
 
-    @Column(name = "prompt_tokens", nullable = false)
+    @TableField("prompt_tokens")
     private Long promptTokens;
 
-    @Column(name = "completion_tokens", nullable = false)
+    @TableField("completion_tokens")
     private Long completionTokens;
 
-    @Column(name = "total_tokens", nullable = false)
+    @TableField("total_tokens")
     private Long totalTokens;
 
-    @Column(name = "duration_ms", nullable = false)
+    @TableField("duration_ms")
     private Long durationMs;
 
-    @Column(name = "created_at", nullable = false)
+    @TableField("created_at")
     private LocalDateTime createdAt;
 
-    protected TokenUsage() {}
+    public TokenUsage() {
+    }
 
     public TokenUsage(String conversationId, String modelId,
                       long promptTokens, long completionTokens, long totalTokens,
@@ -64,4 +62,14 @@ public class TokenUsage {
     public Long getTotalTokens() { return totalTokens; }
     public Long getDurationMs() { return durationMs; }
     public LocalDateTime getCreatedAt() { return createdAt; }
+
+    // Setters
+    public void setId(Long id) { this.id = id; }
+    public void setConversationId(String conversationId) { this.conversationId = conversationId; }
+    public void setModelId(String modelId) { this.modelId = modelId; }
+    public void setPromptTokens(Long promptTokens) { this.promptTokens = promptTokens; }
+    public void setCompletionTokens(Long completionTokens) { this.completionTokens = completionTokens; }
+    public void setTotalTokens(Long totalTokens) { this.totalTokens = totalTokens; }
+    public void setDurationMs(Long durationMs) { this.durationMs = durationMs; }
+    public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
 }

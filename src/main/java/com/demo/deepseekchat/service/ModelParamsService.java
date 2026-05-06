@@ -1,8 +1,9 @@
 package com.demo.deepseekchat.service;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.demo.deepseekchat.mapper.ModelParamsMapper;
 import com.demo.deepseekchat.model.dto.ModelParamsDTO;
 import com.demo.deepseekchat.model.entity.ModelParams;
-import com.demo.deepseekchat.repository.ModelParamsRepository;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import org.springframework.stereotype.Service;
@@ -24,13 +25,13 @@ import java.util.stream.Collectors;
 @Service
 public class ModelParamsService {
 
-    private final ModelParamsRepository repository;
+    private final ModelParamsMapper mapper;
     private final TransactionTemplate transactionTemplate;
     private final Cache<String, ModelParams> paramsCache;
 
-    public ModelParamsService(ModelParamsRepository repository,
+    public ModelParamsService(ModelParamsMapper mapper,
                               PlatformTransactionManager transactionManager) {
-        this.repository = repository;
+        this.mapper = mapper;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
         this.transactionTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRED);
         this.paramsCache = Caffeine.newBuilder()
@@ -46,7 +47,7 @@ public class ModelParamsService {
      */
     public ModelParams getParams(String modelId) {
         return paramsCache.get(modelId, key ->
-                repository.findByModelId(key).orElse(null)
+                mapper.selectOne(new LambdaQueryWrapper<ModelParams>().eq(ModelParams::getModelId, key))
         );
     }
 
@@ -54,14 +55,16 @@ public class ModelParamsService {
      * 获取指定模型的参数 DTO
      */
     public Optional<ModelParamsDTO> getParamsDTO(String modelId) {
-        return repository.findByModelId(modelId).map(this::toDTO);
+        ModelParams entity = mapper.selectOne(
+                new LambdaQueryWrapper<ModelParams>().eq(ModelParams::getModelId, modelId));
+        return Optional.ofNullable(entity).map(this::toDTO);
     }
 
     /**
      * 获取所有模型参数配置
      */
     public List<ModelParamsDTO> listAll() {
-        return repository.findAll().stream()
+        return mapper.selectList(null).stream()
                 .map(this::toDTO)
                 .collect(Collectors.toList());
     }
@@ -71,19 +74,19 @@ public class ModelParamsService {
      */
     public ModelParamsDTO saveOrUpdate(String modelId, ModelParamsDTO dto) {
         ModelParamsDTO result = transactionTemplate.execute(status -> {
-            ModelParams entity = repository.findByModelId(modelId)
-                    .map(p -> {
-                        p.applyUpdates(dto.temperature(), dto.maxTokens(), dto.topP(),
-                                dto.frequencyPenalty(), dto.presencePenalty());
-                        return p;
-                    })
-                    .orElseGet(() -> {
-                        ModelParams newParams = new ModelParams(modelId);
-                        newParams.applyUpdates(dto.temperature(), dto.maxTokens(), dto.topP(),
-                                dto.frequencyPenalty(), dto.presencePenalty());
-                        return newParams;
-                    });
-            return toDTO(repository.save(entity));
+            ModelParams entity = mapper.selectOne(
+                    new LambdaQueryWrapper<ModelParams>().eq(ModelParams::getModelId, modelId));
+            if (entity != null) {
+                entity.applyUpdates(dto.temperature(), dto.maxTokens(), dto.topP(),
+                        dto.frequencyPenalty(), dto.presencePenalty());
+                mapper.updateById(entity);
+            } else {
+                entity = new ModelParams(modelId);
+                entity.applyUpdates(dto.temperature(), dto.maxTokens(), dto.topP(),
+                        dto.frequencyPenalty(), dto.presencePenalty());
+                mapper.insert(entity);
+            }
+            return toDTO(entity);
         });
         paramsCache.invalidate(modelId);
         return result;
@@ -94,9 +97,10 @@ public class ModelParamsService {
      */
     public boolean delete(String modelId) {
         Boolean deleted = transactionTemplate.execute(status -> {
-            if (repository.existsByModelId(modelId)) {
-                ModelParams entity = repository.findByModelId(modelId).orElseThrow();
-                repository.delete(entity);
+            ModelParams entity = mapper.selectOne(
+                    new LambdaQueryWrapper<ModelParams>().eq(ModelParams::getModelId, modelId));
+            if (entity != null) {
+                mapper.deleteById(entity.getId());
                 return true;
             }
             return false;

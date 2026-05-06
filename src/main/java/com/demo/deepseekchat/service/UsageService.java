@@ -1,9 +1,10 @@
 package com.demo.deepseekchat.service;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.demo.deepseekchat.mapper.TokenUsageMapper;
 import com.demo.deepseekchat.model.dto.TokenUsageDTO;
 import com.demo.deepseekchat.model.dto.UsageStats;
 import com.demo.deepseekchat.model.entity.TokenUsage;
-import com.demo.deepseekchat.repository.TokenUsageRepository;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
@@ -21,10 +22,10 @@ public class UsageService {
 
     private static final int DEFAULT_DAYS = 30;
 
-    private final TokenUsageRepository repository;
+    private final TokenUsageMapper mapper;
 
-    public UsageService(TokenUsageRepository repository) {
-        this.repository = repository;
+    public UsageService(TokenUsageMapper mapper) {
+        this.mapper = mapper;
     }
 
     /**
@@ -40,14 +41,17 @@ public class UsageService {
                 promptTokens, completionTokens, totalTokens,
                 durationMs
         );
-        repository.save(usage);
+        mapper.insert(usage);
     }
 
     /**
      * 查询指定对话的用量记录
      */
     public List<TokenUsageDTO> getByConversation(String conversationId) {
-        return repository.findByConversationIdOrderByCreatedAtDesc(conversationId)
+        return mapper.selectList(
+                new LambdaQueryWrapper<TokenUsage>()
+                        .eq(TokenUsage::getConversationId, conversationId)
+                        .orderByDesc(TokenUsage::getCreatedAt))
                 .stream().map(this::toDTO).collect(Collectors.toList());
     }
 
@@ -55,7 +59,10 @@ public class UsageService {
      * 查询指定模型的用量记录
      */
     public List<TokenUsageDTO> getByModel(String modelId) {
-        return repository.findByModelIdOrderByCreatedAtDesc(modelId)
+        return mapper.selectList(
+                new LambdaQueryWrapper<TokenUsage>()
+                        .eq(TokenUsage::getModelId, modelId)
+                        .orderByDesc(TokenUsage::getCreatedAt))
                 .stream().map(this::toDTO).collect(Collectors.toList());
     }
 
@@ -66,7 +73,7 @@ public class UsageService {
                                               LocalDateTime startTime,
                                               LocalDateTime endTime) {
         LocalDateTime start = startTime != null ? startTime : LocalDateTime.now().minusDays(DEFAULT_DAYS);
-        return repository.aggregateByModel(modelId, start, endTime);
+        return mapper.aggregateByModel(modelId, start, endTime);
     }
 
     /**
@@ -76,7 +83,7 @@ public class UsageService {
                                                     LocalDateTime startTime,
                                                     LocalDateTime endTime) {
         LocalDateTime start = startTime != null ? startTime : LocalDateTime.now().minusDays(DEFAULT_DAYS);
-        return repository.aggregateByConversation(conversationId, start, endTime);
+        return mapper.aggregateByConversation(conversationId, start, endTime);
     }
 
     private TokenUsageDTO toDTO(TokenUsage entity) {

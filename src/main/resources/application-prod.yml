@@ -1,0 +1,17 @@
+spring:
+  flyway:
+    clean-disabled: true
+  ai:
+    chat:
+      memory:
+        repository:
+          jdbc:
+            initialize-schema: never
+
+mybatis-plus:
+  configuration:
+    log-impl: org.apache.ibatis.logging.nologging.NoLoggingImpl
+
+logging:
+  level:
+    com.demo.deepseekchat: INFO

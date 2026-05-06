@@ -57,6 +57,72 @@
   },
   "hotPaths": [
     {
+      "path": "",
+      "accessCount": 7,
+      "lastAccessed": 1778085786095,
+      "type": "directory"
+    },
+    {
+      "path": "pom.xml",
+      "accessCount": 4,
+      "lastAccessed": 1778085751424,
+      "type": "file"
+    },
+    {
+      "path": "src/main/resources/application.yml",
+      "accessCount": 4,
+      "lastAccessed": 1778085751460,
+      "type": "file"
+    },
+    {
+      "path": "src/main/java/com/demo/deepseekchat/DeepseekChatApplication.java",
+      "accessCount": 4,
+      "lastAccessed": 1778085751486,
+      "type": "file"
+    },
+    {
+      "path": "src/main/java/com/demo/deepseekchat/controller/ChatController.java",
+      "accessCount": 4,
+      "lastAccessed": 1778085761489,
+      "type": "file"
+    },
+    {
+      "path": "src/main/java/com/demo/deepseekchat/exception/GlobalExceptionHandler.java",
+      "accessCount": 4,
+      "lastAccessed": 1778085761749,
+      "type": "file"
+    },
+    {
+      "path": "src/main/java/com/demo/deepseekchat/config/DeepSeekAutoConfiguration.java",
+      "accessCount": 4,
+      "lastAccessed": 1778085768877,
+      "type": "file"
+    },
+    {
+      "path": "src/main/java/com/demo/deepseekchat/config/AdvisorAutoConfiguration.java",
+      "accessCount": 4,
+      "lastAccessed": 1778085768900,
+      "type": "file"
+    },
+    {
+      "path": "src/main/java/com/demo/deepseekchat/service/ChatService.java",
+      "accessCount": 4,
+      "lastAccessed": 1778085768935,
+      "type": "file"
+    },
+    {
+      "path": "src/main/java/com/demo/deepseekchat/config/DeepSeekProperties.java",
+      "accessCount": 4,
+      "lastAccessed": 1778085777971,
+      "type": "file"
+    },
+    {
+      "path": "src/main/java/com/demo/deepseekchat/model/dto/ChatRequest.java",
+      "accessCount": 4,
+      "lastAccessed": 1778085799518,
+      "type": "file"
+    },
+    {
       "path": "src/main/java/com/demo/deepseekchat/chat/ChatClientRegistry.java",
       "accessCount": 3,
       "lastAccessed": 1778083722225,
@@ -75,33 +141,9 @@
       "type": "file"
     },
     {
-      "path": "src/main/java/com/demo/deepseekchat/service/ChatService.java",
-      "accessCount": 3,
-      "lastAccessed": 1778083722587,
-      "type": "file"
-    },
-    {
-      "path": "src/main/java/com/demo/deepseekchat/DeepseekChatApplication.java",
-      "accessCount": 3,
-      "lastAccessed": 1778083722823,
-      "type": "file"
-    },
-    {
-      "path": "src/main/java/com/demo/deepseekchat/controller/ChatController.java",
-      "accessCount": 3,
-      "lastAccessed": 1778083738054,
-      "type": "file"
-    },
-    {
       "path": "src/main/java/com/demo/deepseekchat/model/dto/ModelsResponse.java",
       "accessCount": 3,
       "lastAccessed": 1778083755886,
-      "type": "file"
-    },
-    {
-      "path": "src/main/java/com/demo/deepseekchat/model/dto/ChatRequest.java",
-      "accessCount": 3,
-      "lastAccessed": 1778083755910,
       "type": "file"
     },
     {
@@ -117,27 +159,9 @@
       "type": "file"
     },
     {
-      "path": "src/main/resources/application.yml",
-      "accessCount": 3,
-      "lastAccessed": 1778083776746,
-      "type": "file"
-    },
-    {
       "path": "src/main/java/com/demo/deepseekchat/exception/ContentFilteredException.java",
       "accessCount": 3,
       "lastAccessed": 1778083776813,
-      "type": "file"
-    },
-    {
-      "path": "src/main/java/com/demo/deepseekchat/config/AdvisorAutoConfiguration.java",
-      "accessCount": 3,
-      "lastAccessed": 1778083776905,
-      "type": "file"
-    },
-    {
-      "path": "src/main/java/com/demo/deepseekchat/config/DeepSeekProperties.java",
-      "accessCount": 3,
-      "lastAccessed": 1778083777159,
       "type": "file"
     },
     {
@@ -153,27 +177,9 @@
       "type": "file"
     },
     {
-      "path": "src/main/java/com/demo/deepseekchat/config/DeepSeekAutoConfiguration.java",
-      "accessCount": 3,
-      "lastAccessed": 1778083777264,
-      "type": "file"
-    },
-    {
-      "path": "src/main/java/com/demo/deepseekchat/exception/GlobalExceptionHandler.java",
-      "accessCount": 3,
-      "lastAccessed": 1778083777336,
-      "type": "file"
-    },
-    {
       "path": "src/main/java/com/demo/deepseekchat/advisor/RateLimitAdvisor.java",
       "accessCount": 3,
       "lastAccessed": 1778083792756,
-      "type": "file"
-    },
-    {
-      "path": "pom.xml",
-      "accessCount": 3,
-      "lastAccessed": 1778083792815,
       "type": "file"
     },
     {
@@ -207,10 +213,76 @@
       "type": "file"
     },
     {
-      "path": "",
+      "path": "src/main/java/com/demo/deepseekchat/repository/ModelParamsRepository.java",
       "accessCount": 2,
-      "lastAccessed": 1778079095489,
-      "type": "directory"
+      "lastAccessed": 1778085761410,
+      "type": "file"
+    },
+    {
+      "path": "src/main/java/com/demo/deepseekchat/repository/TokenUsageRepository.java",
+      "accessCount": 2,
+      "lastAccessed": 1778085761592,
+      "type": "file"
+    },
+    {
+      "path": "src/main/java/com/demo/deepseekchat/model/entity/SystemPrompt.java",
+      "accessCount": 2,
+      "lastAccessed": 1778085761714,
+      "type": "file"
+    },
+    {
+      "path": "src/main/java/com/demo/deepseekchat/repository/SystemPromptRepository.java",
+      "accessCount": 2,
+      "lastAccessed": 1778085761766,
+      "type": "file"
+    },
+    {
+      "path": "src/main/java/com/demo/deepseekchat/model/entity/TokenUsage.java",
+      "accessCount": 2,
+      "lastAccessed": 1778085761815,
+      "type": "file"
+    },
+    {
+      "path": "src/main/java/com/demo/deepseekchat/model/entity/ModelParams.java",
+      "accessCount": 2,
+      "lastAccessed": 1778085761872,
+      "type": "file"
+    },
+    {
+      "path": "src/main/java/com/demo/deepseekchat/service/SystemPromptService.java",
+      "accessCount": 2,
+      "lastAccessed": 1778085768840,
+      "type": "file"
+    },
+    {
+      "path": "src/main/java/com/demo/deepseekchat/controller/ConversationController.java",
+      "accessCount": 2,
+      "lastAccessed": 1778085777847,
+      "type": "file"
+    },
+    {
+      "path": "src/main/java/com/demo/deepseekchat/service/ModelParamsService.java",
+      "accessCount": 2,
+      "lastAccessed": 1778085777912,
+      "type": "file"
+    },
+    {
+      "path": "src/main/java/com/demo/deepseekchat/model/dto/ErrorResponse.java",
+      "accessCount": 2,
+      "lastAccessed": 1778085778023,
+      "type": "file"
+    },
+    {
+      "path": "src/main/java/com/demo/deepseekchat/controller/PromptController.java",
+      "accessCount": 2,
+      "lastAccessed": 1778085778051,
+      "type": "file"
+    },
+    {
+      "path": "src/main/java/com/demo/deepseekchat/service/UsageService.java",
+      "accessCount": 2,
+      "lastAccessed": 1778085793349,
+      "type": "file"
     },
     {
       "path": "src/main/java/com/demo/deepseekchat/service/ModelRegistryRefresher.java",
@@ -219,69 +291,9 @@
       "type": "file"
     },
     {
-      "path": "src/main/java/com/demo/deepseekchat/service/ModelParamsService.java",
-      "accessCount": 1,
-      "lastAccessed": 1778083722703,
-      "type": "file"
-    },
-    {
-      "path": "src/main/java/com/demo/deepseekchat/service/SystemPromptService.java",
-      "accessCount": 1,
-      "lastAccessed": 1778083722754,
-      "type": "file"
-    },
-    {
-      "path": "src/main/java/com/demo/deepseekchat/service/UsageService.java",
-      "accessCount": 1,
-      "lastAccessed": 1778083722807,
-      "type": "file"
-    },
-    {
       "path": "src/main/java/com/demo/deepseekchat/service/ConversationService.java",
       "accessCount": 1,
       "lastAccessed": 1778083722860,
-      "type": "file"
-    },
-    {
-      "path": "src/main/java/com/demo/deepseekchat/repository/SystemPromptRepository.java",
-      "accessCount": 1,
-      "lastAccessed": 1778083737734,
-      "type": "file"
-    },
-    {
-      "path": "src/main/java/com/demo/deepseekchat/repository/TokenUsageRepository.java",
-      "accessCount": 1,
-      "lastAccessed": 1778083737791,
-      "type": "file"
-    },
-    {
-      "path": "src/main/java/com/demo/deepseekchat/model/entity/TokenUsage.java",
-      "accessCount": 1,
-      "lastAccessed": 1778083737837,
-      "type": "file"
-    },
-    {
-      "path": "src/main/java/com/demo/deepseekchat/controller/PromptController.java",
-      "accessCount": 1,
-      "lastAccessed": 1778083737921,
-      "type": "file"
-    },
-    {
-      "path": "src/main/java/com/demo/deepseekchat/controller/ConversationController.java",
-      "accessCount": 1,
-      "lastAccessed": 1778083738122,
-      "type": "file"
-    },
-    {
-      "path": "src/main/java/com/demo/deepseekchat/model/entity/SystemPrompt.java",
-      "accessCount": 1,
-      "lastAccessed": 1778083738158,
-      "type": "file"
-    },
-    {
-      "path": "src/main/java/com/demo/deepseekchat/model/entity/ModelParams.java",
-      "accessCount": 1,
-      "lastAccessed": 1778083738195,
       "type": "file"
     },
     {
@@ -309,12 +321,6 @@
       "type": "file"
     },
     {
-      "path": "src/main/java/com/demo/deepseekchat/model/dto/ErrorResponse.java",
-      "accessCount": 1,
-      "lastAccessed": 1778083755703,
-      "type": "file"
-    },
-    {
       "path": "src/main/java/com/demo/deepseekchat/model/dto/ConversationSummary.java",
       "accessCount": 1,
       "lastAccessed": 1778083755762,
@@ -339,15 +345,15 @@
       "type": "file"
     },
     {
-      "path": "src/main/java/com/demo/deepseekchat/repository/ModelParamsRepository.java",
-      "accessCount": 1,
-      "lastAccessed": 1778083777281,
-      "type": "file"
-    },
-    {
       "path": "src/main/java/com/demo/deepseekchat/advisor/ConversationContextAdvisor.java",
       "accessCount": 1,
       "lastAccessed": 1778083792985,
+      "type": "file"
+    },
+    {
+      "path": "docs/RBAC-USER-MODULE-DESIGN.md",
+      "accessCount": 1,
+      "lastAccessed": 1778085665639,
       "type": "file"
     }
   ],

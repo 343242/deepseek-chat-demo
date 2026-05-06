@@ -1,6 +1,9 @@
 package com.demo.deepseekchat.model.entity;
 
-import jakarta.persistence.*;
+import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
+import com.baomidou.mybatisplus.annotation.TableId;
+import com.baomidou.mybatisplus.annotation.TableName;
 import java.time.LocalDateTime;
 
 /**
@@ -8,27 +11,26 @@ import java.time.LocalDateTime;
  * <p>
  * 每个模型可设置独立的 system prompt，支持动态修改无需重启。
  */
-@Entity
-@Table(name = "system_prompt", uniqueConstraints = @UniqueConstraint(columnNames = "model_id"))
+@TableName("system_prompt")
 public class SystemPrompt {
 
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @TableId(type = IdType.AUTO)
     private Long id;
 
-    @Column(name = "model_id", nullable = false, unique = true, length = 100)
+    @TableField("model_id")
     private String modelId;
 
-    @Column(name = "prompt_text", columnDefinition = "TEXT", nullable = false)
+    @TableField("prompt_text")
     private String promptText;
 
-    @Column(name = "created_at", nullable = false, updatable = false)
+    @TableField("created_at")
     private LocalDateTime createdAt;
 
-    @Column(name = "updated_at")
+    @TableField("updated_at")
     private LocalDateTime updatedAt;
 
-    protected SystemPrompt() {}
+    public SystemPrompt() {
+    }
 
     public SystemPrompt(String modelId, String promptText) {
         this.modelId = modelId;
@@ -48,4 +50,11 @@ public class SystemPrompt {
     public String getPromptText() { return promptText; }
     public LocalDateTime getCreatedAt() { return createdAt; }
     public LocalDateTime getUpdatedAt() { return updatedAt; }
+
+    // Setters
+    public void setId(Long id) { this.id = id; }
+    public void setModelId(String modelId) { this.modelId = modelId; }
+    public void setPromptText(String promptText) { this.promptText = promptText; }
+    public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
+    public void setUpdatedAt(LocalDateTime updatedAt) { this.updatedAt = updatedAt; }
 }

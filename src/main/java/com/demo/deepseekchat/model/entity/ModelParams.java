@@ -1,6 +1,9 @@
 package com.demo.deepseekchat.model.entity;
 
-import jakarta.persistence.*;
+import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
+import com.baomidou.mybatisplus.annotation.TableId;
+import com.baomidou.mybatisplus.annotation.TableName;
 import java.time.LocalDateTime;
 
 /**
@@ -8,39 +11,38 @@ import java.time.LocalDateTime;
  * <p>
  * 支持动态调整 temperature、maxTokens、topP 等参数，无需重启服务。
  */
-@Entity
-@Table(name = "model_params", uniqueConstraints = @UniqueConstraint(columnNames = "model_id"))
+@TableName("model_params")
 public class ModelParams {
 
-    @Id
-    @GeneratedValue(strategy = GenerationType.IDENTITY)
+    @TableId(type = IdType.AUTO)
     private Long id;
 
-    @Column(name = "model_id", nullable = false, unique = true, length = 100)
+    @TableField("model_id")
     private String modelId;
 
-    @Column(name = "temperature")
+    @TableField("temperature")
     private Double temperature;
 
-    @Column(name = "max_tokens")
+    @TableField("max_tokens")
     private Integer maxTokens;
 
-    @Column(name = "top_p")
+    @TableField("top_p")
     private Double topP;
 
-    @Column(name = "frequency_penalty")
+    @TableField("frequency_penalty")
     private Double frequencyPenalty;
 
-    @Column(name = "presence_penalty")
+    @TableField("presence_penalty")
     private Double presencePenalty;
 
-    @Column(name = "created_at", nullable = false, updatable = false)
+    @TableField("created_at")
     private LocalDateTime createdAt;
 
-    @Column(name = "updated_at")
+    @TableField("updated_at")
     private LocalDateTime updatedAt;
 
-    protected ModelParams() {}
+    public ModelParams() {
+    }
 
     public ModelParams(String modelId) {
         this.modelId = modelId;
@@ -68,4 +70,15 @@ public class ModelParams {
     public Double getPresencePenalty() { return presencePenalty; }
     public LocalDateTime getCreatedAt() { return createdAt; }
     public LocalDateTime getUpdatedAt() { return updatedAt; }
+
+    // Setters (needed for MyBatis-Plus)
+    public void setId(Long id) { this.id = id; }
+    public void setModelId(String modelId) { this.modelId = modelId; }
+    public void setTemperature(Double temperature) { this.temperature = temperature; }
+    public void setMaxTokens(Integer maxTokens) { this.maxTokens = maxTokens; }
+    public void setTopP(Double topP) { this.topP = topP; }
+    public void setFrequencyPenalty(Double frequencyPenalty) { this.frequencyPenalty = frequencyPenalty; }
+    public void setPresencePenalty(Double presencePenalty) { this.presencePenalty = presencePenalty; }
+    public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
+    public void setUpdatedAt(LocalDateTime updatedAt) { this.updatedAt = updatedAt; }
 }

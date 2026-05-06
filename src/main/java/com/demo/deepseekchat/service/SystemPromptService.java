@@ -1,8 +1,9 @@
 package com.demo.deepseekchat.service;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.demo.deepseekchat.mapper.SystemPromptMapper;
 import com.demo.deepseekchat.model.dto.SystemPromptDTO;
 import com.demo.deepseekchat.model.entity.SystemPrompt;
-import com.demo.deepseekchat.repository.SystemPromptRepository;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import org.springframework.stereotype.Service;
@@ -24,13 +25,13 @@ import java.util.stream.Collectors;
 @Service
 public class SystemPromptService {
 
-    private final SystemPromptRepository repository;
+    private final SystemPromptMapper mapper;
     private final TransactionTemplate transactionTemplate;
     private final Cache<String, String> promptCache;
 
-    public SystemPromptService(SystemPromptRepository repository,
+    public SystemPromptService(SystemPromptMapper mapper,
                                PlatformTransactionManager transactionManager) {
-        this.repository = repository;
+        this.mapper = mapper;
         this.transactionTemplate = new TransactionTemplate(transactionManager);
         this.transactionTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRED);
         this.promptCache = Caffeine.newBuilder()
@@ -45,25 +46,27 @@ public class SystemPromptService {
      * @return promptText，未配置时返回 null
      */
     public String getPrompt(String modelId) {
-        return promptCache.get(modelId, key ->
-                repository.findByModelId(key)
-                        .map(SystemPrompt::getPromptText)
-                        .orElse(null)
-        );
+        return promptCache.get(modelId, key -> {
+            SystemPrompt sp = mapper.selectOne(
+                    new LambdaQueryWrapper<SystemPrompt>().eq(SystemPrompt::getModelId, key));
+            return sp != null ? sp.getPromptText() : null;
+        });
     }
 
     /**
      * 获取指定模型的 SystemPromptDTO
      */
     public Optional<SystemPromptDTO> getPromptDTO(String modelId) {
-        return repository.findByModelId(modelId).map(this::toDTO);
+        SystemPrompt sp = mapper.selectOne(
+                new LambdaQueryWrapper<SystemPrompt>().eq(SystemPrompt::getModelId, modelId));
+        return Optional.ofNullable(sp).map(this::toDTO);
     }
 
     /**
      * 获取所有 system prompt 配置
      */
     public List<SystemPromptDTO> listAll() {
-        return repository.findAll().stream()
+        return mapper.selectList(null).stream()
                 .map(this::toDTO)
                 .collect(Collectors.toList());
     }
@@ -73,10 +76,16 @@ public class SystemPromptService {
      */
     public SystemPromptDTO saveOrUpdate(String modelId, String promptText) {
         SystemPromptDTO dto = transactionTemplate.execute(status -> {
-            SystemPrompt entity = repository.findByModelId(modelId)
-                    .map(sp -> { sp.updatePrompt(promptText); return sp; })
-                    .orElseGet(() -> new SystemPrompt(modelId, promptText));
-            return toDTO(repository.save(entity));
+            SystemPrompt entity = mapper.selectOne(
+                    new LambdaQueryWrapper<SystemPrompt>().eq(SystemPrompt::getModelId, modelId));
+            if (entity != null) {
+                entity.updatePrompt(promptText);
+                mapper.updateById(entity);
+            } else {
+                entity = new SystemPrompt(modelId, promptText);
+                mapper.insert(entity);
+            }
+            return toDTO(entity);
         });
         promptCache.invalidate(modelId);
         return dto;
@@ -87,10 +96,10 @@ public class SystemPromptService {
      */
     public boolean delete(String modelId) {
         Boolean deleted = transactionTemplate.execute(status -> {
-            if (repository.existsByModelId(modelId)) {
-                // Spring Data derived delete: 先查后删，需在同一事务
-                SystemPrompt entity = repository.findByModelId(modelId).orElseThrow();
-                repository.delete(entity);
+            SystemPrompt entity = mapper.selectOne(
+                    new LambdaQueryWrapper<SystemPrompt>().eq(SystemPrompt::getModelId, modelId));
+            if (entity != null) {
+                mapper.deleteById(entity.getId());
                 return true;
             }
             return false;

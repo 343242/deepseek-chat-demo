@@ -7,14 +7,19 @@ spring:
     username: ${POSTGRES_USER:postgres}
     password: ${POSTGRES_PASSWORD:postgres}
     driver-class-name: org.postgresql.Driver
-  jpa:
-    hibernate:
-      ddl-auto: update
-    show-sql: false
-    properties:
-      hibernate:
-        dialect: org.hibernate.dialect.PostgreSQLDialect
-    open-in-view: false
+    hikari:
+      maximum-pool-size: 10
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+    validate-on-migrate: true
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      timeout: 3000ms
   ai:
     deepseek:
       base-url: https://api.deepseek.com
@@ -28,22 +33,22 @@ spring:
           jdbc:
             initialize-schema: always
 
----
-# 生产环境：关闭自动 DDL，使用 Flyway/Liquibase 管理迁移
-spring:
-  config:
-    activate:
-      on-profile: prod
-  jpa:
-    hibernate:
-      ddl-auto: validate
-  ai:
-    chat:
-      memory:
-        repository:
-          jdbc:
-            initialize-schema: never
+app:
+  jwt:
+    secret: ${JWT_SECRET:myDefaultSecretKeyForDevOnlyMustBe32CharsLong!!}
+    access-expiration: 900
+    refresh-expiration: 86400
+    issuer: deepseek-chat-demo
+    redis-prefix: "auth:token:"
 
-logging:
-  level:
-    com.demo.deepseekchat: INFO
+mybatis-plus:
+  mapper-locations: classpath*:/mapper/**/*.xml
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+  global-config:
+    db-config:
+      logic-delete-field: deleted
+      logic-delete-value: 1
+      logic-not-delete-value: 0
+      id-type: auto

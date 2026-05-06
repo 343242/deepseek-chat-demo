@@ -51,7 +51,6 @@ public class ModelRegistryRefresher {
         try {
             ModelsResponse response = restClient.get()
                     .uri("/models")
-                    .header("Authorization", "Bearer " + properties.apiKey())
                     .retrieve()
                     .body(ModelsResponse.class);
 

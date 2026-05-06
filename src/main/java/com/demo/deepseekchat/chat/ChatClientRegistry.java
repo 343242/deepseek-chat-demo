@@ -26,9 +26,9 @@ public class ChatClientRegistry {
     private volatile List<ModelInfo> cachedModels = Collections.emptyList();
 
     /**
-     * 注册一个 ChatClient（单个追加）
+     * 注册一个 ChatClient（单个追加，线程安全）
      */
-    public void register(String modelId, ChatClient chatClient) {
+    public synchronized void register(String modelId, ChatClient chatClient) {
         Map<String, ChatClient> newMap = new LinkedHashMap<>(registry);
         newMap.put(modelId, chatClient);
         this.registry = Collections.unmodifiableMap(newMap);

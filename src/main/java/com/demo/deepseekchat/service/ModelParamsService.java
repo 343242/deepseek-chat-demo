@@ -3,8 +3,14 @@ package com.demo.deepseekchat.service;
 import com.demo.deepseekchat.model.dto.ModelParamsDTO;
 import com.demo.deepseekchat.model.entity.ModelParams;
 import com.demo.deepseekchat.repository.ModelParamsRepository;
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.support.TransactionTemplate;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
 import java.util.stream.Collectors;
@@ -13,24 +19,35 @@ import java.util.stream.Collectors;
  * 模型参数管理服务
  * <p>
  * 支持动态调整 temperature、maxTokens、topP 等参数，无需重启。
- * ChatService 调用时查询该服务获取运行时参数覆盖。
+ * 使用 Caffeine 本地缓存减少热路径 DB 查询（TTL 30s），写入时主动失效。
  */
 @Service
 public class ModelParamsService {
 
     private final ModelParamsRepository repository;
+    private final TransactionTemplate transactionTemplate;
+    private final Cache<String, ModelParams> paramsCache;
 
-    public ModelParamsService(ModelParamsRepository repository) {
+    public ModelParamsService(ModelParamsRepository repository,
+                              PlatformTransactionManager transactionManager) {
         this.repository = repository;
+        this.transactionTemplate = new TransactionTemplate(transactionManager);
+        this.transactionTemplate.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRED);
+        this.paramsCache = Caffeine.newBuilder()
+                .expireAfterWrite(Duration.ofSeconds(30))
+                .maximumSize(200)
+                .build();
     }
 
     /**
-     * 获取指定模型的运行时参数
+     * 获取指定模型的运行时参数（带缓存）
      *
      * @return ModelParams 实体，未配置时返回 null
      */
     public ModelParams getParams(String modelId) {
-        return repository.findByModelId(modelId).orElse(null);
+        return paramsCache.get(modelId, key ->
+                repository.findByModelId(key).orElse(null)
+        );
     }
 
     /**
@@ -50,34 +67,42 @@ public class ModelParamsService {
     }
 
     /**
-     * 创建或更新模型参数
-     * <p>
-     * 只更新非 null 的字段，null 字段保持原值。
+     * 创建或更新模型参数（编程式事务 + 缓存失效）
      */
     public ModelParamsDTO saveOrUpdate(String modelId, ModelParamsDTO dto) {
-        ModelParams entity = repository.findByModelId(modelId)
-                .map(p -> {
-                    p.applyUpdates(
-                            dto.temperature(), dto.maxTokens(), dto.topP(),
-                            dto.frequencyPenalty(), dto.presencePenalty());
-                    return p;
-                })
-                .orElseGet(() -> {
-                    ModelParams newParams = new ModelParams(modelId);
-                    newParams.applyUpdates(
-                            dto.temperature(), dto.maxTokens(), dto.topP(),
-                            dto.frequencyPenalty(), dto.presencePenalty());
-                    return newParams;
-                });
-        return toDTO(repository.save(entity));
+        ModelParamsDTO result = transactionTemplate.execute(status -> {
+            ModelParams entity = repository.findByModelId(modelId)
+                    .map(p -> {
+                        p.applyUpdates(dto.temperature(), dto.maxTokens(), dto.topP(),
+                                dto.frequencyPenalty(), dto.presencePenalty());
+                        return p;
+                    })
+                    .orElseGet(() -> {
+                        ModelParams newParams = new ModelParams(modelId);
+                        newParams.applyUpdates(dto.temperature(), dto.maxTokens(), dto.topP(),
+                                dto.frequencyPenalty(), dto.presencePenalty());
+                        return newParams;
+                    });
+            return toDTO(repository.save(entity));
+        });
+        paramsCache.invalidate(modelId);
+        return result;
     }
 
     /**
-     * 删除指定模型的参数配置（恢复默认）
+     * 删除指定模型的参数配置（编程式事务 + 缓存失效）
      */
     public boolean delete(String modelId) {
-        if (repository.existsByModelId(modelId)) {
-            repository.deleteByModelId(modelId);
+        Boolean deleted = transactionTemplate.execute(status -> {
+            if (repository.existsByModelId(modelId)) {
+                ModelParams entity = repository.findByModelId(modelId).orElseThrow();
+                repository.delete(entity);
+                return true;
+            }
+            return false;
+        });
+        if (Boolean.TRUE.equals(deleted)) {
+            paramsCache.invalidate(modelId);
             return true;
         }
         return false;

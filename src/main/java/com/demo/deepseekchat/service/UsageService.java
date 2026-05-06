@@ -14,9 +14,12 @@ import java.util.stream.Collectors;
  * 用量统计服务
  * <p>
  * 记录每次 API 调用的 token 消耗和耗时，提供按模型/对话聚合统计。
+ * 聚合查询默认限制最近 30 天，防止全表扫描。
  */
 @Service
 public class UsageService {
+
+    private static final int DEFAULT_DAYS = 30;
 
     private final TokenUsageRepository repository;
 
@@ -26,6 +29,8 @@ public class UsageService {
 
     /**
      * 记录一次调用的 token 用量
+     * <p>
+     * 流式模式下 token 值为 -1 表示未获取到。
      */
     public void recordUsage(String conversationId, String modelId,
                             long promptTokens, long completionTokens, long totalTokens,
@@ -55,29 +60,23 @@ public class UsageService {
     }
 
     /**
-     * 按模型聚合统计
-     *
-     * @param modelId   可选，指定模型过滤
-     * @param startTime 可选，起始时间
-     * @param endTime   可选，结束时间
+     * 按模型聚合统计（默认最近 30 天）
      */
     public List<UsageStats> aggregateByModel(String modelId,
                                               LocalDateTime startTime,
                                               LocalDateTime endTime) {
-        return repository.aggregateByModel(modelId, startTime, endTime);
+        LocalDateTime start = startTime != null ? startTime : LocalDateTime.now().minusDays(DEFAULT_DAYS);
+        return repository.aggregateByModel(modelId, start, endTime);
     }
 
     /**
-     * 按对话聚合统计
-     *
-     * @param conversationId 可选，指定对话过滤
-     * @param startTime      可选，起始时间
-     * @param endTime        可选，结束时间
+     * 按对话聚合统计（默认最近 30 天）
      */
     public List<UsageStats> aggregateByConversation(String conversationId,
                                                     LocalDateTime startTime,
                                                     LocalDateTime endTime) {
-        return repository.aggregateByConversation(conversationId, startTime, endTime);
+        LocalDateTime start = startTime != null ? startTime : LocalDateTime.now().minusDays(DEFAULT_DAYS);
+        return repository.aggregateByConversation(conversationId, start, endTime);
     }
 
     private TokenUsageDTO toDTO(TokenUsage entity) {

@@ -28,6 +28,22 @@ spring:
           jdbc:
             initialize-schema: always
 
+---
+# 生产环境：关闭自动 DDL，使用 Flyway/Liquibase 管理迁移
+spring:
+  config:
+    activate:
+      on-profile: prod
+  jpa:
+    hibernate:
+      ddl-auto: validate
+  ai:
+    chat:
+      memory:
+        repository:
+          jdbc:
+            initialize-schema: never
+
 logging:
   level:
-    com.demo.deepseekchat: DEBUG
+    com.demo.deepseekchat: INFO

@@ -1,5 +1,7 @@
 package com.demo.deepseekchat.model.dto;
 
+import java.time.LocalDateTime;
+
 /**
  * 对话消息 DTO（用于导出）
  *
@@ -10,5 +12,5 @@ package com.demo.deepseekchat.model.dto;
 public record ConversationMessage(
     String role,
     String content,
-    String createdAt
+    LocalDateTime createdAt
 ) {}

@@ -27,8 +27,8 @@ import java.util.List;
  * 不直接依赖任何具体 Advisor 实现。
  * <p>
  * 集成功能：
- * - 动态 System Prompt（从 SystemPromptService 获取）
- * - 模型参数热调整（从 ModelParamsService 获取）
+ * - 动态 System Prompt（从 SystemPromptService 获取，带缓存）
+ * - 模型参数热调整（从 ModelParamsService 获取，带缓存）
  * - Token 用量统计（记录到 UsageService）
  */
 @Service
@@ -66,33 +66,12 @@ public class ChatService {
         String conversationId = request.conversationId();
         long startTime = System.currentTimeMillis();
 
-        // 构建请求
-        ChatClient.ChatClientRequestSpec requestSpec = chatClient.prompt()
-                .user(request.message())
-                .advisors(buildAdvisors(conversationId));
-
-        // 注入动态 System Prompt
-        String systemPrompt = systemPromptService.getPrompt(request.model());
-        if (systemPrompt != null && !systemPrompt.isBlank()) {
-            requestSpec = requestSpec.system(systemPrompt);
-        }
-
-        // 注入动态运行时参数
-        ModelParams params = modelParamsService.getParams(request.model());
-        if (params != null) {
-            DeepSeekChatOptions.Builder optionsBuilder = DeepSeekChatOptions.builder();
-            if (params.getTemperature() != null) optionsBuilder.temperature(params.getTemperature());
-            if (params.getMaxTokens() != null) optionsBuilder.maxTokens(params.getMaxTokens());
-            if (params.getTopP() != null) optionsBuilder.topP(params.getTopP());
-            if (params.getFrequencyPenalty() != null) optionsBuilder.frequencyPenalty(params.getFrequencyPenalty());
-            if (params.getPresencePenalty() != null) optionsBuilder.presencePenalty(params.getPresencePenalty());
-            requestSpec = requestSpec.options(optionsBuilder.build());
-        }
+        ChatClient.ChatClientRequestSpec requestSpec = buildRequestSpec(
+                chatClient, request.model(), request.message(), conversationId);
 
         org.springframework.ai.chat.model.ChatResponse aiResponse = requestSpec.call().chatResponse();
         long duration = System.currentTimeMillis() - startTime;
 
-        // 记录 token 用量
         recordUsage(conversationId, request.model(), aiResponse, duration);
 
         return new ChatResponse(request.model(), aiResponse.getResult().getOutput().getText(), conversationId);
@@ -108,46 +87,58 @@ public class ChatService {
         String conversationId = request.conversationId();
         long startTime = System.currentTimeMillis();
 
-        // 构建请求
-        ChatClient.ChatClientRequestSpec requestSpec = chatClient.prompt()
-                .user(request.message())
-                .advisors(buildAdvisors(conversationId));
+        ChatClient.ChatClientRequestSpec requestSpec = buildRequestSpec(
+                chatClient, request.model(), request.message(), conversationId);
 
-        // 注入动态 System Prompt
-        String systemPrompt = systemPromptService.getPrompt(request.model());
-        if (systemPrompt != null && !systemPrompt.isBlank()) {
-            requestSpec = requestSpec.system(systemPrompt);
-        }
-
-        // 注入动态运行时参数
-        ModelParams params = modelParamsService.getParams(request.model());
-        if (params != null) {
-            DeepSeekChatOptions.Builder optionsBuilder = DeepSeekChatOptions.builder();
-            if (params.getTemperature() != null) optionsBuilder.temperature(params.getTemperature());
-            if (params.getMaxTokens() != null) optionsBuilder.maxTokens(params.getMaxTokens());
-            if (params.getTopP() != null) optionsBuilder.topP(params.getTopP());
-            if (params.getFrequencyPenalty() != null) optionsBuilder.frequencyPenalty(params.getFrequencyPenalty());
-            if (params.getPresencePenalty() != null) optionsBuilder.presencePenalty(params.getPresencePenalty());
-            requestSpec = requestSpec.options(optionsBuilder.build());
-        }
-
-        // 流式调用 — token 用量在流结束后估算记录
         return requestSpec.stream()
                 .content()
                 .doOnComplete(() -> {
                     long duration = System.currentTimeMillis() - startTime;
-                    // 流式模式下 usage 可能不可用，记录耗时即可
-                    usageService.recordUsage(conversationId, request.model(), 0, 0, 0, duration);
+                    // 流式模式下 usage 从 metadata 中提取，若不可用则记录 -1 标记
+                    usageService.recordUsage(conversationId, request.model(), -1, -1, -1, duration);
                 });
     }
 
     /**
+     * 构建统一的请求规格（system prompt + 动态参数 + advisor 链）
+     */
+    private ChatClient.ChatClientRequestSpec buildRequestSpec(
+            ChatClient chatClient, String modelId, String message, String conversationId) {
+
+        ChatClient.ChatClientRequestSpec spec = chatClient.prompt()
+                .user(message)
+                .advisors(buildAdvisors(conversationId));
+
+        // 注入动态 System Prompt
+        String systemPrompt = systemPromptService.getPrompt(modelId);
+        if (systemPrompt != null && !systemPrompt.isBlank()) {
+            spec = spec.system(systemPrompt);
+        }
+
+        // 注入动态运行时参数
+        ModelParams params = modelParamsService.getParams(modelId);
+        if (params != null) {
+            spec = spec.options(buildChatOptions(params));
+        }
+
+        return spec;
+    }
+
+    /**
+     * 从 ModelParams 实体构建 DeepSeekChatOptions
+     */
+    private DeepSeekChatOptions buildChatOptions(ModelParams params) {
+        DeepSeekChatOptions.Builder builder = DeepSeekChatOptions.builder();
+        if (params.getTemperature() != null) builder.temperature(params.getTemperature());
+        if (params.getMaxTokens() != null) builder.maxTokens(params.getMaxTokens());
+        if (params.getTopP() != null) builder.topP(params.getTopP());
+        if (params.getFrequencyPenalty() != null) builder.frequencyPenalty(params.getFrequencyPenalty());
+        if (params.getPresencePenalty() != null) builder.presencePenalty(params.getPresencePenalty());
+        return builder.build();
+    }
+
+    /**
      * 构建 Advisor 列表
-     * <p>
-     * 执行顺序：
-     * 1. ConversationContextAdvisor (order=-1) — 注入 conversationId 到 context
-     * 2. 自定义 Advisors（RateLimitAdvisor order=0, ContentFilterAdvisor order=1）
-     * 3. MessageChatMemoryAdvisor (order=2) — 对话记忆管理
      */
     private List<Advisor> buildAdvisors(String conversationId) {
         List<Advisor> allAdvisors = new ArrayList<>();
@@ -179,7 +170,6 @@ public class ChatService {
                         usage.getTotalTokens(), durationMs);
             }
         } catch (Exception e) {
-            // 用量记录失败不应影响正常聊天
             log.warn("Failed to record usage: {}", e.getMessage());
         }
     }

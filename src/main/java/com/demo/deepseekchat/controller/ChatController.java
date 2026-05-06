@@ -87,20 +87,18 @@ public class ChatController {
     }
 
     private void validateChatRequest(ChatRequest request) {
-        if (request.model() == null || request.model().isBlank()) {
-            throw new IllegalArgumentException("model 不能为空");
-        }
-        if (request.message() == null || request.message().isBlank()) {
-            throw new IllegalArgumentException("message 不能为空");
-        }
+        validateRequired(request.model(), "model");
+        validateRequired(request.message(), "message");
     }
 
     private void validateParams(String model, String message) {
-        if (model == null || model.isBlank()) {
-            throw new IllegalArgumentException("model 不能为空");
-        }
-        if (message == null || message.isBlank()) {
-            throw new IllegalArgumentException("message 不能为空");
+        validateRequired(model, "model");
+        validateRequired(message, "message");
+    }
+
+    private void validateRequired(String value, String fieldName) {
+        if (value == null || value.isBlank()) {
+            throw new IllegalArgumentException(fieldName + " 不能为空");
         }
     }
 }

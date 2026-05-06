@@ -54,6 +54,12 @@
             <scope>runtime</scope>
         </dependency>
 
+        <!-- Caffeine Cache (for hot-path caching) -->
+        <dependency>
+            <groupId>com.github.ben-manes.caffeine</groupId>
+            <artifactId>caffeine</artifactId>
+        </dependency>
+
         <!-- Sensitive Word Filter -->
         <dependency>
             <groupId>com.github.houbb</groupId>

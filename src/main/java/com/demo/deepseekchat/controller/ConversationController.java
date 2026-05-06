@@ -12,7 +12,7 @@ import java.util.Map;
 /**
  * 对话管理 API
  * <p>
- * GET    /api/conversations          - 查询历史对话列表
+ * GET    /api/conversations          - 查询历史对话列表（分页）
  * GET    /api/conversations/{id}     - 获取指定对话消息
  * DELETE /api/conversations/{id}     - 清空指定对话
  * GET    /api/conversations/{id}/export - 导出对话记录
@@ -28,19 +28,25 @@ public class ConversationController {
     }
 
     /**
-     * 查询历史对话列表
+     * 查询历史对话列表（分页）
      */
     @GetMapping
-    public List<ConversationSummary> listConversations() {
-        return conversationService.listConversations();
+    public List<ConversationSummary> listConversations(
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "50") int size) {
+        return conversationService.listConversations(page, size);
     }
 
     /**
      * 获取指定对话的消息列表
      */
     @GetMapping("/{conversationId}")
-    public List<ConversationMessage> getMessages(@PathVariable String conversationId) {
-        return conversationService.getConversationMessages(conversationId);
+    public ResponseEntity<List<ConversationMessage>> getMessages(@PathVariable String conversationId) {
+        List<ConversationMessage> messages = conversationService.getConversationMessages(conversationId);
+        if (messages.isEmpty()) {
+            return ResponseEntity.notFound().build();
+        }
+        return ResponseEntity.ok(messages);
     }
 
     /**
@@ -61,6 +67,9 @@ public class ConversationController {
     @GetMapping("/{conversationId}/export")
     public ResponseEntity<Map<String, Object>> exportConversation(@PathVariable String conversationId) {
         List<ConversationMessage> messages = conversationService.getConversationMessages(conversationId);
+        if (messages.isEmpty()) {
+            return ResponseEntity.notFound().build();
+        }
         return ResponseEntity.ok(Map.of(
                 "conversationId", conversationId,
                 "messageCount", messages.size(),

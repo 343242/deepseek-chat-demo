@@ -1,6 +1,7 @@
 package com.demo.deepseekchat.controller;
 
 import com.demo.deepseekchat.model.dto.SystemPromptDTO;
+import com.demo.deepseekchat.model.dto.SystemPromptUpdateRequest;
 import com.demo.deepseekchat.service.SystemPromptService;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -40,12 +41,11 @@ public class PromptController {
 
     @PutMapping("/{modelId}")
     public SystemPromptDTO saveOrUpdate(@PathVariable String modelId,
-                                        @RequestBody Map<String, String> body) {
-        String promptText = body.get("promptText");
-        if (promptText == null || promptText.isBlank()) {
+                                        @RequestBody SystemPromptUpdateRequest request) {
+        if (request.promptText() == null || request.promptText().isBlank()) {
             throw new IllegalArgumentException("promptText 不能为空");
         }
-        return promptService.saveOrUpdate(modelId, promptText);
+        return promptService.saveOrUpdate(modelId, request.promptText());
     }
 
     @DeleteMapping("/{modelId}")

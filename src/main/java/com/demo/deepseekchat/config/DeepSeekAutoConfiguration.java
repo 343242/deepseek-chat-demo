@@ -26,6 +26,7 @@ public class DeepSeekAutoConfiguration {
         return RestClient.builder()
                 .baseUrl(properties.baseUrl())
                 .defaultHeader("Accept", "application/json")
+                .defaultHeader("Authorization", "Bearer " + properties.apiKey())
                 .build();
     }
 

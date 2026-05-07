@@ -1,5 +1,7 @@
 package com.demo.deepseekchat.user.service;
 
+import com.demo.deepseekchat.exception.BusinessException;
+
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.demo.deepseekchat.security.service.TokenCacheService;
 import com.demo.deepseekchat.user.entity.SysPermission;
@@ -49,7 +51,7 @@ public class SysRoleService {
     public Map<String, Object> getRoleDetail(Long roleId) {
         SysRole role = roleMapper.selectById(roleId);
         if (role == null) {
-            throw new IllegalArgumentException("角色不存在");
+            throw new BusinessException("角色不存在");
         }
         List<SysPermission> permissions = rolePermissionMapper.selectPermissionsByRoleId(roleId);
         return Map.of("role", role, "permissions", permissions);
@@ -61,7 +63,7 @@ public class SysRoleService {
                 .eq(SysRole::getRoleName, roleName)
                 .eq(SysRole::getDeleted, 0));
         if (existing != null) {
-            throw new IllegalArgumentException("角色名已存在");
+            throw new BusinessException("角色名已存在");
         }
 
         SysRole role = new SysRole();
@@ -75,7 +77,7 @@ public class SysRoleService {
     public SysRole updateRole(Long roleId, String roleDesc) {
         SysRole role = roleMapper.selectById(roleId);
         if (role == null) {
-            throw new IllegalArgumentException("角色不存在");
+            throw new BusinessException("角色不存在");
         }
         role.setRoleDesc(roleDesc);
         roleMapper.updateById(role);
@@ -85,7 +87,7 @@ public class SysRoleService {
     public void deleteRole(Long roleId) {
         SysRole role = roleMapper.selectById(roleId);
         if (role == null) {
-            throw new IllegalArgumentException("角色不存在");
+            throw new BusinessException("角色不存在");
         }
 
         // 1. Find all users with this role
@@ -113,7 +115,7 @@ public class SysRoleService {
     public void assignPermissions(Long roleId, List<Long> permissionIds) {
         SysRole role = roleMapper.selectById(roleId);
         if (role == null) {
-            throw new IllegalArgumentException("角色不存在");
+            throw new BusinessException("角色不存在");
         }
 
         transactionTemplate.executeWithoutResult(status -> {

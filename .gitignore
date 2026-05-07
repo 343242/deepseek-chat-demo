@@ -1,4 +1,7 @@
 target/
+
+# Dev environment config (contains real API keys)
+src/main/resources/application-dev.yml
 *.class
 *.jar
 *.log

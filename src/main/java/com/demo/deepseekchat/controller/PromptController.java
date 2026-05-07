@@ -1,5 +1,7 @@
 package com.demo.deepseekchat.controller;
 
+import com.demo.deepseekchat.exception.BusinessException;
+
 import com.demo.deepseekchat.model.dto.SystemPromptDTO;
 import com.demo.deepseekchat.model.dto.SystemPromptUpdateRequest;
 import com.demo.deepseekchat.service.SystemPromptService;
@@ -45,7 +47,7 @@ public class PromptController {
     public SystemPromptDTO saveOrUpdate(@PathVariable String modelId,
                                         @RequestBody SystemPromptUpdateRequest request) {
         if (request.promptText() == null || request.promptText().isBlank()) {
-            throw new IllegalArgumentException("promptText 不能为空");
+            throw new BusinessException("promptText 不能为空");
         }
         return promptService.saveOrUpdate(modelId, request.promptText());
     }

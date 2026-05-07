@@ -1,8 +1,11 @@
 package com.demo.deepseekchat.user.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.demo.deepseekchat.common.snowflake.SnowflakeIdGenerator;
+import com.demo.deepseekchat.exception.BusinessException;
 import com.demo.deepseekchat.exception.RateLimitExceededException;
 import com.demo.deepseekchat.security.config.JwtProperties;
+import com.demo.deepseekchat.security.service.CaptchaService;
 import com.demo.deepseekchat.security.service.TokenCacheService;
 import com.demo.deepseekchat.security.util.JwtTokenProvider;
 import com.demo.deepseekchat.user.dto.*;
@@ -24,7 +27,14 @@ import java.util.stream.Collectors;
 @Service
 public class AuthService {
 
-    private static final Pattern PASSWORD_PATTERN = Pattern.compile("^(?=.*[A-Za-z])(?=.*\\d).{8,}$");
+    /**
+     * 密码复杂度：至少 8 位，必须包含大写、小写、数字、特殊字符中至少 3 种。
+     */
+    private static final Pattern PASSWORD_PATTERN = Pattern.compile(
+            "^(?=(?:.*[a-z]){1,}?)(?=(?:.*[A-Z]){1,}?)(?=(?:.*\\d){1,}?)(?=(?:.*[!@#$%^&*()_+\\-=\\[\\]{};:'\",.<>/?\\|`~]){1,}?).{8,}$"
+    );
+
+    private static final String PASSWORD_RULE_MSG = "密码至少8位，需包含大写字母、小写字母、数字、特殊字符中至少3种";
 
     private final SysUserMapper sysUserMapper;
     private final SysUserRoleMapper sysUserRoleMapper;
@@ -33,6 +43,8 @@ public class AuthService {
     private final JwtTokenProvider jwtTokenProvider;
     private final JwtProperties jwtProperties;
     private final TokenCacheService tokenCacheService;
+    private final CaptchaService captchaService;
+    private final SnowflakeIdGenerator idGenerator;
     private final TransactionTemplate transactionTemplate;
     private final PasswordEncoder passwordEncoder;
 
@@ -43,6 +55,8 @@ public class AuthService {
                        JwtTokenProvider jwtTokenProvider,
                        JwtProperties jwtProperties,
                        TokenCacheService tokenCacheService,
+                       CaptchaService captchaService,
+                       SnowflakeIdGenerator idGenerator,
                        TransactionTemplate transactionTemplate,
                        PasswordEncoder passwordEncoder) {
         this.sysUserMapper = sysUserMapper;
@@ -52,11 +66,17 @@ public class AuthService {
         this.jwtTokenProvider = jwtTokenProvider;
         this.jwtProperties = jwtProperties;
         this.tokenCacheService = tokenCacheService;
+        this.captchaService = captchaService;
+        this.idGenerator = idGenerator;
         this.transactionTemplate = transactionTemplate;
         this.passwordEncoder = passwordEncoder;
     }
 
-    public LoginResponse login(String username, String password, String ip) {
+    public LoginResponse login(String username, String password, String ip,
+                                String captchaId, String captchaCode) {
+        // 0. Captcha validation
+        validateCaptcha(captchaId, captchaCode);
+
         // 1. IP rate limit check (P1-8: RateLimitExceededException → 429)
         if (tokenCacheService.isLoginRateLimited(ip)) {
             throw new RateLimitExceededException("登录尝试过于频繁，请5分钟后再试");
@@ -70,23 +90,23 @@ public class AuthService {
                 .eq(SysUser::getDeleted, 0)
         );
         if (user == null) {
-            throw new IllegalArgumentException("用户名或密码错误");
+            throw new BusinessException("用户名或密码错误");
         }
 
         // 3. Check user status
         if (user.getStatus() != null && user.getStatus() != 1) {
-            throw new IllegalArgumentException("账号已被禁用");
+            throw new BusinessException("账号已被禁用");
         }
 
         // 4. Check Redis status
         String redisStatus = tokenCacheService.getUserStatus(user.getId());
         if ("disabled".equals(redisStatus) || "deleted".equals(redisStatus)) {
-            throw new IllegalArgumentException("账号已被禁用");
+            throw new BusinessException("账号已被禁用");
         }
 
         // 5. Verify password
         if (!passwordEncoder.matches(password, user.getPassword())) {
-            throw new IllegalArgumentException("用户名或密码错误");
+            throw new BusinessException("用户名或密码错误");
         }
 
         // 6. Query roles
@@ -124,7 +144,11 @@ public class AuthService {
         );
     }
 
-    public LoginResponse.UserInfo register(String username, String password, String nickname) {
+    public LoginResponse.UserInfo register(String username, String password, String email,
+                                            String nickname, String captchaId, String captchaCode) {
+        // 0. Captcha validation
+        validateCaptcha(captchaId, captchaCode);
+
         // 1. Check username uniqueness
         SysUser existing = sysUserMapper.selectOne(
             new LambdaQueryWrapper<SysUser>()
@@ -132,31 +156,50 @@ public class AuthService {
                 .eq(SysUser::getDeleted, 0)
         );
         if (existing != null) {
-            throw new IllegalArgumentException("用户名已存在");
+            throw new BusinessException("用户名已存在");
         }
 
-        // 2. Password strength
-        if (!PASSWORD_PATTERN.matcher(password).matches()) {
-            throw new IllegalArgumentException("密码至少8位，需包含字母和数字");
+        // 2. Check email uniqueness
+        if (email != null && !email.isBlank()) {
+            SysUser existingEmail = sysUserMapper.selectOne(
+                new LambdaQueryWrapper<SysUser>()
+                    .eq(SysUser::getEmail, email)
+                    .eq(SysUser::getDeleted, 0)
+            );
+            if (existingEmail != null) {
+                throw new BusinessException("该邮箱已被注册");
+            }
         }
 
-        // 3. Encode password
+        // 3. Password strength (at least 3 of: upper, lower, digit, special)
+        if (!isPasswordComplexEnough(password)) {
+            throw new BusinessException(PASSWORD_RULE_MSG);
+        }
+
+        // 4. Encode password
         String encodedPassword = passwordEncoder.encode(password);
 
-        // 4. Programmatic transaction
+        // 5. Programmatic transaction
         SysUser newUser = transactionTemplate.execute(status -> {
             SysUser user = new SysUser();
+            user.setId(idGenerator.nextId());
             user.setUsername(username);
             user.setPassword(encodedPassword);
+            user.setEmail(email);
             user.setNickname(nickname != null ? nickname : username);
             user.setStatus(1);
             sysUserMapper.insert(user);
 
-            // Assign default USER role (role_id = 2, assuming 1=ADMIN, 2=USER)
-            SysUserRole userRole = new SysUserRole();
-            userRole.setUserId(user.getId());
-            userRole.setRoleId(2L);
-            sysUserRoleMapper.insert(userRole);
+            // Assign default USER role (dynamic lookup)
+            SysRole userRole = sysRoleMapper.selectOne(
+                    new LambdaQueryWrapper<SysRole>().eq(SysRole::getRoleName, "USER"));
+            if (userRole == null) {
+                throw new RuntimeException("默认 USER 角色未找到，请检查数据库初始化");
+            }
+            SysUserRole userRoleBinding = new SysUserRole();
+            userRoleBinding.setUserId(user.getId());
+            userRoleBinding.setRoleId(userRole.getId());
+            sysUserRoleMapper.insert(userRoleBinding);
 
             return user;
         });
@@ -179,18 +222,18 @@ public class AuthService {
     public LoginResponse refreshToken(String refreshToken) {
         // 1. Validate signature
         if (!jwtTokenProvider.validateToken(refreshToken)) {
-            throw new IllegalArgumentException("无效的刷新令牌");
+            throw new BusinessException("无效的刷新令牌");
         }
 
         // 2. Check token type
         if (!"refresh".equals(jwtTokenProvider.getTokenType(refreshToken))) {
-            throw new IllegalArgumentException("不是刷新令牌");
+            throw new BusinessException("不是刷新令牌");
         }
 
-        // 3. Get userId from Redis
-        Long userId = tokenCacheService.getUserIdByRefreshToken(refreshToken);
+        // 3. Atomically rotate (revoke + get userId) via Lua script
+        Long userId = tokenCacheService.rotateRefreshToken(refreshToken);
         if (userId == null) {
-            throw new IllegalArgumentException("刷新令牌已过期或已吊销");
+            throw new BusinessException("刷新令牌已过期或已吊销");
         }
 
         // 4. Check user status
@@ -200,12 +243,12 @@ public class AuthService {
                 .eq(SysUser::getDeleted, 0)
         );
         if (user == null || (user.getStatus() != null && user.getStatus() != 1)) {
-            throw new IllegalArgumentException("用户状态异常");
+            throw new BusinessException("用户状态异常");
         }
 
         String redisStatus = tokenCacheService.getUserStatus(userId);
         if ("disabled".equals(redisStatus) || "deleted".equals(redisStatus)) {
-            throw new IllegalArgumentException("账号已被禁用");
+            throw new BusinessException("账号已被禁用");
         }
 
         // 5. Generate new tokens
@@ -215,15 +258,12 @@ public class AuthService {
         String newAccessToken = jwtTokenProvider.generateAccessToken(userId, roleNames);
         String newRefreshToken = jwtTokenProvider.generateRefreshToken(userId);
 
-        // 6. Revoke old refresh token (rotation)
-        tokenCacheService.revokeRefreshToken(refreshToken);
-
-        // 7. Store new tokens (P2-11: jti)
+        // 6. Store new tokens
         String tokenId = jwtTokenProvider.getJtiFromToken(newAccessToken);
         tokenCacheService.storeAccessToken(userId, tokenId, roleNames);
         tokenCacheService.storeRefreshToken(newRefreshToken, userId);
 
-        // 8. Return new token pair
+        // 7. Return new token pair
         return new LoginResponse(
             newAccessToken,
             newRefreshToken,
@@ -246,7 +286,7 @@ public class AuthService {
                 .eq(SysUser::getDeleted, 0)
         );
         if (user == null) {
-            throw new IllegalArgumentException("用户不存在");
+            throw new BusinessException("用户不存在");
         }
 
         List<Long> roleIds = sysUserRoleMapper.selectRoleIdsByUserId(userId);
@@ -271,15 +311,15 @@ public class AuthService {
     public void changePassword(Long userId, String oldPassword, String newPassword) {
         SysUser user = sysUserMapper.selectById(userId);
         if (user == null) {
-            throw new IllegalArgumentException("用户不存在");
+            throw new BusinessException("用户不存在");
         }
 
         if (!passwordEncoder.matches(oldPassword, user.getPassword())) {
-            throw new IllegalArgumentException("旧密码错误");
+            throw new BusinessException("旧密码错误");
         }
 
-        if (!PASSWORD_PATTERN.matcher(newPassword).matches()) {
-            throw new IllegalArgumentException("新密码至少8位，需包含字母和数字");
+        if (!isPasswordComplexEnough(newPassword)) {
+            throw new BusinessException(PASSWORD_RULE_MSG);
         }
 
         user.setPassword(passwordEncoder.encode(newPassword));
@@ -307,18 +347,15 @@ public class AuthService {
 
         Set<String> permissions = new HashSet<>();
 
-        // P2-14: batch query roles to eliminate N+1
+        // Batch query: eliminate N+1
         List<SysRole> roles = sysRoleMapper.selectBatchIds(roleIds);
         boolean isAdmin = roles.stream()
                 .anyMatch(r -> "ADMIN".equalsIgnoreCase(r.getRoleName()));
 
-        // Load all permission names for all roles
-        for (Long roleId : roleIds) {
-            var perms = sysRolePermissionMapper.selectPermissionsByRoleId(roleId);
-            for (var p : perms) {
-                if (p.getPermissionName() != null) {
-                    permissions.add(p.getPermissionName());
-                }
+        var perms = sysRolePermissionMapper.selectPermissionsByRoleIds(roleIds);
+        for (var p : perms) {
+            if (p.getPermissionName() != null) {
+                permissions.add(p.getPermissionName());
             }
         }
 
@@ -340,6 +377,38 @@ public class AuthService {
                 .collect(Collectors.toList());
     }
 
+    // ==================== Captcha ====================
+
+    private void validateCaptcha(String captchaId, String captchaCode) {
+        if (captchaId == null || captchaCode == null) {
+            throw new BusinessException("验证码参数缺失");
+        }
+        int submittedX;
+        try {
+            submittedX = Integer.parseInt(captchaCode);
+        } catch (NumberFormatException e) {
+            throw new BusinessException("验证码格式错误");
+        }
+        if (!captchaService.validate(captchaId, submittedX)) {
+            throw new BusinessException("验证码错误或已过期");
+        }
+    }
+
+    /**
+     * 密码复杂度校验：至少包含大写、小写、数字、特殊字符中的 3 种。
+     */
+    private boolean isPasswordComplexEnough(String password) {
+        if (password == null || password.length() < 8) return false;
+
+        int categories = 0;
+        if (password.chars().anyMatch(Character::isLowerCase)) categories++;
+        if (password.chars().anyMatch(Character::isUpperCase)) categories++;
+        if (password.chars().anyMatch(Character::isDigit)) categories++;
+        if (password.chars().anyMatch(c -> !Character.isLetterOrDigit(c))) categories++;
+
+        return categories >= 3;
+    }
+
     public LoginResponse.UserInfo updateProfile(Long userId, UserUpdateRequest request) {
         SysUser user = sysUserMapper.selectOne(
             new LambdaQueryWrapper<SysUser>()
@@ -347,7 +416,7 @@ public class AuthService {
                 .eq(SysUser::getDeleted, 0)
         );
         if (user == null) {
-            throw new IllegalArgumentException("用户不存在");
+            throw new BusinessException("用户不存在");
         }
 
         if (request.nickname() != null) user.setNickname(request.nickname());

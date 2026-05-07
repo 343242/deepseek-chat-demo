@@ -22,4 +22,13 @@ public interface TokenUsageMapper extends BaseMapper<TokenUsage> {
     List<UsageStats> aggregateByConversation(@Param("conversationId") String conversationId,
                                              @Param("startTime") LocalDateTime startTime,
                                              @Param("endTime") LocalDateTime endTime);
+
+    List<UsageStats> aggregateByModelForUser(@Param("modelId") String modelId,
+                                             @Param("userPrefix") String userPrefix,
+                                             @Param("startTime") LocalDateTime startTime,
+                                             @Param("endTime") LocalDateTime endTime);
+
+    List<UsageStats> aggregateByUserConversations(@Param("userPrefix") String userPrefix,
+                                                   @Param("startTime") LocalDateTime startTime,
+                                                   @Param("endTime") LocalDateTime endTime);
 }

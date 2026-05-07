@@ -11,12 +11,14 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 对话管理 API
+ * 对话管理 API（用户隔离版）
  * <p>
- * GET    /api/conversations          - 查询历史对话列表（分页）
- * GET    /api/conversations/{id}     - 获取指定对话消息
- * DELETE /api/conversations/{id}     - 清空指定对话
- * GET    /api/conversations/{id}/export - 导出对话记录
+ * 所有接口自动绑定当前登录用户，用户只能查看和管理自己的对话记录。
+ * <p>
+ * GET    /api/conversations          - 查询当前用户的对话列表（分页）
+ * GET    /api/conversations/{id}     - 获取当前用户指定对话的消息
+ * DELETE /api/conversations/{id}     - 清空当前用户指定对话
+ * GET    /api/conversations/{id}/export - 导出当前用户对话记录
  */
 @RestController
 @RequestMapping("/api/conversations")
@@ -29,9 +31,6 @@ public class ConversationController {
         this.conversationService = conversationService;
     }
 
-    /**
-     * 查询历史对话列表（分页）
-     */
     @GetMapping
     public List<ConversationSummary> listConversations(
             @RequestParam(defaultValue = "1") int page,
@@ -39,9 +38,6 @@ public class ConversationController {
         return conversationService.listConversations(page, size);
     }
 
-    /**
-     * 获取指定对话的消息列表
-     */
     @GetMapping("/{conversationId}")
     public ResponseEntity<List<ConversationMessage>> getMessages(@PathVariable String conversationId) {
         List<ConversationMessage> messages = conversationService.getConversationMessages(conversationId);
@@ -51,9 +47,6 @@ public class ConversationController {
         return ResponseEntity.ok(messages);
     }
 
-    /**
-     * 清空指定对话
-     */
     @DeleteMapping("/{conversationId}")
     public ResponseEntity<Map<String, Object>> clearConversation(@PathVariable String conversationId) {
         conversationService.clearConversation(conversationId);
@@ -63,9 +56,6 @@ public class ConversationController {
         ));
     }
 
-    /**
-     * 导出对话记录（JSON 格式）
-     */
     @GetMapping("/{conversationId}/export")
     public ResponseEntity<Map<String, Object>> exportConversation(@PathVariable String conversationId) {
         List<ConversationMessage> messages = conversationService.getConversationMessages(conversationId);

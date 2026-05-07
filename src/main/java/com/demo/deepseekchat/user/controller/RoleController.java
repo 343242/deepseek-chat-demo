@@ -1,5 +1,7 @@
 package com.demo.deepseekchat.user.controller;
 
+import com.demo.deepseekchat.exception.BusinessException;
+
 import com.demo.deepseekchat.user.entity.SysPermission;
 import com.demo.deepseekchat.user.entity.SysRole;
 import com.demo.deepseekchat.user.service.SysPermissionService;
@@ -38,7 +40,7 @@ public class RoleController {
         String roleName = request.get("roleName");
         String roleDesc = request.get("roleDesc");
         if (roleName == null || roleName.isBlank()) {
-            throw new IllegalArgumentException("roleName 不能为空");
+            throw new BusinessException("roleName 不能为空");
         }
         return roleService.createRole(roleName, roleDesc);
     }

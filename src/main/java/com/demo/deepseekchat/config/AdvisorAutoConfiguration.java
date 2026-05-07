@@ -11,6 +11,7 @@ import org.springframework.ai.chat.memory.ChatMemoryRepository;
 import org.springframework.ai.chat.memory.MessageWindowChatMemory;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.scheduling.annotation.Scheduled;
 
@@ -41,15 +42,22 @@ public class AdvisorAutoConfiguration {
         return new RateLimitAdvisor(rateLimiter);
     }
 
+    @org.springframework.context.annotation.Lazy
+    private final TokenBucketLimiter tokenBucketLimiter;
+
+    public AdvisorAutoConfiguration(@org.springframework.context.annotation.Lazy TokenBucketLimiter tokenBucketLimiter) {
+        this.tokenBucketLimiter = tokenBucketLimiter;
+    }
+
     /**
      * 每小时清理一次空闲令牌桶，防止内存无限增长
      */
     @Scheduled(fixedRate = 3600000)
-    public void cleanupIdleBuckets(TokenBucketLimiter limiter) {
-        int removed = limiter.cleanIdleBuckets();
+    public void cleanupIdleBuckets() {
+        int removed = tokenBucketLimiter.cleanIdleBuckets();
         if (removed > 0) {
             org.slf4j.LoggerFactory.getLogger(AdvisorAutoConfiguration.class)
-                    .info("Cleaned up {} idle token buckets, remaining: {}", removed, limiter.bucketCount());
+                    .info("Cleaned up {} idle token buckets, remaining: {}", removed, tokenBucketLimiter.bucketCount());
         }
     }
 
@@ -75,10 +83,11 @@ public class AdvisorAutoConfiguration {
      * 启动时自动建表（initialize-schema=always）。
      */
     @Bean
-    public ChatMemory chatMemory(ChatMemoryRepository chatMemoryRepository) {
+    public ChatMemory chatMemory(ChatMemoryRepository chatMemoryRepository,
+                                   @Value("${app.chat.memory.max-messages:20}") int maxMessages) {
         return MessageWindowChatMemory.builder()
                 .chatMemoryRepository(chatMemoryRepository)
-                .maxMessages(20)
+                .maxMessages(maxMessages)
                 .build();
     }
 }

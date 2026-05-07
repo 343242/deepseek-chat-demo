@@ -15,7 +15,7 @@ import java.util.stream.Collectors;
  * 用量统计服务
  * <p>
  * 记录每次 API 调用的 token 消耗和耗时，提供按模型/对话聚合统计。
- * 聚合查询默认限制最近 30 天，防止全表扫描。
+ * 支持用户级隔离查询，通过 conversationId 的 "u_{userId}_" 前缀过滤。
  */
 @Service
 public class UsageService {
@@ -28,11 +28,6 @@ public class UsageService {
         this.mapper = mapper;
     }
 
-    /**
-     * 记录一次调用的 token 用量
-     * <p>
-     * 流式模式下 token 值为 -1 表示未获取到。
-     */
     public void recordUsage(String conversationId, String modelId,
                             long promptTokens, long completionTokens, long totalTokens,
                             long durationMs) {
@@ -44,9 +39,6 @@ public class UsageService {
         mapper.insert(usage);
     }
 
-    /**
-     * 查询指定对话的用量记录
-     */
     public List<TokenUsageDTO> getByConversation(String conversationId) {
         return mapper.selectList(
                 new LambdaQueryWrapper<TokenUsage>()
@@ -56,19 +48,17 @@ public class UsageService {
     }
 
     /**
-     * 查询指定模型的用量记录
+     * 查询指定模型 + 用户前缀的用量记录（用户隔离）
      */
-    public List<TokenUsageDTO> getByModel(String modelId) {
+    public List<TokenUsageDTO> getByModelAndUser(String modelId, String userPrefix) {
         return mapper.selectList(
                 new LambdaQueryWrapper<TokenUsage>()
                         .eq(TokenUsage::getModelId, modelId)
+                        .likeRight(TokenUsage::getConversationId, userPrefix)
                         .orderByDesc(TokenUsage::getCreatedAt))
                 .stream().map(this::toDTO).collect(Collectors.toList());
     }
 
-    /**
-     * 按模型聚合统计（默认最近 30 天）
-     */
     public List<UsageStats> aggregateByModel(String modelId,
                                               LocalDateTime startTime,
                                               LocalDateTime endTime) {
@@ -77,13 +67,29 @@ public class UsageService {
     }
 
     /**
-     * 按对话聚合统计（默认最近 30 天）
+     * 按模型聚合统计（用户隔离，仅统计当前用户前缀的记录）
      */
+    public List<UsageStats> aggregateByModelForUser(String modelId, String userPrefix,
+                                                     LocalDateTime startTime, LocalDateTime endTime) {
+        LocalDateTime start = startTime != null ? startTime : LocalDateTime.now().minusDays(DEFAULT_DAYS);
+        return mapper.aggregateByModelForUser(modelId, userPrefix, start, endTime);
+    }
+
     public List<UsageStats> aggregateByConversation(String conversationId,
                                                     LocalDateTime startTime,
                                                     LocalDateTime endTime) {
         LocalDateTime start = startTime != null ? startTime : LocalDateTime.now().minusDays(DEFAULT_DAYS);
         return mapper.aggregateByConversation(conversationId, start, endTime);
+    }
+
+    /**
+     * 按用户所有对话聚合统计
+     */
+    public List<UsageStats> aggregateByUserConversations(String userPrefix,
+                                                          LocalDateTime startTime,
+                                                          LocalDateTime endTime) {
+        LocalDateTime start = startTime != null ? startTime : LocalDateTime.now().minusDays(DEFAULT_DAYS);
+        return mapper.aggregateByUserConversations(userPrefix, start, endTime);
     }
 
     private TokenUsageDTO toDTO(TokenUsage entity) {

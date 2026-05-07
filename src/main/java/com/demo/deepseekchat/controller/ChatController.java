@@ -1,10 +1,13 @@
 package com.demo.deepseekchat.controller;
 
+import com.demo.deepseekchat.exception.BusinessException;
+
 import com.demo.deepseekchat.model.dto.ChatRequest;
 import com.demo.deepseekchat.model.dto.ChatResponse;
 import com.demo.deepseekchat.model.dto.ModelInfo;
 import com.demo.deepseekchat.service.ChatService;
 import com.demo.deepseekchat.service.ModelService;
+import jakarta.validation.Valid;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -48,7 +51,7 @@ public class ChatController {
      * 阻塞式聊天
      */
     @PostMapping("/chat")
-    public ChatResponse chat(@RequestBody ChatRequest request) {
+    public ChatResponse chat(@Valid @RequestBody ChatRequest request) {
         validateChatRequest(request);
         return chatService.chat(request);
     }
@@ -70,7 +73,7 @@ public class ChatController {
      * SSE 流式聊天（POST 方式）
      */
     @PostMapping(value = "/chat/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public Flux<String> chatStreamPost(@RequestBody ChatRequest request) {
+    public Flux<String> chatStreamPost(@Valid @RequestBody ChatRequest request) {
         validateChatRequest(request);
         return chatService.chatStream(request);
     }
@@ -100,7 +103,7 @@ public class ChatController {
 
     private void validateRequired(String value, String fieldName) {
         if (value == null || value.isBlank()) {
-            throw new IllegalArgumentException(fieldName + " 不能为空");
+            throw new BusinessException(fieldName + " 不能为空");
         }
     }
 }

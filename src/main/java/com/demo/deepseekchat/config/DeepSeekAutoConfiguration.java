@@ -7,7 +7,11 @@ import org.springframework.boot.CommandLineRunner;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.web.client.RestClient;
+
+import java.net.http.HttpClient;
+import java.time.Duration;
 
 /**
  * DeepSeek 自动配置
@@ -23,8 +27,16 @@ public class DeepSeekAutoConfiguration {
 
     @Bean
     public RestClient deepSeekRestClient(DeepSeekProperties properties) {
+        JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(
+                HttpClient.newBuilder()
+                        .connectTimeout(Duration.ofSeconds(10))
+                        .build()
+        );
+        requestFactory.setReadTimeout(Duration.ofSeconds(60));
+
         return RestClient.builder()
                 .baseUrl(properties.baseUrl())
+                .requestFactory(requestFactory)
                 .defaultHeader("Accept", "application/json")
                 .defaultHeader("Authorization", "Bearer " + properties.apiKey())
                 .build();

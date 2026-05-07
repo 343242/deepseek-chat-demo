@@ -85,15 +85,32 @@ public class TokenCacheService {
         return val != null ? Long.parseLong(val) : null;
     }
 
-    public void revokeRefreshToken(String refreshToken) {
+    /**
+     * 原子化 refresh token 旋转：GET userId + DEL old token + SREM index
+     * 使用 Lua 脚本保证原子性，防止并发旋转竞态
+     *
+     * @return userId if token was valid and revoked, null otherwise
+     */
+    public Long rotateRefreshToken(String refreshToken) {
         String hash = sha256Hex(refreshToken);
         String key = "auth:refresh:" + hash;
-        String val = redisTemplate.opsForValue().get(key);
-        if (val != null) {
-            redisTemplate.delete(key);
-            // Clean up reverse index
-            redisTemplate.opsForSet().remove("auth:user_refresh:" + val, hash);
-        }
+
+        String script = """
+            local val = redis.call('GET', KEYS[1])
+            if val == false then
+                return nil
+            end
+            redis.call('DEL', KEYS[1])
+            redis.call('SREM', 'auth:user_refresh:' .. val, ARGV[1])
+            return val
+            """;
+
+        String result = redisTemplate.execute(
+                new org.springframework.data.redis.core.script.DefaultRedisScript<>(script, String.class),
+                List.of(key),
+                hash
+        );
+        return result != null ? Long.parseLong(result) : null;
     }
 
     // --- Revoke All (SCAN-based) ---

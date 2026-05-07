@@ -1,5 +1,7 @@
 package com.demo.deepseekchat.user.service;
 
+import com.demo.deepseekchat.exception.BusinessException;
+
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.demo.deepseekchat.user.entity.SysPermission;
 import com.demo.deepseekchat.user.mapper.SysPermissionMapper;
@@ -29,7 +31,7 @@ public class SysPermissionService {
                 .eq(SysPermission::getResourceKey, resourceKey)
                 .eq(SysPermission::getDeleted, 0));
         if (existing != null) {
-            throw new IllegalArgumentException("权限标识已存在: " + resourceKey);
+            throw new BusinessException("权限标识已存在: " + resourceKey);
         }
 
         SysPermission perm = new SysPermission();
@@ -45,7 +47,7 @@ public class SysPermissionService {
     public void deletePermission(Long permissionId) {
         SysPermission perm = permissionMapper.selectById(permissionId);
         if (perm == null) {
-            throw new IllegalArgumentException("权限不存在");
+            throw new BusinessException("权限不存在");
         }
         // Logical delete
         permissionMapper.deleteById(permissionId);

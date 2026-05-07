@@ -1,12 +1,9 @@
+# Production overlay — activates on top of stable profile
+# Usage: SPRING_PROFILES_ACTIVE=stable,prod
+
 spring:
   flyway:
     clean-disabled: true
-  ai:
-    chat:
-      memory:
-        repository:
-          jdbc:
-            initialize-schema: never
 
 mybatis-plus:
   configuration:
@@ -14,4 +11,4 @@ mybatis-plus:
 
 logging:
   level:
-    com.demo.deepseekchat: INFO
+    com.demo.deepseekchat: WARN

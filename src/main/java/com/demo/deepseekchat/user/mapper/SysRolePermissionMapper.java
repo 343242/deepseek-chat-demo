@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.demo.deepseekchat.user.entity.SysRolePermission;
 import com.demo.deepseekchat.user.entity.SysPermission;
 import org.apache.ibatis.annotations.Mapper;
+import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 
 import java.util.List;
@@ -17,4 +18,9 @@ public interface SysRolePermissionMapper extends BaseMapper<SysRolePermission> {
         WHERE rp.role_id = #{roleId} AND p.status = 1 AND p.deleted = 0
     """)
     List<SysPermission> selectPermissionsByRoleId(Long roleId);
+
+    /**
+     * 批量查询多个角色的权限，消除 N+1 查询
+     */
+    List<SysPermission> selectPermissionsByRoleIds(@Param("roleIds") List<Long> roleIds);
 }

@@ -1,0 +1,3 @@
+-- V3: Legacy placeholder — superseded by V4 which creates table + index
+-- This file is intentionally empty to preserve Flyway migration history.
+-- No-op migration.

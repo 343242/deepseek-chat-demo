@@ -23,9 +23,12 @@ public class JwtTokenProvider {
 
     private final JwtProperties jwtProperties;
     private final SecretKey secretKey;
+    private final org.springframework.core.env.Environment environment;
 
-    public JwtTokenProvider(JwtProperties jwtProperties) {
+    public JwtTokenProvider(JwtProperties jwtProperties,
+                            org.springframework.core.env.Environment environment) {
         this.jwtProperties = jwtProperties;
+        this.environment = environment;
         this.secretKey = Keys.hmacShaKeyFor(
             jwtProperties.secret().getBytes(StandardCharsets.UTF_8)
         );
@@ -36,10 +39,12 @@ public class JwtTokenProvider {
         String secret = jwtProperties.secret();
         if (secret == null || secret.length() < 32) {
             throw new IllegalStateException(
-                "JWT secret 必须至少 32 个字符，当前长度: "
-                + (secret == null ? 0 : secret.length()));
+                "JWT secret 配置不合规，请通过环境变量 JWT_SECRET 设置一个安全的密钥");
         }
-        if (KNOWN_DEFAULTS.contains(secret)) {
+        // 仅在非 dev 环境下拒绝已知默认值
+        String[] activeProfiles = environment.getActiveProfiles();
+        boolean isDev = java.util.Arrays.stream(activeProfiles).anyMatch("dev"::equals);
+        if (!isDev && KNOWN_DEFAULTS.contains(secret)) {
             throw new IllegalStateException(
                 "JWT secret 不能使用已知默认值，请通过环境变量 JWT_SECRET 设置一个安全的密钥");
         }

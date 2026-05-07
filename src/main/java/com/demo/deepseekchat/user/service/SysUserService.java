@@ -1,5 +1,7 @@
 package com.demo.deepseekchat.user.service;
 
+import com.demo.deepseekchat.exception.BusinessException;
+
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.demo.deepseekchat.security.service.TokenCacheService;
@@ -75,7 +77,7 @@ public class SysUserService {
     public Map<String, Object> updateUserStatus(Long id, Integer status) {
         SysUser user = userMapper.selectById(id);
         if (user == null) {
-            throw new IllegalArgumentException("用户不存在");
+            throw new BusinessException("用户不存在");
         }
         user.setStatus(status);
         userMapper.updateById(user);
@@ -92,7 +94,7 @@ public class SysUserService {
     public Map<String, Object> assignRoles(Long id, AssignRolesRequest request) {
         SysUser user = userMapper.selectById(id);
         if (user == null) {
-            throw new IllegalArgumentException("用户不存在");
+            throw new BusinessException("用户不存在");
         }
 
         transactionTemplate.executeWithoutResult(status -> {
@@ -117,7 +119,7 @@ public class SysUserService {
     public Map<String, Object> deleteUser(Long id) {
         SysUser user = userMapper.selectById(id);
         if (user == null) {
-            throw new IllegalArgumentException("用户不存在");
+            throw new BusinessException("用户不存在");
         }
 
         userMapper.deleteById(id);

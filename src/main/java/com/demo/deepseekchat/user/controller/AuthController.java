@@ -1,5 +1,7 @@
 package com.demo.deepseekchat.user.controller;
 
+import com.demo.deepseekchat.security.dto.CaptchaResult;
+import com.demo.deepseekchat.security.service.CaptchaService;
 import com.demo.deepseekchat.security.util.SecurityUtils;
 import com.demo.deepseekchat.user.dto.*;
 import com.demo.deepseekchat.user.service.AuthService;
@@ -14,21 +16,34 @@ import java.util.Map;
 public class AuthController {
 
     private final AuthService authService;
+    private final CaptchaService captchaService;
 
-    public AuthController(AuthService authService) {
+    public AuthController(AuthService authService, CaptchaService captchaService) {
         this.authService = authService;
+        this.captchaService = captchaService;
+    }
+
+    @GetMapping("/captcha")
+    public CaptchaResult getCaptcha() {
+        return captchaService.generate();
     }
 
     @PostMapping("/register")
     public LoginResponse.UserInfo register(@Valid @RequestBody RegisterRequest request) {
-        return authService.register(request.username(), request.password(), request.nickname());
+        return authService.register(
+                request.username(), request.password(), request.email(),
+                request.nickname(), request.captchaId(), request.captchaCode()
+        );
     }
 
     @PostMapping("/login")
     public LoginResponse login(@Valid @RequestBody LoginRequest request,
                                HttpServletRequest httpRequest) {
         String ip = httpRequest.getRemoteAddr();
-        return authService.login(request.username(), request.password(), ip);
+        return authService.login(
+                request.username(), request.password(), ip,
+                request.captchaId(), request.captchaCode()
+        );
     }
 
     @PostMapping("/refresh")

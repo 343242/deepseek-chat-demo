@@ -24,7 +24,9 @@ public class AuthController {
     }
 
     @GetMapping("/captcha")
-    public CaptchaResult getCaptcha() {
+    public CaptchaResult getCaptcha(HttpServletRequest httpRequest) {
+        String ip = httpRequest.getRemoteAddr();
+        captchaService.checkRateLimit(ip);
         return captchaService.generate();
     }
 

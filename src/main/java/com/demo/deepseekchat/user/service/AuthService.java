@@ -16,6 +16,7 @@ import com.demo.deepseekchat.user.mapper.SysRoleMapper;
 import com.demo.deepseekchat.user.mapper.SysRolePermissionMapper;
 import com.demo.deepseekchat.user.mapper.SysUserMapper;
 import com.demo.deepseekchat.user.mapper.SysUserRoleMapper;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -24,17 +25,20 @@ import java.util.*;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
+import java.util.Locale;
+
 @Service
 public class AuthService {
 
     /**
-     * 密码复杂度：至少 8 位，必须包含大写、小写、数字、特殊字符中至少 3 种。
+     * 密码复杂度：至少 8 位不超过 72 位，必须包含大写、小写、数字、显式特殊字符中至少 3 种。
+     * 不允许空白字符。
      */
-    private static final Pattern PASSWORD_PATTERN = Pattern.compile(
-            "^(?=(?:.*[a-z]){1,}?)(?=(?:.*[A-Z]){1,}?)(?=(?:.*\\d){1,}?)(?=(?:.*[!@#$%^&*()_+\\-=\\[\\]{};:'\",.<>/?\\|`~]){1,}?).{8,}$"
+    private static final Pattern SPECIAL_CHAR_PATTERN = Pattern.compile(
+            "[!@#$%^&*()_+\\-=\\[\\]{};:'\",.<>/?|`~]"
     );
 
-    private static final String PASSWORD_RULE_MSG = "密码至少8位，需包含大写字母、小写字母、数字、特殊字符中至少3种";
+    private static final String PASSWORD_RULE_MSG = "密码需8-72位，不允许空白字符，需包含大写字母、小写字母、数字、特殊字符中至少3种";
 
     private final SysUserMapper sysUserMapper;
     private final SysUserRoleMapper sysUserRoleMapper;
@@ -74,14 +78,14 @@ public class AuthService {
 
     public LoginResponse login(String username, String password, String ip,
                                 String captchaId, String captchaCode) {
-        // 0. Captcha validation
-        validateCaptcha(captchaId, captchaCode);
-
-        // 1. IP rate limit check (P1-8: RateLimitExceededException → 429)
+        // 1. IP rate limit check（在验证码之前，防止暴力破解验证码不计入限流）
         if (tokenCacheService.isLoginRateLimited(ip)) {
             throw new RateLimitExceededException("登录尝试过于频繁，请5分钟后再试");
         }
         tokenCacheService.incrementLoginAttempts(ip);
+
+        // 2. Captcha validation
+        validateCaptcha(captchaId, captchaCode);
 
         // 2. Query user
         SysUser user = sysUserMapper.selectOne(
@@ -93,19 +97,19 @@ public class AuthService {
             throw new BusinessException("用户名或密码错误");
         }
 
-        // 3. Check user status
-        if (user.getStatus() != null && user.getStatus() != 1) {
-            throw new BusinessException("账号已被禁用");
+        // 3. Verify password（先验密码，防止枚举账号状态）
+        if (!passwordEncoder.matches(password, user.getPassword())) {
+            throw new BusinessException("用户名或密码错误");
         }
 
-        // 4. Check Redis status
+        // 4. Check user status
+        if (user.getStatus() != null && user.getStatus() != 1) {
+            throw new BusinessException("用户名或密码错误");
+        }
+
+        // 5. Check Redis status
         String redisStatus = tokenCacheService.getUserStatus(user.getId());
         if ("disabled".equals(redisStatus) || "deleted".equals(redisStatus)) {
-            throw new BusinessException("账号已被禁用");
-        }
-
-        // 5. Verify password
-        if (!passwordEncoder.matches(password, user.getPassword())) {
             throw new BusinessException("用户名或密码错误");
         }
 
@@ -149,60 +153,47 @@ public class AuthService {
         // 0. Captcha validation
         validateCaptcha(captchaId, captchaCode);
 
-        // 1. Check username uniqueness
-        SysUser existing = sysUserMapper.selectOne(
-            new LambdaQueryWrapper<SysUser>()
-                .eq(SysUser::getUsername, username)
-                .eq(SysUser::getDeleted, 0)
-        );
-        if (existing != null) {
-            throw new BusinessException("用户名已存在");
-        }
+        // 1. Normalize inputs
+        String normalizedUsername = username.trim();
+        String normalizedEmail = email.trim().toLowerCase(Locale.ROOT);
 
-        // 2. Check email uniqueness
-        if (email != null && !email.isBlank()) {
-            SysUser existingEmail = sysUserMapper.selectOne(
-                new LambdaQueryWrapper<SysUser>()
-                    .eq(SysUser::getEmail, email)
-                    .eq(SysUser::getDeleted, 0)
-            );
-            if (existingEmail != null) {
-                throw new BusinessException("该邮箱已被注册");
-            }
-        }
-
-        // 3. Password strength (at least 3 of: upper, lower, digit, special)
+        // 2. Password strength (at least 3 of: upper, lower, digit, special)
         if (!isPasswordComplexEnough(password)) {
             throw new BusinessException(PASSWORD_RULE_MSG);
         }
 
-        // 4. Encode password
+        // 3. Encode password
         String encodedPassword = passwordEncoder.encode(password);
 
-        // 5. Programmatic transaction
-        SysUser newUser = transactionTemplate.execute(status -> {
-            SysUser user = new SysUser();
-            user.setId(idGenerator.nextId());
-            user.setUsername(username);
-            user.setPassword(encodedPassword);
-            user.setEmail(email);
-            user.setNickname(nickname != null ? nickname : username);
-            user.setStatus(1);
-            sysUserMapper.insert(user);
+        // 4. Programmatic transaction（数据库唯一索引兜底 + DuplicateKeyException 兜底）
+        SysUser newUser;
+        try {
+            newUser = transactionTemplate.execute(status -> {
+                SysUser user = new SysUser();
+                user.setId(idGenerator.nextId());
+                user.setUsername(normalizedUsername);
+                user.setPassword(encodedPassword);
+                user.setEmail(normalizedEmail);
+                user.setNickname(nickname != null ? nickname.trim() : normalizedUsername);
+                user.setStatus(1);
+                sysUserMapper.insert(user);
 
-            // Assign default USER role (dynamic lookup)
-            SysRole userRole = sysRoleMapper.selectOne(
-                    new LambdaQueryWrapper<SysRole>().eq(SysRole::getRoleName, "USER"));
-            if (userRole == null) {
-                throw new RuntimeException("默认 USER 角色未找到，请检查数据库初始化");
-            }
-            SysUserRole userRoleBinding = new SysUserRole();
-            userRoleBinding.setUserId(user.getId());
-            userRoleBinding.setRoleId(userRole.getId());
-            sysUserRoleMapper.insert(userRoleBinding);
+                // Assign default USER role
+                SysRole userRole = sysRoleMapper.selectOne(
+                        new LambdaQueryWrapper<SysRole>().eq(SysRole::getRoleName, "USER"));
+                if (userRole == null) {
+                    throw new RuntimeException("默认 USER 角色未找到，请检查数据库初始化");
+                }
+                SysUserRole userRoleBinding = new SysUserRole();
+                userRoleBinding.setUserId(user.getId());
+                userRoleBinding.setRoleId(userRole.getId());
+                sysUserRoleMapper.insert(userRoleBinding);
 
-            return user;
-        });
+                return user;
+            });
+        } catch (DuplicateKeyException e) {
+            throw new BusinessException("用户名或邮箱已存在");
+        }
 
         if (newUser == null) {
             throw new RuntimeException("注册失败");
@@ -349,8 +340,6 @@ public class AuthService {
 
         // Batch query: eliminate N+1
         List<SysRole> roles = sysRoleMapper.selectBatchIds(roleIds);
-        boolean isAdmin = roles.stream()
-                .anyMatch(r -> "ADMIN".equalsIgnoreCase(r.getRoleName()));
 
         var perms = sysRolePermissionMapper.selectPermissionsByRoleIds(roleIds);
         for (var p : perms) {
@@ -395,16 +384,18 @@ public class AuthService {
     }
 
     /**
-     * 密码复杂度校验：至少包含大写、小写、数字、特殊字符中的 3 种。
+     * 密码复杂度校验：至少包含大写、小写、数字、显式特殊字符中的 3 种。
+     * 不允许空白字符，长度 8-72。
      */
     private boolean isPasswordComplexEnough(String password) {
-        if (password == null || password.length() < 8) return false;
+        if (password == null || password.length() < 8 || password.length() > 72) return false;
+        if (password.chars().anyMatch(Character::isWhitespace)) return false;
 
         int categories = 0;
         if (password.chars().anyMatch(Character::isLowerCase)) categories++;
         if (password.chars().anyMatch(Character::isUpperCase)) categories++;
         if (password.chars().anyMatch(Character::isDigit)) categories++;
-        if (password.chars().anyMatch(c -> !Character.isLetterOrDigit(c))) categories++;
+        if (SPECIAL_CHAR_PATTERN.matcher(password).find()) categories++;
 
         return categories >= 3;
     }

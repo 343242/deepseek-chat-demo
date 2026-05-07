@@ -40,6 +40,13 @@ public record SnowflakeProperties(
         if (epoch == null || epoch.isBlank()) epoch = DEFAULT_EPOCH;
         if (datacenterId == null) datacenterId = 0;
         if (workerId == null) workerId = 0;
+
+        // 非 dev 环境下 workerId 必须显式配置，防止多实例 ID 冲突
+        String profile = System.getenv("SPRING_PROFILES_ACTIVE");
+        if (profile != null && !profile.contains("dev") && datacenterId == 0 && workerId == 0) {
+            throw new IllegalStateException(
+                    "非 dev 环境必须显式配置 app.snowflake.datacenter-id 和 worker-id（不能都为 0），防止多实例部署时雪花 ID 冲突");
+        }
     }
 
     public long epochMillis() {

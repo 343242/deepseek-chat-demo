@@ -1,6 +1,6 @@
 {
   "version": "1.0.0",
-  "lastScanned": 1778078928659,
+  "lastScanned": 1778180520150,
   "projectRoot": "/home/instant/.openclaw/workspace/deepseek-chat-demo",
   "techStack": {
     "languages": [
@@ -34,24 +34,45 @@
     "isMonorepo": false,
     "workspaces": [],
     "mainDirectories": [
+      "docs",
       "src"
     ],
     "gitBranches": null
   },
   "customNotes": [],
   "directoryMap": {
+    "docs": {
+      "path": "docs",
+      "purpose": "Documentation",
+      "fileCount": 1,
+      "lastAccessed": 1778180520139,
+      "keyFiles": [
+        "RBAC-USER-MODULE-DESIGN.md"
+      ]
+    },
+    "graphify-out": {
+      "path": "graphify-out",
+      "purpose": null,
+      "fileCount": 3,
+      "lastAccessed": 1778180520143,
+      "keyFiles": [
+        "GRAPH_REPORT.md",
+        "graph.html",
+        "graph.json"
+      ]
+    },
     "src": {
       "path": "src",
       "purpose": "Source code",
       "fileCount": 0,
-      "lastAccessed": 1778078928649,
+      "lastAccessed": 1778180520143,
       "keyFiles": []
     },
     "target": {
       "path": "target",
       "purpose": null,
       "fileCount": 0,
-      "lastAccessed": 1778078928652,
+      "lastAccessed": 1778180520144,
       "keyFiles": []
     }
   },

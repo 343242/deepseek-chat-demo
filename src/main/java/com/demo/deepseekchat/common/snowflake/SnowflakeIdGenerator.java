@@ -3,6 +3,7 @@ package com.demo.deepseekchat.common.snowflake;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.concurrent.locks.LockSupport;
 import java.util.concurrent.locks.ReentrantLock;
 
 /**
@@ -168,10 +169,11 @@ public class SnowflakeIdGenerator {
     }
 
     private long waitNextMillis(long lastTimestamp) {
-        long timestamp = timeMillis();
-        while (timestamp <= lastTimestamp) {
+        long timestamp;
+        do {
+            LockSupport.parkNanos(100_000L); // 0.1ms，避免 CPU 空转
             timestamp = timeMillis();
-        }
+        } while (timestamp <= lastTimestamp);
         return timestamp;
     }
 }

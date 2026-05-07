@@ -1,5 +1,6 @@
 package com.demo.deepseekchat.security.service;
 
+import com.demo.deepseekchat.exception.RateLimitExceededException;
 import com.demo.deepseekchat.security.dto.CaptchaResult;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
@@ -13,9 +14,11 @@ import java.awt.*;
 import java.awt.geom.*;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
+import java.security.SecureRandom;
 import java.util.Base64;
 import java.util.Random;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -41,17 +44,19 @@ public class CaptchaService {
     private static final int PUZZLE_SIZE = 47;
     private static final int PUZZLE_PADDING = 10;
     private static final int TOLERANCE = 5;
+    private static final int CAPTCHA_RATE_LIMIT = 20; // 每分钟每 IP 最多生成 20 次
 
-    private final Random random = new Random();
+    private final SecureRandom secureRandom = new SecureRandom();
     private final Cache<String, Integer> captchaCache;
-    private final boolean devProfile;
+    private final ConcurrentHashMap<String, Long> generationCounter = new ConcurrentHashMap<>();
+    private final boolean exposeAnswer;
 
-    public CaptchaService(@Value("${spring.profiles.active:prod}") String activeProfile) {
+    public CaptchaService(@Value("${app.captcha.expose-answer:false}") boolean exposeAnswer) {
         this.captchaCache = Caffeine.newBuilder()
                 .expireAfterWrite(5, TimeUnit.MINUTES)
                 .maximumSize(10_000)
                 .build();
-        this.devProfile = "dev".equals(activeProfile);
+        this.exposeAnswer = exposeAnswer;
     }
 
     /**
@@ -62,9 +67,9 @@ public class CaptchaService {
     public CaptchaResult generate() {
         String captchaId = UUID.randomUUID().toString().replace("-", "");
 
-        // 1. 随机 x 位置（确保拼图块不超出边界）
-        int answerX = PUZZLE_PADDING + random.nextInt(BG_WIDTH - PUZZLE_SIZE - 2 * PUZZLE_PADDING);
-        int answerY = PUZZLE_PADDING + random.nextInt(BG_HEIGHT - PUZZLE_SIZE - 2 * PUZZLE_PADDING);
+        // 1. 随机 x 位置
+        int answerX = PUZZLE_PADDING + secureRandom.nextInt(BG_WIDTH - PUZZLE_SIZE - 2 * PUZZLE_PADDING);
+        int answerY = PUZZLE_PADDING + secureRandom.nextInt(BG_HEIGHT - PUZZLE_SIZE - 2 * PUZZLE_PADDING);
 
         // 2. 生成背景图
         BufferedImage bgImage = generateBackground();
@@ -91,7 +96,7 @@ public class CaptchaService {
                 captchaId,
                 bgBase64,
                 puzzleBase64,
-                devProfile ? answerX : null
+                exposeAnswer ? answerX : null
         );
     }
 
@@ -105,9 +110,8 @@ public class CaptchaService {
     public boolean validate(String captchaId, int submittedX) {
         if (captchaId == null) return false;
 
-        Integer answerX = captchaCache.getIfPresent(captchaId);
-        // 一次性使用，无论对错都删除
-        captchaCache.invalidate(captchaId);
+        // 原子取出并删除，防止并发复用同一个 captchaId
+        Integer answerX = captchaCache.asMap().remove(captchaId);
 
         if (answerX == null) {
             log.debug("Captcha not found or expired: {}", captchaId);
@@ -140,19 +144,19 @@ public class CaptchaService {
         // 随机噪点
         for (int i = 0; i < 80; i++) {
             g2d.setColor(randomColor(100, 220));
-            int x = random.nextInt(BG_WIDTH);
-            int y = random.nextInt(BG_HEIGHT);
-            g2d.fillOval(x, y, 2 + random.nextInt(4), 2 + random.nextInt(4));
+            int x = secureRandom.nextInt(BG_WIDTH);
+            int y = secureRandom.nextInt(BG_HEIGHT);
+            g2d.fillOval(x, y, 2 + secureRandom.nextInt(4), 2 + secureRandom.nextInt(4));
         }
 
         // 随机干扰线
         for (int i = 0; i < 5; i++) {
             g2d.setColor(randomColor(120, 200));
-            g2d.setStroke(new BasicStroke(1 + random.nextFloat()));
-            int x1 = random.nextInt(BG_WIDTH);
-            int y1 = random.nextInt(BG_HEIGHT);
-            int x2 = random.nextInt(BG_WIDTH);
-            int y2 = random.nextInt(BG_HEIGHT);
+            g2d.setStroke(new BasicStroke(1 + secureRandom.nextFloat()));
+            int x1 = secureRandom.nextInt(BG_WIDTH);
+            int y1 = secureRandom.nextInt(BG_HEIGHT);
+            int x2 = secureRandom.nextInt(BG_WIDTH);
+            int y2 = secureRandom.nextInt(BG_HEIGHT);
             g2d.drawLine(x1, y1, x2, y2);
         }
 
@@ -235,7 +239,17 @@ public class CaptchaService {
         g2d.dispose();
     }
 
-    // ==================== 工具方法 ====================
+    /**
+     * 检查 IP 验证码生成频率，超限抛异常。
+     */
+    public void checkRateLimit(String ip) {
+        long now = System.currentTimeMillis();
+        generationCounter.entrySet().removeIf(e -> now - e.getValue() > 60_000);
+        long count = generationCounter.merge(ip, now, (old, val) -> old);
+        if (count > CAPTCHA_RATE_LIMIT) {
+            throw new RateLimitExceededException("验证码生成过于频繁，请稍后再试");
+        }
+    }
 
     private String imageToBase64(BufferedImage image) {
         try (ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
@@ -248,9 +262,9 @@ public class CaptchaService {
 
     private Color randomColor(int min, int max) {
         return new Color(
-                min + random.nextInt(max - min),
-                min + random.nextInt(max - min),
-                min + random.nextInt(max - min)
+                min + secureRandom.nextInt(max - min),
+                min + secureRandom.nextInt(max - min),
+                min + secureRandom.nextInt(max - min)
         );
     }
 }

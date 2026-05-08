@@ -9,6 +9,8 @@ import com.demo.chat.chat.content.SensitiveWordFilterService;
 import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.chat.memory.ChatMemoryRepository;
 import org.springframework.ai.chat.memory.MessageWindowChatMemory;
+import org.springframework.ai.chat.memory.repository.jdbc.JdbcChatMemoryRepositoryDialect;
+import org.springframework.ai.chat.memory.repository.jdbc.PostgresChatMemoryRepositoryDialect;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.beans.factory.annotation.Value;
@@ -82,6 +84,14 @@ public class AdvisorAutoConfiguration {
      * 自动配置为 JdbcChatMemoryRepository，支持 PostgreSQL 方言。
      * 启动时自动建表（initialize-schema=always）。
      */
+    /**
+     * 直接注册 PostgreSQL 方言 Bean，跳过 Spring AI 的自动探测（避免启动时 JDBC 连接未就绪的 WARN 日志）
+     */
+    @Bean
+    public JdbcChatMemoryRepositoryDialect jdbcChatMemoryRepositoryDialect() {
+        return new PostgresChatMemoryRepositoryDialect();
+    }
+
     @Bean
     public ChatMemory chatMemory(ChatMemoryRepository chatMemoryRepository,
                                    @Value("${app.chat.memory.max-messages:20}") int maxMessages) {

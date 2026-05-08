@@ -83,5 +83,5 @@ WHERE permission_name IN ('chat:send', 'chat:stream', 'conversation:manage', 'us
 
 -- 初始管理员 (密码: admin123 的 BCrypt hash)
 INSERT INTO sys_user (username, password, nickname, status) VALUES
-('admin', '$2a$10$EixZaYVK1fsbw1ZfbX3OXePaWxn96p36Kz2u0bF/8bF4W2vF4I0Gq', '系统管理员', 1);
+('admin', '$2a$10$kK3Qf5iixQQ.De4smj0k9OE/7A.nxhHAe.6U2R11foJ5WIdup2q8.', '系统管理员', 1);
 INSERT INTO sys_user_role (user_id, role_id) VALUES (1, 1);

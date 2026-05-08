@@ -245,8 +245,17 @@ public class CaptchaService {
     public void checkRateLimit(String ip) {
         long now = System.currentTimeMillis();
         generationCounter.entrySet().removeIf(e -> now - e.getValue() > 60_000);
-        long count = generationCounter.merge(ip, now, (old, val) -> old);
-        if (count > CAPTCHA_RATE_LIMIT) {
+        long count = generationCounter.merge(ip, now, (oldVal, newVal) -> {
+            // 只在 60s 窗口内递增计数，否则用新时间戳重置
+            if (now - oldVal <= 60_000) {
+                return oldVal + 1;
+            }
+            return newVal;
+        });
+        // 首次请求：值=now（时间戳），远大于限制；实际应判断递增后的计数
+        // 修正：首次插入后 count=now，需要减去首次时间戳来判断
+        long requestCount = count - now + 1; // 首次=1, 后续递增
+        if (requestCount > CAPTCHA_RATE_LIMIT) {
             throw new RateLimitExceededException("验证码生成过于频繁，请稍后再试");
         }
     }

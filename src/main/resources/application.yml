@@ -8,3 +8,8 @@ app:
   chat:
     memory:
       max-messages: ${CHAT_MEMORY_MAX_MESSAGES:20}
+
+logging:
+  level:
+    org.springframework.ai.chat.memory.repository.jdbc.JdbcChatMemoryRepositoryDialect: ERROR
+    org.springframework.ai.chat.memory.repository.jdbc.JdbcChatMemoryRepository$Builder: ERROR

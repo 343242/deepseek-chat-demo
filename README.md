@@ -14,7 +14,7 @@
 | spring-ai-starter-model-minimax | 1.1.5 | MiniMax 模型接入 |
 | MyBatis-Plus | 3.5.16 | ORM 框架 |
 | Spring Security | 随 Boot | 认证与授权 |
-| JJWT | 0.12.6 | JWT 双 Token（Access 15min + Refresh 24h） |
+| JJWT | 0.13.0 | JWT 双 Token（Access 15min + Refresh 24h） |
 | Spring Data Redis | 随 Boot | Token 存储、权限缓存、IP 限流 |
 | Caffeine | 3.x | 本地缓存（SystemPrompt / ModelParams / 验证码） |
 | sensitive-word | 0.29.5 | DFA 敏感词过滤（纯内存，14W+ QPS） |
@@ -151,7 +151,7 @@ src/main/java/com/demo/chat/
 │   │   ├── TokenCacheService.java            #   Redis token 存储/吊销/权限缓存/限流
 │   │   └── CaptchaService.java               #   滑块拼图验证码（纯 Java 2D，Caffeine 缓存）
 │   ├── token/
-│   │   └── CookieTokenManager.java           #   Cookie Token 读/写/清除（SRP 抽取）
+│   │   └── CookieTokenManager.java           #   Cookie Token 读/写/清除（HttpOnly + Secure + SameSite=Lax）
 │   └── util/
 │       ├── JwtTokenProvider.java             #   JWT 生成/验证 (jti, issuer 校验)
 │       └── SecurityUtils.java                #   getCurrentUserId / extractToken
@@ -498,9 +498,10 @@ model:
 - **接口隔离 (ISP)**：每个 Service 提供独立的接口，Impl 类实现接口，Controller 按需注入
 - **策略模式**：`ModelProvider` 封装厂商差异，ProviderRegistry 自动发现，零修改接入新厂商
 - **编程式事务**：统一使用 `TransactionTemplate`，精确控制事务边界
-- **安全纵深**：JWT 签名 + Redis 吊销 + 用户状态标记 + issuer 校验 + IP 限流 + 滑块验证码
+- **安全纵深**：JWT 签名 + Redis 吊销 + 用户状态标记 + issuer 校验 + IP 限流 + 滑块验证码 + Cookie SameSite 防护
 - **自研核心**：雪花 ID 生成器、滑块验证码均为纯 Java 实现，无外部依赖
 - **数据访问分层**：SQL 全部下沉到 Mapper 层（语义化方法 + XML），Service 层不含 `LambdaQueryWrapper`，仅保留分页查询使用 MyBatis-Plus 内置机制
+- **JWT 安全规范**：遵循 OWASP / RFC 9700 最佳实践（详见 `.trellis/spec/guides/jwt-best-practices.md`），包含短过期 + Redis 黑名单 + Refresh Token Rotation + Cookie 安全属性 + 密码修改后全量吊销
 
 ## License
 

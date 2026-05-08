@@ -9,7 +9,7 @@ import org.springframework.security.core.AuthenticationException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
-import com.demo.deepseekchat.model.dto.ErrorResponse;
+import com.demo.deepseekchat.chat.dto.ErrorResponse;
 
 /**
  * 全局异常处理器

@@ -1,6 +1,6 @@
 package com.demo.deepseekchat.security.config;
 
-import com.demo.deepseekchat.model.dto.ErrorResponse;
+import com.demo.deepseekchat.chat.dto.ErrorResponse;
 import com.demo.deepseekchat.security.filter.JwtAuthenticationFilter;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Value;

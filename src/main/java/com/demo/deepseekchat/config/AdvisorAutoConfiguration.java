@@ -1,11 +1,11 @@
 package com.demo.deepseekchat.config;
 
-import com.demo.deepseekchat.advisor.ContentFilterAdvisor;
-import com.demo.deepseekchat.advisor.RateLimitAdvisor;
-import com.demo.deepseekchat.advisor.RateLimiter;
-import com.demo.deepseekchat.advisor.TokenBucketLimiter;
-import com.demo.deepseekchat.content.ContentFilterService;
-import com.demo.deepseekchat.content.SensitiveWordFilterService;
+import com.demo.deepseekchat.chat.advisor.ContentFilterAdvisor;
+import com.demo.deepseekchat.chat.advisor.RateLimitAdvisor;
+import com.demo.deepseekchat.chat.advisor.RateLimiter;
+import com.demo.deepseekchat.chat.advisor.TokenBucketLimiter;
+import com.demo.deepseekchat.chat.content.ContentFilterService;
+import com.demo.deepseekchat.chat.content.SensitiveWordFilterService;
 import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.chat.memory.ChatMemoryRepository;
 import org.springframework.ai.chat.memory.MessageWindowChatMemory;

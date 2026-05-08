@@ -3,7 +3,7 @@ server:
 
 spring:
   datasource:
-    url: jdbc:postgresql://${DB_HOST:localhost}:5432/${DB_NAME:deepseek_chat}
+    url: jdbc:postgresql://${DB_HOST:localhost}:5432/${DB_NAME:chat_demo}
     username: ${POSTGRES_USER}
     password: ${POSTGRES_PASSWORD}
     driver-class-name: org.postgresql.Driver
@@ -33,7 +33,7 @@ app:
     secret: ${JWT_SECRET}
     access-expiration: ${JWT_ACCESS_EXPIRATION:900}
     refresh-expiration: ${JWT_REFRESH_EXPIRATION:86400}
-    issuer: deepseek-chat-demo
+    issuer: chat-demo
     redis-prefix: "auth:token:"
   snowflake:
     epoch: ${SNOWFLAKE_EPOCH:2026-01-01T00:00:00+08:00}
@@ -53,4 +53,4 @@ mybatis-plus:
 
 logging:
   level:
-    com.demo.deepseekchat: INFO
+    com.demo.chat: INFO

@@ -12,9 +12,9 @@
     </parent>
 
     <groupId>com.demo</groupId>
-    <artifactId>deepseek-chat-demo</artifactId>
+    <artifactId>chat-demo</artifactId>
     <version>0.0.1-SNAPSHOT</version>
-    <name>deepseek-chat-demo</name>
+    <name>chat-demo</name>
     <description>Demo project for DeepSeek chat assistant using Spring AI</description>
 
     <properties>

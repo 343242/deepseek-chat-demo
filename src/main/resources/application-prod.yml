@@ -7,4 +7,4 @@ mybatis-plus:
 
 logging:
   level:
-    com.demo.deepseekchat: WARN
+    com.demo.chat: WARN

@@ -14,7 +14,7 @@
 | Spring Security | 随 Boot | 认证与授权 |
 | JJWT | 0.12.6 | JWT 双 Token（Access 15min + Refresh 24h） |
 | Spring Data Redis | 随 Boot | Token 存储、权限缓存、IP 限流 |
-| Flyway | 随 Boot | 数据库版本迁移 |
+| Flyway | ~~已移除~~ | ~~数据库版本迁移~~ |
 | Caffeine | 3.1.x | 本地缓存（SystemPrompt / ModelParams / 验证码） |
 | sensitive-word | 0.29.5 | DFA 敏感词过滤（纯内存，14W+ QPS） |
 | PostgreSQL | 18 | 主数据库 |
@@ -61,7 +61,7 @@ mvn clean package -DskipTests
 java -jar target/deepseek-chat-demo-0.0.1-SNAPSHOT.jar
 ```
 
-> Flyway 会在首次启动时自动创建所有表和初始数据。
+> 首次部署请先执行建表脚本：`psql -U postgres -d deepseek_chat -f src/main/resources/schema.sql`
 > 初始管理员账号：`admin` / `admin123`（生产环境请立即修改）
 
 ### 4. 验证
@@ -91,92 +91,12 @@ curl http://localhost:8080/api/chat/stream?model=deepseek-chat&message=你好&co
   -H "Authorization: Bearer <accessToken>"
 ```
 
-## API 接口
+## 文档
 
-### 认证
+- [API 接口文档](docs/API-DOCS.md) — 所有接口的完整说明
+- [数据库设计文档](docs/DATABASE.md) — 表结构、索引、关系、Redis 使用
 
-| 方法 | 路径 | 权限 | 说明 |
-|------|------|------|------|
-| `GET` | `/api/auth/captcha` | 公开 | 获取滑块验证码 |
-| `POST` | `/api/auth/register` | 公开 | 用户注册（需验证码） |
-| `POST` | `/api/auth/login` | 公开 | 登录，返回双 Token（需验证码） |
-| `POST` | `/api/auth/refresh` | 公开 | 刷新 Access Token |
-| `POST` | `/api/auth/logout` | 登录 | 登出（吊销 Token） |
-| `GET` | `/api/auth/me` | 登录 | 获取当前用户信息 + 权限 |
-| `PATCH` | `/api/auth/me/password` | 登录 | 修改密码 |
-| `PATCH` | `/api/auth/me/profile` | 登录 | 修改个人信息 |
-
-#### 注册请求体
-
-```json
-{
-  "username": "alice",
-  "password": "Abc12345",
-  "email": "alice@example.com",
-  "nickname": "Alice",
-  "captchaId": "uuid",
-  "captchaCode": "182"
-}
-```
-
-**密码规则**：至少 8 位，必须包含大写字母、小写字母、数字、特殊字符中的 **至少 3 种**。
-
-#### 登录请求体
-
-```json
-{
-  "username": "alice",
-  "password": "Abc12345",
-  "captchaId": "uuid",
-  "captchaCode": "182"
-}
-```
-
-### 聊天
-
-| 方法 | 路径 | 权限 | 说明 |
-|------|------|------|------|
-| `GET` | `/api/models` | `chat:send` | 获取可用模型列表 |
-| `POST` | `/api/chat` | `chat:send` | 阻塞式聊天 |
-| `GET` | `/api/chat/stream` | `chat:stream` | SSE 流式聊天（query params） |
-| `POST` | `/api/chat/stream` | `chat:stream` | SSE 流式聊天（JSON body） |
-| `POST` | `/api/models/refresh` | `model:config` | 刷新模型列表 |
-
-### 对话管理
-
-| 方法 | 路径 | 权限 | 说明 |
-|------|------|------|------|
-| `GET` | `/api/conversations` | `conversation:manage` | 对话列表（分页） |
-| `GET` | `/api/conversations/{id}` | `conversation:manage` | 对话消息明细 |
-| `DELETE` | `/api/conversations/{id}` | `conversation:manage` | 清空对话 |
-| `GET` | `/api/conversations/{id}/export` | `conversation:manage` | 导出对话 |
-
-### 系统配置（管理员）
-
-| 方法 | 路径 | 权限 | 说明 |
-|------|------|------|------|
-| `GET/PUT/DELETE` | `/api/prompts/{modelId}` | `prompt:manage` | System Prompt 管理 |
-| `GET/PUT/DELETE` | `/api/params/{modelId}` | `model:config` | 模型参数管理 |
-| `GET` | `/api/usage/records` | `usage:view` | 用量记录 |
-
-### 用户管理（管理员）
-
-| 方法 | 路径 | 权限 | 说明 |
-|------|------|------|------|
-| `GET` | `/api/users` | `user:manage` | 用户列表（分页） |
-| `GET` | `/api/users/{id}` | `user:manage` | 用户详情 |
-| `PATCH` | `/api/users/{id}` | `user:manage` | 修改用户信息 |
-| `PATCH` | `/api/users/{id}/status` | `user:manage` | 启用/禁用 |
-| `PATCH` | `/api/users/{id}/roles` | `user:manage` | 分配角色 |
-| `DELETE` | `/api/users/{id}` | `user:manage` | 删除用户 |
-
-### 角色权限（管理员）
-
-| 方法 | 路径 | 权限 | 说明 |
-|------|------|------|------|
-| `GET/POST/PUT/DELETE` | `/api/roles` | `role:manage` | 角色 CRUD |
-| `GET/PATCH` | `/api/roles/{id}/permissions` | `role:manage` | 权限分配 |
-| `GET` | `/api/roles/permissions` | `role:manage` | 全部权限列表 |
+---
 
 ## 项目结构
 
@@ -353,10 +273,11 @@ sys_user ─< sys_user_role >─ sys_role ─< sys_role_permission >─ sys_perm
 
 ### 6. 数据库管理
 
-- **Flyway** 统一版本迁移：V1 用户模块 → V2 JPA 迁移 MP → V3 索引 → V4 Spring AI 记忆表
-- **Spring AI initialize-schema 已关闭**，`spring_ai_chat_memory` 表由 Flyway V4 建表
+- **schema.sql** 全量建表脚本（首次部署手动执行），支持重复执行（IF NOT EXISTS + NOT EXISTS）
+- **Spring AI initialize-schema 已关闭**，`spring_ai_chat_memory` 表由 schema.sql 建表
 - **MyBatis-Plus** 全量 ORM，`@TableLogic` 逻辑删除
 - **编程式事务** `TransactionTemplate`，不使用 `@Transactional`
+- 详见 [数据库设计文档](docs/DATABASE.md)
 
 ### 7. 缓存策略
 

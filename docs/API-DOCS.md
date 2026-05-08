@@ -97,7 +97,7 @@
 }
 ```
 
-**Response：** 用户信息（Token 已写入 Cookie）
+**Response：**
 
 ```json
 {
@@ -206,6 +206,13 @@
 }
 ```
 
+| 字段 | 规则 |
+|------|------|
+| nickname | 最多 50 字符 |
+| email | 合法邮箱格式，最多 100 字符 |
+| phone | 11 位手机号（1 开头） |
+| avatar | URL，最多 255 字符 |
+
 **Response：** 更新后的用户信息
 
 ---
@@ -214,7 +221,7 @@
 
 ### GET /api/models
 
-获取可用模型列表。
+获取可用模型列表（多厂商聚合）。
 
 **权限：** `chat:send`
 
@@ -222,10 +229,39 @@
 
 ```json
 [
-  { "id": "deepseek-chat", "object": "model", "created": 1700000000, "owned_by": "deepseek" },
-  { "id": "deepseek-reasoner", "object": "model", "created": 1700000000, "owned_by": "deepseek" }
+  {
+    "id": "deepseek-v4-flash",
+    "providerId": "deepseek",
+    "providerName": "DeepSeek",
+    "compositeId": "deepseek/deepseek-v4-flash",
+    "ownedBy": "deepseek",
+    "created": 1773799200
+  },
+  {
+    "id": "glm-5.1",
+    "providerId": "zhipu",
+    "providerName": "智谱 AI",
+    "compositeId": "zhipu/glm-5.1",
+    "ownedBy": "zhipuai",
+    "created": 0
+  },
+  {
+    "id": "MiniMax-M2.1",
+    "providerId": "minimax",
+    "providerName": "MiniMax",
+    "compositeId": "minimax/MiniMax-M2.1",
+    "ownedBy": "minimax",
+    "created": 0
+  }
 ]
 ```
+
+| 字段 | 说明 |
+|------|------|
+| id | 模型 ID（厂商返回的原始 ID） |
+| providerId | 厂商标识（`deepseek` / `zhipu` / `minimax`） |
+| providerName | 厂商显示名称 |
+| compositeId | 复合 ID，用于 API 请求时精确路由到指定厂商 |
 
 ---
 
@@ -239,7 +275,7 @@
 
 ```json
 {
-  "model": "deepseek-chat",
+  "model": "deepseek/deepseek-v4-flash",
   "message": "你好",
   "conversationId": "my-chat-001"
 }
@@ -247,19 +283,25 @@
 
 | 字段 | 必填 | 规则 |
 |------|------|------|
-| model | ✅ | 最多 100 字符 |
+| model | ✅ | 最多 100 字符。支持复合格式 `providerId/modelId`（如 `zhipu/glm-5.1`）或简单格式（如 `deepseek-chat`，默认路由） |
 | message | ✅ | 最多 10000 字符 |
-| conversationId | | 字母/数字/下划线/连字符，默认 "default" |
+| conversationId | | 字母/数字/下划线/连字符，默认 `"default"` |
 
 **Response：**
 
 ```json
 {
-  "model": "deepseek-chat",
+  "model": "deepseek-v4-flash",
   "content": "你好！有什么可以帮你的？",
   "conversationId": "my-chat-001"
 }
 ```
+
+> **模型路由规则：** `model` 字段支持两种格式：
+> - **复合格式** `{providerId}/{modelId}`：精确路由，如 `zhipu/glm-5.1`、`minimax/MiniMax-M2.1`
+> - **简单格式** `{modelId}`：路由到默认 Provider（`deepseek`），如 `deepseek-v4-flash`
+>
+> 推荐使用复合格式，避免同名模型冲突。
 
 ---
 
@@ -273,15 +315,15 @@ SSE 流式聊天（query params）。
 
 | 参数 | 必填 | 说明 |
 |------|------|------|
-| model | ✅ | 模型 ID |
+| model | ✅ | 模型 ID（同 POST /api/chat 的路由规则） |
 | message | ✅ | 消息内容 |
 | conversationId | | 对话 ID |
 
 **Response：** `text/event-stream`
 
 ```
-data: {"content":"你","model":"deepseek-chat","conversationId":"default"}
-data: {"content":"好","model":"deepseek-chat","conversationId":"default"}
+data: {"content":"你","model":"deepseek-v4-flash","conversationId":"default"}
+data: {"content":"好","model":"deepseek-v4-flash","conversationId":"default"}
 data: [DONE]
 ```
 
@@ -301,15 +343,29 @@ SSE 流式聊天（JSON body）。
 
 ### POST /api/models/refresh
 
-手动刷新模型列表（从 DeepSeek API 拉取）。
+手动刷新模型列表（从所有 Provider API 重新拉取）。
 
 **权限：** `model:config`
 
-**Response：** 更新后的模型列表
+**Response（成功）：**
+
+```json
+{ "message": "Models refreshed successfully" }
+```
+
+**Response（部分失败）：**
+
+```json
+{ "message": "Failed to refresh models, existing models remain available" }
+```
+
+> 单个 Provider 拉取失败不影响其他 Provider，已缓存的模型仍然可用。
 
 ---
 
 ## 对话管理
+
+> 所有对话接口自动绑定当前登录用户，用户只能查看和管理自己的对话。
 
 ### GET /api/conversations
 
@@ -322,7 +378,7 @@ SSE 流式聊天（JSON body）。
 | 参数 | 必填 | 说明 |
 |------|------|------|
 | page | | 页码，默认 1 |
-| size | | 每页条数，默认 20 |
+| size | | 每页条数，默认 50 |
 
 **Response：**
 
@@ -362,15 +418,35 @@ SSE 流式聊天（JSON body）。
 
 **权限：** `conversation:manage`
 
-**Response：** 204 No Content
+**Response：**
+
+```json
+{
+  "conversationId": "my-chat-001",
+  "message": "对话已清空"
+}
+```
 
 ---
 
 ### GET /api/conversations/{conversationId}/export
 
-导出对话为 JSON 文件。
+导出对话记录。
 
 **权限：** `conversation:manage`
+
+**Response：**
+
+```json
+{
+  "conversationId": "my-chat-001",
+  "messageCount": 5,
+  "messages": [
+    { "role": "user", "content": "你好", "createdAt": "2026-05-08T10:00:00" },
+    { "role": "assistant", "content": "你好！", "createdAt": "2026-05-08T10:00:01" }
+  ]
+}
+```
 
 ---
 
@@ -412,6 +488,12 @@ SSE 流式聊天（JSON body）。
 
 **权限：** `prompt:manage`
 
+**Response（成功）：**
+
+```json
+{ "modelId": "deepseek-chat", "message": "已删除" }
+```
+
 ---
 
 ## 模型参数
@@ -430,11 +512,11 @@ SSE 流式聊天（JSON body）。
 
 **权限：** `model:config`
 
-**Response：**
+**Response（有配置时）：**
 
 ```json
 {
-  "modelId": "deepseek-chat",
+  "modelId": "deepseek-v4-flash",
   "temperature": 0.7,
   "maxTokens": 4096,
   "topP": 0.9,
@@ -443,11 +525,13 @@ SSE 流式聊天（JSON body）。
 }
 ```
 
+**Response（无配置）：** 204 No Content
+
 ---
 
 ### PUT /api/models/{modelId}/params
 
-设置模型参数。
+创建或更新模型参数。只更新非 null 字段，null 字段保持原值。
 
 **权限：** `model:config`
 
@@ -471,17 +555,48 @@ SSE 流式聊天（JSON body）。
 
 **权限：** `model:config`
 
+**Response（成功）：**
+
+```json
+{ "modelId": "deepseek-v4-flash", "message": "已删除，恢复默认参数" }
+```
+
+**Response（无配置）：** 404 Not Found
+
 ---
 
 ## 用量统计
 
+> 所有用量查询自动绑定当前登录用户，用户只能查看自己的用量数据。
+
 ### GET /api/usage/records
 
-Token 用量记录（分页）。
+Token 用量明细（必须指定 `model` 或 `conversation` 参数）。
 
 **权限：** `usage:view`
 
-**Params：** `page`, `size`
+**Params：**
+
+| 参数 | 必填 | 说明 |
+|------|------|------|
+| model | 二选一 | 按模型筛选 |
+| conversation | 二选一 | 按对话 ID 筛选 |
+
+**Response：**
+
+```json
+[
+  {
+    "conversationId": "u_1_my-chat-001",
+    "modelId": "deepseek-v4-flash",
+    "promptTokens": 120,
+    "completionTokens": 80,
+    "totalTokens": 200,
+    "durationMs": 1500,
+    "createdAt": "2026-05-08T10:00:01"
+  }
+]
+```
 
 ---
 
@@ -491,12 +606,20 @@ Token 用量记录（分页）。
 
 **权限：** `usage:view`
 
+**Params：**
+
+| 参数 | 必填 | 说明 |
+|------|------|------|
+| model | | 按模型筛选 |
+| startTime | | ISO 时间，如 `2026-05-01T00:00:00` |
+| endTime | | ISO 时间 |
+
 **Response：**
 
 ```json
 [
   {
-    "groupKey": "deepseek-chat",
+    "groupKey": "deepseek-v4-flash",
     "requestCount": 150,
     "totalPromptTokens": 30000,
     "totalCompletionTokens": 15000,
@@ -514,6 +637,16 @@ Token 用量记录（分页）。
 
 **权限：** `usage:view`
 
+**Params：**
+
+| 参数 | 必填 | 说明 |
+|------|------|------|
+| conversation | | 按对话 ID 筛选 |
+| startTime | | ISO 时间 |
+| endTime | | ISO 时间 |
+
+**Response：** 同 `stats/model`，`groupKey` 为对话 ID
+
 ---
 
 ## 用户管理
@@ -524,7 +657,13 @@ Token 用量记录（分页）。
 
 用户列表（分页）。
 
-**Params：** `page`, `size`
+**Params：**
+
+| 参数 | 必填 | 说明 |
+|------|------|------|
+| page | | 页码，默认 1 |
+| size | | 每页条数，默认 20 |
+| keyword | | 搜索关键词（模糊匹配用户名/昵称/邮箱） |
 
 ---
 
@@ -555,11 +694,11 @@ Token 用量记录（分页）。
 
 启用/禁用用户。
 
-**Request：**
+**Params：**
 
-```json
-{ "status": 0 }
-```
+| 参数 | 必填 | 说明 |
+|------|------|------|
+| status | ✅ | `0` 禁用，`1` 启用 |
 
 ---
 
@@ -593,7 +732,7 @@ Token 用量记录（分页）。
 
 ### GET /api/roles/{id}
 
-角色详情。
+角色详情（含权限列表）。
 
 ---
 
@@ -601,17 +740,38 @@ Token 用量记录（分页）。
 
 创建角色。
 
+**Request：**
+
+```json
+{
+  "roleName": "operator",
+  "roleDesc": "运营人员"
+}
+```
+
 ---
 
 ### PUT /api/roles/{id}
 
 更新角色。
 
+**Request：**
+
+```json
+{ "roleDesc": "新描述" }
+```
+
 ---
 
 ### DELETE /api/roles/{id}
 
 逻辑删除角色。
+
+**Response：**
+
+```json
+{ "roleId": "3", "message": "角色已删除" }
+```
 
 ---
 
@@ -629,6 +789,16 @@ Token 用量记录（分页）。
 
 ```json
 { "permissionIds": [1, 2, 3] }
+```
+
+**Response：**
+
+```json
+{
+  "roleId": 1,
+  "permissionIds": [1, 2, 3],
+  "message": "权限已更新"
+}
 ```
 
 ---
@@ -654,10 +824,12 @@ Token 用量记录（分页）。
 | HTTP 状态码 | error | 说明 |
 |------------|-------|------|
 | 400 | `business_error` | 业务逻辑错误 |
-| 400 | `validation_error` | 参数校验失败 |
+| 400 | `validation_error` | 参数校验失败（含字段级详情） |
 | 400 | `content_filtered` | 内容包含敏感词 |
-| 401 | `unauthorized` | 未认证 / Token 失效 |
-| 403 | `access_denied` | 权限不足 |
-| 404 | `not_found` | 资源不存在 / 模型不存在 |
+| 401 | `UNAUTHORIZED` | 未认证 / Token 失效 |
+| 403 | `FORBIDDEN` | 权限不足 |
+| 404 | `model_not_found` | 模型不存在 |
 | 429 | `rate_limit_exceeded` | 请求过于频繁 |
 | 500 | `internal_error` | 服务内部错误 |
+
+> `validation_error` 的 `message` 字段包含具体校验失败的字段名和原因，例如 `"model: 模型不能为空; message: 消息不能为空"`。

@@ -6,7 +6,19 @@
 
 ## Overview
 
-This directory contains guidelines for backend development. Fill in each file with your project's specific conventions.
+Spring Boot 3.5 + MyBatis-Plus + PostgreSQL + Redis 的 DeepSeek 聊天助手后端。
+
+---
+
+## Pre-Development Checklist
+
+开始编码前，确认已阅读：
+
+- [ ] [Directory Structure](./directory-structure.md) — 模块组织和命名规则
+- [ ] [Database Guidelines](./database-guidelines.md) — ORM 用法、Schema 管理、Redis/缓存策略
+- [ ] [Error Handling](./error-handling.md) — 异常体系和统一错误格式
+- [ ] [Quality Guidelines](./quality-guidelines.md) — 设计原则、安全检查清单、禁止模式
+- [ ] [Logging Guidelines](./logging-guidelines.md) — 日志级别和规范
 
 ---
 
@@ -14,25 +26,21 @@ This directory contains guidelines for backend development. Fill in each file wi
 
 | Guide | Description | Status |
 |-------|-------------|--------|
-| [Directory Structure](./directory-structure.md) | Module organization and file layout | To fill |
-| [Database Guidelines](./database-guidelines.md) | ORM patterns, queries, migrations | To fill |
-| [Error Handling](./error-handling.md) | Error types, handling strategies | To fill |
-| [Quality Guidelines](./quality-guidelines.md) | Code standards, forbidden patterns | To fill |
-| [Logging Guidelines](./logging-guidelines.md) | Structured logging, log levels | To fill |
+| [Directory Structure](./directory-structure.md) | 模块组织、文件布局、命名规则 | ✅ Filled |
+| [Database Guidelines](./database-guidelines.md) | MyBatis-Plus、Schema、Redis、Caffeine | ✅ Filled |
+| [Error Handling](./error-handling.md) | 异常体系、错误格式、校验模式 | ✅ Filled |
+| [Quality Guidelines](./quality-guidelines.md) | 安全检查、禁止模式、DTO 规则 | ✅ Filled |
+| [Logging Guidelines](./logging-guidelines.md) | 日志级别、Profile 差异 | ✅ Filled |
 
 ---
 
-## How to Fill These Guidelines
+## Quick Reference
 
-For each guideline file:
-
-1. Document your project's **actual conventions** (not ideals)
-2. Include **code examples** from your codebase
-3. List **forbidden patterns** and why
-4. Add **common mistakes** your team has made
-
-The goal is to help AI assistants and new team members understand how YOUR project works.
-
----
-
-**Language**: All documentation should be written in **English**.
+- **ORM**: MyBatis-Plus（禁 JPA）
+- **事务**: TransactionTemplate（禁 @Transactional）
+- **异常**: BusinessException（禁 IllegalArgumentException）
+- **DTO**: record + @Valid
+- **Token**: HttpOnly Cookie（禁 JSON body 返回）
+- **状态字段**: 枚举校验（禁裸 Integer）
+- **Schema**: sql/schema.sql（禁 Flyway）
+- **Docker**: 仅 bookworm 变体，需授权后拉取

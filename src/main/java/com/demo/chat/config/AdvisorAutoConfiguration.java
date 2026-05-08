@@ -9,13 +9,15 @@ import com.demo.chat.chat.content.SensitiveWordFilterService;
 import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.chat.memory.ChatMemoryRepository;
 import org.springframework.ai.chat.memory.MessageWindowChatMemory;
-import org.springframework.ai.chat.memory.repository.jdbc.JdbcChatMemoryRepositoryDialect;
+import org.springframework.ai.chat.memory.repository.jdbc.JdbcChatMemoryRepository;
 import org.springframework.ai.chat.memory.repository.jdbc.PostgresChatMemoryRepositoryDialect;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.scheduling.annotation.Scheduled;
+import org.springframework.transaction.PlatformTransactionManager;
 
 import java.time.Duration;
 
@@ -78,18 +80,20 @@ public class AdvisorAutoConfiguration {
     // ==================== 对话记忆 ====================
 
     /**
-     * 使用 JDBC 持久化 ChatMemory（PostgreSQL）
+     * 手动创建 JdbcChatMemoryRepository，显式指定 PostgreSQL 方言。
      * <p>
-     * ChatMemoryRepository 由 spring-ai-starter-model-chat-memory-repository-jdbc
-     * 自动配置为 JdbcChatMemoryRepository，支持 PostgreSQL 方言。
-     * 启动时自动建表（initialize-schema=always）。
-     */
-    /**
-     * 直接注册 PostgreSQL 方言 Bean，跳过 Spring AI 的自动探测（避免启动时 JDBC 连接未就绪的 WARN 日志）
+     * 排除了 Spring AI 的 JdbcChatMemoryRepositoryAutoConfiguration，
+     * 因为它的自动探测在 Bean 初始化阶段调用 JdbcChatMemoryRepositoryDialect.from(dataSource)，
+     * 此时 HikariPool 可能尚未就绪，导致 WARN 日志。
      */
     @Bean
-    public JdbcChatMemoryRepositoryDialect jdbcChatMemoryRepositoryDialect() {
-        return new PostgresChatMemoryRepositoryDialect();
+    public ChatMemoryRepository chatMemoryRepository(JdbcTemplate jdbcTemplate,
+                                                      PlatformTransactionManager transactionManager) {
+        return JdbcChatMemoryRepository.builder()
+                .jdbcTemplate(jdbcTemplate)
+                .transactionManager(transactionManager)
+                .dialect(new PostgresChatMemoryRepositoryDialect())
+                .build();
     }
 
     @Bean

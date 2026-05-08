@@ -10,7 +10,7 @@ import java.util.List;
 /**
  * 模型厂商抽象接口（策略模式）
  * <p>
- * 每个厂商（DeepSeek、智谱、MiniMax、Moonshot 等）提供一个实现。
+ * 每个厂商（DeepSeek、智谱、MiniMax 等）提供一个实现。
  * 封装厂商差异：ChatClient 创建、ChatOptions 构建、模型列表拉取。
  * <p>
  * 设计原则：
@@ -34,14 +34,14 @@ public interface ModelProvider {
      * 用于 model ID 路由："deepseek/deepseek-chat" 中的 "deepseek" 部分。
      * 必须全局唯一，小写，不含斜杠。
      *
-     * @return 厂商 ID，如 "deepseek"、"zhipu"、"minimax"、"moonshot"
+     * @return 厂商 ID，如 "deepseek"、"zhipu"、"minimax"
      */
     String getProviderId();
 
     /**
      * 厂商显示名称（面向用户）
      *
-     * @return 如 "DeepSeek"、"智谱 AI"、"MiniMax"、"Moonshot"
+     * @return 如 "DeepSeek"、"智谱 AI"、"MiniMax"
      */
     String getDisplayName();
 

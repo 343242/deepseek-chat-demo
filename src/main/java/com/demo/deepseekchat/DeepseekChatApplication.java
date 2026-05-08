@@ -6,8 +6,7 @@ import org.springframework.boot.autoconfigure.SpringBootApplication;
 
 @SpringBootApplication(exclude = {
         org.springframework.ai.model.zhipuai.autoconfigure.ZhiPuAiChatAutoConfiguration.class,
-        org.springframework.ai.model.minimax.autoconfigure.MiniMaxChatAutoConfiguration.class,
-        org.springframework.ai.model.openai.autoconfigure.OpenAiChatAutoConfiguration.class
+        org.springframework.ai.model.minimax.autoconfigure.MiniMaxChatAutoConfiguration.class
 })
 @MapperScan("com.demo.deepseekchat.**.mapper")
 public class DeepseekChatApplication {

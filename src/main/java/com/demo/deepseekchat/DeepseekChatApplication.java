@@ -4,7 +4,11 @@ import org.mybatis.spring.annotation.MapperScan;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
-@SpringBootApplication
+@SpringBootApplication(exclude = {
+        org.springframework.ai.model.zhipuai.autoconfigure.ZhiPuAiChatAutoConfiguration.class,
+        org.springframework.ai.model.minimax.autoconfigure.MiniMaxChatAutoConfiguration.class,
+        org.springframework.ai.model.openai.autoconfigure.OpenAiChatAutoConfiguration.class
+})
 @MapperScan("com.demo.deepseekchat.**.mapper")
 public class DeepseekChatApplication {
 

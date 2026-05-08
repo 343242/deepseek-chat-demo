@@ -417,9 +417,24 @@ public class AuthService {
             throw new BusinessException("用户不存在");
         }
 
-        if (request.nickname() != null) user.setNickname(request.nickname());
-        if (request.email() != null) user.setEmail(request.email());
-        if (request.phone() != null) user.setPhone(request.phone());
+        if (request.nickname() != null) user.setNickname(request.nickname().trim());
+        if (request.email() != null) {
+            String normalizedEmail = request.email().trim().toLowerCase(Locale.ROOT);
+            // Check uniqueness (excluding self)
+            if (!normalizedEmail.equals(user.getEmail())) {
+                SysUser existing = sysUserMapper.selectOne(
+                    new LambdaQueryWrapper<SysUser>()
+                        .eq(SysUser::getEmail, normalizedEmail)
+                        .eq(SysUser::getDeleted, 0)
+                        .ne(SysUser::getId, userId)
+                );
+                if (existing != null) {
+                    throw new BusinessException("邮箱已被使用");
+                }
+            }
+            user.setEmail(normalizedEmail);
+        }
+        if (request.phone() != null) user.setPhone(request.phone().isBlank() ? null : request.phone().trim());
         if (request.avatar() != null) user.setAvatar(request.avatar());
         sysUserMapper.updateById(user);
 

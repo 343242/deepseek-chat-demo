@@ -111,7 +111,7 @@ public class AuthController {
     }
 
     @PatchMapping("/me/profile")
-    public LoginResponse.UserInfo updateProfile(@RequestBody UserUpdateRequest request) {
+    public LoginResponse.UserInfo updateProfile(@Valid @RequestBody UserUpdateRequest request) {
         Long userId = SecurityUtils.getCurrentUserId();
         return authService.updateProfile(userId, request);
     }

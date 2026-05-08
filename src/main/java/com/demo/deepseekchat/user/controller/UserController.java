@@ -4,6 +4,7 @@ import com.demo.deepseekchat.user.dto.AssignRolesRequest;
 import com.demo.deepseekchat.user.dto.LoginResponse;
 import com.demo.deepseekchat.user.dto.UserUpdateRequest;
 import com.demo.deepseekchat.user.service.SysUserService;
+import jakarta.validation.Valid;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
@@ -34,12 +35,15 @@ public class UserController {
     }
 
     @PatchMapping("/{id}")
-    public LoginResponse.UserInfo updateUser(@PathVariable Long id, @RequestBody UserUpdateRequest request) {
+    public LoginResponse.UserInfo updateUser(@PathVariable Long id, @Valid @RequestBody UserUpdateRequest request) {
         return sysUserService.updateUser(id, request);
     }
 
     @PatchMapping("/{id}/status")
     public Map<String, Object> updateUserStatus(@PathVariable Long id, @RequestParam Integer status) {
+        if (!com.demo.deepseekchat.user.enums.UserStatus.isValid(status)) {
+            throw new com.demo.deepseekchat.exception.BusinessException("无效的用户状态，仅支持 0(禁用) 和 1(启用)");
+        }
         return sysUserService.updateUserStatus(id, status);
     }
 

@@ -13,3 +13,7 @@ src/main/resources/application-dev.yml
 .DS_Store
 graphify-out/
 .omc/
+.agents/
+.claude/
+.codex/
+.gitignore_new

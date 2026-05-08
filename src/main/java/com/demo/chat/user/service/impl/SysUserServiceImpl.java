@@ -87,6 +87,9 @@ public class SysUserServiceImpl implements SysUserService {
 
     @Override
     public Map<String, Object> updateUserStatus(Long id, Integer status) {
+        if (!UserStatus.isValid(status)) {
+            throw new BusinessException("无效的用户状态，仅支持 0(禁用) 和 1(启用)");
+        }
         SysUser user = userMapper.selectById(id);
         if (user == null) {
             throw new BusinessException("用户不存在");

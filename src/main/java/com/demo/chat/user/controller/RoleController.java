@@ -1,8 +1,8 @@
 package com.demo.chat.user.controller;
 
-import com.demo.chat.exception.BusinessException;
-
 import com.demo.chat.user.dto.AssignPermissionsRequest;
+import com.demo.chat.user.dto.CreateRoleRequest;
+import com.demo.chat.user.dto.UpdateRoleRequest;
 import com.demo.chat.user.entity.SysPermission;
 import com.demo.chat.user.entity.SysRole;
 import com.demo.chat.user.service.SysPermissionService;
@@ -14,6 +14,11 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * 角色管理控制器 — 仅负责 HTTP 请求/响应的转发
+ *
+ * <p>所有请求参数使用专用 DTO 承载，确保验证完整。</p>
+ */
 @RestController
 @RequestMapping("/api/roles")
 @PreAuthorize("hasAuthority('role:manage')")
@@ -38,19 +43,13 @@ public class RoleController {
     }
 
     @PostMapping
-    public SysRole createRole(@RequestBody Map<String, String> request) {
-        String roleName = request.get("roleName");
-        String roleDesc = request.get("roleDesc");
-        if (roleName == null || roleName.isBlank()) {
-            throw new BusinessException("roleName 不能为空");
-        }
-        return roleService.createRole(roleName, roleDesc);
+    public SysRole createRole(@Valid @RequestBody CreateRoleRequest request) {
+        return roleService.createRole(request.roleName(), request.roleDesc());
     }
 
     @PutMapping("/{id}")
-    public SysRole updateRole(@PathVariable Long id, @RequestBody Map<String, String> request) {
-        String roleDesc = request.get("roleDesc");
-        return roleService.updateRole(id, roleDesc);
+    public SysRole updateRole(@PathVariable Long id, @Valid @RequestBody UpdateRoleRequest request) {
+        return roleService.updateRole(id, request.roleDesc());
     }
 
     @DeleteMapping("/{id}")

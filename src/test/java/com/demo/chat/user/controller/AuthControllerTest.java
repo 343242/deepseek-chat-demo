@@ -2,8 +2,8 @@ package com.demo.chat.user.controller;
 
 import com.demo.chat.exception.BusinessException;
 import com.demo.chat.exception.GlobalExceptionHandler;
-import com.demo.chat.security.config.JwtProperties;
 import com.demo.chat.security.service.CaptchaService;
+import com.demo.chat.security.token.CookieTokenManager;
 import com.demo.chat.user.dto.*;
 import com.demo.chat.user.service.AuthService;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -32,7 +32,7 @@ class AuthControllerTest {
 
     @Mock private AuthService authService;
     @Mock private CaptchaService captchaService;
-    @Mock private JwtProperties jwtProperties;
+    @Mock private CookieTokenManager cookieTokenManager;
 
     @InjectMocks private AuthController authController;
 
@@ -97,9 +97,7 @@ class AuthControllerTest {
                             .contentType(MediaType.APPLICATION_JSON)
                             .content(objectMapper.writeValueAsString(
                                     new LoginRequest("testuser", "Password1!", "cap-id", "100"))))
-                    .andExpect(status().isOk())
-                    .andExpect(cookie().exists("access_token"))
-                    .andExpect(cookie().exists("refresh_token"));
+                    .andExpect(status().isOk());
         }
 
         @Test

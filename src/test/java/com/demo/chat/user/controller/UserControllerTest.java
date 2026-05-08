@@ -82,8 +82,11 @@ class UserControllerTest {
     }
 
     @Test
-    @DisplayName("更新用户状态 - 无效状态 → 400 (BusinessException)")
+    @DisplayName("更新用户状态 - 无效状态 → 400 (BusinessException from Service)")
     void updateUserStatus_invalidStatus() throws Exception {
+        when(sysUserService.updateUserStatus(1L, 2)).thenThrow(
+                new BusinessException("无效的用户状态，仅支持 0(禁用) 和 1(启用)"));
+
         mockMvc.perform(patch("/api/users/1/status?status=2"))
                 .andExpect(status().isBadRequest());
     }

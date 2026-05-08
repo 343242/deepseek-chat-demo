@@ -10,6 +10,11 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.Map;
 
+/**
+ * 用户管理控制器 — 仅负责 HTTP 请求/响应的转发
+ *
+ * <p>业务校验（如 UserStatus 合法性）已下沉到 Service 层。</p>
+ */
 @RestController
 @RequestMapping("/api/users")
 @PreAuthorize("hasAuthority('user:manage')")
@@ -41,9 +46,6 @@ public class UserController {
 
     @PatchMapping("/{id}/status")
     public Map<String, Object> updateUserStatus(@PathVariable Long id, @RequestParam Integer status) {
-        if (!com.demo.chat.user.enums.UserStatus.isValid(status)) {
-            throw new com.demo.chat.exception.BusinessException("无效的用户状态，仅支持 0(禁用) 和 1(启用)");
-        }
         return sysUserService.updateUserStatus(id, status);
     }
 

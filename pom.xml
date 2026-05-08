@@ -15,7 +15,7 @@
     <artifactId>chat-demo</artifactId>
     <version>0.0.1-SNAPSHOT</version>
     <name>chat-demo</name>
-    <description>Demo project for DeepSeek chat assistant using Spring AI</description>
+    <description>Multi-provider AI chat demo (DeepSeek, Zhipu, MiniMax) using Spring AI</description>
 
     <properties>
         <java.version>21</java.version>

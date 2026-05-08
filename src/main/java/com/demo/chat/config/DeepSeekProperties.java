@@ -37,7 +37,7 @@ public record DeepSeekProperties(
     ) {
         public ChatOptions {
             if (model == null || model.isBlank()) {
-                model = "deepseek-chat";
+                model = "deepseek-v4-flash";
             }
             if (temperature == null) {
                 temperature = 0.7;

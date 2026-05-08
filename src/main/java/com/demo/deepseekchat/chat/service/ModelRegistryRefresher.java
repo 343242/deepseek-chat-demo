@@ -33,6 +33,9 @@ public class ModelRegistryRefresher {
     private final ProviderRegistry providerRegistry;
     private final ChatClientRegistry chatClientRegistry;
 
+    /** modelId → providerId 反向索引（刷新时构建，O(1) 查询） */
+    private volatile Map<String, String> modelToProvider = Map.of();
+
     public ModelRegistryRefresher(ProviderRegistry providerRegistry,
                                   ChatClientRegistry chatClientRegistry) {
         this.providerRegistry = providerRegistry;
@@ -53,6 +56,7 @@ public class ModelRegistryRefresher {
 
         Map<String, ChatClient> newClients = new LinkedHashMap<>();
         List<ModelInfo> allModels = new ArrayList<>();
+        Map<String, String> newIndex = new HashMap<>();
         int successCount = 0;
 
         for (ModelProvider provider : providerRegistry.getAll()) {
@@ -64,6 +68,9 @@ public class ModelRegistryRefresher {
                 }
 
                 for (ModelInfo model : models) {
+                    // 构建反向索引：modelId → providerId
+                    newIndex.putIfAbsent(model.id(), provider.getProviderId());
+
                     try {
                         ChatClient client = provider.createClient(model.id(), null);
                         // 用复合格式作为 key: "deepseek/deepseek-chat"
@@ -86,11 +93,22 @@ public class ModelRegistryRefresher {
 
         if (!newClients.isEmpty()) {
             chatClientRegistry.replaceAll(newClients, allModels);
+            modelToProvider = Collections.unmodifiableMap(newIndex);
         }
 
         log.info("Refresh complete: {} models from {}/{} providers",
                 newClients.size(), successCount, providerRegistry.size());
 
         return successCount > 0;
+    }
+
+    /**
+     * 查找模型所属的 Provider（O(1)，基于刷新时构建的索引）
+     *
+     * @param modelId 纯模型 ID（如 "deepseek-chat"）
+     * @return providerId，未找到时返回 null
+     */
+    public String getProviderIdForModel(String modelId) {
+        return modelToProvider.get(modelId);
     }
 }

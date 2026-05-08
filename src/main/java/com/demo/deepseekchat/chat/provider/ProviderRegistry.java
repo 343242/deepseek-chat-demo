@@ -1,5 +1,6 @@
 package com.demo.deepseekchat.chat.provider;
 
+import com.demo.deepseekchat.exception.ProviderNotFoundException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -22,8 +23,7 @@ import java.util.stream.Collectors;
  * <p>
  * 生命周期：Spring 容器启动时一次性构建，运行时不可变（线程安全）。
  */
-import com.demo.deepseekchat.exception.ProviderNotFoundException;
-import org.springframework.stereotype.Component;
+@Component
 public class ProviderRegistry {
 
     private static final Logger log = LoggerFactory.getLogger(ProviderRegistry.class);

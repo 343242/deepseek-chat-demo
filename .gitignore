@@ -12,3 +12,4 @@ src/main/resources/application-dev.yml
 .classpath
 .DS_Store
 graphify-out/
+.omc/

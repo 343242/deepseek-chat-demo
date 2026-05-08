@@ -47,14 +47,15 @@ public class ModelService {
         List<ProviderModelInfo> result = new ArrayList<>(cachedModels.size());
 
         for (ModelInfo model : cachedModels) {
-            // 尝试从所有 Provider 中匹配 model.id() 对应的 Provider
-            ModelProvider matchedProvider = findProviderForModel(model.id());
-            if (matchedProvider != null) {
+            // O(1) 查询：基于刷新时构建的反向索引
+            String providerId = refresher.getProviderIdForModel(model.id());
+            if (providerId != null) {
+                ModelProvider provider = providerRegistry.get(providerId);
                 result.add(ProviderModelInfo.from(model,
-                        matchedProvider.getProviderId(),
-                        matchedProvider.getDisplayName()));
+                        provider.getProviderId(),
+                        provider.getDisplayName()));
             } else {
-                // 无法匹配时使用默认值（向后兼容）
+                // 未匹配时使用默认值（向后兼容）
                 result.add(new ProviderModelInfo(
                         model.id(), "deepseek", "DeepSeek",
                         "deepseek/" + model.id(),
@@ -81,21 +82,4 @@ public class ModelService {
         return refresher.refresh();
     }
 
-    /**
-     * 查找模型所属的 Provider
-     * <p>
-     * 通过遍历所有 Provider 的 fetchModels() 来匹配。
-     * 由于 fetchModels() 可能被频繁调用，这里使用简单的遍历匹配。
-     * 如果性能成为问题，可以引入缓存。
-     */
-    private ModelProvider findProviderForModel(String modelId) {
-        for (ModelProvider provider : providerRegistry.getAll()) {
-            for (ModelInfo model : provider.fetchModels()) {
-                if (modelId.equals(model.id())) {
-                    return provider;
-                }
-            }
-        }
-        return null;
-    }
 }

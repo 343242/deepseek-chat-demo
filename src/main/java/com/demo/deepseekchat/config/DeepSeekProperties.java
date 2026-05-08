@@ -20,7 +20,7 @@ public record DeepSeekProperties(
         if (baseUrl == null || baseUrl.isBlank()) {
             baseUrl = "https://api.deepseek.com";
         }
-        // 保证 chat 永远不为 null，避免 ChatClientFactory 中的 NPE
+        // 保证 chat 永远不为 null，避免 NPE
         if (chat == null) {
             chat = new ChatOptions(null, null, null, null);
         }

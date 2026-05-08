@@ -43,7 +43,7 @@ public class ChatClientRegistry {
      * @param newClients 新的模型→ChatClient 映射
      * @param newModels  新的模型信息列表
      */
-    public void replaceAll(Map<String, ChatClient> newClients, List<ModelInfo> newModels) {
+    public synchronized void replaceAll(Map<String, ChatClient> newClients, List<ModelInfo> newModels) {
         this.registry = Collections.unmodifiableMap(new LinkedHashMap<>(newClients));
         this.cachedModels = List.copyOf(newModels);
         log.info("Registry replaced: {} models", registry.size());

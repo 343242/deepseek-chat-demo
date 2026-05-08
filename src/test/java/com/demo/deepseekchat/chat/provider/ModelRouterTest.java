@@ -11,7 +11,7 @@ import static org.junit.jupiter.api.Assertions.*;
 @DisplayName("ModelRouter 单元测试")
 class ModelRouterTest {
 
-    private final ModelRouter router = new ModelRouter();
+    private final ModelRouter router = new ModelRouter("deepseek");
 
     @Nested
     @DisplayName("复合格式解析")

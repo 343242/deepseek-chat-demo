@@ -12,7 +12,6 @@ import org.springframework.ai.zhipuai.api.ZhiPuAiApi;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
-import java.time.Instant;
 import java.util.List;
 
 /**
@@ -32,10 +31,10 @@ public class ZhipuModelProvider implements ModelProvider {
 
     /** 智谱 AI 可用模型列表（硬编码，因智谱无 /models API） */
     private static final List<ModelInfo> MODELS = List.of(
-            new ModelInfo("glm-4-air", "model", Instant.now().getEpochSecond(), "zhipuai"),
-            new ModelInfo("glm-4-flash", "model", Instant.now().getEpochSecond(), "zhipuai"),
-            new ModelInfo("glm-4-plus", "model", Instant.now().getEpochSecond(), "zhipuai"),
-            new ModelInfo("glm-4-long", "model", Instant.now().getEpochSecond(), "zhipuai")
+            new ModelInfo("glm-4-air", "model", 0L, "zhipuai"),
+            new ModelInfo("glm-4-flash", "model", 0L, "zhipuai"),
+            new ModelInfo("glm-4-plus", "model", 0L, "zhipuai"),
+            new ModelInfo("glm-4-long", "model", 0L, "zhipuai")
     );
 
     private final String apiKey;

@@ -12,7 +12,6 @@ import org.springframework.ai.openai.api.OpenAiApi;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
-import java.time.Instant;
 import java.util.List;
 
 /**
@@ -21,7 +20,7 @@ import java.util.List;
  * Moonshot 兼容 OpenAI API 格式，因此使用 Spring AI 的 OpenAiApi / OpenAiChatModel 实现。
  * 构建链路：OpenAiApi(baseUrl, apiKey) → OpenAiChatOptions → OpenAiChatModel → ChatClient。
  * <p>
- * 通过环境变量 {@code MOONSHOT_API_KEY} 和 {@code MOONSHOT_BASE_URL} 配置连接参数。
+ * 通过 {@code spring.ai.moonshot.api-key} 和 {@code spring.ai.moonshot.base-url} 配置连接参数。
  * Moonshot 不提供公开的 /models API，因此使用硬编码的模型列表。
  *
  * @see ModelProvider
@@ -33,17 +32,17 @@ public class MoonshotModelProvider implements ModelProvider {
 
     /** Moonshot 可用模型列表（硬编码） */
     private static final List<ModelInfo> MODELS = List.of(
-            new ModelInfo("moonshot-v1-8k", "model", Instant.now().getEpochSecond(), "moonshot"),
-            new ModelInfo("moonshot-v1-32k", "model", Instant.now().getEpochSecond(), "moonshot"),
-            new ModelInfo("moonshot-v1-128k", "model", Instant.now().getEpochSecond(), "moonshot")
+            new ModelInfo("moonshot-v1-8k", "model", 0L, "moonshot"),
+            new ModelInfo("moonshot-v1-32k", "model", 0L, "moonshot"),
+            new ModelInfo("moonshot-v1-128k", "model", 0L, "moonshot")
     );
 
     private final String apiKey;
     private final String baseUrl;
 
     public MoonshotModelProvider(
-            @Value("${MOONSHOT_API_KEY:}") String apiKey,
-            @Value("${MOONSHOT_BASE_URL:https://api.moonshot.cn/v1}") String baseUrl) {
+            @Value("${spring.ai.moonshot.api-key:}") String apiKey,
+            @Value("${spring.ai.moonshot.base-url:https://api.moonshot.cn/v1}") String baseUrl) {
         this.apiKey = apiKey;
         this.baseUrl = baseUrl;
     }

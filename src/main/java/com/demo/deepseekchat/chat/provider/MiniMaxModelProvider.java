@@ -12,7 +12,6 @@ import org.springframework.ai.minimax.api.MiniMaxApi;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
-import java.time.Instant;
 import java.util.List;
 
 /**
@@ -35,9 +34,9 @@ public class MiniMaxModelProvider implements ModelProvider {
 
     /** MiniMax 可用模型列表（硬编码） */
     private static final List<ModelInfo> MODELS = List.of(
-            new ModelInfo("MiniMax-Text-01", "model", Instant.now().getEpochSecond(), "minimax"),
-            new ModelInfo("abab6.5g-chat", "model", Instant.now().getEpochSecond(), "minimax"),
-            new ModelInfo("abab6.5s-chat", "model", Instant.now().getEpochSecond(), "minimax")
+            new ModelInfo("MiniMax-Text-01", "model", 0L, "minimax"),
+            new ModelInfo("abab6.5g-chat", "model", 0L, "minimax"),
+            new ModelInfo("abab6.5s-chat", "model", 0L, "minimax")
     );
 
     private final String apiKey;

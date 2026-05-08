@@ -203,7 +203,8 @@ public class ChatService {
                 .advisors(buildAdvisors(conversationId));
 
         // 注入动态 System Prompt（数据库 > XML 模板）
-        String systemPrompt = systemPromptService.getPrompt(rawModelId);
+        // 使用解析后的纯 modelId 查询，而非 rawModelId（复合格式会导致查询 miss）
+        String systemPrompt = systemPromptService.getPrompt(route.modelId());
         if (systemPrompt != null && !systemPrompt.isBlank()) {
             spec = spec.system(systemPrompt);
         }

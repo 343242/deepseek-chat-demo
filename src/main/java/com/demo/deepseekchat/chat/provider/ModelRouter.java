@@ -1,5 +1,6 @@
 package com.demo.deepseekchat.chat.provider;
 
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 /**
@@ -10,17 +11,23 @@ import org.springframework.stereotype.Component;
  * 路由规则：
  * <ul>
  *   <li>"deepseek/deepseek-chat" → Route("deepseek", "deepseek-chat")</li>
- *   <li>"deepseek-chat" → Route("deepseek", "deepseek-chat")（向后兼容）</li>
+ *   <li>"deepseek-chat" → Route(默认 provider, "deepseek-chat")（向后兼容）</li>
  *   <li>"zhipu/glm-4-air" → Route("zhipu", "glm-4-air")</li>
  * </ul>
  * <p>
- * 默认 provider 为 "deepseek"，确保现有客户端无需修改。
+ * 默认 provider 可通过 {@code model.router.default-provider} 配置，默认为 "deepseek"。
  */
 @Component
 public class ModelRouter {
 
-    private static final String DEFAULT_PROVIDER = "deepseek";
     private static final String SEPARATOR = "/";
+
+    private final String defaultProvider;
+
+    public ModelRouter(
+            @Value("${model.router.default-provider:deepseek}") String defaultProvider) {
+        this.defaultProvider = defaultProvider;
+    }
 
     /**
      * 解析后的路由结果（不可变值对象）
@@ -40,7 +47,7 @@ public class ModelRouter {
      * 支持两种格式：
      * <ol>
      *   <li>复合格式: "{providerId}/{modelId}" — 精确路由</li>
-     *   <li>简单格式: "{modelId}" — 默认路由到 DeepSeek</li>
+     *   <li>简单格式: "{modelId}" — 默认路由到配置的 defaultProvider</li>
      * </ol>
      *
      * @param rawModelId 原始 model ID，不能为 null 或空
@@ -58,6 +65,6 @@ public class ModelRouter {
                     rawModelId.substring(slashIndex + 1));
         }
 
-        return new Route(DEFAULT_PROVIDER, rawModelId);
+        return new Route(defaultProvider, rawModelId);
     }
 }

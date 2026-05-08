@@ -16,4 +16,4 @@ graphify-out/
 .agents/
 .claude/
 .codex/
-.gitignore_new
+.trellis/

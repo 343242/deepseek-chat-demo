@@ -150,6 +150,8 @@ src/main/java/com/demo/chat/
 │   ├── service/
 │   │   ├── TokenCacheService.java            #   Redis token 存储/吊销/权限缓存/限流
 │   │   └── CaptchaService.java               #   滑块拼图验证码（纯 Java 2D，Caffeine 缓存）
+│   ├── token/
+│   │   └── CookieTokenManager.java           #   Cookie Token 读/写/清除（SRP 抽取）
 │   └── util/
 │       ├── JwtTokenProvider.java             #   JWT 生成/验证 (jti, issuer 校验)
 │       └── SecurityUtils.java                #   getCurrentUserId / extractToken
@@ -158,17 +160,37 @@ src/main/java/com/demo/chat/
 │   ├── entity/                               #   SysUser(雪花ID), SysRole, SysPermission, ...
 │   ├── enums/
 │   │   └── UserStatus.java                   #   用户状态枚举
-│   ├── mapper/                               #   MyBatis-Plus BaseMapper + 自定义查询
-│   ├── service/
-│   │   ├── AuthService.java                  #   认证：登录/注册/刷新/登出/改密（含验证码校验）
-│   │   ├── SysUserService.java               #   用户 CRUD
-│   │   ├── SysRoleService.java               #   角色管理
-│   │   └── SysPermissionService.java         #   权限 CRUD
+│   ├── mapper/                               #   语义化查询接口 + XML（SRP：数据访问层）
+│   │   ├── SysUserMapper.java                #     selectByUsername / selectActiveById / selectByEmailExcludingId
+│   │   ├── SysRoleMapper.java                #     selectAllOrdered / selectByRoleName
+│   │   ├── SysPermissionMapper.java          #     selectAllOrdered / selectByPermissionName / selectByResourceKey
+│   │   ├── SysRolePermissionMapper.java      #     selectPermissionsByRoleId(s) / deleteByRoleId / batchInsert
+│   │   └── SysUserRoleMapper.java            #     selectRoleIdsByUserId / selectUserIdsByRoleId / batchInsert
+│   ├── service/                              #   接口层（面向 Controller）
+│   │   ├── AuthService.java                  #     认证：登录/注册/刷新/登出/改密
+│   │   ├── SysUserService.java               #     用户 CRUD
+│   │   ├── SysRoleService.java               #     角色管理
+│   │   ├── SysPermissionService.java         #     权限 CRUD
+│   │   └── impl/                             #     实现层（业务编排，不含 SQL）
+│   │       ├── AuthServiceImpl.java
+│   │       ├── SysUserServiceImpl.java
+│   │       ├── SysRoleServiceImpl.java
+│   │       └── SysPermissionServiceImpl.java
 │   ├── dto/                                  #   Login/Register/Refresh/ChangePassword/...
-│   └── controller/
-│       ├── AuthController.java               #   /api/auth/* (含验证码接口)
-│       ├── UserController.java               #   /api/users/* (ADMIN)
-│       └── RoleController.java               #   /api/roles/* (ADMIN)
+│   │   ├── LoginRequest.java
+│   │   ├── RegisterRequest.java
+│   │   ├── RefreshRequest.java
+│   │   ├── ChangePasswordRequest.java
+│   │   ├── LoginResponse.java
+│   │   ├── UserUpdateRequest.java
+│   │   ├── AssignRolesRequest.java
+│   │   ├── AssignPermissionsRequest.java
+│   │   ├── CreateRoleRequest.java            #     角色创建 DTO（替代 Map<String,String>）
+│   │   └── UpdateRoleRequest.java            #     角色更新 DTO
+│   └── controller/                           #   仅负责 HTTP 转发（SRP）
+│       ├── AuthController.java               #     /api/auth/*（Cookie 委托 CookieTokenManager）
+│       ├── UserController.java               #     /api/users/* (ADMIN)
+│       └── RoleController.java               #     /api/roles/* (ADMIN)
 │
 ├── chat/                                     # 聊天核心模块
 │   │
@@ -244,6 +266,15 @@ src/main/java/com/demo/chat/
     ├── ModelNotFoundException.java           #   模型不存在异常
     ├── ProviderNotFoundException.java        #   厂商不存在异常
     └── RateLimitExceededException.java       #   限流异常
+
+resources/
+└── mapper/                                   # MyBatis XML Mapper（SQL 与 Java 解耦）
+    ├── SysUserMapper.xml
+    ├── SysRoleMapper.xml
+    ├── SysPermissionMapper.xml
+    ├── SysUserRoleMapper.xml
+    ├── SysRolePermissionMapper.xml
+    └── TokenUsageMapper.xml
 ```
 
 ## 架构设计
@@ -461,13 +492,15 @@ model:
 
 ## 设计原则
 
-- **单一职责**：每个类只做一件事
-- **依赖倒置**：Advisor 依赖接口（`RateLimiter`、`ContentFilterService`），ChatService 依赖 `ModelProvider` 接口
-- **开闭原则**：新增模型厂商只需实现 `ModelProvider` + 新增 `XxxProperties` + RestClient Bean；新增限流算法只需实现 `RateLimiter`
+- **单一职责 (SRP)**：Controller 只做 HTTP 转发、Service 只做业务编排、Mapper 只做数据访问、CookieTokenManager 只管 Cookie 读写
+- **依赖倒置 (DIP)**：Controller/Service 依赖接口（`AuthService`、`SysUserService`），不依赖 Impl 类；Advisor 依赖接口（`RateLimiter`、`ContentFilterService`）
+- **开闭原则 (OCP)**：新增模型厂商只需实现 `ModelProvider` + 新增 `XxxProperties` + RestClient Bean；新增限流算法只需实现 `RateLimiter`；新增查询只需 Mapper 加方法 + XML 加 SQL
+- **接口隔离 (ISP)**：每个 Service 提供独立的接口，Impl 类实现接口，Controller 按需注入
+- **策略模式**：`ModelProvider` 封装厂商差异，ProviderRegistry 自动发现，零修改接入新厂商
 - **编程式事务**：统一使用 `TransactionTemplate`，精确控制事务边界
 - **安全纵深**：JWT 签名 + Redis 吊销 + 用户状态标记 + issuer 校验 + IP 限流 + 滑块验证码
 - **自研核心**：雪花 ID 生成器、滑块验证码均为纯 Java 实现，无外部依赖
-- **策略模式**：`ModelProvider` 封装厂商差异，ProviderRegistry 自动发现，零修改接入新厂商
+- **数据访问分层**：SQL 全部下沉到 Mapper 层（语义化方法 + XML），Service 层不含 `LambdaQueryWrapper`，仅保留分页查询使用 MyBatis-Plus 内置机制
 
 ## License
 

@@ -2,10 +2,12 @@ package com.demo.deepseekchat.user.controller;
 
 import com.demo.deepseekchat.exception.BusinessException;
 
+import com.demo.deepseekchat.user.dto.AssignPermissionsRequest;
 import com.demo.deepseekchat.user.entity.SysPermission;
 import com.demo.deepseekchat.user.entity.SysRole;
 import com.demo.deepseekchat.user.service.SysPermissionService;
 import com.demo.deepseekchat.user.service.SysRoleService;
+import jakarta.validation.Valid;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
@@ -64,10 +66,9 @@ public class RoleController {
 
     @PatchMapping("/{id}/permissions")
     public Map<String, Object> assignPermissions(@PathVariable Long id,
-                                                  @RequestBody Map<String, List<Long>> request) {
-        List<Long> permissionIds = request.get("permissionIds");
-        roleService.assignPermissions(id, permissionIds);
-        return Map.of("roleId", id, "permissionIds", permissionIds != null ? permissionIds : List.of(), "message", "权限已更新");
+                                                  @Valid @RequestBody AssignPermissionsRequest request) {
+        roleService.assignPermissions(id, request.permissionIds());
+        return Map.of("roleId", id, "permissionIds", request.permissionIds(), "message", "权限已更新");
     }
 
     @GetMapping("/permissions")

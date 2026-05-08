@@ -26,11 +26,18 @@ public class SysPermissionService {
 
     public SysPermission createPermission(String permissionName, String permissionDesc,
                                            String resourceType, String resourceKey) {
-        // Check uniqueness
-        SysPermission existing = permissionMapper.selectOne(new LambdaQueryWrapper<SysPermission>()
+        // Check uniqueness — both permissionName and resourceKey must be unique
+        SysPermission existingByName = permissionMapper.selectOne(new LambdaQueryWrapper<SysPermission>()
+                .eq(SysPermission::getPermissionName, permissionName)
+                .eq(SysPermission::getDeleted, 0));
+        if (existingByName != null) {
+            throw new BusinessException("权限名称已存在: " + permissionName);
+        }
+
+        SysPermission existingByKey = permissionMapper.selectOne(new LambdaQueryWrapper<SysPermission>()
                 .eq(SysPermission::getResourceKey, resourceKey)
                 .eq(SysPermission::getDeleted, 0));
-        if (existing != null) {
+        if (existingByKey != null) {
             throw new BusinessException("权限标识已存在: " + resourceKey);
         }
 

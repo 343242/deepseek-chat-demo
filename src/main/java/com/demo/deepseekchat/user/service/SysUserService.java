@@ -1,6 +1,7 @@
 package com.demo.deepseekchat.user.service;
 
 import com.demo.deepseekchat.exception.BusinessException;
+import com.demo.deepseekchat.user.enums.UserStatus;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
@@ -8,8 +9,10 @@ import com.demo.deepseekchat.security.service.TokenCacheService;
 import com.demo.deepseekchat.user.dto.AssignRolesRequest;
 import com.demo.deepseekchat.user.dto.LoginResponse;
 import com.demo.deepseekchat.user.dto.UserUpdateRequest;
+import com.demo.deepseekchat.user.entity.SysRole;
 import com.demo.deepseekchat.user.entity.SysUser;
 import com.demo.deepseekchat.user.entity.SysUserRole;
+import com.demo.deepseekchat.user.mapper.SysRoleMapper;
 import com.demo.deepseekchat.user.mapper.SysUserMapper;
 import com.demo.deepseekchat.user.mapper.SysUserRoleMapper;
 import org.springframework.stereotype.Service;
@@ -26,17 +29,20 @@ public class SysUserService {
 
     private final SysUserMapper userMapper;
     private final SysUserRoleMapper userRoleMapper;
+    private final SysRoleMapper roleMapper;
     private final TransactionTemplate transactionTemplate;
     private final TokenCacheService tokenCacheService;
     private final AuthService authService;
 
     public SysUserService(SysUserMapper userMapper,
                           SysUserRoleMapper userRoleMapper,
+                          SysRoleMapper roleMapper,
                           TransactionTemplate transactionTemplate,
                           TokenCacheService tokenCacheService,
                           AuthService authService) {
         this.userMapper = userMapper;
         this.userRoleMapper = userRoleMapper;
+        this.roleMapper = roleMapper;
         this.transactionTemplate = transactionTemplate;
         this.tokenCacheService = tokenCacheService;
         this.authService = authService;
@@ -82,13 +88,13 @@ public class SysUserService {
         user.setStatus(status);
         userMapper.updateById(user);
 
-        if (status == 0) {
+        if (status == UserStatus.DISABLED.code) {
             authService.revokeAllUserTokens(id);
-        } else {
+        } else if (status == UserStatus.ENABLED.code) {
             tokenCacheService.clearUserStatus(id);
         }
 
-        return Map.of("userId", id, "status", status, "message", status == 1 ? "已启用" : "已禁用");
+        return Map.of("userId", id, "status", status, "message", status == UserStatus.ENABLED.code ? "已启用" : "已禁用");
     }
 
     public Map<String, Object> assignRoles(Long id, AssignRolesRequest request) {
@@ -97,23 +103,32 @@ public class SysUserService {
             throw new BusinessException("用户不存在");
         }
 
+        // 去重
+        List<Long> uniqueRoleIds = request.roleIds().stream().distinct().toList();
+
+        // 存在性校验
+        List<SysRole> existingRoles = roleMapper.selectBatchIds(uniqueRoleIds);
+        if (existingRoles.size() != uniqueRoleIds.size()) {
+            Set<Long> found = existingRoles.stream().map(SysRole::getId).collect(Collectors.toSet());
+            List<Long> missing = uniqueRoleIds.stream().filter(rid -> !found.contains(rid)).toList();
+            throw new BusinessException("角色不存在: " + missing);
+        }
+
         transactionTemplate.executeWithoutResult(status -> {
             userRoleMapper.delete(new LambdaQueryWrapper<SysUserRole>()
                     .eq(SysUserRole::getUserId, id));
 
-            if (request.roleIds() != null) {
-                for (Long roleId : request.roleIds()) {
-                    SysUserRole userRole = new SysUserRole();
-                    userRole.setUserId(id);
-                    userRole.setRoleId(roleId);
-                    userRoleMapper.insert(userRole);
-                }
+            for (Long roleId : uniqueRoleIds) {
+                SysUserRole userRole = new SysUserRole();
+                userRole.setUserId(id);
+                userRole.setRoleId(roleId);
+                userRoleMapper.insert(userRole);
             }
         });
 
         tokenCacheService.evictUserPermissions(id);
 
-        return Map.of("userId", id, "roles", request.roleIds() != null ? request.roleIds() : List.of(), "message", "角色已更新");
+        return Map.of("userId", id, "roles", uniqueRoleIds, "message", "角色已更新");
     }
 
     public Map<String, Object> deleteUser(Long id) {

@@ -8,5 +8,11 @@ public record JwtProperties(
     long accessExpiration,
     long refreshExpiration,
     String issuer,
-    String redisPrefix
-) {}
+    String redisPrefix,
+    boolean cookieSecure
+) {
+    /** 开发环境默认 false，生产环境应设为 true */
+    public boolean cookieSecure() {
+        return cookieSecure;
+    }
+}

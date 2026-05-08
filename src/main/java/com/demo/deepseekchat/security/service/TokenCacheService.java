@@ -193,7 +193,7 @@ public class TokenCacheService {
     public boolean isLoginRateLimited(String ip) {
         String key = "ratelimit:login:" + ip;
         String val = redisTemplate.opsForValue().get(key);
-        return val != null && Long.parseLong(val) > 10;
+        return val != null && Long.parseLong(val) >= 10;
     }
 
     public long getRemainingLoginAttempts(String ip) {

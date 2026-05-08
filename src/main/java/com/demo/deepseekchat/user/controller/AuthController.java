@@ -1,5 +1,6 @@
 package com.demo.deepseekchat.user.controller;
 
+import com.demo.deepseekchat.security.config.JwtProperties;
 import com.demo.deepseekchat.security.dto.CaptchaResult;
 import com.demo.deepseekchat.security.service.CaptchaService;
 import com.demo.deepseekchat.security.util.SecurityUtils;
@@ -20,6 +21,7 @@ public class AuthController {
 
     private final AuthService authService;
     private final CaptchaService captchaService;
+    private final JwtProperties jwtProperties;
 
     @Value("${app.jwt.access-expiration:900}")
     private long accessExpiration;
@@ -27,9 +29,10 @@ public class AuthController {
     @Value("${app.jwt.refresh-expiration:86400}")
     private long refreshExpiration;
 
-    public AuthController(AuthService authService, CaptchaService captchaService) {
+    public AuthController(AuthService authService, CaptchaService captchaService, JwtProperties jwtProperties) {
         this.authService = authService;
         this.captchaService = captchaService;
+        this.jwtProperties = jwtProperties;
     }
 
     @GetMapping("/captcha")
@@ -119,14 +122,14 @@ public class AuthController {
     private void setTokenCookies(HttpServletResponse response, String accessToken, String refreshToken) {
         Cookie accessCookie = new Cookie("access_token", accessToken);
         accessCookie.setHttpOnly(true);
-        accessCookie.setSecure(false); // TODO: 生产环境改为 true
+        accessCookie.setSecure(jwtProperties.cookieSecure());
         accessCookie.setPath("/api");
         accessCookie.setMaxAge((int) accessExpiration);
         response.addCookie(accessCookie);
 
         Cookie refreshCookie = new Cookie("refresh_token", refreshToken);
         refreshCookie.setHttpOnly(true);
-        refreshCookie.setSecure(false); // TODO: 生产环境改为 true
+        refreshCookie.setSecure(jwtProperties.cookieSecure());
         refreshCookie.setPath("/api/auth/refresh");
         refreshCookie.setMaxAge((int) refreshExpiration);
         response.addCookie(refreshCookie);

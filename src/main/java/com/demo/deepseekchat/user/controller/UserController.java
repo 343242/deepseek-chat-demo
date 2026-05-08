@@ -48,7 +48,7 @@ public class UserController {
     }
 
     @PatchMapping("/{id}/roles")
-    public Map<String, Object> assignRoles(@PathVariable Long id, @RequestBody AssignRolesRequest request) {
+    public Map<String, Object> assignRoles(@PathVariable Long id, @Valid @RequestBody AssignRolesRequest request) {
         return sysUserService.assignRoles(id, request);
     }
 

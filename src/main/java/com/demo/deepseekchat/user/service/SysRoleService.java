@@ -15,8 +15,8 @@ import com.demo.deepseekchat.user.mapper.SysUserRoleMapper;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
-import java.util.List;
-import java.util.Map;
+import java.util.*;
+import java.util.stream.Collectors;
 
 @Service
 public class SysRoleService {
@@ -118,19 +118,28 @@ public class SysRoleService {
             throw new BusinessException("角色不存在");
         }
 
+        // 去重
+        List<Long> uniquePermIds = permissionIds.stream().distinct().toList();
+
+        // 存在性校验
+        List<SysPermission> existingPerms = permissionMapper.selectBatchIds(uniquePermIds);
+        if (existingPerms.size() != uniquePermIds.size()) {
+            Set<Long> found = existingPerms.stream().map(SysPermission::getId).collect(Collectors.toSet());
+            List<Long> missing = uniquePermIds.stream().filter(pid -> !found.contains(pid)).toList();
+            throw new BusinessException("权限不存在: " + missing);
+        }
+
         transactionTemplate.executeWithoutResult(status -> {
             // Delete old associations
             rolePermissionMapper.delete(new LambdaQueryWrapper<SysRolePermission>()
                     .eq(SysRolePermission::getRoleId, roleId));
 
             // Insert new associations
-            if (permissionIds != null) {
-                for (Long permId : permissionIds) {
-                    SysRolePermission rp = new SysRolePermission();
-                    rp.setRoleId(roleId);
-                    rp.setPermissionId(permId);
-                    rolePermissionMapper.insert(rp);
-                }
+            for (Long permId : uniquePermIds) {
+                SysRolePermission rp = new SysRolePermission();
+                rp.setRoleId(roleId);
+                rp.setPermissionId(permId);
+                rolePermissionMapper.insert(rp);
             }
         });
 

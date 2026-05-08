@@ -14,10 +14,10 @@ import java.net.http.HttpClient;
 import java.time.Duration;
 
 /**
- * DeepSeek 自动配置
+ * 模型自动配置
  * <p>
- * 职责：配置属性绑定、RestClient 创建、启动时模型初始化。
- * 模型拉取和注册逻辑委托给 {@link ModelRegistryRefresher}，消除重复代码。
+ * 职责：配置属性绑定、DeepSeek RestClient、启动时模型初始化。
+ * 模型拉取和注册逻辑委托给 {@link ModelRegistryRefresher}。
  */
 @Configuration
 @EnableConfigurationProperties(DeepSeekProperties.class)
@@ -25,7 +25,13 @@ public class DeepSeekAutoConfiguration {
 
     private static final Logger log = LoggerFactory.getLogger(DeepSeekAutoConfiguration.class);
 
-    @Bean
+    /**
+     * DeepSeek 专用 RestClient
+     * <p>
+     * 供 DeepSeekModelProvider 调用 /models API 使用。
+     * Bean 命名为 "deepSeekRestClient" 以避免与其他 Provider 的 RestClient 冲突。
+     */
+    @Bean("deepSeekRestClient")
     public RestClient deepSeekRestClient(DeepSeekProperties properties) {
         JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(
                 HttpClient.newBuilder()
@@ -45,12 +51,12 @@ public class DeepSeekAutoConfiguration {
     @Bean
     public CommandLineRunner modelInitializer(ModelRegistryRefresher refresher) {
         return args -> {
-            log.info("Initializing DeepSeek models...");
+            log.info("Initializing models from all providers...");
             boolean success = refresher.refresh();
             if (success) {
-                log.info("DeepSeek model initialization completed");
+                log.info("Model initialization completed");
             } else {
-                log.warn("DeepSeek model initialization failed, service may be partially available");
+                log.warn("Model initialization failed, service may be partially available");
             }
         };
     }

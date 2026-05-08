@@ -5,6 +5,9 @@ import com.demo.deepseekchat.chat.client.ChatClientRegistry;
 import com.demo.deepseekchat.chat.dto.ChatRequest;
 import com.demo.deepseekchat.chat.dto.ChatResponse;
 import com.demo.deepseekchat.chat.entity.ModelParams;
+import com.demo.deepseekchat.chat.provider.ModelProvider;
+import com.demo.deepseekchat.chat.provider.ModelRouter;
+import com.demo.deepseekchat.chat.provider.ProviderRegistry;
 import com.demo.deepseekchat.security.util.SecurityUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -13,9 +16,8 @@ import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
 import org.springframework.ai.chat.client.advisor.api.Advisor;
 import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.chat.messages.AssistantMessage;
-import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.metadata.Usage;
-import org.springframework.ai.deepseek.DeepSeekChatOptions;
+import org.springframework.ai.chat.prompt.ChatOptions;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 
@@ -35,6 +37,11 @@ import java.util.concurrent.atomic.AtomicReference;
  * - 模型参数热调整（从 ModelParamsService 获取，带缓存）
  * - Token 用量统计（记录到 UsageService）
  * - 用户级对话隔离（conversationId 自动绑定 userId）
+ * <p>
+ * 多 Provider 支持：
+ * - 通过 ModelRouter 解析 model ID（支持 "provider/model" 复合格式和纯 modelId 向后兼容）
+ * - 通过 ProviderRegistry 获取对应厂商的 Provider
+ * - 通过 Provider.buildOptions() 构建厂商特定的 ChatOptions（不泄漏到本类）
  */
 @Service
 public class ChatService {
@@ -42,18 +49,25 @@ public class ChatService {
     private static final Logger log = LoggerFactory.getLogger(ChatService.class);
 
     private final ChatClientRegistry registry;
+    private final ProviderRegistry providerRegistry;
+    private final ModelRouter modelRouter;
     private final ChatMemory chatMemory;
     private final List<Advisor> advisors;
     private final SystemPromptService systemPromptService;
     private final ModelParamsService modelParamsService;
     private final UsageService usageService;
 
-    public ChatService(ChatClientRegistry registry, ChatMemory chatMemory,
+    public ChatService(ChatClientRegistry registry,
+                       ProviderRegistry providerRegistry,
+                       ModelRouter modelRouter,
+                       ChatMemory chatMemory,
                        List<Advisor> advisors,
                        SystemPromptService systemPromptService,
                        ModelParamsService modelParamsService,
                        UsageService usageService) {
         this.registry = registry;
+        this.providerRegistry = providerRegistry;
+        this.modelRouter = modelRouter;
         this.chatMemory = chatMemory;
         this.advisors = advisors;
         this.systemPromptService = systemPromptService;
@@ -174,40 +188,37 @@ public class ChatService {
 
     /**
      * 构建统一的请求规格（system prompt + 动态参数 + advisor 链）
+     * <p>
+     * 通过 ModelRouter 解析 model ID，委托 Provider 构建 ChatOptions。
+     * 本类不感知具体厂商的 ChatOptions 类型（DIP）。
      */
     private ChatClient.ChatClientRequestSpec buildRequestSpec(
-            ChatClient chatClient, String modelId, String message, String conversationId) {
+            ChatClient chatClient, String rawModelId, String message, String conversationId) {
+
+        // 解析 model ID 路由
+        ModelRouter.Route route = modelRouter.resolve(rawModelId);
 
         ChatClient.ChatClientRequestSpec spec = chatClient.prompt()
                 .user(message)
                 .advisors(buildAdvisors(conversationId));
 
         // 注入动态 System Prompt（数据库 > XML 模板）
-        String systemPrompt = systemPromptService.getPrompt(modelId);
+        String systemPrompt = systemPromptService.getPrompt(rawModelId);
         if (systemPrompt != null && !systemPrompt.isBlank()) {
             spec = spec.system(systemPrompt);
         }
 
-        // 注入动态运行时参数
-        ModelParams params = modelParamsService.getParams(modelId);
+        // 注入动态运行时参数 — 委托给对应 Provider 构建 ChatOptions
+        ModelParams params = modelParamsService.getParams(route.modelId());
         if (params != null) {
-            spec = spec.options(buildChatOptions(params));
+            ModelProvider provider = providerRegistry.get(route.providerId());
+            ChatOptions options = provider.buildOptions(params);
+            if (options != null) {
+                spec = spec.options(options);
+            }
         }
 
         return spec;
-    }
-
-    /**
-     * 从 ModelParams 实体构建 DeepSeekChatOptions
-     */
-    private DeepSeekChatOptions buildChatOptions(ModelParams params) {
-        DeepSeekChatOptions.Builder builder = DeepSeekChatOptions.builder();
-        if (params.getTemperature() != null) builder.temperature(params.getTemperature());
-        if (params.getMaxTokens() != null) builder.maxTokens(params.getMaxTokens());
-        if (params.getTopP() != null) builder.topP(params.getTopP());
-        if (params.getFrequencyPenalty() != null) builder.frequencyPenalty(params.getFrequencyPenalty());
-        if (params.getPresencePenalty() != null) builder.presencePenalty(params.getPresencePenalty());
-        return builder.build();
     }
 
     /**

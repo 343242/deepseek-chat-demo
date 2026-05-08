@@ -4,7 +4,7 @@ import com.demo.deepseekchat.exception.BusinessException;
 
 import com.demo.deepseekchat.chat.dto.ChatRequest;
 import com.demo.deepseekchat.chat.dto.ChatResponse;
-import com.demo.deepseekchat.chat.dto.ModelInfo;
+import com.demo.deepseekchat.chat.dto.ProviderModelInfo;
 import com.demo.deepseekchat.chat.service.ChatService;
 import com.demo.deepseekchat.chat.service.ModelService;
 import jakarta.validation.Valid;
@@ -43,7 +43,7 @@ public class ChatController {
      * 获取可用模型列表
      */
     @GetMapping("/models")
-    public List<ModelInfo> listModels() {
+    public List<ProviderModelInfo> listModels() {
         return modelService.listModels();
     }
 

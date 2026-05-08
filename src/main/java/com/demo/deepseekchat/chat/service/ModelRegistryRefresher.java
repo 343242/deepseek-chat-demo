@@ -1,80 +1,96 @@
 package com.demo.deepseekchat.chat.service;
 
-import com.demo.deepseekchat.chat.client.ChatClientFactory;
 import com.demo.deepseekchat.chat.client.ChatClientRegistry;
-import com.demo.deepseekchat.config.DeepSeekProperties;
 import com.demo.deepseekchat.chat.dto.ModelInfo;
-import com.demo.deepseekchat.chat.dto.ModelsResponse;
+import com.demo.deepseekchat.chat.provider.ModelProvider;
+import com.demo.deepseekchat.chat.provider.ProviderRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.stereotype.Component;
-import org.springframework.web.client.RestClient;
 
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 /**
- * 模型注册刷新器
+ * 模型注册刷新器（多 Provider 版）
  * <p>
- * 封装 "从 DeepSeek API 拉取模型列表 → 创建 ChatClient → 原子替换 Registry" 的完整流程。
- * 被 CommandLineRunner（启动时）和 ModelService（手动刷新）共同复用，消除重复代码。
+ * 遍历所有可用的 ModelProvider，聚合所有厂商的模型到 ChatClientRegistry。
+ * 单个 Provider 拉取失败不影响其他 Provider（try-catch 隔离）。
+ * <p>
+ * 被 CommandLineRunner（启动时）和 ModelService（手动刷新）共同复用。
+ * <p>
+ * 设计原则：
+ * <ul>
+ *   <li>OCP — 新增 Provider 后自动被遍历，不需要修改此类</li>
+ *   <li>容错 — 单个 Provider 失败不阻塞其他 Provider 的模型注册</li>
+ * </ul>
  */
 @Component
 public class ModelRegistryRefresher {
 
     private static final Logger log = LoggerFactory.getLogger(ModelRegistryRefresher.class);
 
-    private final ChatClientFactory factory;
-    private final ChatClientRegistry registry;
-    private final DeepSeekProperties properties;
-    private final RestClient restClient;
+    private final ProviderRegistry providerRegistry;
+    private final ChatClientRegistry chatClientRegistry;
 
-    public ModelRegistryRefresher(ChatClientFactory factory,
-                                  ChatClientRegistry registry,
-                                  DeepSeekProperties properties,
-                                  RestClient deepSeekRestClient) {
-        this.factory = factory;
-        this.registry = registry;
-        this.properties = properties;
-        this.restClient = deepSeekRestClient;
+    public ModelRegistryRefresher(ProviderRegistry providerRegistry,
+                                  ChatClientRegistry chatClientRegistry) {
+        this.providerRegistry = providerRegistry;
+        this.chatClientRegistry = chatClientRegistry;
     }
 
     /**
-     * 从 DeepSeek API 拉取模型列表，创建 ChatClient，原子替换 Registry。
+     * 从所有可用 Provider 拉取模型，创建 ChatClient，原子替换 Registry。
+     * <p>
+     * 策略：先在临时 Map/List 中构建所有模型，全部完成后一次性替换。
+     * 不会出现 "清空后某个 Provider 失败导致无模型可用" 的中间状态。
      *
-     * @return true 刷新成功，false 刷新失败（原有模型不受影响）
+     * @return true 至少有一个 Provider 刷新成功
      */
     public boolean refresh() {
-        log.info("Refreshing DeepSeek model list from {}...", properties.baseUrl());
-        try {
-            ModelsResponse response = restClient.get()
-                    .uri("/models")
-                    .retrieve()
-                    .body(ModelsResponse.class);
+        log.info("Refreshing models from {} providers: {}",
+                providerRegistry.size(), providerRegistry.getAvailableProviderIds());
 
-            if (response == null || response.data() == null) {
-                log.warn("Failed to fetch model list: response is null");
-                return false;
+        Map<String, ChatClient> newClients = new LinkedHashMap<>();
+        List<ModelInfo> allModels = new ArrayList<>();
+        int successCount = 0;
+
+        for (ModelProvider provider : providerRegistry.getAll()) {
+            try {
+                List<ModelInfo> models = provider.fetchModels();
+                if (models.isEmpty()) {
+                    log.warn("Provider {} returned empty model list", provider.getProviderId());
+                    continue;
+                }
+
+                for (ModelInfo model : models) {
+                    try {
+                        ChatClient client = provider.createClient(model.id(), null);
+                        // 用复合格式作为 key: "deepseek/deepseek-chat"
+                        String compositeKey = provider.getProviderId() + "/" + model.id();
+                        newClients.put(compositeKey, client);
+                        // 同时用纯 modelId 注册（向后兼容，最后一个同名 Provider 覆盖）
+                        newClients.putIfAbsent(model.id(), client);
+                        allModels.add(model);
+                    } catch (Exception e) {
+                        log.warn("Failed to create client for {}/{}: {}",
+                                provider.getProviderId(), model.id(), e.getMessage());
+                    }
+                }
+                successCount++;
+                log.info("Provider {}: registered {} models", provider.getProviderId(), models.size());
+            } catch (Exception e) {
+                log.error("Failed to refresh provider {}: {}", provider.getProviderId(), e.getMessage());
             }
-
-            List<ModelInfo> models = response.data();
-
-            // 先在临时 Map 中构建所有 ChatClient，成功后再一次性替换
-            Map<String, ChatClient> newClients = new LinkedHashMap<>();
-            for (ModelInfo model : models) {
-                newClients.put(model.id(), factory.create(model.id()));
-            }
-
-            // 原子替换：不会出现 "清空后拉取失败导致无模型可用" 的中间状态
-            registry.replaceAll(newClients, models);
-
-            log.info("Refreshed {} models: {}", registry.size(), registry.getAvailableModelIds());
-            return true;
-        } catch (Exception e) {
-            log.error("Failed to refresh models from DeepSeek API", e);
-            return false;
         }
+
+        if (!newClients.isEmpty()) {
+            chatClientRegistry.replaceAll(newClients, allModels);
+        }
+
+        log.info("Refresh complete: {} models from {}/{} providers",
+                newClients.size(), successCount, providerRegistry.size());
+
+        return successCount > 0;
     }
 }

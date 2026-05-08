@@ -1,5 +1,6 @@
 package com.demo.chat.user.service;
 
+import com.demo.chat.user.service.impl.AuthServiceImpl;
 import com.demo.chat.exception.BusinessException;
 import com.demo.chat.exception.RateLimitExceededException;
 import com.demo.chat.security.config.JwtProperties;
@@ -52,7 +53,7 @@ class AuthServiceTest {
     @Mock private PasswordEncoder passwordEncoder;
 
     @InjectMocks
-    private AuthService authService;
+    private AuthServiceImpl authService;
 
     private SysUser buildActiveUser() {
         SysUser user = new SysUser();

@@ -1,5 +1,6 @@
 package com.demo.chat.user.service;
 
+import com.demo.chat.user.service.impl.SysRoleServiceImpl;
 import com.demo.chat.exception.BusinessException;
 import com.demo.chat.security.service.TokenCacheService;
 import com.demo.chat.user.entity.SysPermission;
@@ -37,7 +38,7 @@ class SysRoleServiceTest {
     @Mock private TransactionTemplate transactionTemplate;
 
     @InjectMocks
-    private SysRoleService sysRoleService;
+    private SysRoleServiceImpl sysRoleService;
 
     @Nested
     @DisplayName("创建角色")

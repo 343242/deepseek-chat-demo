@@ -1,5 +1,6 @@
 package com.demo.chat.user.service;
 
+import com.demo.chat.user.service.impl.SysUserServiceImpl;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.demo.chat.exception.BusinessException;
@@ -39,7 +40,7 @@ class SysUserServiceTest {
     @Mock private AuthService authService;
 
     @InjectMocks
-    private SysUserService sysUserService;
+    private SysUserServiceImpl sysUserService;
 
     private SysUser buildUser() {
         SysUser user = new SysUser();

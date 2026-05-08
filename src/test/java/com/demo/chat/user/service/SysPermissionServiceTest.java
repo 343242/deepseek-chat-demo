@@ -1,5 +1,6 @@
 package com.demo.chat.user.service;
 
+import com.demo.chat.user.service.impl.SysPermissionServiceImpl;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.demo.chat.exception.BusinessException;
 import com.demo.chat.user.entity.SysPermission;
@@ -25,7 +26,7 @@ class SysPermissionServiceTest {
     private SysPermissionMapper permissionMapper;
 
     @InjectMocks
-    private SysPermissionService sysPermissionService;
+    private SysPermissionServiceImpl sysPermissionService;
 
     // ==================== Create ====================
 

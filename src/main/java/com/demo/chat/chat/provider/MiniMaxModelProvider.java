@@ -22,9 +22,9 @@ import java.util.List;
  * <p>
  * 封装 MiniMax 的 ChatClient 创建、ChatOptions 构建和模型列表拉取。
  * MiniMax 兼容 OpenAI API 规范，通过 {@code GET /v1/models} 动态获取模型列表。
- * 拉取失败时回退到硬编码的默认模型列表，不影响服务可用性。
+ * 拉取失败时回退到硬编码的默认模型列表，保证服务可用性。
  * <p>
- * 通过 {@code spring.ai.minimax.api-key} 配置连接参数。
+ * 通过 {@code spring.ai.minimax.api-key} 和 {@code spring.ai.minimax.base-url} 配置连接参数。
  * MiniMaxApi 构造函数签名为 {@code MiniMaxApi(apiKey, baseUrl)}。
  *
  * @see ModelProvider
@@ -34,22 +34,26 @@ public class MiniMaxModelProvider implements ModelProvider {
 
     private static final Logger log = LoggerFactory.getLogger(MiniMaxModelProvider.class);
 
-    private static final String BASE_URL = "https://api.minimax.chat/v1";
+    private static final String DEFAULT_BASE_URL = "https://api.minimaxi.com/v1";
 
-    /** MiniMax 硬编码回退模型列表（API 拉取失败时使用） */
+    /** MiniMax 兜底模型列表（API 拉取失败时使用） */
     private static final List<ModelInfo> FALLBACK_MODELS = List.of(
-            new ModelInfo("MiniMax-Text-01", "model", 0L, "minimax"),
-            new ModelInfo("abab6.5g-chat", "model", 0L, "minimax"),
-            new ModelInfo("abab6.5s-chat", "model", 0L, "minimax")
+            new ModelInfo("MiniMax-M2.7", "model", 0L, "minimax"),
+            new ModelInfo("MiniMax-M2.5", "model", 0L, "minimax"),
+            new ModelInfo("MiniMax-M2.1", "model", 0L, "minimax")
     );
 
     private final String apiKey;
+    private final String baseUrl;
     private final RestClient restClient;
 
-    public MiniMaxModelProvider(@Value("${spring.ai.minimax.api-key:}") String apiKey) {
+    public MiniMaxModelProvider(
+            @Value("${spring.ai.minimax.api-key:}") String apiKey,
+            @Value("${spring.ai.minimax.base-url:#{null}}") String baseUrl) {
         this.apiKey = apiKey;
+        this.baseUrl = (baseUrl != null && !baseUrl.isBlank()) ? baseUrl : DEFAULT_BASE_URL;
         this.restClient = RestClient.builder()
-                .baseUrl(BASE_URL)
+                .baseUrl(this.baseUrl)
                 .defaultHeader("Authorization", "Bearer " + apiKey)
                 .build();
     }
@@ -88,7 +92,7 @@ public class MiniMaxModelProvider implements ModelProvider {
                 log.info("Fetched {} models from MiniMax API", response.data().size());
                 return response.data();
             }
-            log.warn("MiniMax API returned empty model list, using fallback");
+            log.warn("MiniMax API returned empty response, using fallback");
             return FALLBACK_MODELS;
         } catch (Exception e) {
             log.warn("Failed to fetch MiniMax models: {}, using fallback", e.getMessage());
@@ -107,7 +111,7 @@ public class MiniMaxModelProvider implements ModelProvider {
      */
     @Override
     public ChatClient createClient(String modelId, Double temperature) {
-        MiniMaxApi api = new MiniMaxApi(apiKey, BASE_URL);
+        MiniMaxApi api = new MiniMaxApi(apiKey, baseUrl);
 
         MiniMaxChatOptions.Builder optionsBuilder = MiniMaxChatOptions.builder()
                 .model(modelId);

@@ -32,6 +32,12 @@ public class DeepSeekModelProvider implements ModelProvider {
 
     private static final Logger log = LoggerFactory.getLogger(DeepSeekModelProvider.class);
 
+    /** DeepSeek 兜底模型列表（API 拉取失败时使用） */
+    private static final List<ModelInfo> FALLBACK_MODELS = List.of(
+            new ModelInfo("deepseek-v4-flash", "model", 0L, "deepseek"),
+            new ModelInfo("deepseek-v4-pro", "model", 0L, "deepseek")
+    );
+
     private final DeepSeekProperties properties;
     private final RestClient restClient;
 
@@ -59,9 +65,9 @@ public class DeepSeekModelProvider implements ModelProvider {
     /**
      * 从 DeepSeek /models API 拉取可用模型列表
      * <p>
-     * 调用失败时返回空列表，不影响其他 Provider 的模型注册。
+     * 调用失败时回退到硬编码的 {@link #FALLBACK_MODELS}，保证服务可用性。
      *
-     * @return 模型信息列表，调用失败时返回空列表
+     * @return 模型信息列表
      */
     @Override
     public List<ModelInfo> fetchModels() {
@@ -70,12 +76,14 @@ public class DeepSeekModelProvider implements ModelProvider {
                     .uri("/models")
                     .retrieve()
                     .body(ModelsResponse.class);
-            return response != null && response.data() != null
-                    ? response.data()
-                    : Collections.emptyList();
+            if (response != null && response.data() != null) {
+                return response.data();
+            }
+            log.warn("DeepSeek API returned empty response, using fallback");
+            return FALLBACK_MODELS;
         } catch (Exception e) {
-            log.warn("Failed to fetch DeepSeek models: {}", e.getMessage());
-            return Collections.emptyList();
+            log.warn("Failed to fetch DeepSeek models: {}, using fallback", e.getMessage());
+            return FALLBACK_MODELS;
         }
     }
 

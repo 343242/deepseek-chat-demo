@@ -31,10 +31,18 @@ public class ZhipuModelProvider implements ModelProvider {
 
     /** 智谱 AI 可用模型列表（硬编码，因智谱无 /models API） */
     private static final List<ModelInfo> MODELS = List.of(
-            new ModelInfo("glm-4-air", "model", 0L, "zhipuai"),
-            new ModelInfo("glm-4-flash", "model", 0L, "zhipuai"),
-            new ModelInfo("glm-4-plus", "model", 0L, "zhipuai"),
-            new ModelInfo("glm-4-long", "model", 0L, "zhipuai")
+            new ModelInfo("glm-5.1", "model", 0L, "zhipuai"),
+            new ModelInfo("glm-5-turbo", "model", 0L, "zhipuai"),
+            new ModelInfo("glm-5", "model", 0L, "zhipuai"),
+            new ModelInfo("glm-4.7", "model", 0L, "zhipuai"),
+            new ModelInfo("glm-4.7-flash", "model", 0L, "zhipuai"),
+            new ModelInfo("glm-4.7-flashx", "model", 0L, "zhipuai"),
+            new ModelInfo("glm-4.6", "model", 0L, "zhipuai"),
+            new ModelInfo("glm-4.5-air", "model", 0L, "zhipuai"),
+            new ModelInfo("glm-4.5-airx", "model", 0L, "zhipuai"),
+            new ModelInfo("glm-4.5-flash", "model", 0L, "zhipuai"),
+            new ModelInfo("glm-4-flash-250414", "model", 0L, "zhipuai"),
+            new ModelInfo("glm-4-flashx-250414", "model", 0L, "zhipuai")
     );
 
     private final String apiKey;
@@ -42,7 +50,7 @@ public class ZhipuModelProvider implements ModelProvider {
 
     public ZhipuModelProvider(
             @Value("${spring.ai.zhipuai.api-key:}") String apiKey,
-            @Value("${spring.ai.zhipuai.base-url:https://open.bigmodel.cn/api/paas}") String baseUrl) {
+            @Value("${spring.ai.zhipuai.base-url:https://open.bigmodel.cn/api/paas/v4}") String baseUrl) {
         this.apiKey = apiKey;
         this.baseUrl = baseUrl;
     }

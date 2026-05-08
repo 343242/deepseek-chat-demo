@@ -1,6 +1,7 @@
 package com.demo.chat.chat.provider;
 
 import com.demo.chat.chat.dto.ModelInfo;
+import com.demo.chat.chat.dto.ModelsResponse;
 import com.demo.chat.chat.entity.ModelParams;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -11,14 +12,17 @@ import org.springframework.ai.minimax.MiniMaxChatOptions;
 import org.springframework.ai.minimax.api.MiniMaxApi;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
+import org.springframework.web.client.RestClient;
 
+import java.util.Collections;
 import java.util.List;
 
 /**
  * MiniMax 模型厂商 Provider
  * <p>
- * 封装 MiniMax 的 ChatClient 创建、ChatOptions 构建和模型列表管理。
- * MiniMax 不提供公开的 /models API，因此使用硬编码的模型列表。
+ * 封装 MiniMax 的 ChatClient 创建、ChatOptions 构建和模型列表拉取。
+ * MiniMax 兼容 OpenAI API 规范，通过 {@code GET /v1/models} 动态获取模型列表。
+ * 拉取失败时回退到硬编码的默认模型列表，不影响服务可用性。
  * <p>
  * 通过 {@code spring.ai.minimax.api-key} 配置连接参数。
  * MiniMaxApi 构造函数签名为 {@code MiniMaxApi(apiKey, baseUrl)}。
@@ -32,17 +36,22 @@ public class MiniMaxModelProvider implements ModelProvider {
 
     private static final String BASE_URL = "https://api.minimax.chat/v1";
 
-    /** MiniMax 可用模型列表（硬编码） */
-    private static final List<ModelInfo> MODELS = List.of(
+    /** MiniMax 硬编码回退模型列表（API 拉取失败时使用） */
+    private static final List<ModelInfo> FALLBACK_MODELS = List.of(
             new ModelInfo("MiniMax-Text-01", "model", 0L, "minimax"),
             new ModelInfo("abab6.5g-chat", "model", 0L, "minimax"),
             new ModelInfo("abab6.5s-chat", "model", 0L, "minimax")
     );
 
     private final String apiKey;
+    private final RestClient restClient;
 
     public MiniMaxModelProvider(@Value("${spring.ai.minimax.api-key:}") String apiKey) {
         this.apiKey = apiKey;
+        this.restClient = RestClient.builder()
+                .baseUrl(BASE_URL)
+                .defaultHeader("Authorization", "Bearer " + apiKey)
+                .build();
     }
 
     @Override
@@ -61,13 +70,30 @@ public class MiniMaxModelProvider implements ModelProvider {
     }
 
     /**
-     * 返回 MiniMax 的硬编码模型列表
+     * 从 MiniMax /v1/models API 拉取可用模型列表
+     * <p>
+     * MiniMax 兼容 OpenAI API 规范，GET /v1/models 返回标准格式。
+     * 拉取失败时回退到硬编码的 {@link #FALLBACK_MODELS}，保证服务可用性。
      *
-     * @return MiniMax 可用模型列表
+     * @return 模型信息列表
      */
     @Override
     public List<ModelInfo> fetchModels() {
-        return MODELS;
+        try {
+            ModelsResponse response = restClient.get()
+                    .uri("/models")
+                    .retrieve()
+                    .body(ModelsResponse.class);
+            if (response != null && response.data() != null && !response.data().isEmpty()) {
+                log.info("Fetched {} models from MiniMax API", response.data().size());
+                return response.data();
+            }
+            log.warn("MiniMax API returned empty model list, using fallback");
+            return FALLBACK_MODELS;
+        } catch (Exception e) {
+            log.warn("Failed to fetch MiniMax models: {}, using fallback", e.getMessage());
+            return FALLBACK_MODELS;
+        }
     }
 
     /**

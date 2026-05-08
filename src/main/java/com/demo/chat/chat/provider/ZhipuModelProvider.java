@@ -2,6 +2,7 @@ package com.demo.chat.chat.provider;
 
 import com.demo.chat.chat.dto.ModelInfo;
 import com.demo.chat.chat.entity.ModelParams;
+import com.demo.chat.config.ZhipuProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
@@ -9,7 +10,6 @@ import org.springframework.ai.chat.prompt.ChatOptions;
 import org.springframework.ai.zhipuai.ZhiPuAiChatModel;
 import org.springframework.ai.zhipuai.ZhiPuAiChatOptions;
 import org.springframework.ai.zhipuai.api.ZhiPuAiApi;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -20,9 +20,10 @@ import java.util.List;
  * 封装智谱 AI 的 ChatClient 创建、ChatOptions 构建和模型列表管理。
  * 智谱不提供 /models API，因此使用硬编码的模型列表。
  * <p>
- * 通过 {@code spring.ai.zhipuai.api-key} 和 {@code spring.ai.zhipuai.base-url} 配置连接参数。
+ * 通过 {@link ZhipuProperties} 获取连接配置，与 DeepSeek、MiniMax Provider 保持统一的配置模式。
  *
  * @see ModelProvider
+ * @see ZhipuProperties
  */
 @Component
 public class ZhipuModelProvider implements ModelProvider {
@@ -45,14 +46,10 @@ public class ZhipuModelProvider implements ModelProvider {
             new ModelInfo("glm-4-flashx-250414", "model", 0L, "zhipuai")
     );
 
-    private final String apiKey;
-    private final String baseUrl;
+    private final ZhipuProperties properties;
 
-    public ZhipuModelProvider(
-            @Value("${spring.ai.zhipuai.api-key:}") String apiKey,
-            @Value("${spring.ai.zhipuai.base-url:https://open.bigmodel.cn/api/paas/v4}") String baseUrl) {
-        this.apiKey = apiKey;
-        this.baseUrl = baseUrl;
+    public ZhipuModelProvider(ZhipuProperties properties) {
+        this.properties = properties;
     }
 
     @Override
@@ -67,7 +64,7 @@ public class ZhipuModelProvider implements ModelProvider {
 
     @Override
     public boolean isAvailable() {
-        return apiKey != null && !apiKey.isBlank();
+        return properties.apiKey() != null && !properties.apiKey().isBlank();
     }
 
     /**
@@ -86,6 +83,7 @@ public class ZhipuModelProvider implements ModelProvider {
      * 为指定智谱模型创建 ChatClient
      * <p>
      * 构建链路：ZhiPuAiApi → ZhiPuAiChatOptions → ZhiPuAiChatModel → ChatClient。
+     * temperature 参数优先级：传入参数 > 配置文件默认值。
      *
      * @param modelId     模型 ID，如 "glm-4-air"、"glm-4-flash"
      * @param temperature 可选温度参数，null 使用智谱默认值
@@ -94,14 +92,22 @@ public class ZhipuModelProvider implements ModelProvider {
     @Override
     public ChatClient createClient(String modelId, Double temperature) {
         ZhiPuAiApi api = ZhiPuAiApi.builder()
-                .baseUrl(baseUrl)
-                .apiKey(apiKey)
+                .baseUrl(properties.baseUrl())
+                .apiKey(properties.apiKey())
                 .build();
 
         ZhiPuAiChatOptions.Builder optionsBuilder = ZhiPuAiChatOptions.builder()
                 .model(modelId);
-        if (temperature != null) {
-            optionsBuilder.temperature(temperature);
+
+        Double temp = temperature != null ? temperature : properties.chat().temperature();
+        if (temp != null) {
+            optionsBuilder.temperature(temp);
+        }
+        if (properties.chat().topP() != null) {
+            optionsBuilder.topP(properties.chat().topP());
+        }
+        if (properties.chat().maxTokens() != null) {
+            optionsBuilder.maxTokens(properties.chat().maxTokens());
         }
 
         ZhiPuAiChatModel chatModel = new ZhiPuAiChatModel(api, optionsBuilder.build());

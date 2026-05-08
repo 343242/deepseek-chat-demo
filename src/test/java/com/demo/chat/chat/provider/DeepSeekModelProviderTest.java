@@ -139,13 +139,15 @@ class DeepSeekModelProviderTest {
     class FetchModelsTests {
 
         @Test
-        @DisplayName("RestClient 异常 → 返回空列表")
-        void fetchModels_error_returnsEmpty() {
+        @DisplayName("RestClient 异常 → 回退到 fallback 列表")
+        void fetchModels_error_returnsFallback() {
             when(restClient.get()).thenThrow(new RuntimeException("connection failed"));
 
             List<ModelInfo> result = provider.fetchModels();
             assertNotNull(result);
-            assertTrue(result.isEmpty());
+            assertFalse(result.isEmpty());
+            // fallback 列表应包含 deepseek-v4-flash
+            assertTrue(result.stream().anyMatch(m -> "deepseek-v4-flash".equals(m.id())));
         }
     }
 }

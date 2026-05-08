@@ -3,6 +3,7 @@ package com.demo.chat.chat.provider;
 import com.demo.chat.chat.dto.ModelInfo;
 import com.demo.chat.chat.dto.ModelsResponse;
 import com.demo.chat.chat.entity.ModelParams;
+import com.demo.chat.config.MiniMaxProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
@@ -10,11 +11,10 @@ import org.springframework.ai.chat.prompt.ChatOptions;
 import org.springframework.ai.minimax.MiniMaxChatModel;
 import org.springframework.ai.minimax.MiniMaxChatOptions;
 import org.springframework.ai.minimax.api.MiniMaxApi;
-import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
-import java.util.Collections;
 import java.util.List;
 
 /**
@@ -24,17 +24,15 @@ import java.util.List;
  * MiniMax 兼容 OpenAI API 规范，通过 {@code GET /v1/models} 动态获取模型列表。
  * 拉取失败时回退到硬编码的默认模型列表，保证服务可用性。
  * <p>
- * 通过 {@code spring.ai.minimax.api-key} 和 {@code spring.ai.minimax.base-url} 配置连接参数。
- * MiniMaxApi 构造函数签名为 {@code MiniMaxApi(apiKey, baseUrl)}。
+ * 通过 {@link MiniMaxProperties} 获取连接配置，与 DeepSeek、Zhipu Provider 保持统一的配置模式。
  *
  * @see ModelProvider
+ * @see MiniMaxProperties
  */
 @Component
 public class MiniMaxModelProvider implements ModelProvider {
 
     private static final Logger log = LoggerFactory.getLogger(MiniMaxModelProvider.class);
-
-    private static final String DEFAULT_BASE_URL = "https://api.minimaxi.com/v1";
 
     /** MiniMax 兜底模型列表（API 拉取失败时使用） */
     private static final List<ModelInfo> FALLBACK_MODELS = List.of(
@@ -43,19 +41,13 @@ public class MiniMaxModelProvider implements ModelProvider {
             new ModelInfo("MiniMax-M2.1", "model", 0L, "minimax")
     );
 
-    private final String apiKey;
-    private final String baseUrl;
+    private final MiniMaxProperties properties;
     private final RestClient restClient;
 
-    public MiniMaxModelProvider(
-            @Value("${spring.ai.minimax.api-key:}") String apiKey,
-            @Value("${spring.ai.minimax.base-url:#{null}}") String baseUrl) {
-        this.apiKey = apiKey;
-        this.baseUrl = (baseUrl != null && !baseUrl.isBlank()) ? baseUrl : DEFAULT_BASE_URL;
-        this.restClient = RestClient.builder()
-                .baseUrl(this.baseUrl)
-                .defaultHeader("Authorization", "Bearer " + apiKey)
-                .build();
+    public MiniMaxModelProvider(MiniMaxProperties properties,
+                                @Qualifier("miniMaxRestClient") RestClient restClient) {
+        this.properties = properties;
+        this.restClient = restClient;
     }
 
     @Override
@@ -70,7 +62,7 @@ public class MiniMaxModelProvider implements ModelProvider {
 
     @Override
     public boolean isAvailable() {
-        return apiKey != null && !apiKey.isBlank();
+        return properties.apiKey() != null && !properties.apiKey().isBlank();
     }
 
     /**
@@ -103,7 +95,8 @@ public class MiniMaxModelProvider implements ModelProvider {
     /**
      * 为指定 MiniMax 模型创建 ChatClient
      * <p>
-     * 构建链路：MiniMaxApi(apiKey, baseUrl) → MiniMaxChatOptions → MiniMaxChatModel → ChatClient。
+     * 构建链路：MiniMaxApi → MiniMaxChatOptions → MiniMaxChatModel → ChatClient。
+     * temperature 参数优先级：传入参数 > 配置文件默认值。
      *
      * @param modelId     模型 ID，如 "MiniMax-Text-01"、"abab6.5g-chat"
      * @param temperature 可选温度参数，null 使用 MiniMax 默认值
@@ -111,12 +104,20 @@ public class MiniMaxModelProvider implements ModelProvider {
      */
     @Override
     public ChatClient createClient(String modelId, Double temperature) {
-        MiniMaxApi api = new MiniMaxApi(apiKey, baseUrl);
+        MiniMaxApi api = new MiniMaxApi(properties.apiKey(), properties.baseUrl());
 
         MiniMaxChatOptions.Builder optionsBuilder = MiniMaxChatOptions.builder()
                 .model(modelId);
-        if (temperature != null) {
-            optionsBuilder.temperature(temperature);
+
+        Double temp = temperature != null ? temperature : properties.chat().temperature();
+        if (temp != null) {
+            optionsBuilder.temperature(temp);
+        }
+        if (properties.chat().topP() != null) {
+            optionsBuilder.topP(properties.chat().topP());
+        }
+        if (properties.chat().maxTokens() != null) {
+            optionsBuilder.maxTokens(properties.chat().maxTokens());
         }
 
         MiniMaxChatModel chatModel = new MiniMaxChatModel(api, optionsBuilder.build());

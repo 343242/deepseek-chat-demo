@@ -1,6 +1,7 @@
 package com.demo.chat.chat.provider;
 
 import com.demo.chat.chat.entity.ModelParams;
+import com.demo.chat.config.ZhipuProperties;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -20,8 +21,15 @@ class ZhipuModelProviderTest {
 
     @BeforeEach
     void setUp() {
-        providerWithKey = new ZhipuModelProvider("test-api-key", "https://open.bigmodel.cn/api/paas");
-        providerWithoutKey = new ZhipuModelProvider("", "https://open.bigmodel.cn/api/paas");
+        ZhipuProperties propsWithKey = new ZhipuProperties(
+                "https://open.bigmodel.cn/api/paas/v4", "test-api-key",
+                new ZhipuProperties.ChatOptions("glm-4.7", 0.7, null, null));
+        ZhipuProperties propsWithoutKey = new ZhipuProperties(
+                "https://open.bigmodel.cn/api/paas/v4", "",
+                new ZhipuProperties.ChatOptions("glm-4.7", 0.7, null, null));
+
+        providerWithKey = new ZhipuModelProvider(propsWithKey);
+        providerWithoutKey = new ZhipuModelProvider(propsWithoutKey);
     }
 
     @Nested
@@ -66,14 +74,21 @@ class ZhipuModelProviderTest {
         @DisplayName("返回硬编码模型列表")
         void returnsHardcodedModels() {
             List<?> models = providerWithKey.fetchModels();
-            assertEquals(4, models.size());
+            assertEquals(12, models.size());
         }
 
         @Test
-        @DisplayName("包含 glm-4-air")
-        void containsGlm4Air() {
+        @DisplayName("包含 glm-5.1")
+        void containsGlm51() {
             assertTrue(providerWithKey.fetchModels().stream()
-                    .anyMatch(m -> "glm-4-air".equals(m.id())));
+                    .anyMatch(m -> "glm-5.1".equals(m.id())));
+        }
+
+        @Test
+        @DisplayName("包含 glm-4.5-air")
+        void containsGlm45Air() {
+            assertTrue(providerWithKey.fetchModels().stream()
+                    .anyMatch(m -> "glm-4.5-air".equals(m.id())));
         }
     }
 
@@ -84,7 +99,7 @@ class ZhipuModelProviderTest {
         @Test
         @DisplayName("创建 ChatClient 不为 null")
         void createClient_notNull() {
-            ChatClient client = providerWithKey.createClient("glm-4-air", 0.7);
+            ChatClient client = providerWithKey.createClient("glm-4.5-air", 0.7);
             assertNotNull(client);
         }
     }
@@ -102,7 +117,7 @@ class ZhipuModelProviderTest {
         @Test
         @DisplayName("映射 temperature + maxTokens")
         void mapsParams() {
-            ModelParams params = new ModelParams("glm-4-air");
+            ModelParams params = new ModelParams("glm-4.5-air");
             params.setTemperature(0.5);
             params.setMaxTokens(500);
 

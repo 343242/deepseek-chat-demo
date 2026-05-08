@@ -76,7 +76,15 @@ public class AuthService {
         this.passwordEncoder = passwordEncoder;
     }
 
-    public LoginResponse login(String username, String password, String ip,
+    public record TokenPair(String accessToken, String refreshToken) {}
+
+    /**
+     * Login: validates credentials and returns token pair + user info.
+     * Caller (controller) is responsible for setting cookies.
+     */
+    public record LoginResult(TokenPair tokens, LoginResponse response) {}
+
+    public LoginResult login(String username, String password, String ip,
                                 String captchaId, String captchaCode) {
         // 1. IP rate limit check（在验证码之前，防止暴力破解验证码不计入限流）
         if (tokenCacheService.isLoginRateLimited(ip)) {
@@ -129,23 +137,19 @@ public class AuthService {
         // 9. Cache permissions
         Set<String> permissions = loadUserPermissions(user.getId());
 
-        // 10. Return response
-        return new LoginResponse(
-            accessToken,
-            refreshToken,
-            "Bearer",
-            jwtProperties.accessExpiration(),
-            jwtProperties.refreshExpiration(),
+        // 10. Return result
+        TokenPair tokenPair = new TokenPair(accessToken, refreshToken);
+        LoginResponse response = new LoginResponse(
             new LoginResponse.UserInfo(
                 user.getId(),
                 user.getUsername(),
                 user.getNickname(),
                 user.getEmail(),
                 user.getAvatar(),
-                roleNames,
-                permissions
+                roleNames
             )
         );
+        return new LoginResult(tokenPair, response);
     }
 
     public LoginResponse.UserInfo register(String username, String password, String email,
@@ -205,12 +209,11 @@ public class AuthService {
             newUser.getNickname(),
             newUser.getEmail(),
             newUser.getAvatar(),
-            List.of("USER"),
-            Set.of()
+            List.of("USER")
         );
     }
 
-    public LoginResponse refreshToken(String refreshToken) {
+    public LoginResult refreshToken(String refreshToken) {
         // 1. Validate signature
         if (!jwtTokenProvider.validateToken(refreshToken)) {
             throw new BusinessException("无效的刷新令牌");
@@ -255,14 +258,18 @@ public class AuthService {
         tokenCacheService.storeRefreshToken(newRefreshToken, userId);
 
         // 7. Return new token pair
-        return new LoginResponse(
-            newAccessToken,
-            newRefreshToken,
-            "Bearer",
-            jwtProperties.accessExpiration(),
-            jwtProperties.refreshExpiration(),
-            null
+        TokenPair tokenPair = new TokenPair(newAccessToken, newRefreshToken);
+        LoginResponse response = new LoginResponse(
+            new LoginResponse.UserInfo(
+                user.getId(),
+                user.getUsername(),
+                user.getNickname(),
+                user.getEmail(),
+                user.getAvatar(),
+                roleNames
+            )
         );
+        return new LoginResult(tokenPair, response);
     }
 
     public void logout(Long userId, String accessToken) {
@@ -283,9 +290,10 @@ public class AuthService {
         List<Long> roleIds = sysUserRoleMapper.selectRoleIdsByUserId(userId);
         List<String> roleNames = getRoleNames(roleIds);
 
+        // Ensure permissions are cached (for internal authorization use)
         Set<String> permissions = tokenCacheService.getUserPermissions(userId);
         if (permissions == null) {
-            permissions = loadUserPermissions(userId);
+            loadUserPermissions(userId);
         }
 
         return new LoginResponse.UserInfo(
@@ -294,8 +302,7 @@ public class AuthService {
             user.getNickname(),
             user.getEmail(),
             user.getAvatar(),
-            roleNames,
-            permissions
+            roleNames
         );
     }
 

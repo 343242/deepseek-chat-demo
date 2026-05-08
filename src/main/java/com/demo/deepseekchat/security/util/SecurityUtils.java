@@ -24,12 +24,22 @@ public final class SecurityUtils {
     }
 
     /**
-     * 从 Authorization header 提取 Bearer token
+     * 从 Authorization header 或 Cookie 中提取 access token
      */
     public static String extractToken(HttpServletRequest request) {
+        // 1. Authorization header
         String bearer = request.getHeader("Authorization");
         if (StringUtils.hasText(bearer) && bearer.startsWith("Bearer ")) {
             return bearer.substring(7);
+        }
+        // 2. Cookie
+        jakarta.servlet.http.Cookie[] cookies = request.getCookies();
+        if (cookies != null) {
+            for (jakarta.servlet.http.Cookie cookie : cookies) {
+                if ("access_token".equals(cookie.getName())) {
+                    return cookie.getValue();
+                }
+            }
         }
         return null;
     }

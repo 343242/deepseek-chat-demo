@@ -1,4 +1,5 @@
 target/
+.env
 
 # Dev environment config (contains real API keys)
 src/main/resources/application-dev.yml

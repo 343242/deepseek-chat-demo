@@ -1,33 +1,40 @@
+# chat-demo Docker Compose
+# 用法: docker compose up -d
+
 services:
   postgres:
-    image: postgres:18-bookworm
-    container_name: deepseek-chat-pg
-    environment:
-      POSTGRES_DB: deepseek_chat
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+    image: postgres:18.-bookworm
+    container_name: chat-demo-db
+    restart: unless-stopped
     ports:
-      - "5432:5432"
+      - "${PG_PORT:-5432}:5432"
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-chat_demo}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?请在 .env 中设置 POSTGRES_PASSWORD}
     volumes:
-      - pgdata:/var/lib/postgresql
+      - pgdata:/var/lib/postgresql/data
+      - ./sql/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-chat_demo}"]
       interval: 5s
       timeout: 3s
-      retries: 5
+      retries: 10
 
   redis:
-    image: redis:8.2-bookworm
-    container_name: deepseek-chat-redis
+    image: redis:8.2.6-bookworm
+    container_name: chat-demo-redis
+    restart: unless-stopped
     ports:
-      - "6379:6379"
+      - "${REDIS_PORT:-6379}:6379"
+    command: redis-server --appendonly yes
     volumes:
       - redisdata:/data
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 3s
-      retries: 5
+      retries: 10
 
 volumes:
   pgdata:

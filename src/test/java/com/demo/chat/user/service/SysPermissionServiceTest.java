@@ -1,7 +1,6 @@
 package com.demo.chat.user.service;
 
 import com.demo.chat.user.service.impl.SysPermissionServiceImpl;
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.demo.chat.exception.BusinessException;
 import com.demo.chat.user.entity.SysPermission;
 import com.demo.chat.user.mapper.SysPermissionMapper;
@@ -13,6 +12,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.List;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
@@ -33,15 +33,14 @@ class SysPermissionServiceTest {
     @Test
     @DisplayName("createPermission_success: 正常创建")
     void createPermission_success() {
-        when(permissionMapper.selectOne(any(LambdaQueryWrapper.class)))
-                .thenReturn(null) // byName check
-                .thenReturn(null); // byKey check
-        when(permissionMapper.insert((com.demo.chat.user.entity.SysPermission) any())).thenReturn(1);
+        when(permissionMapper.selectByPermissionName("user:read")).thenReturn(Optional.empty());
+        when(permissionMapper.selectByResourceKey("api:user:read")).thenReturn(Optional.empty());
+        when(permissionMapper.insert(any(SysPermission.class))).thenReturn(1);
 
         SysPermission result = sysPermissionService.createPermission("user:read", "查看用户", "API", "api:user:read");
 
         assertNotNull(result);
-        verify(permissionMapper).insert((com.demo.chat.user.entity.SysPermission) any());
+        verify(permissionMapper).insert(any(SysPermission.class));
     }
 
     @Test
@@ -50,14 +49,13 @@ class SysPermissionServiceTest {
         SysPermission existing = new SysPermission();
         existing.setId(1L);
         existing.setResourceKey("api:user:read");
-        when(permissionMapper.selectOne(any(LambdaQueryWrapper.class)))
-                .thenReturn(null) // byName check passes
-                .thenReturn(existing); // byKey check fails
+        when(permissionMapper.selectByPermissionName("user:write")).thenReturn(Optional.empty());
+        when(permissionMapper.selectByResourceKey("api:user:read")).thenReturn(Optional.of(existing));
 
         BusinessException ex = assertThrows(BusinessException.class,
                 () -> sysPermissionService.createPermission("user:write", "写入用户", "API", "api:user:read"));
         assertTrue(ex.getMessage().contains("权限标识已存在"));
-        verify(permissionMapper, never()).insert((com.demo.chat.user.entity.SysPermission) any());
+        verify(permissionMapper, never()).insert(any(SysPermission.class));
     }
 
     @Test
@@ -66,13 +64,12 @@ class SysPermissionServiceTest {
         SysPermission existing = new SysPermission();
         existing.setId(1L);
         existing.setPermissionName("user:read");
-        when(permissionMapper.selectOne(any(LambdaQueryWrapper.class)))
-                .thenReturn(existing); // byName check fails immediately
+        when(permissionMapper.selectByPermissionName("user:read")).thenReturn(Optional.of(existing));
 
         BusinessException ex = assertThrows(BusinessException.class,
                 () -> sysPermissionService.createPermission("user:read", "查看用户", "API", "api:user:view"));
         assertTrue(ex.getMessage().contains("权限名称已存在"));
-        verify(permissionMapper, never()).insert((com.demo.chat.user.entity.SysPermission) any());
+        verify(permissionMapper, never()).insert(any(SysPermission.class));
     }
 
     // ==================== Delete ====================
@@ -108,7 +105,7 @@ class SysPermissionServiceTest {
         SysPermission perm = new SysPermission();
         perm.setId(1L);
         perm.setPermissionName("user:read");
-        when(permissionMapper.selectList(any(LambdaQueryWrapper.class))).thenReturn(List.of(perm));
+        when(permissionMapper.selectAllOrdered()).thenReturn(List.of(perm));
 
         List<SysPermission> result = sysPermissionService.listPermissions();
 

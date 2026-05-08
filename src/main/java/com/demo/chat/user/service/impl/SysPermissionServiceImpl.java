@@ -1,8 +1,6 @@
 package com.demo.chat.user.service.impl;
 
 import com.demo.chat.exception.BusinessException;
-
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.demo.chat.user.entity.SysPermission;
 import com.demo.chat.user.mapper.SysPermissionMapper;
 import com.demo.chat.user.service.SysPermissionService;
@@ -21,28 +19,17 @@ public class SysPermissionServiceImpl implements SysPermissionService {
 
     @Override
     public List<SysPermission> listPermissions() {
-        return permissionMapper.selectList(new LambdaQueryWrapper<SysPermission>()
-                .eq(SysPermission::getDeleted, 0)
-                .orderByAsc(SysPermission::getId));
+        return permissionMapper.selectAllOrdered();
     }
 
     @Override
     public SysPermission createPermission(String permissionName, String permissionDesc,
                                            String resourceType, String resourceKey) {
-        // Check uniqueness — both permissionName and resourceKey must be unique
-        SysPermission existingByName = permissionMapper.selectOne(new LambdaQueryWrapper<SysPermission>()
-                .eq(SysPermission::getPermissionName, permissionName)
-                .eq(SysPermission::getDeleted, 0));
-        if (existingByName != null) {
-            throw new BusinessException("权限名称已存在: " + permissionName);
-        }
+        permissionMapper.selectByPermissionName(permissionName)
+                .ifPresent(existing -> { throw new BusinessException("权限名称已存在: " + permissionName); });
 
-        SysPermission existingByKey = permissionMapper.selectOne(new LambdaQueryWrapper<SysPermission>()
-                .eq(SysPermission::getResourceKey, resourceKey)
-                .eq(SysPermission::getDeleted, 0));
-        if (existingByKey != null) {
-            throw new BusinessException("权限标识已存在: " + resourceKey);
-        }
+        permissionMapper.selectByResourceKey(resourceKey)
+                .ifPresent(existing -> { throw new BusinessException("权限标识已存在: " + resourceKey); });
 
         SysPermission perm = new SysPermission();
         perm.setPermissionName(permissionName);
@@ -60,7 +47,6 @@ public class SysPermissionServiceImpl implements SysPermissionService {
         if (perm == null) {
             throw new BusinessException("权限不存在");
         }
-        // Logical delete
         permissionMapper.deleteById(permissionId);
     }
 }

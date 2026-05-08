@@ -3,7 +3,6 @@ package com.demo.chat.user.service.impl;
 import com.demo.chat.exception.BusinessException;
 import com.demo.chat.user.enums.UserStatus;
 
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.demo.chat.security.service.TokenCacheService;
 import com.demo.chat.user.dto.AssignRolesRequest;
@@ -53,14 +52,14 @@ public class SysUserServiceImpl implements SysUserService {
     @Override
     public Map<String, Object> listUsers(int page, int size, String keyword) {
         Page<SysUser> pageReq = new Page<>(page, size);
-        LambdaQueryWrapper<SysUser> wrapper = new LambdaQueryWrapper<SysUser>()
-                .eq(SysUser::getDeleted, 0)
-                .and(keyword != null && !keyword.isBlank(), w ->
-                        w.like(SysUser::getUsername, keyword)
-                                .or().like(SysUser::getNickname, keyword))
-                .orderByDesc(SysUser::getCreatedAt);
-
-        Page<SysUser> result = userMapper.selectPage(pageReq, wrapper);
+        // 分页查询含条件，保留 selectPage（MyBatis-Plus 内置分页机制）
+        Page<SysUser> result = userMapper.selectPage(pageReq,
+                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<SysUser>()
+                        .eq(SysUser::getDeleted, 0)
+                        .and(keyword != null && !keyword.isBlank(), w ->
+                                w.like(SysUser::getUsername, keyword)
+                                        .or().like(SysUser::getNickname, keyword))
+                        .orderByDesc(SysUser::getCreatedAt));
 
         List<Map<String, Object>> content = result.getRecords().stream()
                 .map(SysUserServiceImpl::toSafeMap)
@@ -113,10 +112,8 @@ public class SysUserServiceImpl implements SysUserService {
             throw new BusinessException("用户不存在");
         }
 
-        // 去重
         List<Long> uniqueRoleIds = request.roleIds().stream().distinct().toList();
 
-        // 存在性校验
         List<SysRole> existingRoles = roleMapper.selectBatchIds(uniqueRoleIds);
         if (existingRoles.size() != uniqueRoleIds.size()) {
             Set<Long> found = existingRoles.stream().map(SysRole::getId).collect(Collectors.toSet());
@@ -125,14 +122,18 @@ public class SysUserServiceImpl implements SysUserService {
         }
 
         transactionTemplate.executeWithoutResult(status -> {
-            userRoleMapper.delete(new LambdaQueryWrapper<SysUserRole>()
-                    .eq(SysUserRole::getUserId, id));
+            userRoleMapper.deleteByUserId(id);
 
-            for (Long roleId : uniqueRoleIds) {
-                SysUserRole userRole = new SysUserRole();
-                userRole.setUserId(id);
-                userRole.setRoleId(roleId);
-                userRoleMapper.insert(userRole);
+            List<SysUserRole> bindings = uniqueRoleIds.stream()
+                    .map(roleId -> {
+                        SysUserRole userRole = new SysUserRole();
+                        userRole.setUserId(id);
+                        userRole.setRoleId(roleId);
+                        return userRole;
+                    })
+                    .toList();
+            if (!bindings.isEmpty()) {
+                userRoleMapper.batchInsert(bindings);
             }
         });
 

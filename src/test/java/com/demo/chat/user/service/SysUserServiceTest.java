@@ -114,14 +114,13 @@ class SysUserServiceTest {
             role.setRoleName("ADMIN");
             when(roleMapper.selectBatchIds(List.of(10L))).thenReturn(List.of(role));
 
-            // Execute transaction callback immediately
             doAnswer(invocation -> {
                 java.util.function.Consumer<org.springframework.transaction.TransactionStatus> consumer = invocation.getArgument(0);
                 consumer.accept(null);
                 return null;
             }).when(transactionTemplate).executeWithoutResult(any());
 
-            when(userRoleMapper.insert(any(SysUserRole.class))).thenReturn(1);
+            when(userRoleMapper.batchInsert(anyList())).thenReturn(1);
 
             Map<String, Object> result = sysUserService.assignRoles(1L, new AssignRolesRequest(List.of(10L)));
 
@@ -137,7 +136,6 @@ class SysUserServiceTest {
 
             SysRole role = new SysRole();
             role.setId(10L);
-            // Deduped list has 1 element but input has 2
             when(roleMapper.selectBatchIds(List.of(10L))).thenReturn(List.of(role));
 
             doAnswer(invocation -> {
@@ -146,7 +144,7 @@ class SysUserServiceTest {
                 return null;
             }).when(transactionTemplate).executeWithoutResult(any());
 
-            when(userRoleMapper.insert(any(SysUserRole.class))).thenReturn(1);
+            when(userRoleMapper.batchInsert(anyList())).thenReturn(1);
 
             Map<String, Object> result = sysUserService.assignRoles(1L, new AssignRolesRequest(List.of(10L, 10L)));
 
@@ -170,7 +168,7 @@ class SysUserServiceTest {
         void assignRoles_nonExistentRole() {
             SysUser user = buildUser();
             when(userMapper.selectById(1L)).thenReturn(user);
-            when(roleMapper.selectBatchIds(List.of(999L))).thenReturn(List.of()); // role not found
+            when(roleMapper.selectBatchIds(List.of(999L))).thenReturn(List.of());
 
             assertThrows(BusinessException.class,
                     () -> sysUserService.assignRoles(1L, new AssignRolesRequest(List.of(999L))));

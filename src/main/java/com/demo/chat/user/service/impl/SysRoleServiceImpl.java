@@ -1,13 +1,10 @@
 package com.demo.chat.user.service.impl;
 
 import com.demo.chat.exception.BusinessException;
-
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.demo.chat.security.service.TokenCacheService;
 import com.demo.chat.user.entity.SysPermission;
 import com.demo.chat.user.entity.SysRole;
 import com.demo.chat.user.entity.SysRolePermission;
-import com.demo.chat.user.entity.SysUserRole;
 import com.demo.chat.user.mapper.SysPermissionMapper;
 import com.demo.chat.user.mapper.SysRoleMapper;
 import com.demo.chat.user.mapper.SysRolePermissionMapper;
@@ -45,9 +42,7 @@ public class SysRoleServiceImpl implements SysRoleService {
 
     @Override
     public List<SysRole> listRoles() {
-        return roleMapper.selectList(new LambdaQueryWrapper<SysRole>()
-                .eq(SysRole::getDeleted, 0)
-                .orderByAsc(SysRole::getId));
+        return roleMapper.selectAllOrdered();
     }
 
     @Override
@@ -62,13 +57,8 @@ public class SysRoleServiceImpl implements SysRoleService {
 
     @Override
     public SysRole createRole(String roleName, String roleDesc) {
-        // Check uniqueness
-        SysRole existing = roleMapper.selectOne(new LambdaQueryWrapper<SysRole>()
-                .eq(SysRole::getRoleName, roleName)
-                .eq(SysRole::getDeleted, 0));
-        if (existing != null) {
-            throw new BusinessException("角色名已存在");
-        }
+        roleMapper.selectByRoleName(roleName)
+                .ifPresent(existing -> { throw new BusinessException("角色名已存在"); });
 
         SysRole role = new SysRole();
         role.setRoleName(roleName);
@@ -96,25 +86,13 @@ public class SysRoleServiceImpl implements SysRoleService {
             throw new BusinessException("角色不存在");
         }
 
-        // 1. Find all users with this role
-        List<Long> userIds = userRoleMapper.selectList(
-                new LambdaQueryWrapper<SysUserRole>().eq(SysUserRole::getRoleId, roleId))
-                .stream().map(SysUserRole::getUserId).toList();
-
-        // 2. Evict permission cache for affected users
+        List<Long> userIds = userRoleMapper.selectUserIdsByRoleId(roleId);
         for (Long userId : userIds) {
             tokenCacheService.evictUserPermissions(userId);
         }
 
-        // 3. Delete role-permission associations
-        rolePermissionMapper.delete(new LambdaQueryWrapper<SysRolePermission>()
-                .eq(SysRolePermission::getRoleId, roleId));
-
-        // 4. Delete user-role associations
-        userRoleMapper.delete(new LambdaQueryWrapper<SysUserRole>()
-                .eq(SysUserRole::getRoleId, roleId));
-
-        // 5. Logical delete role
+        rolePermissionMapper.deleteByRoleId(roleId);
+        userRoleMapper.deleteByRoleId(roleId);
         roleMapper.deleteById(roleId);
     }
 
@@ -125,10 +103,8 @@ public class SysRoleServiceImpl implements SysRoleService {
             throw new BusinessException("角色不存在");
         }
 
-        // 去重
         List<Long> uniquePermIds = permissionIds.stream().distinct().toList();
 
-        // 存在性校验
         List<SysPermission> existingPerms = permissionMapper.selectBatchIds(uniquePermIds);
         if (existingPerms.size() != uniquePermIds.size()) {
             Set<Long> found = existingPerms.stream().map(SysPermission::getId).collect(Collectors.toSet());
@@ -137,24 +113,22 @@ public class SysRoleServiceImpl implements SysRoleService {
         }
 
         transactionTemplate.executeWithoutResult(status -> {
-            // Delete old associations
-            rolePermissionMapper.delete(new LambdaQueryWrapper<SysRolePermission>()
-                    .eq(SysRolePermission::getRoleId, roleId));
+            rolePermissionMapper.deleteByRoleId(roleId);
 
-            // Insert new associations
-            for (Long permId : uniquePermIds) {
-                SysRolePermission rp = new SysRolePermission();
-                rp.setRoleId(roleId);
-                rp.setPermissionId(permId);
-                rolePermissionMapper.insert(rp);
+            List<SysRolePermission> bindings = uniquePermIds.stream()
+                    .map(permId -> {
+                        SysRolePermission rp = new SysRolePermission();
+                        rp.setRoleId(roleId);
+                        rp.setPermissionId(permId);
+                        return rp;
+                    })
+                    .toList();
+            if (!bindings.isEmpty()) {
+                rolePermissionMapper.batchInsert(bindings);
             }
         });
 
-        // Find all users with this role and evict their permission cache
-        List<Long> userIds = userRoleMapper.selectList(
-                new LambdaQueryWrapper<SysUserRole>().eq(SysUserRole::getRoleId, roleId))
-                .stream().map(SysUserRole::getUserId).toList();
-
+        List<Long> userIds = userRoleMapper.selectUserIdsByRoleId(roleId);
         for (Long userId : userIds) {
             tokenCacheService.evictUserPermissions(userId);
         }

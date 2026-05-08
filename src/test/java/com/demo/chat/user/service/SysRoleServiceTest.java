@@ -6,7 +6,6 @@ import com.demo.chat.security.service.TokenCacheService;
 import com.demo.chat.user.entity.SysPermission;
 import com.demo.chat.user.entity.SysRole;
 import com.demo.chat.user.entity.SysRolePermission;
-import com.demo.chat.user.entity.SysUserRole;
 import com.demo.chat.user.mapper.SysPermissionMapper;
 import com.demo.chat.user.mapper.SysRoleMapper;
 import com.demo.chat.user.mapper.SysRolePermissionMapper;
@@ -21,6 +20,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.List;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -47,7 +47,7 @@ class SysRoleServiceTest {
         @Test
         @DisplayName("createRole_success: 正常创建")
         void createRole_success() {
-            when(roleMapper.selectOne(any())).thenReturn(null);
+            when(roleMapper.selectByRoleName("EDITOR")).thenReturn(Optional.empty());
             when(roleMapper.insert(any(SysRole.class))).thenReturn(1);
 
             SysRole result = sysRoleService.createRole("EDITOR", "编辑者");
@@ -62,7 +62,7 @@ class SysRoleServiceTest {
             SysRole existing = new SysRole();
             existing.setId(1L);
             existing.setRoleName("ADMIN");
-            when(roleMapper.selectOne(any())).thenReturn(existing);
+            when(roleMapper.selectByRoleName("ADMIN")).thenReturn(Optional.of(existing));
 
             assertThrows(BusinessException.class, () -> sysRoleService.createRole("ADMIN", "管理员"));
         }
@@ -78,16 +78,12 @@ class SysRoleServiceTest {
             SysRole role = new SysRole();
             role.setId(1L);
             when(roleMapper.selectById(1L)).thenReturn(role);
-
-            SysUserRole ur = new SysUserRole();
-            ur.setUserId(10L);
-            ur.setRoleId(1L);
-            when(userRoleMapper.selectList(any())).thenReturn(List.of(ur));
+            when(userRoleMapper.selectUserIdsByRoleId(1L)).thenReturn(List.of(10L));
 
             sysRoleService.deleteRole(1L);
 
-            verify(rolePermissionMapper).delete(any());
-            verify(userRoleMapper).delete(any());
+            verify(rolePermissionMapper).deleteByRoleId(1L);
+            verify(userRoleMapper).deleteByRoleId(1L);
             verify(roleMapper).deleteById(1L);
             verify(tokenCacheService).evictUserPermissions(10L);
         }
@@ -121,11 +117,11 @@ class SysRoleServiceTest {
                 return null;
             }).when(transactionTemplate).executeWithoutResult(any());
 
-            when(userRoleMapper.selectList(any())).thenReturn(List.of());
+            when(userRoleMapper.selectUserIdsByRoleId(1L)).thenReturn(List.of());
 
             assertDoesNotThrow(() -> sysRoleService.assignPermissions(1L, List.of(10L)));
-            verify(rolePermissionMapper).delete(any());
-            verify(rolePermissionMapper).insert(any(SysRolePermission.class));
+            verify(rolePermissionMapper).deleteByRoleId(1L);
+            verify(rolePermissionMapper).batchInsert(anyList());
         }
 
         @Test
@@ -145,11 +141,10 @@ class SysRoleServiceTest {
                 return null;
             }).when(transactionTemplate).executeWithoutResult(any());
 
-            when(userRoleMapper.selectList(any())).thenReturn(List.of());
+            when(userRoleMapper.selectUserIdsByRoleId(1L)).thenReturn(List.of());
 
-            // Pass duplicate IDs, should only insert once after dedup
             assertDoesNotThrow(() -> sysRoleService.assignPermissions(1L, List.of(10L, 10L)));
-            verify(rolePermissionMapper, times(1)).insert(any(SysRolePermission.class));
+            verify(rolePermissionMapper).batchInsert(anyList());
         }
 
         @Test

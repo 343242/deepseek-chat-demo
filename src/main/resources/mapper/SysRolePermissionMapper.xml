@@ -13,4 +13,15 @@
         AND p.status = 1 AND p.deleted = 0
     </select>
 
+    <delete id="deleteByRoleId">
+        DELETE FROM sys_role_permission WHERE role_id = #{roleId}
+    </delete>
+
+    <insert id="batchInsert">
+        INSERT INTO sys_role_permission (role_id, permission_id) VALUES
+        <foreach collection="list" item="item" separator=",">
+            (#{item.roleId}, #{item.permissionId})
+        </foreach>
+    </insert>
+
 </mapper>

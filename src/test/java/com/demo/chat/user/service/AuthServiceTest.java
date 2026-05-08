@@ -30,6 +30,7 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.List;
+import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -70,7 +71,7 @@ class AuthServiceTest {
     private void setupLoginMocks(SysUser user) {
         when(tokenCacheService.isLoginRateLimited(anyString())).thenReturn(false);
         when(captchaService.validate(anyString(), anyInt())).thenReturn(true);
-        when(sysUserMapper.selectOne(any())).thenReturn(user);
+        when(sysUserMapper.selectByUsername(anyString())).thenReturn(Optional.of(user));
         when(passwordEncoder.matches(eq("Password1!"), anyString())).thenReturn(true);
         when(sysUserRoleMapper.selectRoleIdsByUserId(1L)).thenReturn(List.of(1L));
         SysRole role = new SysRole(); role.setId(1L); role.setRoleName("USER");
@@ -128,7 +129,7 @@ class AuthServiceTest {
         void login_userNotFound() {
             when(tokenCacheService.isLoginRateLimited(anyString())).thenReturn(false);
             when(captchaService.validate(anyString(), anyInt())).thenReturn(true);
-            when(sysUserMapper.selectOne(any())).thenReturn(null);
+            when(sysUserMapper.selectByUsername(anyString())).thenReturn(Optional.empty());
 
             assertThrows(BusinessException.class,
                     () -> authService.login("nouser", "Password1!", "127.0.0.1", "cap-id", "150"));
@@ -140,7 +141,7 @@ class AuthServiceTest {
             SysUser user = buildActiveUser();
             when(tokenCacheService.isLoginRateLimited(anyString())).thenReturn(false);
             when(captchaService.validate(anyString(), anyInt())).thenReturn(true);
-            when(sysUserMapper.selectOne(any())).thenReturn(user);
+            when(sysUserMapper.selectByUsername(anyString())).thenReturn(Optional.of(user));
             when(passwordEncoder.matches(eq("WrongPass1!"), anyString())).thenReturn(false);
 
             assertThrows(BusinessException.class,
@@ -154,7 +155,7 @@ class AuthServiceTest {
             user.setStatus(0);
             when(tokenCacheService.isLoginRateLimited(anyString())).thenReturn(false);
             when(captchaService.validate(anyString(), anyInt())).thenReturn(true);
-            when(sysUserMapper.selectOne(any())).thenReturn(user);
+            when(sysUserMapper.selectByUsername(anyString())).thenReturn(Optional.of(user));
             when(passwordEncoder.matches(anyString(), anyString())).thenReturn(true);
 
             assertThrows(BusinessException.class,
@@ -167,7 +168,7 @@ class AuthServiceTest {
             SysUser user = buildActiveUser();
             when(tokenCacheService.isLoginRateLimited(anyString())).thenReturn(false);
             when(captchaService.validate(anyString(), anyInt())).thenReturn(true);
-            when(sysUserMapper.selectOne(any())).thenReturn(user);
+            when(sysUserMapper.selectByUsername(anyString())).thenReturn(Optional.of(user));
             when(passwordEncoder.matches(anyString(), anyString())).thenReturn(true);
             when(tokenCacheService.getUserStatus(1L)).thenReturn("disabled");
 
@@ -189,7 +190,7 @@ class AuthServiceTest {
             SysRole userRole = new SysRole();
             userRole.setId(2L);
             userRole.setRoleName("USER");
-            when(sysRoleMapper.selectOne(any())).thenReturn(userRole);
+            when(sysRoleMapper.selectByRoleName("USER")).thenReturn(Optional.of(userRole));
         }
 
         @Test
@@ -280,7 +281,7 @@ class AuthServiceTest {
             when(passwordEncoder.encode(anyString())).thenReturn("$2a$10$encoded");
             when(idGenerator.nextId()).thenReturn(123L);
             SysRole userRole = new SysRole(); userRole.setId(1L); userRole.setRoleName("USER");
-            when(sysRoleMapper.selectOne(any())).thenReturn(userRole);
+            when(sysRoleMapper.selectByRoleName("USER")).thenReturn(Optional.of(userRole));
         }
     }
 
@@ -294,9 +295,9 @@ class AuthServiceTest {
         @DisplayName("updateProfile_emailDuplicate: 邮箱重复时抛 BusinessException")
         void updateProfile_emailDuplicate() {
             SysUser user = buildActiveUser();
-            when(sysUserMapper.selectOne(any())).thenReturn(user);
-            // Second selectOne for uniqueness check returns existing user
-            when(sysUserMapper.selectOne(argThat(w -> true))).thenReturn(user);
+            when(sysUserMapper.selectActiveById(1L)).thenReturn(Optional.of(user));
+            when(sysUserMapper.selectByEmailExcludingId("other@example.com", 1L))
+                    .thenReturn(Optional.of(buildActiveUser()));
 
             assertThrows(BusinessException.class,
                     () -> authService.updateProfile(1L, new UserUpdateRequest(null, "other@example.com", null, null)));
@@ -306,29 +307,20 @@ class AuthServiceTest {
         @DisplayName("updateProfile_emailChange_success: 正常修改邮箱")
         void updateProfile_emailChange_success() {
             SysUser user = buildActiveUser();
-            // First call returns user, second call for uniqueness returns null (no conflict)
-            when(sysUserMapper.selectOne(any())).thenAnswer(inv -> {
-                // Return user for both calls
-                return user;
-            });
+            when(sysUserMapper.selectActiveById(1L)).thenReturn(Optional.of(user));
             when(sysUserMapper.updateById(any(SysUser.class))).thenReturn(1);
-            // For getCurrentUser after update
             when(sysUserRoleMapper.selectRoleIdsByUserId(1L)).thenReturn(List.of(1L));
             SysRole role = new SysRole(); role.setId(1L); role.setRoleName("USER");
             when(sysRoleMapper.selectBatchIds(List.of(1L))).thenReturn(List.of(role));
             when(tokenCacheService.getUserPermissions(1L)).thenReturn(null);
 
-            // The email uniqueness check uses a different query with .ne(SysUser::getId, userId)
-            // We need to be more precise with mocking
-            // Actually since both selectOne calls use any(), we need lenient or restructure
-            // Let's use a simpler approach: make the new email same as current (no change needed)
             assertDoesNotThrow(() -> authService.updateProfile(1L, new UserUpdateRequest("NewNick", null, null, null)));
         }
 
         @Test
         @DisplayName("updateProfile_userNotFound: 抛 BusinessException")
         void updateProfile_userNotFound() {
-            when(sysUserMapper.selectOne(any())).thenReturn(null);
+            when(sysUserMapper.selectActiveById(999L)).thenReturn(Optional.empty());
             assertThrows(BusinessException.class,
                     () -> authService.updateProfile(999L, new UserUpdateRequest("nick", null, null, null)));
         }

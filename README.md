@@ -98,9 +98,20 @@ curl http://localhost:8080/api/chat/stream?model=zhipu/glm-4.7&message=你好&co
 
 ## 文档
 
+### 项目文档
+
 - [API 接口文档](docs/API-DOCS.md) — 所有接口的完整说明
 - [数据库设计文档](docs/DATABASE.md) — 表结构、索引、关系、Redis 使用
 - [RBAC 用户模块设计](docs/RBAC-USER-MODULE-DESIGN.md) — 权限模型与用户管理
+
+### 外部参考文档
+
+| 文档 | 链接 |
+|------|------|
+| Spring AI API 1.1.6 | <https://docs.spring.io/spring-ai/docs/1.1.6/api/> |
+| DeepSeek API | <https://api-docs.deepseek.com/> |
+| 智谱 AI (BigModel) API | <https://docs.bigmodel.cn/cn/api/introduction> |
+| MiniMax API | <https://platform.minimaxi.com/docs/api-reference/api-overview> |
 
 ---
 

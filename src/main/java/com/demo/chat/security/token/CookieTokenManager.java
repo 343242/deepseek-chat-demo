@@ -62,6 +62,7 @@ public class CookieTokenManager {
         cookie.setSecure(jwtProperties.cookieSecure());
         cookie.setPath("/api");
         cookie.setMaxAge((int) jwtProperties.accessExpiration());
+        cookie.setAttribute("SameSite", "Lax");
         return cookie;
     }
 
@@ -71,6 +72,7 @@ public class CookieTokenManager {
         cookie.setSecure(jwtProperties.cookieSecure());
         cookie.setPath("/api/auth/refresh");
         cookie.setMaxAge((int) jwtProperties.refreshExpiration());
+        cookie.setAttribute("SameSite", "Lax");
         return cookie;
     }
 
@@ -79,6 +81,7 @@ public class CookieTokenManager {
         cookie.setHttpOnly(true);
         cookie.setPath(path);
         cookie.setMaxAge(0);
+        cookie.setAttribute("SameSite", "Lax");
         return cookie;
     }
 }

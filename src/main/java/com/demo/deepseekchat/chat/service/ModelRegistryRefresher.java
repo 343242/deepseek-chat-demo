@@ -68,9 +68,6 @@ public class ModelRegistryRefresher {
                 }
 
                 for (ModelInfo model : models) {
-                    // 构建反向索引：modelId → providerId
-                    newIndex.putIfAbsent(model.id(), provider.getProviderId());
-
                     try {
                         ChatClient client = provider.createClient(model.id(), null);
                         // 用复合格式作为 key: "deepseek/deepseek-chat"
@@ -79,6 +76,8 @@ public class ModelRegistryRefresher {
                         // 同时用纯 modelId 注册（向后兼容，最后一个同名 Provider 覆盖）
                         newClients.putIfAbsent(model.id(), client);
                         allModels.add(model);
+                        // ★ createClient 成功后才写入反向索引
+                        newIndex.putIfAbsent(model.id(), provider.getProviderId());
                     } catch (Exception e) {
                         log.warn("Failed to create client for {}/{}: {}",
                                 provider.getProviderId(), model.id(), e.getMessage());
@@ -91,13 +90,14 @@ public class ModelRegistryRefresher {
             }
         }
 
-        if (!newClients.isEmpty()) {
+        boolean hasClients = !newClients.isEmpty();
+        if (hasClients) {
             chatClientRegistry.replaceAll(newClients, allModels);
             modelToProvider = Collections.unmodifiableMap(newIndex);
         }
 
-        log.info("Refresh complete: {} models from {}/{} providers",
-                newClients.size(), successCount, providerRegistry.size());
+        log.info("Refresh complete: {} clients, {} models from {}/{} providers",
+                newClients.size(), allModels.size(), successCount, providerRegistry.size());
 
         return successCount > 0;
     }

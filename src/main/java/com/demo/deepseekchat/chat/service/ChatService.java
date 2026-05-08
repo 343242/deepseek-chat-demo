@@ -77,32 +77,39 @@ public class ChatService {
 
     /**
      * 阻塞式聊天
+     * <p>
+     * 在入口处一次性解析 route，后续所有操作（client 查找、options 构建、
+     * 用量记录、响应元数据）均使用同一个 route，避免 client/options 厂商不一致。
      */
     public ChatResponse chat(ChatRequest request) {
         Long userId = SecurityUtils.getCurrentUserId();
         String isolatedConversationId = buildIsolatedConversationId(userId, request.conversationId());
 
-        log.debug("Chat request: userId={}, model={}, conversationId={}",
-                userId, request.model(), isolatedConversationId);
+        // ★ 入口处统一解析 route，后续全部使用此 route
+        ModelRouter.Route route = modelRouter.resolve(request.model());
 
-        ChatClient chatClient = registry.get(request.model());
+        log.debug("Chat request: userId={}, rawModel={}, route={}, conversationId={}",
+                userId, request.model(), route.toCompositeId(), isolatedConversationId);
+
+        ChatClient chatClient = registry.get(route.toCompositeId());
         long startTime = System.currentTimeMillis();
 
         ChatClient.ChatClientRequestSpec requestSpec = buildRequestSpec(
-                chatClient, request.model(), request.message(), isolatedConversationId);
+                chatClient, route, request.message(), isolatedConversationId);
 
         org.springframework.ai.chat.model.ChatResponse aiResponse = requestSpec.call().chatResponse();
         long duration = System.currentTimeMillis() - startTime;
 
-        recordUsage(isolatedConversationId, request.model(), aiResponse, duration);
+        recordUsage(isolatedConversationId, route.toCompositeId(), aiResponse, duration);
 
-        return new ChatResponse(request.model(), aiResponse.getResult().getOutput().getText(),
+        return new ChatResponse(route.toCompositeId(), aiResponse.getResult().getOutput().getText(),
                 request.conversationId());
     }
 
     /**
      * 流式聊天，返回 SSE 事件流
      * <p>
+     * 使用 chatResponse() 而非 content() 保留 Spring AI 的 token usage 元数据。
      * 使用 StringBuilder 收集已生成的文本，在断连/错误时通过 doFinally
      * 确保部分回复也会保存到 ChatMemory，防止数据丢失。
      */
@@ -110,22 +117,35 @@ public class ChatService {
         Long userId = SecurityUtils.getCurrentUserId();
         String isolatedConversationId = buildIsolatedConversationId(userId, request.conversationId());
 
-        log.debug("Stream chat request: userId={}, model={}, conversationId={}",
-                userId, request.model(), isolatedConversationId);
+        // ★ 入口处统一解析 route
+        ModelRouter.Route route = modelRouter.resolve(request.model());
 
-        ChatClient chatClient = registry.get(request.model());
+        log.debug("Stream chat request: userId={}, rawModel={}, route={}, conversationId={}",
+                userId, request.model(), route.toCompositeId(), isolatedConversationId);
+
+        ChatClient chatClient = registry.get(route.toCompositeId());
         long startTime = System.currentTimeMillis();
 
         ChatClient.ChatClientRequestSpec requestSpec = buildRequestSpec(
-                chatClient, request.model(), request.message(), isolatedConversationId);
+                chatClient, route, request.message(), isolatedConversationId);
 
         // 收集已生成的文本，断连/取消时用于保存部分回复
         StringBuilder collectedContent = new StringBuilder();
         java.util.concurrent.atomic.AtomicBoolean usageRecorded = new java.util.concurrent.atomic.AtomicBoolean(false);
 
+        // 保留最后一个 ChatResponse 用于提取 token usage
+        AtomicReference<org.springframework.ai.chat.model.ChatResponse> lastAiResponse = new AtomicReference<>();
+
         return requestSpec.stream()
-                .content()
-                .doOnNext(chunk -> collectedContent.append(chunk))
+                .chatResponse()  // ★ 使用 chatResponse() 保留元数据，而非 content()
+                .map(aiResponse -> {
+                    lastAiResponse.set(aiResponse);
+                    String text = aiResponse.getResult() != null
+                            ? aiResponse.getResult().getOutput().getText()
+                            : "";
+                    collectedContent.append(text);
+                    return text;
+                })
                 .doFinally(signal -> {
                     switch (signal) {
                         case ON_ERROR, CANCEL -> {
@@ -134,17 +154,28 @@ public class ChatService {
                             savePartialResponse(isolatedConversationId, collectedContent.toString());
                         }
                         case ON_COMPLETE -> {
-                            // 正常完成时不保存（MessageChatMemoryAdvisor 负责）
                             log.debug("Stream completed for conversation: {}", isolatedConversationId);
                         }
                         default -> {
                             savePartialResponse(isolatedConversationId, collectedContent.toString());
                         }
                     }
-                    // 无论何种终止信号都记录用量（幂等）
+                    // ★ 尝试从最后一个 ChatResponse 提取真实 token usage
                     if (usageRecorded.compareAndSet(false, true)) {
                         long duration = System.currentTimeMillis() - startTime;
-                        usageService.recordUsage(isolatedConversationId, request.model(), -1, -1, -1, duration);
+                        org.springframework.ai.chat.model.ChatResponse last = lastAiResponse.get();
+                        if (last != null && last.getMetadata() != null && last.getMetadata().getUsage() != null) {
+                            Usage usage = last.getMetadata().getUsage();
+                            usageService.recordUsage(
+                                    isolatedConversationId, route.toCompositeId(),
+                                    usage.getPromptTokens(), usage.getCompletionTokens(),
+                                    usage.getTotalTokens(), duration);
+                        } else {
+                            // 流式响应无 usage 元数据时仍记录 -1
+                            usageService.recordUsage(
+                                    isolatedConversationId, route.toCompositeId(),
+                                    -1, -1, -1, duration);
+                        }
                     }
                 });
     }
@@ -189,28 +220,31 @@ public class ChatService {
     /**
      * 构建统一的请求规格（system prompt + 动态参数 + advisor 链）
      * <p>
-     * 通过 ModelRouter 解析 model ID，委托 Provider 构建 ChatOptions。
-     * 本类不感知具体厂商的 ChatOptions 类型（DIP）。
+     * route 由调用方在入口处统一解析后传入，本方法不再重复解析。
+     * 配置查询使用 composite key (providerId/modelId)，回退到 bare modelId（向后兼容）。
+     * 委托 Provider 构建 ChatOptions，本类不感知具体厂商的 ChatOptions 类型（DIP）。
      */
     private ChatClient.ChatClientRequestSpec buildRequestSpec(
-            ChatClient chatClient, String rawModelId, String message, String conversationId) {
-
-        // 解析 model ID 路由
-        ModelRouter.Route route = modelRouter.resolve(rawModelId);
+            ChatClient chatClient, ModelRouter.Route route, String message, String conversationId) {
 
         ChatClient.ChatClientRequestSpec spec = chatClient.prompt()
                 .user(message)
                 .advisors(buildAdvisors(conversationId));
 
-        // 注入动态 System Prompt（数据库 > XML 模板）
-        // 使用解析后的纯 modelId 查询，而非 rawModelId（复合格式会导致查询 miss）
-        String systemPrompt = systemPromptService.getPrompt(route.modelId());
+        // 注入动态 System Prompt — 优先用 composite key 查询，回退到 bare modelId
+        String systemPrompt = systemPromptService.getPrompt(route.toCompositeId());
+        if (systemPrompt == null || systemPrompt.isBlank()) {
+            systemPrompt = systemPromptService.getPrompt(route.modelId());
+        }
         if (systemPrompt != null && !systemPrompt.isBlank()) {
             spec = spec.system(systemPrompt);
         }
 
-        // 注入动态运行时参数 — 委托给对应 Provider 构建 ChatOptions
-        ModelParams params = modelParamsService.getParams(route.modelId());
+        // 注入动态运行时参数 — 同样先查 composite key，回退到 bare modelId
+        ModelParams params = modelParamsService.getParams(route.toCompositeId());
+        if (params == null) {
+            params = modelParamsService.getParams(route.modelId());
+        }
         if (params != null) {
             ModelProvider provider = providerRegistry.get(route.providerId());
             ChatOptions options = provider.buildOptions(params);

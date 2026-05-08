@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
-<mapper namespace="com.demo.deepseekchat.mapper.TokenUsageMapper">
+<mapper namespace="com.demo.deepseekchat.chat.mapper.TokenUsageMapper">
 
-    <select id="aggregateByModel" resultType="com.demo.deepseekchat.model.dto.UsageStats">
+    <select id="aggregateByModel" resultType="com.demo.deepseekchat.chat.dto.UsageStats">
         SELECT model_id AS groupKey,
                COUNT(*) AS requestCount,
                COALESCE(SUM(prompt_tokens), 0) AS totalPromptTokens,
@@ -17,7 +17,7 @@
         GROUP BY model_id
     </select>
 
-    <select id="aggregateByConversation" resultType="com.demo.deepseekchat.model.dto.UsageStats">
+    <select id="aggregateByConversation" resultType="com.demo.deepseekchat.chat.dto.UsageStats">
         SELECT conversation_id AS groupKey,
                COUNT(*) AS requestCount,
                COALESCE(SUM(prompt_tokens), 0) AS totalPromptTokens,
@@ -32,7 +32,7 @@
     </select>
 
     <!-- 用户隔离：按模型聚合，仅统计当前用户的记录 -->
-    <select id="aggregateByModelForUser" resultType="com.demo.deepseekchat.model.dto.UsageStats">
+    <select id="aggregateByModelForUser" resultType="com.demo.deepseekchat.chat.dto.UsageStats">
         SELECT model_id AS groupKey,
                COUNT(*) AS requestCount,
                COALESCE(SUM(prompt_tokens), 0) AS totalPromptTokens,
@@ -48,7 +48,7 @@
     </select>
 
     <!-- 用户隔离：按对话聚合，仅统计当前用户的记录 -->
-    <select id="aggregateByUserConversations" resultType="com.demo.deepseekchat.model.dto.UsageStats">
+    <select id="aggregateByUserConversations" resultType="com.demo.deepseekchat.chat.dto.UsageStats">
         SELECT conversation_id AS groupKey,
                COUNT(*) AS requestCount,
                COALESCE(SUM(prompt_tokens), 0) AS totalPromptTokens,

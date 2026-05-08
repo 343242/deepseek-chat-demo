@@ -1,10 +1,6 @@
 # Production overlay — activates on top of stable profile
 # Usage: SPRING_PROFILES_ACTIVE=stable,prod
 
-spring:
-  flyway:
-    clean-disabled: true
-
 mybatis-plus:
   configuration:
     log-impl: org.apache.ibatis.logging.nologging.NoLoggingImpl

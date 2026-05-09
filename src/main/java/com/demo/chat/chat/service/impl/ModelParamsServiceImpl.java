@@ -76,8 +76,8 @@ public class ModelParamsServiceImpl implements ModelParamsService {
 
     @Override
     public boolean delete(String modelId) {
-        boolean deleted = transactionTemplate.execute(status ->
-                mapper.deleteByModelId(modelId) > 0);
+        boolean deleted = Boolean.TRUE.equals(transactionTemplate.execute(status ->
+                mapper.deleteByModelId(modelId) > 0));
         if (deleted) {
             paramsCache.invalidate(modelId);
         }

@@ -2,6 +2,7 @@ package com.demo.chat.chat.advisor;
 
 import com.demo.chat.chat.content.ContentFilterService;
 import com.demo.chat.exception.ContentFilteredException;
+import org.jspecify.annotations.NonNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClientRequest;
@@ -47,7 +48,7 @@ public class ContentFilterAdvisor implements BaseAdvisor {
     }
 
     @Override
-    public ChatClientRequest before(ChatClientRequest request, AdvisorChain chain) {
+    public ChatClientRequest before(ChatClientRequest request, @NonNull AdvisorChain chain) {
         String userMessage = extractLastUserMessage(request.prompt().getInstructions());
 
         if (userMessage != null && contentFilterService.containsSensitiveContent(userMessage)) {
@@ -61,7 +62,7 @@ public class ContentFilterAdvisor implements BaseAdvisor {
     }
 
     @Override
-    public ChatClientResponse after(ChatClientResponse response, AdvisorChain chain) {
+    public ChatClientResponse after(ChatClientResponse response, @NonNull AdvisorChain chain) {
         ChatResponse chatResponse = response.chatResponse();
         if (chatResponse == null) {
             return response;

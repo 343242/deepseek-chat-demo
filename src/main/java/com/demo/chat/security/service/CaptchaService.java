@@ -24,14 +24,14 @@ import java.util.concurrent.TimeUnit;
 /**
  * 滑块拼图验证码服务。
  * 纯 Java 2D 实现，无外部图片/模型依赖。
- *
+ * <p>
  * 流程：
  * 1. 生成带随机噪点/渐变的背景图 (310×155)
  * 2. 在随机 x 位置抠出拼图块 (47×47)
  * 3. 底图对应位置绘制半透明遮罩
  * 4. captchaId → 正确 x 坐标存入 Caffeine（5 分钟 TTL）
  * 5. 校验时容差 ±5px
- *
+ * </p>
  * dev profile 会额外返回 answer，方便 API 测试。
  */
 @Service

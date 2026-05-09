@@ -9,10 +9,7 @@ import org.springframework.stereotype.Component;
 
 import javax.crypto.SecretKey;
 import java.nio.charset.StandardCharsets;
-import java.util.Date;
-import java.util.List;
-import java.util.Set;
-import java.util.UUID;
+import java.util.*;
 
 @Component
 public class JwtTokenProvider {
@@ -43,7 +40,7 @@ public class JwtTokenProvider {
         }
         // 仅在非 dev 环境下拒绝已知默认值
         String[] activeProfiles = environment.getActiveProfiles();
-        boolean isDev = java.util.Arrays.stream(activeProfiles).anyMatch("dev"::equals);
+        boolean isDev = Arrays.asList(activeProfiles).contains("dev");
         if (!isDev && KNOWN_DEFAULTS.contains(secret)) {
             throw new IllegalStateException(
                 "JWT secret 不能使用已知默认值，请通过环境变量 JWT_SECRET 设置一个安全的密钥");
@@ -116,7 +113,6 @@ public class JwtTokenProvider {
         }
     }
 
-    @SuppressWarnings("unchecked")
     public List<String> getRolesFromToken(String token) {
         Claims claims = parseVerifiedClaims(token);
         Object rolesObj = claims.get("roles");

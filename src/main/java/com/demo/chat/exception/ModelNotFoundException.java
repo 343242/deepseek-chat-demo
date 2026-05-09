@@ -1,10 +1,14 @@
 package com.demo.chat.exception;
 
+import java.io.Serial;
+
 /**
  * 模型未找到异常
  */
 public class ModelNotFoundException extends RuntimeException {
-    private static final long serialVersionUID = 1L;
+
+    @Serial
+    private static final long serialVersionUID = 34512341L;
 
     private final String modelId;
 

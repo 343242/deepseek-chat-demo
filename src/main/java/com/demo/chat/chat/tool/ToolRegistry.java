@@ -8,6 +8,7 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 /**
@@ -44,9 +45,7 @@ public class ToolRegistry {
             List<ToolCallback> all = new ArrayList<>();
             for (Object bean : beans) {
                 ToolCallback[] fromBean = ToolCallbacks.from(bean);
-                for (ToolCallback cb : fromBean) {
-                    all.add(cb);
-                }
+                all.addAll(Arrays.asList(fromBean));
                 log.debug("Discovered {} tools from {}", fromBean.length,
                         bean.getClass().getSimpleName());
             }

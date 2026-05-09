@@ -1,5 +1,6 @@
 package com.demo.chat.chat.advisor;
 
+import org.jspecify.annotations.NonNull;
 import org.springframework.ai.chat.client.ChatClientRequest;
 import org.springframework.ai.chat.client.ChatClientResponse;
 import org.springframework.ai.chat.client.advisor.api.AdvisorChain;
@@ -33,7 +34,7 @@ public class ConversationContextAdvisor implements BaseAdvisor {
     }
 
     @Override
-    public ChatClientRequest before(ChatClientRequest request, AdvisorChain chain) {
+    public ChatClientRequest before(ChatClientRequest request, @NonNull AdvisorChain chain) {
         // 通过 mutate + builder 将 conversationId 注入 context
         return request.mutate()
                 .context(ChatMemory.CONVERSATION_ID, conversationId)
@@ -41,7 +42,7 @@ public class ConversationContextAdvisor implements BaseAdvisor {
     }
 
     @Override
-    public ChatClientResponse after(ChatClientResponse response, AdvisorChain chain) {
+    public ChatClientResponse after(@NonNull ChatClientResponse response, @NonNull AdvisorChain chain) {
         return response;
     }
 }

@@ -133,11 +133,10 @@ public class ChatServiceImpl implements ChatService {
 
         return requestSpec.stream()
                 .chatResponse()
-                .map(aiResponse -> {
+                .mapNotNull(aiResponse -> {
                     lastAiResponse.set(aiResponse);
-                    String text = aiResponse.getResult() != null
-                            ? aiResponse.getResult().getOutput().getText()
-                            : "";
+                    aiResponse.getResult();
+                    String text = aiResponse.getResult().getOutput().getText();
                     collectedContent.append(text);
                     return text;
                 })
@@ -148,17 +147,13 @@ public class ChatServiceImpl implements ChatService {
                                     signal, isolatedConversationId, collectedContent.length());
                             savePartialResponse(isolatedConversationId, collectedContent.toString());
                         }
-                        case ON_COMPLETE -> {
-                            log.debug("Stream completed for conversation: {}", isolatedConversationId);
-                        }
-                        default -> {
-                            savePartialResponse(isolatedConversationId, collectedContent.toString());
-                        }
+                        case ON_COMPLETE -> log.debug("Stream completed for conversation: {}", isolatedConversationId);
+                        default -> savePartialResponse(isolatedConversationId, collectedContent.toString());
                     }
                     if (usageRecorded.compareAndSet(false, true)) {
                         long duration = System.currentTimeMillis() - startTime;
                         org.springframework.ai.chat.model.ChatResponse last = lastAiResponse.get();
-                        if (last != null && last.getMetadata() != null && last.getMetadata().getUsage() != null) {
+                        if (last != null && last.getMetadata().getUsage() != null) {
                             Usage usage = last.getMetadata().getUsage();
                             usageService.recordUsage(
                                     isolatedConversationId, route.toCompositeId(),
@@ -178,7 +173,7 @@ public class ChatServiceImpl implements ChatService {
             try {
                 var history = chatMemory.get(conversationId);
                 if (!history.isEmpty()) {
-                    var lastMsg = history.get(history.size() - 1);
+                    var lastMsg = history.getLast();
                     if (lastMsg instanceof AssistantMessage am
                             && content.equals(am.getText())) {
                         log.debug("MessageChatMemoryAdvisor already saved identical response, skipping");
@@ -201,7 +196,7 @@ public class ChatServiceImpl implements ChatService {
                 .advisors(buildAdvisors(conversationId));
 
         if (toolRegistry.hasTools()) {
-            spec = spec.tools(toolRegistry.getToolCallbacks());
+            spec = spec.tools((Object) toolRegistry.getToolCallbacks());
         }
 
         String systemPrompt = systemPromptService.getPrompt(route.toCompositeId());

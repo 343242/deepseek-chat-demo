@@ -48,7 +48,7 @@ public class TokenCacheService {
 
     public boolean isAccessTokenValid(Long userId, String tokenId) {
         String key = jwtProperties.redisPrefix() + userId + ":" + tokenId;
-        return Boolean.TRUE.equals(redisTemplate.hasKey(key));
+        return redisTemplate.hasKey(key);
     }
 
     // --- Refresh Token (SHA-256 hashed) ---
@@ -110,7 +110,7 @@ public class TokenCacheService {
                 List.of(key),
                 hash
         );
-        return result != null ? Long.parseLong(result) : null;
+        return Long.parseLong(result);
     }
 
     // --- Revoke All (SCAN-based) ---

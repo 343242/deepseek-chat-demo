@@ -102,8 +102,8 @@ public class SystemPromptServiceImpl implements SystemPromptService {
 
     @Override
     public boolean delete(String modelId) {
-        boolean deleted = transactionTemplate.execute(status ->
-                mapper.deleteByModelId(modelId) > 0);
+        boolean deleted = Boolean.TRUE.equals(transactionTemplate.execute(status ->
+                mapper.deleteByModelId(modelId) > 0));
         if (deleted) {
             promptCache.invalidate(modelId);
         }

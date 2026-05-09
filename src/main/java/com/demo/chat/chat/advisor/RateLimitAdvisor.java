@@ -1,6 +1,7 @@
 package com.demo.chat.chat.advisor;
 
 import com.demo.chat.exception.RateLimitExceededException;
+import org.jspecify.annotations.NonNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClientRequest;
@@ -42,7 +43,7 @@ public class RateLimitAdvisor implements BaseAdvisor {
     }
 
     @Override
-    public ChatClientRequest before(ChatClientRequest request, AdvisorChain chain) {
+    public ChatClientRequest before(@NonNull ChatClientRequest request, @NonNull AdvisorChain chain) {
         String conversationId = extractConversationId(request);
 
         if (!rateLimiter.tryAcquire(conversationId)) {
@@ -56,7 +57,7 @@ public class RateLimitAdvisor implements BaseAdvisor {
     }
 
     @Override
-    public ChatClientResponse after(ChatClientResponse response, AdvisorChain chain) {
+    public ChatClientResponse after(@NonNull ChatClientResponse response, @NonNull AdvisorChain chain) {
         return response;
     }
 

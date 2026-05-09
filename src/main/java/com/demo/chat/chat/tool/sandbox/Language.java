@@ -50,9 +50,11 @@ public enum Language {
             }
         }
         // 常见别名
-        if ("js".equals(normalized) || "esm".equals(normalized)) return JAVASCRIPT;
-        if ("ts".equals(normalized)) return TYPESCRIPT;
-        if ("py".equals(normalized)) return PYTHON;
-        return null;
+        return switch (normalized) {
+            case "js", "esm" -> JAVASCRIPT;
+            case "ts" -> TYPESCRIPT;
+            case "py" -> PYTHON;
+            default -> null;
+        };
     }
 }

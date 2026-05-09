@@ -1,0 +1,8 @@
+# Python 沙箱镜像
+# 用途：在隔离容器中执行模型请求的 Python 代码
+# 安全：非 root、无网络、只读文件系统
+FROM python:3.12-slim-bookworm
+
+RUN useradd -m -s /bin/bash sandbox
+USER sandbox
+WORKDIR /tmp

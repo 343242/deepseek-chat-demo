@@ -34,6 +34,15 @@ docker compose up -d
 # 初始管理员：admin / admin123（生产环境请立即修改）
 ```
 
+> **沙箱代码执行（可选）：** 如需 Tool Calling 代码执行功能，构建沙箱镜像：
+> ```bash
+> cd sandbox
+> docker build -f Dockerfile.python -t sandbox-python:bookworm .
+> docker build -f Dockerfile.node -t sandbox-node:bookworm .       # 需先拉取 node:22-bookworm
+> docker build -f Dockerfile.java -t sandbox-java:bookworm .       # 需先拉取 eclipse-temurin:21-jre-bookworm
+> ```
+```
+
 > PostgreSQL 18 变更了数据目录结构，docker-compose 已适配。如手动启动需注意 volume 挂载路径为 `/var/lib/postgresql`（而非旧版 `/var/lib/postgresql/data`）。
 
 ### 2. 配置环境变量
@@ -115,6 +124,7 @@ src/main/java/com/demo/chat/
 ├── config/                                   # 基础配置
 │   ├── ModelProviderAutoConfiguration.java   #   多厂商自动配置
 │   ├── ToolAutoConfiguration.java            #   Tool Calling 自动配置
+│   ├── SandboxAutoConfiguration.java         #   沙箱自动配置
 │   ├── DeepSeekProperties.java               #   spring.ai.deepseek.*
 │   ├── MiniMaxProperties.java                #   spring.ai.minimax.*
 │   ├── ZhipuProperties.java                  #   spring.ai.zhipuai.*
@@ -189,7 +199,13 @@ src/main/java/com/demo/chat/
 │   ├── tool/                                 #   ★ 工具集（模型可调用的工具）
 │   │   ├── ToolRegistry.java                 #     工具注册中心（自动发现 @Tool Bean）
 │   │   ├── DateTimeTools.java                #     日期时间查询（当前时间、星期、日期差）
-│   │   └── CalculatorTools.java              #     数学计算（表达式求值）
+│   │   ├── CalculatorTools.java              #     数学计算（表达式求值）
+│   │   ├── CodeExecutionTool.java            #     代码执行（Docker 沙箱）
+│   │   └── sandbox/                          #     沙箱引擎
+│   │       ├── SandboxService.java           #       Docker 容器生命周期管理
+│   │       ├── SandboxConfig.java            #       配置属性
+│   │       ├── SandboxResult.java            #       执行结果 DTO
+│   │       └── Language.java                 #       语言枚举
 │   │
 │   ├── util/
 │   │   └── ConversationIdUtil.java           #     对话 ID 用户隔离工具（构建/解析/前缀）
@@ -417,7 +433,37 @@ ToolCallAdvisor → ToolCallingManager
 - **OCP**：新增工具 = 新增类，零改现有代码
 - **ToolCallAdvisor** 显式在 advisor 链中处理，限流/内容过滤可拦截工具调用过程
 - **disableMemory()**：已有 MessageChatMemoryAdvisor 管理对话历史，避免重复
-- 内置工具：`DateTimeTools`（日期时间查询）、`CalculatorTools`（数学计算）
+- 内置工具：`DateTimeTools`（日期时间查询）、`CalculatorTools`（数学计算）、`CodeExecutionTool`（沙箱代码执行）
+
+#### 沙箱代码执行
+
+```
+模型返回 tool_call: { code: "print(sum(range(1, 101)))", language: "python" }
+     │
+     ▼ CodeExecutionTool.executeCode()
+     │
+     ▼ SandboxService
+     │  docker create --rm --network=none --read-only --user nobody
+     │           --memory=128m --cpus=1 --pids-limit=64
+     │           sandbox-python:bookworm timeout 10 python3 /tmp/code.py
+     │
+     ▼ 执行完毕，容器自动删除
+     │
+     ▼ 返回结果 "退出码: 0\n输出:\n5050"
+     │
+     ▼ 模型生成最终回复："1 到 100 的和是 5050"
+```
+
+| 安全层级 | 措施 |
+|---------|------|
+| 网络 | `--network=none` |
+| 文件系统 | `--read-only` + `tmpfs /tmp` |
+| 用户 | `--user nobody` |
+| 内存 | `--memory=128m` |
+| CPU | `--cpus=1` |
+| 进程 | `--pids-limit=64` |
+| 超时 | `timeout 10` + Java Future 双重保障 |
+| 清理 | `--rm` 用完即弃 |
 
 ### 10. 数据访问分层
 

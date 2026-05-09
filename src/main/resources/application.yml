@@ -8,6 +8,17 @@ app:
   chat:
     memory:
       max-messages: ${CHAT_MEMORY_MAX_MESSAGES:20}
+  sandbox:
+    enabled: ${SANDBOX_ENABLED:true}
+    max-concurrency: ${SANDBOX_MAX_CONCURRENCY:3}
+    timeout: ${SANDBOX_TIMEOUT:10s}
+    max-memory-mb: ${SANDBOX_MAX_MEMORY_MB:128}
+    max-cpus: ${SANDBOX_MAX_CPUS:1.0}
+    max-output-bytes: ${SANDBOX_MAX_OUTPUT_BYTES:10240}
+    language-images:
+      PYTHON: sandbox-python:bookworm
+      JAVASCRIPT: sandbox-node:bookworm
+      JAVA: sandbox-java:bookworm
 
 logging:
   level:

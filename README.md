@@ -210,15 +210,23 @@ src/main/java/com/demo/chat/
 │   ├── util/
 │   │   └── ConversationIdUtil.java           #     对话 ID 用户隔离工具（构建/解析/前缀）
 │   │
-│   ├── service/                              #   业务服务
-│   │   ├── ChatService.java                  #     聊天服务（阻塞 + 流式 + 记忆 + doFinally）
-│   │   ├── ModelService.java                 #     模型管理（按厂商分组）
-│   │   ├── ModelRegistryRefresher.java       #     模型注册刷新器
-│   │   ├── ConversationService.java          #     对话管理（用户隔离）
-│   │   ├── SystemPromptService.java          #     System Prompt 管理（Caffeine 缓存）
-│   │   ├── PromptLoaderService.java          #     XML 模板加载器
-│   │   ├── ModelParamsService.java           #     模型参数管理（Caffeine 缓存）
-│   │   └── UsageService.java                 #     用量统计
+│   ├── service/                              #   业务服务（接口层）
+│   │   ├── ChatService.java                  #     聊天服务接口（阻塞 + 流式 + 记忆 + doFinally）
+│   │   ├── ModelService.java                 #     模型管理接口（按厂商分组）
+│   │   ├── ConversationService.java          #     对话管理接口（用户隔离）
+│   │   ├── SystemPromptService.java          #     System Prompt 管理接口（Caffeine 缓存）
+│   │   ├── PromptLoaderService.java          #     XML 模板加载器接口
+│   │   ├── ModelParamsService.java           #     模型参数管理接口（Caffeine 缓存）
+│   │   ├── UsageService.java                 #     用量统计接口
+│   │   ├── ModelRegistryRefresher.java       #     模型注册刷新器（@Component，无接口）
+│   │   └── impl/                             #     实现层（业务编排，不含 SQL）
+│   │       ├── ChatServiceImpl.java
+│   │       ├── ModelServiceImpl.java
+│   │       ├── ConversationServiceImpl.java
+│   │       ├── SystemPromptServiceImpl.java
+│   │       ├── PromptLoaderServiceImpl.java
+│   │       ├── ModelParamsServiceImpl.java
+│   │       └── UsageServiceImpl.java
 │   │
 │   ├── controller/                           #   REST 接口
 │   │   ├── ChatController.java               #     /api/chat, /api/models
@@ -232,7 +240,7 @@ src/main/java/com/demo/chat/
 │   │   ├── ModelParams.java
 │   │   └── TokenUsage.java
 │   │
-│   ├── mapper/                               #   MyBatis-Plus Mapper（语义化查询）
+│   ├── mapper/                               #   MyBatis-Plus Mapper（语义化接口 + XML）
 │   │   ├── SystemPromptMapper.java           #     selectByModelId / selectAllOrdered / deleteByModelId
 │   │   ├── ModelParamsMapper.java            #     selectByModelId / selectAllOrdered / deleteByModelId
 │   │   ├── TokenUsageMapper.java             #     selectByConversationId / aggregateByModel / ...
@@ -268,13 +276,16 @@ resources/
 │   ├── default.xml
 │   ├── deepseek-chat.xml
 │   └── deepseek-reasoner.xml
-└── mapper/                                   # MyBatis XML Mapper
+└── mapper/                                   # MyBatis XML Mapper（SQL 全部由 XML 维护）
     ├── SysUserMapper.xml
     ├── SysRoleMapper.xml
     ├── SysPermissionMapper.xml
     ├── SysUserRoleMapper.xml
     ├── SysRolePermissionMapper.xml
-    └── TokenUsageMapper.xml
+    ├── TokenUsageMapper.xml
+    ├── ConversationMapper.xml
+    ├── ModelParamsMapper.xml
+    └── SystemPromptMapper.xml
 ```
 
 ## 架构设计
@@ -469,15 +480,19 @@ ToolCallAdvisor → ToolCallingManager
 
 ```
 Controller (@Valid 校验)
+    ↓ 注入 Service 接口
+Service 接口
     ↓
-Service (业务编排，不含 SQL)
+ServiceImpl (业务编排，不含 SQL)
     ↓
-Mapper (语义化方法 + XML，所有查询逻辑在此)
+Mapper (语义化接口 + XML，所有查询逻辑在此)
     ↓
 Database
 ```
 
+- **Service 层接口/实现分离**：chat 模块与 user 模块一致，Controller 注入接口，实现类独立维护
 - **Service 层不含 `LambdaQueryWrapper`**：所有查询通过 Mapper 语义化方法（`selectByModelId`、`selectAllOrdered`）或 XML SQL 实现
+- **Mapper SQL 全部由 XML 维护**：不使用 `@Select`/`@Delete` 注解，SQL 集中在 `resources/mapper/*.xml`
 - **编程式事务** `TransactionTemplate`，不使用 `@Transactional`
 - DTO 全部使用 Java record，Entity 不暴露给前端
 - **sql/schema.sql** 全量建表脚本（IF NOT EXISTS 幂等），由 docker-compose 自动执行
@@ -561,9 +576,9 @@ model:
 | 原则 | 实践 |
 |------|------|
 | **单一职责 (SRP)** | Controller 只做 HTTP 转发、Service 只做业务编排、Mapper 只做数据访问 |
-| **依赖倒置 (DIP)** | 依赖接口（`AuthService`、`RateLimiter`、`ContentFilterService`），不依赖实现类 |
+| **依赖倒置 (DIP)** | 依赖接口（`AuthService`、`ChatService`、`RateLimiter`、`ContentFilterService`），不依赖实现类 |
 | **开闭原则 (OCP)** | 新增厂商 = 新增 Provider 类；新增限流算法 = 实现 `RateLimiter` 接口；零改旧代码 |
-| **接口隔离 (ISP)** | 每个 Service 提供独立接口，Controller 按需注入 |
+| **接口隔离 (ISP)** | 每个 Service 提供独立接口（chat 模块与 user 模块一致），Controller 按需注入 |
 | **策略模式** | `ModelProvider` 封装厂商差异，`ProviderRegistry` 自动发现 |
 | **DTO 隔离** | Entity 不暴露给前端，全部通过 record DTO 转换 |
 | **数据访问下沉** | `LambdaQueryWrapper` 全部在 Mapper 层，Service 层不含 SQL 构建逻辑 |

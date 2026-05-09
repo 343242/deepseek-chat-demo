@@ -323,7 +323,7 @@ public class AuthServiceImpl implements AuthService {
         if (roleIds == null || roleIds.isEmpty()) {
             return List.of();
         }
-        List<SysRole> roles = sysRoleMapper.selectBatchIds(roleIds);
+        List<SysRole> roles = sysRoleMapper.selectByIds(roleIds);
         return roles.stream()
                 .filter(Objects::nonNull)
                 .map(SysRole::getRoleName)

@@ -75,7 +75,7 @@ class AuthServiceTest {
         when(passwordEncoder.matches(eq("Password1!"), anyString())).thenReturn(true);
         when(sysUserRoleMapper.selectRoleIdsByUserId(1L)).thenReturn(List.of(1L));
         SysRole role = new SysRole(); role.setId(1L); role.setRoleName("USER");
-        when(sysRoleMapper.selectBatchIds(List.of(1L))).thenReturn(List.of(role));
+        when(sysRoleMapper.selectByIds(List.of(1L))).thenReturn(List.of(role));
         when(jwtTokenProvider.generateAccessToken(eq(1L), anyList())).thenReturn("access-token");
         when(jwtTokenProvider.generateRefreshToken(1L)).thenReturn("refresh-token");
         when(jwtTokenProvider.getJtiFromToken("access-token")).thenReturn("jti-123");
@@ -311,7 +311,7 @@ class AuthServiceTest {
             when(sysUserMapper.updateById(any(SysUser.class))).thenReturn(1);
             when(sysUserRoleMapper.selectRoleIdsByUserId(1L)).thenReturn(List.of(1L));
             SysRole role = new SysRole(); role.setId(1L); role.setRoleName("USER");
-            when(sysRoleMapper.selectBatchIds(List.of(1L))).thenReturn(List.of(role));
+            when(sysRoleMapper.selectByIds(List.of(1L))).thenReturn(List.of(role));
             when(tokenCacheService.getUserPermissions(1L)).thenReturn(null);
 
             assertDoesNotThrow(() -> authService.updateProfile(1L, new UserUpdateRequest("NewNick", null, null, null)));

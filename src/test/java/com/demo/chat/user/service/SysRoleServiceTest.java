@@ -109,7 +109,7 @@ class SysRoleServiceTest {
 
             SysPermission perm = new SysPermission();
             perm.setId(10L);
-            when(permissionMapper.selectBatchIds(List.of(10L))).thenReturn(List.of(perm));
+            when(permissionMapper.selectByIds(List.of(10L))).thenReturn(List.of(perm));
 
             doAnswer(invocation -> {
                 java.util.function.Consumer<org.springframework.transaction.TransactionStatus> consumer = invocation.getArgument(0);
@@ -133,7 +133,7 @@ class SysRoleServiceTest {
 
             SysPermission perm = new SysPermission();
             perm.setId(10L);
-            when(permissionMapper.selectBatchIds(List.of(10L))).thenReturn(List.of(perm));
+            when(permissionMapper.selectByIds(List.of(10L))).thenReturn(List.of(perm));
 
             doAnswer(invocation -> {
                 java.util.function.Consumer<org.springframework.transaction.TransactionStatus> consumer = invocation.getArgument(0);
@@ -153,7 +153,7 @@ class SysRoleServiceTest {
             SysRole role = new SysRole();
             role.setId(1L);
             when(roleMapper.selectById(1L)).thenReturn(role);
-            when(permissionMapper.selectBatchIds(List.of(999L))).thenReturn(List.of());
+            when(permissionMapper.selectByIds(List.of(999L))).thenReturn(List.of());
 
             assertThrows(BusinessException.class,
                     () -> sysRoleService.assignPermissions(1L, List.of(999L)));

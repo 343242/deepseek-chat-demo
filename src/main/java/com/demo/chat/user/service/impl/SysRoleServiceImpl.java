@@ -105,7 +105,7 @@ public class SysRoleServiceImpl implements SysRoleService {
 
         List<Long> uniquePermIds = permissionIds.stream().distinct().toList();
 
-        List<SysPermission> existingPerms = permissionMapper.selectBatchIds(uniquePermIds);
+        List<SysPermission> existingPerms = permissionMapper.selectByIds(uniquePermIds);
         if (existingPerms.size() != uniquePermIds.size()) {
             Set<Long> found = existingPerms.stream().map(SysPermission::getId).collect(Collectors.toSet());
             List<Long> missing = uniquePermIds.stream().filter(pid -> !found.contains(pid)).toList();

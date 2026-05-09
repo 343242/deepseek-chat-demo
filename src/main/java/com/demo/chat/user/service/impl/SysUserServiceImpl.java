@@ -114,7 +114,7 @@ public class SysUserServiceImpl implements SysUserService {
 
         List<Long> uniqueRoleIds = request.roleIds().stream().distinct().toList();
 
-        List<SysRole> existingRoles = roleMapper.selectBatchIds(uniqueRoleIds);
+        List<SysRole> existingRoles = roleMapper.selectByIds(uniqueRoleIds);
         if (existingRoles.size() != uniqueRoleIds.size()) {
             Set<Long> found = existingRoles.stream().map(SysRole::getId).collect(Collectors.toSet());
             List<Long> missing = uniqueRoleIds.stream().filter(rid -> !found.contains(rid)).toList();

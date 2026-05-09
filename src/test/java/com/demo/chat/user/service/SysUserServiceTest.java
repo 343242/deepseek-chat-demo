@@ -112,7 +112,7 @@ class SysUserServiceTest {
             SysRole role = new SysRole();
             role.setId(10L);
             role.setRoleName("ADMIN");
-            when(roleMapper.selectBatchIds(List.of(10L))).thenReturn(List.of(role));
+            when(roleMapper.selectByIds(List.of(10L))).thenReturn(List.of(role));
 
             doAnswer(invocation -> {
                 java.util.function.Consumer<org.springframework.transaction.TransactionStatus> consumer = invocation.getArgument(0);
@@ -136,7 +136,7 @@ class SysUserServiceTest {
 
             SysRole role = new SysRole();
             role.setId(10L);
-            when(roleMapper.selectBatchIds(List.of(10L))).thenReturn(List.of(role));
+            when(roleMapper.selectByIds(List.of(10L))).thenReturn(List.of(role));
 
             doAnswer(invocation -> {
                 java.util.function.Consumer<org.springframework.transaction.TransactionStatus> consumer = invocation.getArgument(0);
@@ -168,7 +168,7 @@ class SysUserServiceTest {
         void assignRoles_nonExistentRole() {
             SysUser user = buildUser();
             when(userMapper.selectById(1L)).thenReturn(user);
-            when(roleMapper.selectBatchIds(List.of(999L))).thenReturn(List.of());
+            when(roleMapper.selectByIds(List.of(999L))).thenReturn(List.of());
 
             assertThrows(BusinessException.class,
                     () -> sysUserService.assignRoles(1L, new AssignRolesRequest(List.of(999L))));

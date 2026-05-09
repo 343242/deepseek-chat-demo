@@ -255,7 +255,6 @@ public class ChatService {
         allAdvisors.add(new ConversationContextAdvisor(conversationId));
         allAdvisors.addAll(advisors);
         allAdvisors.add(MessageChatMemoryAdvisor.builder(chatMemory)
-                .conversationId(conversationId)
                 .build());
         return allAdvisors;
     }

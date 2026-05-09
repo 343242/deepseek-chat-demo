@@ -8,10 +8,10 @@
 |------|------|------|
 | Java | 21 | 运行时 |
 | Spring Boot | 3.5.14 | 应用框架 |
-| Spring AI | 1.1.5 | AI 模型集成 |
-| spring-ai-starter-model-deepseek | 1.1.5 | DeepSeek 模型接入 |
-| spring-ai-starter-model-zhipuai | 1.1.5 | 智谱 AI 模型接入 |
-| spring-ai-starter-model-minimax | 1.1.5 | MiniMax 模型接入 |
+| Spring AI | 1.1.6 | AI 模型集成 |
+| spring-ai-starter-model-deepseek | 1.1.6 | DeepSeek 模型接入 |
+| spring-ai-starter-model-zhipuai | 1.1.6 | 智谱 AI 模型接入 |
+| spring-ai-starter-model-minimax | 1.1.6 | MiniMax 模型接入 |
 | MyBatis-Plus | 3.5.16 | ORM 框架 |
 | Spring Security | 随 Boot | 认证与授权 |
 | JJWT | 0.13.0 | JWT 双 Token（Access 15min + Refresh 24h） |

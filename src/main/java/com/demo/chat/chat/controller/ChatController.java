@@ -1,16 +1,16 @@
 package com.demo.chat.chat.controller;
 
-import com.demo.chat.exception.BusinessException;
-
 import com.demo.chat.chat.dto.ChatRequest;
 import com.demo.chat.chat.dto.ChatResponse;
 import com.demo.chat.chat.dto.ProviderModelInfo;
 import com.demo.chat.chat.service.ChatService;
 import com.demo.chat.chat.service.ModelService;
 import jakarta.validation.Valid;
+import jakarta.validation.constraints.NotBlank;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Flux;
 
@@ -29,6 +29,7 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api")
 @PreAuthorize("hasAuthority('chat:send')")
+@Validated
 public class ChatController {
 
     private final ModelService modelService;
@@ -49,10 +50,12 @@ public class ChatController {
 
     /**
      * 阻塞式聊天
+     * <p>
+     * ChatRequest 已通过 @NotBlank 注解定义校验规则，@Valid 触发校验，
+     * GlobalExceptionHandler 统一处理 MethodArgumentNotValidException。
      */
     @PostMapping("/chat")
     public ChatResponse chat(@Valid @RequestBody ChatRequest request) {
-        validateChatRequest(request);
         return chatService.chat(request);
     }
 
@@ -61,10 +64,9 @@ public class ChatController {
      */
     @GetMapping(value = "/chat/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<String> chatStreamGet(
-            @RequestParam String model,
-            @RequestParam String message,
+            @RequestParam @NotBlank(message = "model 不能为空") String model,
+            @RequestParam @NotBlank(message = "message 不能为空") String message,
             @RequestParam(defaultValue = "default") String conversationId) {
-        validateParams(model, message);
         ChatRequest request = new ChatRequest(model, message, conversationId);
         return chatService.chatStream(request);
     }
@@ -74,7 +76,6 @@ public class ChatController {
      */
     @PostMapping(value = "/chat/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<String> chatStreamPost(@Valid @RequestBody ChatRequest request) {
-        validateChatRequest(request);
         return chatService.chatStream(request);
     }
 
@@ -89,21 +90,5 @@ public class ChatController {
         }
         return ResponseEntity.internalServerError().body(Map.of(
                 "message", "Failed to refresh models, existing models remain available"));
-    }
-
-    private void validateChatRequest(ChatRequest request) {
-        validateRequired(request.model(), "model");
-        validateRequired(request.message(), "message");
-    }
-
-    private void validateParams(String model, String message) {
-        validateRequired(model, "model");
-        validateRequired(message, "message");
-    }
-
-    private void validateRequired(String value, String fieldName) {
-        if (value == null || value.isBlank()) {
-            throw new BusinessException(fieldName + " 不能为空");
-        }
     }
 }

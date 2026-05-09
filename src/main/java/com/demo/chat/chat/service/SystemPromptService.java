@@ -1,6 +1,5 @@
 package com.demo.chat.chat.service;
 
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.demo.chat.chat.mapper.SystemPromptMapper;
 import com.demo.chat.chat.dto.SystemPromptDTO;
 import com.demo.chat.chat.entity.SystemPrompt;
@@ -68,8 +67,7 @@ public class SystemPromptService {
             }
 
             // 4. PostgreSQL 数据库
-            SystemPrompt sp = mapper.selectOne(
-                    new LambdaQueryWrapper<SystemPrompt>().eq(SystemPrompt::getModelId, key));
+            SystemPrompt sp = mapper.selectByModelId(key);
             if (sp != null && sp.getPromptText() != null && !sp.getPromptText().isBlank()) {
                 log.debug("Using DB prompt for model: {}", key);
                 return sp.getPromptText();
@@ -80,21 +78,18 @@ public class SystemPromptService {
     }
 
     public Optional<SystemPromptDTO> getPromptDTO(String modelId) {
-        SystemPrompt sp = mapper.selectOne(
-                new LambdaQueryWrapper<SystemPrompt>().eq(SystemPrompt::getModelId, modelId));
-        return Optional.ofNullable(sp).map(this::toDTO);
+        return Optional.ofNullable(mapper.selectByModelId(modelId)).map(this::toDTO);
     }
 
     public List<SystemPromptDTO> listAll() {
-        return mapper.selectList(null).stream()
+        return mapper.selectAllOrdered().stream()
                 .map(this::toDTO)
                 .collect(Collectors.toList());
     }
 
     public SystemPromptDTO saveOrUpdate(String modelId, String promptText) {
         SystemPromptDTO dto = transactionTemplate.execute(status -> {
-            SystemPrompt entity = mapper.selectOne(
-                    new LambdaQueryWrapper<SystemPrompt>().eq(SystemPrompt::getModelId, modelId));
+            SystemPrompt entity = mapper.selectByModelId(modelId);
             if (entity != null) {
                 entity.updatePrompt(promptText);
                 mapper.updateById(entity);
@@ -109,20 +104,12 @@ public class SystemPromptService {
     }
 
     public boolean delete(String modelId) {
-        Boolean deleted = transactionTemplate.execute(status -> {
-            SystemPrompt entity = mapper.selectOne(
-                    new LambdaQueryWrapper<SystemPrompt>().eq(SystemPrompt::getModelId, modelId));
-            if (entity != null) {
-                mapper.deleteById(entity.getId());
-                return true;
-            }
-            return false;
-        });
-        if (Boolean.TRUE.equals(deleted)) {
+        boolean deleted = transactionTemplate.execute(status ->
+                mapper.deleteByModelId(modelId) > 0);
+        if (deleted) {
             promptCache.invalidate(modelId);
-            return true;
         }
-        return false;
+        return deleted;
     }
 
     private SystemPromptDTO toDTO(SystemPrompt entity) {

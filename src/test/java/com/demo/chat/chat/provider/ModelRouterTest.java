@@ -6,6 +6,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.junit.jupiter.MockitoExtension;
 
+import com.demo.chat.exception.BusinessException;
+
 import static org.junit.jupiter.api.Assertions.*;
 
 @DisplayName("ModelRouter 单元测试")
@@ -82,21 +84,21 @@ class ModelRouterTest {
     class EdgeCaseTests {
 
         @Test
-        @DisplayName("null → IllegalArgumentException")
+        @DisplayName("null → BusinessException")
         void resolve_null_throwsException() {
-            assertThrows(IllegalArgumentException.class, () -> router.resolve(null));
+            assertThrows(BusinessException.class, () -> router.resolve(null));
         }
 
         @Test
-        @DisplayName("空字符串 → IllegalArgumentException")
+        @DisplayName("空字符串 → BusinessException")
         void resolve_blank_throwsException() {
-            assertThrows(IllegalArgumentException.class, () -> router.resolve(""));
+            assertThrows(BusinessException.class, () -> router.resolve(""));
         }
 
         @Test
-        @DisplayName("纯空格 → IllegalArgumentException")
+        @DisplayName("纯空格 → BusinessException")
         void resolve_whitespace_throwsException() {
-            assertThrows(IllegalArgumentException.class, () -> router.resolve("   "));
+            assertThrows(BusinessException.class, () -> router.resolve("   "));
         }
 
         @Test

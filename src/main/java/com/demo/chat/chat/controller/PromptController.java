@@ -1,10 +1,9 @@
 package com.demo.chat.chat.controller;
 
-import com.demo.chat.exception.BusinessException;
-
 import com.demo.chat.chat.dto.SystemPromptDTO;
 import com.demo.chat.chat.dto.SystemPromptUpdateRequest;
 import com.demo.chat.chat.service.SystemPromptService;
+import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
@@ -45,10 +44,7 @@ public class PromptController {
 
     @PutMapping("/{modelId}")
     public SystemPromptDTO saveOrUpdate(@PathVariable String modelId,
-                                        @RequestBody SystemPromptUpdateRequest request) {
-        if (request.promptText() == null || request.promptText().isBlank()) {
-            throw new BusinessException("promptText 不能为空");
-        }
+                                        @Valid @RequestBody SystemPromptUpdateRequest request) {
         return promptService.saveOrUpdate(modelId, request.promptText());
     }
 

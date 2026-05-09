@@ -1,6 +1,5 @@
 package com.demo.chat.chat.service;
 
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.demo.chat.chat.mapper.ModelParamsMapper;
 import com.demo.chat.chat.dto.ModelParamsDTO;
 import com.demo.chat.chat.entity.ModelParams;
@@ -43,25 +42,21 @@ public class ModelParamsService {
      * @return ModelParams 实体，未配置时返回 null
      */
     public ModelParams getParams(String modelId) {
-        return paramsCache.get(modelId, key ->
-                mapper.selectOne(new LambdaQueryWrapper<ModelParams>().eq(ModelParams::getModelId, key))
-        );
+        return paramsCache.get(modelId, mapper::selectByModelId);
     }
 
     /**
      * 获取指定模型的参数 DTO
      */
     public Optional<ModelParamsDTO> getParamsDTO(String modelId) {
-        ModelParams entity = mapper.selectOne(
-                new LambdaQueryWrapper<ModelParams>().eq(ModelParams::getModelId, modelId));
-        return Optional.ofNullable(entity).map(this::toDTO);
+        return Optional.ofNullable(mapper.selectByModelId(modelId)).map(this::toDTO);
     }
 
     /**
      * 获取所有模型参数配置
      */
     public List<ModelParamsDTO> listAll() {
-        return mapper.selectList(null).stream()
+        return mapper.selectAllOrdered().stream()
                 .map(this::toDTO)
                 .collect(Collectors.toList());
     }
@@ -71,8 +66,7 @@ public class ModelParamsService {
      */
     public ModelParamsDTO saveOrUpdate(String modelId, ModelParamsDTO dto) {
         ModelParamsDTO result = transactionTemplate.execute(status -> {
-            ModelParams entity = mapper.selectOne(
-                    new LambdaQueryWrapper<ModelParams>().eq(ModelParams::getModelId, modelId));
+            ModelParams entity = mapper.selectByModelId(modelId);
             if (entity != null) {
                 entity.applyUpdates(dto.temperature(), dto.maxTokens(), dto.topP(),
                         dto.frequencyPenalty(), dto.presencePenalty());
@@ -93,20 +87,12 @@ public class ModelParamsService {
      * 删除指定模型的参数配置（编程式事务 + 缓存失效）
      */
     public boolean delete(String modelId) {
-        Boolean deleted = transactionTemplate.execute(status -> {
-            ModelParams entity = mapper.selectOne(
-                    new LambdaQueryWrapper<ModelParams>().eq(ModelParams::getModelId, modelId));
-            if (entity != null) {
-                mapper.deleteById(entity.getId());
-                return true;
-            }
-            return false;
-        });
-        if (Boolean.TRUE.equals(deleted)) {
+        boolean deleted = transactionTemplate.execute(status ->
+                mapper.deleteByModelId(modelId) > 0);
+        if (deleted) {
             paramsCache.invalidate(modelId);
-            return true;
         }
-        return false;
+        return deleted;
     }
 
     private ModelParamsDTO toDTO(ModelParams entity) {

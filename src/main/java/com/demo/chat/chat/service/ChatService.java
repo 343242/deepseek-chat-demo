@@ -8,6 +8,7 @@ import com.demo.chat.chat.entity.ModelParams;
 import com.demo.chat.chat.provider.ModelProvider;
 import com.demo.chat.chat.provider.ModelRouter;
 import com.demo.chat.chat.provider.ProviderRegistry;
+import com.demo.chat.chat.util.ConversationIdUtil;
 import com.demo.chat.security.util.SecurityUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -83,7 +84,7 @@ public class ChatService {
      */
     public ChatResponse chat(ChatRequest request) {
         Long userId = SecurityUtils.getCurrentUserId();
-        String isolatedConversationId = buildIsolatedConversationId(userId, request.conversationId());
+        String isolatedConversationId = ConversationIdUtil.buildIsolatedId(userId, request.conversationId());
 
         // ★ 入口处统一解析 route，后续全部使用此 route
         ModelRouter.Route route = modelRouter.resolve(request.model());
@@ -115,7 +116,7 @@ public class ChatService {
      */
     public Flux<String> chatStream(ChatRequest request) {
         Long userId = SecurityUtils.getCurrentUserId();
-        String isolatedConversationId = buildIsolatedConversationId(userId, request.conversationId());
+        String isolatedConversationId = ConversationIdUtil.buildIsolatedId(userId, request.conversationId());
 
         // ★ 入口处统一解析 route
         ModelRouter.Route route = modelRouter.resolve(request.model());
@@ -205,16 +206,6 @@ public class ChatService {
                 log.warn("Failed to save partial stream response: {}", e.getMessage());
             }
         }
-    }
-
-    /**
-     * 构建用户隔离的 conversationId
-     * <p>
-     * 格式: u_{userId}_{rawConversationId}
-     * 确保不同用户的同名对话互不干扰
-     */
-    private String buildIsolatedConversationId(Long userId, String rawConversationId) {
-        return "u_" + userId + "_" + rawConversationId;
     }
 
     /**

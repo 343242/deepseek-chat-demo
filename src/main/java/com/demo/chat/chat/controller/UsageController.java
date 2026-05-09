@@ -1,10 +1,11 @@
 package com.demo.chat.chat.controller;
 
-import com.demo.chat.exception.BusinessException;
 import com.demo.chat.chat.dto.TokenUsageDTO;
 import com.demo.chat.chat.dto.UsageStats;
-import com.demo.chat.security.util.SecurityUtils;
 import com.demo.chat.chat.service.UsageService;
+import com.demo.chat.chat.util.ConversationIdUtil;
+import com.demo.chat.exception.BusinessException;
+import com.demo.chat.security.util.SecurityUtils;
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
@@ -41,11 +42,11 @@ public class UsageController {
         Long userId = SecurityUtils.getCurrentUserId();
 
         if (conversation != null && !conversation.isBlank()) {
-            String isolatedId = "u_" + userId + "_" + conversation;
+            String isolatedId = ConversationIdUtil.buildIsolatedId(userId, conversation);
             return usageService.getByConversation(isolatedId);
         }
         if (model != null && !model.isBlank()) {
-            String prefix = "u_" + userId + "_";
+            String prefix = ConversationIdUtil.buildLikePrefix(userId).replace("%", "_");
             return usageService.getByModelAndUser(model, prefix);
         }
         throw new BusinessException("请指定 model 或 conversation 参数");
@@ -57,7 +58,7 @@ public class UsageController {
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime startTime,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime endTime) {
         Long userId = SecurityUtils.getCurrentUserId();
-        String prefix = "u_" + userId + "_";
+        String prefix = ConversationIdUtil.buildLikePrefix(userId).replace("%", "_");
         return usageService.aggregateByModelForUser(model, prefix, startTime, endTime);
     }
 
@@ -68,10 +69,10 @@ public class UsageController {
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime endTime) {
         Long userId = SecurityUtils.getCurrentUserId();
         if (conversation != null && !conversation.isBlank()) {
-            String isolatedId = "u_" + userId + "_" + conversation;
+            String isolatedId = ConversationIdUtil.buildIsolatedId(userId, conversation);
             return usageService.aggregateByConversation(isolatedId, startTime, endTime);
         }
-        String prefix = "u_" + userId + "_";
+        String prefix = ConversationIdUtil.buildLikePrefix(userId).replace("%", "_");
         return usageService.aggregateByUserConversations(prefix, startTime, endTime);
     }
 }

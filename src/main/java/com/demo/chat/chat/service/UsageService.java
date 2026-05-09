@@ -1,6 +1,5 @@
 package com.demo.chat.chat.service;
 
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.demo.chat.chat.mapper.TokenUsageMapper;
 import com.demo.chat.chat.dto.TokenUsageDTO;
 import com.demo.chat.chat.dto.UsageStats;
@@ -40,23 +39,18 @@ public class UsageService {
     }
 
     public List<TokenUsageDTO> getByConversation(String conversationId) {
-        return mapper.selectList(
-                new LambdaQueryWrapper<TokenUsage>()
-                        .eq(TokenUsage::getConversationId, conversationId)
-                        .orderByDesc(TokenUsage::getCreatedAt))
-                .stream().map(this::toDTO).collect(Collectors.toList());
+        return mapper.selectByConversationId(conversationId).stream()
+                .map(this::toDTO)
+                .collect(Collectors.toList());
     }
 
     /**
      * 查询指定模型 + 用户前缀的用量记录（用户隔离）
      */
     public List<TokenUsageDTO> getByModelAndUser(String modelId, String userPrefix) {
-        return mapper.selectList(
-                new LambdaQueryWrapper<TokenUsage>()
-                        .eq(TokenUsage::getModelId, modelId)
-                        .likeRight(TokenUsage::getConversationId, userPrefix)
-                        .orderByDesc(TokenUsage::getCreatedAt))
-                .stream().map(this::toDTO).collect(Collectors.toList());
+        return mapper.selectByModelAndUserPrefix(modelId, userPrefix).stream()
+                .map(this::toDTO)
+                .collect(Collectors.toList());
     }
 
     public List<UsageStats> aggregateByModel(String modelId,

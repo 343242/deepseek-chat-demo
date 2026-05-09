@@ -2,10 +2,10 @@ package com.demo.chat.chat.service;
 
 import com.demo.chat.chat.dto.ConversationMessage;
 import com.demo.chat.chat.dto.ConversationSummary;
+import com.demo.chat.chat.mapper.ConversationMapper;
+import com.demo.chat.chat.util.ConversationIdUtil;
 import com.demo.chat.security.util.SecurityUtils;
 import org.springframework.ai.chat.memory.ChatMemoryRepository;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -21,14 +21,12 @@ import java.util.List;
 public class ConversationService {
 
     private final ChatMemoryRepository chatMemoryRepository;
-    private final JdbcTemplate jdbcTemplate;
+    private final ConversationMapper conversationMapper;
 
-    @Value("${app.chat-memory.table-name:spring_ai_chat_memory}")
-    private String chatMemoryTableName;
-
-    public ConversationService(ChatMemoryRepository chatMemoryRepository, JdbcTemplate jdbcTemplate) {
+    public ConversationService(ChatMemoryRepository chatMemoryRepository,
+                               ConversationMapper conversationMapper) {
         this.chatMemoryRepository = chatMemoryRepository;
-        this.jdbcTemplate = jdbcTemplate;
+        this.conversationMapper = conversationMapper;
     }
 
     /**
@@ -36,27 +34,9 @@ public class ConversationService {
      */
     public List<ConversationSummary> listConversations(int page, int size) {
         Long userId = SecurityUtils.getCurrentUserId();
-        String prefix = "u_" + userId + "_%";
+        String prefix = ConversationIdUtil.buildLikePrefix(userId);
         int offset = (page - 1) * size;
-
-        return jdbcTemplate.query(
-                "SELECT conversation_id, COUNT(*) AS msg_count, " +
-                "MIN(created_at) AS first_msg, MAX(created_at) AS last_msg " +
-                "FROM " + chatMemoryTableName + " " +
-                "WHERE conversation_id LIKE ? " +
-                "GROUP BY conversation_id " +
-                "ORDER BY last_msg DESC LIMIT ? OFFSET ?",
-                (rs, rowNum) -> {
-                    String rawConversationId = stripUserPrefix(rs.getString("conversation_id"));
-                    return new ConversationSummary(
-                            rawConversationId,
-                            rs.getLong("msg_count"),
-                            rs.getTimestamp("first_msg").toLocalDateTime(),
-                            rs.getTimestamp("last_msg").toLocalDateTime()
-                    );
-                },
-                prefix, size, offset
-        );
+        return conversationMapper.selectConversationsByPrefix(prefix, size, offset);
     }
 
     /**
@@ -71,18 +51,8 @@ public class ConversationService {
      */
     public List<ConversationMessage> getConversationMessages(String rawConversationId) {
         Long userId = SecurityUtils.getCurrentUserId();
-        String isolatedId = buildIsolatedConversationId(userId, rawConversationId);
-
-        return jdbcTemplate.query(
-                "SELECT role, content, created_at FROM " + chatMemoryTableName + " " +
-                "WHERE conversation_id = ? ORDER BY created_at ASC",
-                (rs, rowNum) -> new ConversationMessage(
-                        rs.getString("role"),
-                        rs.getString("content"),
-                        rs.getTimestamp("created_at").toLocalDateTime()
-                ),
-                isolatedId
-        );
+        String isolatedId = ConversationIdUtil.buildIsolatedId(userId, rawConversationId);
+        return conversationMapper.selectMessagesByConversationId(isolatedId);
     }
 
     /**
@@ -90,28 +60,7 @@ public class ConversationService {
      */
     public void clearConversation(String rawConversationId) {
         Long userId = SecurityUtils.getCurrentUserId();
-        String isolatedId = buildIsolatedConversationId(userId, rawConversationId);
+        String isolatedId = ConversationIdUtil.buildIsolatedId(userId, rawConversationId);
         chatMemoryRepository.deleteByConversationId(isolatedId);
-    }
-
-    /**
-     * 构建用户隔离的 conversationId
-     */
-    private String buildIsolatedConversationId(Long userId, String rawConversationId) {
-        return "u_" + userId + "_" + rawConversationId;
-    }
-
-    /**
-     * 从存储的 conversationId 中剥离用户前缀
-     * "u_123_default" → "default"
-     */
-    private String stripUserPrefix(String isolatedConversationId) {
-        if (isolatedConversationId == null) return null;
-        // 匹配 u_{userId}_{rest} 格式
-        int firstUnderscore = isolatedConversationId.indexOf('_');
-        if (firstUnderscore < 0) return isolatedConversationId;
-        int secondUnderscore = isolatedConversationId.indexOf('_', firstUnderscore + 1);
-        if (secondUnderscore < 0) return isolatedConversationId;
-        return isolatedConversationId.substring(secondUnderscore + 1);
     }
 }

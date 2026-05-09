@@ -8,8 +8,10 @@ import com.demo.chat.chat.entity.ModelParams;
 import com.demo.chat.chat.provider.ModelProvider;
 import com.demo.chat.chat.provider.ModelRouter;
 import com.demo.chat.chat.provider.ProviderRegistry;
+import com.demo.chat.chat.tool.ToolRegistry;
 import com.demo.chat.chat.util.ConversationIdUtil;
 import com.demo.chat.security.util.SecurityUtils;
+import org.springframework.ai.chat.client.advisor.ToolCallAdvisor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
@@ -54,6 +56,8 @@ public class ChatService {
     private final ModelRouter modelRouter;
     private final ChatMemory chatMemory;
     private final List<Advisor> advisors;
+    private final ToolCallAdvisor toolCallAdvisor;
+    private final ToolRegistry toolRegistry;
     private final SystemPromptService systemPromptService;
     private final ModelParamsService modelParamsService;
     private final UsageService usageService;
@@ -63,6 +67,8 @@ public class ChatService {
                        ModelRouter modelRouter,
                        ChatMemory chatMemory,
                        List<Advisor> advisors,
+                       ToolCallAdvisor toolCallAdvisor,
+                       ToolRegistry toolRegistry,
                        SystemPromptService systemPromptService,
                        ModelParamsService modelParamsService,
                        UsageService usageService) {
@@ -71,6 +77,8 @@ public class ChatService {
         this.modelRouter = modelRouter;
         this.chatMemory = chatMemory;
         this.advisors = advisors;
+        this.toolCallAdvisor = toolCallAdvisor;
+        this.toolRegistry = toolRegistry;
         this.systemPromptService = systemPromptService;
         this.modelParamsService = modelParamsService;
         this.usageService = usageService;
@@ -222,6 +230,11 @@ public class ChatService {
                 .user(message)
                 .advisors(buildAdvisors(conversationId));
 
+        // 注入可用工具 — 仅在有工具时添加，避免不支持 function calling 的模型报错
+        if (toolRegistry.hasTools()) {
+            spec = spec.tools(toolRegistry.getToolCallbacks());
+        }
+
         // 注入动态 System Prompt — 优先用 composite key 查询，回退到 bare modelId
         String systemPrompt = systemPromptService.getPrompt(route.toCompositeId());
         if (systemPrompt == null || systemPrompt.isBlank()) {
@@ -254,6 +267,10 @@ public class ChatService {
         List<Advisor> allAdvisors = new ArrayList<>();
         allAdvisors.add(new ConversationContextAdvisor(conversationId));
         allAdvisors.addAll(advisors);
+        // ToolCallAdvisor(order=2) 位于限流(0)和内容安全(1)之后、对话记忆之前
+        if (toolRegistry.hasTools()) {
+            allAdvisors.add(toolCallAdvisor);
+        }
         allAdvisors.add(MessageChatMemoryAdvisor.builder(chatMemory)
                 .build());
         return allAdvisors;

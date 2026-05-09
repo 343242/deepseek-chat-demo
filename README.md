@@ -1,6 +1,6 @@
 # Chat Demo
 
-基于 **Spring Boot 3.5 + Spring AI 1.1 + MyBatis-Plus 3.5** 的多厂商 AI 聊天助手后端。支持 **DeepSeek、智谱 AI (Zhipu)、MiniMax** 三家模型厂商，通过 Provider 抽象层实现统一路由。提供动态模型加载、SSE 流式响应、JDBC 对话记忆、RBAC 权限系统、滑块验证码、自研雪花 ID，并通过 Advisor 链实现限流与内容安全过滤。
+基于 **Spring Boot 3.5 + Spring AI 1.1 + MyBatis-Plus 3.5** 的多厂商 AI 聊天助手后端。支持 **DeepSeek、智谱 AI (Zhipu)、MiniMax** 三家模型厂商，通过 Provider 抽象层实现统一路由。提供动态模型加载、SSE 流式响应、JDBC 对话记忆、**Tool Calling 工具调用**、RBAC 权限系统、滑块验证码、自研雪花 ID，并通过 Advisor 链实现限流与内容安全过滤。
 
 ## 技术栈
 
@@ -113,7 +113,8 @@ src/main/java/com/demo/chat/
 │       └── SnowflakeConfiguration.java       #     Spring Bean 注册
 │
 ├── config/                                   # 基础配置
-│   ├── ModelProviderAutoConfiguration.java   #   多厂商自动配置：Properties + RestClient + 模型初始化
+│   ├── ModelProviderAutoConfiguration.java   #   多厂商自动配置
+│   ├── ToolAutoConfiguration.java            #   Tool Calling 自动配置
 │   ├── DeepSeekProperties.java               #   spring.ai.deepseek.*
 │   ├── MiniMaxProperties.java                #   spring.ai.minimax.*
 │   ├── ZhipuProperties.java                  #   spring.ai.zhipuai.*
@@ -184,6 +185,11 @@ src/main/java/com/demo/chat/
 │   ├── content/                              #   内容安全
 │   │   ├── ContentFilterService.java         #     过滤服务接口
 │   │   └── SensitiveWordFilterService.java   #     sensitive-word DFA 实现
+│   │
+│   ├── tool/                                 #   ★ 工具集（模型可调用的工具）
+│   │   ├── ToolRegistry.java                 #     工具注册中心（自动发现 @Tool Bean）
+│   │   ├── DateTimeTools.java                #     日期时间查询（当前时间、星期、日期差）
+│   │   └── CalculatorTools.java              #     数学计算（表达式求值）
 │   │
 │   ├── util/
 │   │   └── ConversationIdUtil.java           #     对话 ID 用户隔离工具（构建/解析/前缀）
@@ -381,16 +387,39 @@ sys_user ─< sys_user_role >─ sys_role ─< sys_role_permission >─ sys_perm
 ### 8. Advisor 链
 
 ```
-请求 → RateLimitAdvisor (order=0, 限流)
+请求 → ConversationContextAdvisor (order=-1, 注入 conversationId)
+     → RateLimitAdvisor (order=0, 限流)
      → ContentFilterAdvisor (order=1, 输入检测)
-     → ConversationContextAdvisor (动态 System Prompt + ModelParams)
+     → ToolCallAdvisor (order=2, 工具调用循环)
+     → MessageChatMemoryAdvisor (对话记忆写入)
      → 模型调用
      → ContentFilterAdvisor (after, 输出过滤)
-     → ChatMemoryAdvisor (对话记忆写入)
      → 响应
 ```
 
-### 9. 数据访问分层
+### 9. Tool Calling（工具调用）
+
+```
+用户提问 "明天星期几？"
+     │
+     ▼ 模型决定需要调用工具
+     │
+ToolCallAdvisor → ToolCallingManager
+     │
+     ▼ 分发到 DateTimeTools.getCurrentWeekday(offsetDays=1)
+     │
+     ▼ 工具返回 "2026-05-10 是星期日"
+     │
+     ▼ 结果回传模型，生成最终回复
+```
+
+- **声明式注册**：`@Component` + `@Tool` 注解，Spring 自动发现
+- **OCP**：新增工具 = 新增类，零改现有代码
+- **ToolCallAdvisor** 显式在 advisor 链中处理，限流/内容过滤可拦截工具调用过程
+- **disableMemory()**：已有 MessageChatMemoryAdvisor 管理对话历史，避免重复
+- 内置工具：`DateTimeTools`（日期时间查询）、`CalculatorTools`（数学计算）
+
+### 10. 数据访问分层
 
 ```
 Controller (@Valid 校验)
@@ -407,7 +436,7 @@ Database
 - DTO 全部使用 Java record，Entity 不暴露给前端
 - **sql/schema.sql** 全量建表脚本（IF NOT EXISTS 幂等），由 docker-compose 自动执行
 
-### 10. 缓存策略
+### 11. 缓存策略
 
 | 层级 | 技术 | TTL | 场景 |
 |------|------|-----|------|

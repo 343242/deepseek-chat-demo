@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.demo.chat.chat.mapper.SystemPromptMapper">
+
+    <!-- 按模型 ID 查询 -->
+    <select id="selectByModelId" resultType="com.demo.chat.chat.entity.SystemPrompt">
+        SELECT * FROM system_prompt WHERE model_id = #{modelId}
+    </select>
+
+    <!-- 查询全部（按 model_id 排序） -->
+    <select id="selectAllOrdered" resultType="com.demo.chat.chat.entity.SystemPrompt">
+        SELECT * FROM system_prompt ORDER BY model_id
+    </select>
+
+    <!-- 按模型 ID 删除 -->
+    <delete id="deleteByModelId">
+        DELETE FROM system_prompt WHERE model_id = #{modelId}
+    </delete>
+
+</mapper>

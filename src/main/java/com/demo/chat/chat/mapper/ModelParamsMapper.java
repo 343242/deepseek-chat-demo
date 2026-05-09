@@ -4,8 +4,6 @@ import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.demo.chat.chat.entity.ModelParams;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
-import org.apache.ibatis.annotations.Select;
-import org.apache.ibatis.annotations.Delete;
 
 import java.util.List;
 
@@ -17,12 +15,9 @@ import java.util.List;
 @Mapper
 public interface ModelParamsMapper extends BaseMapper<ModelParams> {
 
-    @Select("SELECT * FROM model_params WHERE model_id = #{modelId}")
     ModelParams selectByModelId(@Param("modelId") String modelId);
 
-    @Select("SELECT * FROM model_params ORDER BY model_id")
     List<ModelParams> selectAllOrdered();
 
-    @Delete("DELETE FROM model_params WHERE model_id = #{modelId}")
     int deleteByModelId(@Param("modelId") String modelId);
 }

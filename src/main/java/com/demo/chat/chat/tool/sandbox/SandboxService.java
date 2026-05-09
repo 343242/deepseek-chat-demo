@@ -182,6 +182,7 @@ public class SandboxService {
         return switch (language) {
             case PYTHON -> List.of("python3", "/tmp/code.py");
             case JAVASCRIPT -> List.of("node", "/tmp/code.js");
+            case TYPESCRIPT -> List.of("npx", "tsx", "/tmp/code.ts");
             case JAVA -> List.of("sh", "-c",
                     "cp /tmp/code.java /tmp/Main.java && javac /tmp/Main.java -d /tmp && java -cp /tmp Main");
         };

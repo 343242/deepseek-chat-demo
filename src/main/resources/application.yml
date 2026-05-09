@@ -18,6 +18,7 @@ app:
     language-images:
       PYTHON: sandbox-python:bookworm
       JAVASCRIPT: sandbox-node:bookworm
+      TYPESCRIPT: sandbox-node:bookworm
       JAVA: sandbox-java:bookworm
 
 logging:

@@ -1,7 +1,10 @@
 # Node.js 沙箱镜像
-# 构建命令：docker build -f Dockerfile.node -t sandbox-node:bookworm .
-# 需要先拉取基础镜像：docker pull node:22-bookworm
+# 支持 .js / .mjs / .ts 执行
+# 构建：docker build -f Dockerfile.node -t sandbox-node:bookworm .
 FROM node:22-bookworm
+
+# 安装 tsx 用于 TypeScript 执行
+RUN npm install -g tsx
 
 RUN useradd -m -s /bin/bash sandbox
 USER sandbox

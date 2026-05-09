@@ -39,16 +39,17 @@ public class CodeExecutionTool {
     }
 
     @Tool(description = "在安全的沙箱环境中执行代码并返回运行结果。" +
-            "支持 Python、JavaScript、Java 三种语言。" +
+            "支持 Python、JavaScript (.js/.mjs)、TypeScript (.ts)、Java 四种语言。" +
             "当需要运行代码验证结果、执行数学计算、处理数据、测试算法时使用此工具。" +
             "每次执行都在隔离的 Docker 容器中，不会影响主服务。")
     public String executeCode(
             @ToolParam(description = "要执行的代码，必须是完整可运行的代码。" +
                     "Python: 直接写代码体。" +
-                    "JavaScript: 直接写代码。" +
+                    "JavaScript: 直接写代码（支持 ESM 语法）。" +
+                    "TypeScript: 直接写代码，无需额外配置。" +
                     "Java: 写一个包含 main 方法的类（类名必须是 Main）。" +
                     "代码长度不能超过 5000 字符。") String code,
-            @ToolParam(description = "编程语言，可选值：python、javascript、java。默认 python。") String language) {
+            @ToolParam(description = "编程语言，可选值：python、javascript、typescript、java。默认 python。") String language) {
 
         // 前置校验
         if (code == null || code.isBlank()) {

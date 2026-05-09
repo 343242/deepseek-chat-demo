@@ -47,6 +47,7 @@ public record SandboxConfig(
         return Map.of(
                 "PYTHON", "sandbox-python:bookworm",
                 "JAVASCRIPT", "sandbox-node:bookworm",
+                "TYPESCRIPT", "sandbox-node:bookworm",
                 "JAVA", "sandbox-java:bookworm"
         );
     }

@@ -3,12 +3,13 @@ package com.demo.chat.chat.tool.sandbox;
 /**
  * 支持的沙箱执行语言
  * <p>
- * 新增语言只需在此枚举添加值 + SandboxConfig 加镜像映射，零改现有代码（OCP）。
+ * 新增语言只需在此枚举添加值 + SandboxConfig 加镜像映射 + SandboxService 加执行命令，零改其他代码（OCP）。
  */
 public enum Language {
 
     PYTHON("python3", "python", ".py"),
     JAVASCRIPT("node", "javascript", ".js"),
+    TYPESCRIPT("tsx", "typescript", ".ts"),
     JAVA("java", "java", ".java");
 
     private final String command;
@@ -48,6 +49,10 @@ public enum Language {
                 return lang;
             }
         }
+        // 常见别名
+        if ("js".equals(normalized) || "esm".equals(normalized)) return JAVASCRIPT;
+        if ("ts".equals(normalized)) return TYPESCRIPT;
+        if ("py".equals(normalized)) return PYTHON;
         return null;
     }
 }

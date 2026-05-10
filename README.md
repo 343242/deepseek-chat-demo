@@ -2,31 +2,39 @@
 
 基于 **Spring Boot 3.5 + Spring AI 1.1 + MyBatis-Plus 3.5** 的多厂商 AI 聊天助手后端。支持 **DeepSeek、智谱 AI (Zhipu)、MiniMax** 三家模型厂商，通过 Provider 抽象层实现统一路由。提供动态模型加载、SSE 流式响应、JDBC 对话记忆、**Tool Calling 工具调用**、RBAC 权限系统、滑块验证码、自研雪花 ID，并通过 Advisor 链实现限流与内容安全过滤。
 
+支持 **RAG（检索增强生成）**，通过 Apache Tika 多格式文档解析、Parent-Child 分块策略、PGvector 向量存储、阿里千问 text-embedding-v4 向量化，实现文档上传→解析→分块→向量化→检索增强的完整链路。
+
 ## 技术栈
 
 | 依赖 | 版本 | 用途 |
 |------|------|------|
-| Java | 21 | 运行时 |
-| Spring Boot | 3.5.14 | 应用框架 |
-| Spring AI | 1.1.6 | AI 模型集成 |
-| spring-ai-starter-model-deepseek | 1.1.6 | DeepSeek 模型接入 |
-| spring-ai-starter-model-zhipuai | 1.1.6 | 智谱 AI 模型接入 |
-| spring-ai-starter-model-minimax | 1.1.6 | MiniMax 模型接入 |
-| MyBatis-Plus | 3.5.16 | ORM 框架 |
-| Spring Security | 随 Boot | 认证与授权 |
-| JJWT | 0.13.0 | JWT 双 Token（Access 15min + Refresh 24h） |
-| Spring Data Redis | 随 Boot | Token 存储、权限缓存、IP 限流 |
+| Apache Tika | 随 Spring AI | 多格式文档解析（PDF/DOCX/PPTX/HTML 等） |
 | Caffeine | 3.x | 本地缓存（SystemPrompt / ModelParams / 验证码） |
-| sensitive-word | 0.29.5 | DFA 敏感词过滤（纯内存，14W+ QPS） |
+| DashScope text-embedding-v4 | - | 阿里千问 Embedding 模型（1024 维） |
+| Java | 21 | 运行时 |
+| JJWT | 0.13.0 | JWT 双 Token（Access 15min + Refresh 24h） |
+| MinIO | 9.0.0 | 对象存储（RAG 文件管理） |
+| MyBatis-Plus | 3.5.16 | ORM 框架 |
+| PGvector | 随 PostgreSQL | 向量数据库（pgvector 扩展） |
 | PostgreSQL | 18 | 主数据库 |
 | Redis | 8.2 | 缓存 / Token 存储 |
+| sensitive-word | 0.29.5 | DFA 敏感词过滤（纯内存，14W+ QPS） |
+| Spring AI | 1.1.6 | AI 模型集成 |
+| Spring AI RAG | 1.1.6 | RetrievalAugmentationAdvisor + DocumentPostProcessor |
+| Spring Boot | 3.5.14 | 应用框架 |
+| Spring Data Redis | 随 Boot | Token 存储、权限缓存、IP 限流 |
+| Spring Security | 随 Boot | 认证与授权 |
+| Spring WebFlux | 随 Boot | WebClient（DashScope API 通信） |
+| spring-ai-starter-model-deepseek | 1.1.6 | DeepSeek 模型接入 |
+| spring-ai-starter-model-minimax | 1.1.6 | MiniMax 模型接入 |
+| spring-ai-starter-model-zhipuai | 1.1.6 | 智谱 AI 模型接入 |
 
 ## 快速开始
 
 ### 1. 启动依赖服务
 
 ```bash
-# 使用 docker compose 一键启动 PostgreSQL + Redis
+# 使用 docker compose 一键启动 PostgreSQL + Redis + MinIO
 cp .env.example .env   # 编辑 POSTGRES_PASSWORD 等配置
 docker compose up -d
 
@@ -52,6 +60,9 @@ docker compose up -d
 export DEEPSEEK_API_KEY=sk-***
 export ZHIPU_API_KEY=***         # 可选
 export MINIMAX_API_KEY=***       # 可选
+
+# RAG 配置（可选）
+export DASHSCOPE_API_KEY=sk-***       # 阿里千问 Embedding API Key
 
 export JWT_SECRET=your-jwt-secret-at-least-32-characters-long!!
 
@@ -95,6 +106,23 @@ curl -X POST http://localhost:8080/api/chat \
 # 5. SSE 流式聊天
 curl "http://localhost:8080/api/chat/stream?model=zhipu/glm-4.7&message=你好&conversationId=test" \
   -b cookies.txt
+
+# 6. 上传文档（RAG）
+curl -X POST http://localhost:8080/api/documents/upload \
+  -b cookies.txt \
+  -F "file=@document.pdf"
+
+# 7. RAG 增强聊天
+curl -X POST http://localhost:8080/api/chat \
+  -H "Content-Type: application/json" \
+  -b cookies.txt \
+  -d '{"model":"deepseek/deepseek-chat","message":"文档里讲了什么？","ragEnabled":true}'
+
+# 8. 查看文档列表
+curl http://localhost:8080/api/documents -b cookies.txt
+
+# 9. 删除文档
+curl -X DELETE http://localhost:8080/api/documents/1 -b cookies.txt
 ```
 
 ## 文档
@@ -262,6 +290,61 @@ src/main/java/com/demo/chat/
 │       ├── UsageStats.java
 │       └── ErrorResponse.java
 │
+├── rag/                                      # ★ RAG 检索增强生成模块
+│   ├── config/                               #   RAG 配置
+│   │   ├── MinioConfig.java                  #     MinIO Client Bean
+│   │   ├── MinioProperties.java              #     spring.minio.* 配置
+│   │   ├── DocumentProperties.java           #     app.document.* 配置
+│   │   └── RagConfig.java                    #     RetrievalAugmentationAdvisor + ParentDocumentPostProcessor
+│   │
+│   ├── parser/                               #   ★ 文档解析（策略模式）
+│   │   ├── DocumentParser.java               #     解析器接口
+│   │   ├── DocumentParserFactory.java        #     MIME 类型路由工厂
+│   │   ├── PdfDocumentParser.java            #     PDF 专用（页码元数据）
+│   │   ├── MarkdownDocumentParser.java       #     Markdown 专用（标题层级）
+│   │   └── TikaDocumentParser.java           #     通用兜底（DOCX/PPTX/HTML...）
+│   │
+│   ├── chunk/                                #   ★ 自定义分块（策略模式）
+│   │   ├── ChunkStrategy.java                #     分块策略接口
+│   │   ├── ChunkStrategyFactory.java         #     策略工厂（YAML 配置路由）
+│   │   ├── TokenChunkStrategy.java           #     Token 数切分
+│   │   ├── ParagraphChunkStrategy.java       #     段落/标题感知切分
+│   │   ├── ParentChildChunkStrategy.java     #     父子双层切分（默认）
+│   │   └── ParentDocumentPostProcessor.java  #     检索后子→父替换 + 去重
+│   │
+│   ├── etl/                                  #   ★ ETL Pipeline（接口分离）
+│   │   ├── Extractor.java                    #     Extract 阶段接口
+│   │   ├── Transformer.java                  #     Transform 阶段接口
+│   │   ├── Loader.java                       #     Load 阶段接口
+│   │   ├── DocumentExtractor.java            #     MinIO 下载 + Parser 解析
+│   │   ├── StrategyTransformer.java          #     路由到 ChunkStrategyFactory
+│   │   └── VectorStoreLoader.java            #     写入 PGvector
+│   │
+│   ├── embedding/                            #   ★ 向量化
+│   │   ├── DashScopeEmbeddingProperties.java #     DashScope 配置
+│   │   ├── DashScopeEmbeddingApi.java        #     API 请求/响应 DTO
+│   │   └── DashScopeEmbeddingModel.java      #     Spring AI EmbeddingModel 实现
+│   │
+│   ├── service/                              #   编排服务
+│   │   ├── FileStorageService.java           #     文件存储接口（MinIO/S3/本地）
+│   │   ├── EtlPipelineService.java           #     ETL Pipeline 接口
+│   │   └── impl/
+│   │       ├── MinioFileStorageService.java  #     MinIO 实现（上传/下载/删除/预签名）
+│   │       └── EtlPipelineServiceImpl.java   #     纯编排器（Extract→Transform→Load）
+│   │
+│   ├── controller/
+│   │   └── DocumentController.java           #     /api/documents/* (上传/列表/详情/删除/状态)
+│   │
+│   ├── entity/
+│   │   └── RagDocument.java                  #     文档记录（状态机: UPLOADED→PARSING→CHUNKING→VECTORIZING→COMPLETED/FAILED）
+│   │
+│   ├── dto/
+│   │   ├── DocumentDTO.java                  #     文档详情 DTO
+│   │   └── DocumentUploadResponse.java       #     上传响应 DTO
+│   │
+│   └── mapper/
+│       └── RagDocumentMapper.java            #     MyBatis-Plus Mapper
+│
 └── exception/                                # 异常处理
     ├── GlobalExceptionHandler.java           #   统一错误响应 (400/401/403/404/429/500)
     ├── BusinessException.java                #   业务异常（统一替代 IllegalArgumentException）
@@ -417,6 +500,7 @@ sys_user ─< sys_user_role >─ sys_role ─< sys_role_permission >─ sys_perm
 请求 → ConversationContextAdvisor (order=-1, 注入 conversationId)
      → RateLimitAdvisor (order=0, 限流)
      → ContentFilterAdvisor (order=1, 输入检测)
+     → RetrievalAugmentationAdvisor (ragEnabled=true 时注入)
      → ToolCallAdvisor (order=2, 工具调用循环)
      → MessageChatMemoryAdvisor (对话记忆写入)
      → 模型调用
@@ -507,6 +591,64 @@ Database
 | 分布式 | Redis | 900s | Access Token 元数据 |
 | 分布式 | Redis | 86400s | Refresh Token + 用户状态标记 |
 
+### 12. RAG 检索增强生成
+
+**整体流程：**
+
+```
+用户上传文档 (PDF/DOCX/MD/...)
+        │
+        ▼
+DocumentController.upload()
+        │
+        ├── 1. MinIO 存储（FileStorageService）
+        ├── 2. 创建 rag_document 记录
+        └── 3. ETL Pipeline（EtlPipelineService）
+                │
+                ├── Extract: DocumentExtractor
+                │   └── DocumentParserFactory.getParser(mimeType)
+                │       ├── application/pdf → PdfDocumentParser (页码元数据)
+                │       ├── text/markdown  → MarkdownDocumentParser (标题层级)
+                │       └── 其他           → TikaDocumentParser (兜底)
+                │
+                ├── Transform: StrategyTransformer
+                │   └── ChunkStrategyFactory.getStrategy("parent-child")
+                │       └── ParentChildChunkStrategy
+                │           ├── 第 1 层: 2000 tokens → 父文档
+                │           └── 第 2 层: 500 tokens → 子切分 (metadata 含 parentId + parentContent)
+                │
+                └── Load: VectorStoreLoader
+                    └── VectorStore.add(childChunks) → PGvector
+
+---
+
+用户提问 + ragEnabled=true
+        │
+        ▼
+ChatService → RetrievalAugmentationAdvisor
+        │
+        ├── 1. VectorStore.similaritySearch(query) → 命中子切分
+        ├── 2. ParentDocumentPostProcessor: 子→父替换 + parentId 去重
+        └── 3. 父文档完整上下文 → 拼接到用户提问 → LLM 回答
+```
+
+**关键设计：**
+
+- **策略模式**：`DocumentParser` 接口 + `ChunkStrategy` 接口，各自可独立扩展
+- **Parent-Child 策略**：子切分保证检索精度（500 tokens），父文档保证 LLM 上下文完整性（2000 tokens）
+- **ETL 解耦**：`Extractor`/`Transformer`/`Loader` 独立接口，Pipeline 只做编排，零业务逻辑
+- **DocumentPostProcessor**：Spring AI 原生扩展点，检索后子→父替换 + 去重
+- **DashScope Embedding**：通过 WebClient 调用阿里千问 OpenAI 兼容 API，实现 `EmbeddingModel` 接口
+- **向量维度**：`text-embedding-v4` 支持 64~2048 维，默认 1024（CMTEB 最佳平衡点）
+
+**分块策略对比：**
+
+| 策略 | 切分方式 | 适用场景 | 配置值 |
+|------|---------|---------|--------|
+| token | Token 数机械切分 | 格式不固定的文档 | `token` |
+| paragraph | 段落/标题边界切分 + 短段落合并 | Markdown/纯文本 | `paragraph` |
+| parent-child | 双层切分（父 2000t / 子 500t） | 精准检索 + 完整上下文 | `parent-child` |
+
 ## 环境配置
 
 ### Profile 说明
@@ -552,6 +694,36 @@ app:
     datacenter-id: 0
     worker-id: 0
 
+  # RAG 文档管理
+  minio:
+    endpoint: ${MINIO_ENDPOINT:http://localhost:9000}
+    access-key: ${MINIO_ROOT_USER:minioadmin}
+    secret-key: ${MINIO_ROOT_PASSWORD:minioadmin123}
+    bucket: ${MINIO_BUCKET:rag-documents}
+
+  # DashScope Embedding
+  ai:
+    dashscope:
+      embedding:
+        base-url: ${DASHSCOPE_EMBEDDING_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode/v1}
+        api-key: ${DASHSCOPE_API_KEY}
+        model: text-embedding-v4
+        dimensions: 1024
+    vectorstore:
+      pgvector:
+        index-type: HNSW
+        distance-type: COSINE_DISTANCE
+        dimensions: 1024
+        initialize-schema: true
+
+app:
+  document:
+    chunk-strategy: parent-child
+    parent-chunk-size: 2000
+    child-chunk-size: 500
+    max-file-size: 50MB
+    allowed-mime-types: application/pdf,...
+
 model:
   router:
     default-provider: deepseek
@@ -585,6 +757,9 @@ model:
 | **编程式事务** | `TransactionTemplate` 精确控制事务边界 |
 | **安全纵深** | JWT + Redis 吊销 + 用户状态 + IP 限流 + 滑块验证码 + Cookie SameSite |
 | **自研核心** | 雪花 ID 生成器、滑块验证码均为纯 Java 实现，无外部依赖 |
+| **模板方法 + 接口分离** | ETL Pipeline 拆分为 Extractor/Transformer/Loader 独立接口，Pipeline 只做编排 |
+| **双层检索（Parent-Child）** | 子切分保证检索精度，父文档保证 LLM 上下文完整性 |
+| **EmbeddingModel 接口适配** | 自建 DashScopeEmbeddingModel 实现标准接口，PgVectorStore 自动注入，零耦合 |
 
 ## License
 

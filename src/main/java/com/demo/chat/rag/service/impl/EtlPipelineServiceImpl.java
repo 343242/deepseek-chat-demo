@@ -7,8 +7,8 @@ import com.demo.chat.rag.parser.DocumentParserFactory;
 import com.demo.chat.rag.service.DocumentChunkService;
 import com.demo.chat.rag.service.EtlPipelineService;
 import com.demo.chat.rag.service.FileStorageService;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.ai.document.Document;
 import org.springframework.core.io.Resource;
 import org.springframework.stereotype.Service;
@@ -17,22 +17,25 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 import java.util.List;
 
-/**
- * ETL Pipeline 编排服务实现
- * <p>
- * 流程：Extract(从 MinIO 下载 → Parser 解析) → Transform(分块) → Load(预留)
- * 每个阶段更新 rag_document 表的 status 字段。
- * </p>
- */
-@Slf4j
 @Service
-@RequiredArgsConstructor
 public class EtlPipelineServiceImpl implements EtlPipelineService {
+
+    private static final Logger log = LoggerFactory.getLogger(EtlPipelineServiceImpl.class);
 
     private final FileStorageService fileStorageService;
     private final DocumentParserFactory parserFactory;
     private final DocumentChunkService chunkService;
     private final RagDocumentMapper ragDocumentMapper;
+
+    public EtlPipelineServiceImpl(FileStorageService fileStorageService,
+                                  DocumentParserFactory parserFactory,
+                                  DocumentChunkService chunkService,
+                                  RagDocumentMapper ragDocumentMapper) {
+        this.fileStorageService = fileStorageService;
+        this.parserFactory = parserFactory;
+        this.chunkService = chunkService;
+        this.ragDocumentMapper = ragDocumentMapper;
+    }
 
     @Override
     @Transactional

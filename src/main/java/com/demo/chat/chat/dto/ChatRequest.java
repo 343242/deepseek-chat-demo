@@ -32,7 +32,7 @@ public record ChatRequest(
 
     Boolean ragEnabled,
 
-    @Pattern(regexp = "^(SIMPLE|MULTI_TURN)?$", message = "对话模式仅支持 SIMPLE 或 MULTI_TURN")
+    @Pattern(regexp = "^(SIMPLE|MULTI_TURN)$", message = "对话模式仅支持 SIMPLE 或 MULTI_TURN")
     String mode,
 
     Boolean enableThinking

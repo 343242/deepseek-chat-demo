@@ -6,6 +6,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
+import jakarta.validation.Valid;
 import java.util.List;
 import java.util.Map;
 
@@ -49,7 +50,7 @@ public class ModelParamsController {
      */
     @PutMapping("/{modelId}/params")
     public ModelParamsDTO saveOrUpdate(@PathVariable String modelId,
-                                       @RequestBody ModelParamsDTO dto) {
+                                       @Valid @RequestBody ModelParamsDTO dto) {
         return modelParamsService.saveOrUpdate(modelId, dto);
     }
 

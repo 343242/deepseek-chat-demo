@@ -127,7 +127,7 @@ public class TokenBucketLimiter implements RateLimiter {
 
         private void refill() {
             Instant now = Instant.now();
-            double elapsedSeconds = (now.toEpochMilli() - lastRefillTime.toEpochMilli()) / 1000.0;
+            double elapsedSeconds = Duration.between(lastRefillTime, now).toNanos() / 1_000_000_000.0;
             long tokensToAdd = (long) (elapsedSeconds * refillRate);
 
             if (tokensToAdd > 0) {

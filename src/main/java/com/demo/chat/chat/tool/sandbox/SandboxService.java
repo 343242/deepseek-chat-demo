@@ -30,12 +30,14 @@ public class SandboxService {
 
     private final SandboxConfig config;
     private final ExecutorService executor;
+    private final Semaphore concurrencyLimiter;
     private final boolean dockerAvailable;
 
     public SandboxService(SandboxConfig config) {
         this.config = config;
-        this.executor = Executors.newFixedThreadPool(config.maxConcurrency(),
-                Thread.ofVirtual().name("sandbox-", 0).factory());
+        this.concurrencyLimiter = new Semaphore(config.maxConcurrency());
+        // 虚线程 per-task：每个容器执行独立一个虚线程，通过 Semaphore 限流
+        this.executor = Executors.newVirtualThreadPerTaskExecutor();
         this.dockerAvailable = checkDockerAvailable();
         if (dockerAvailable) {
             log.info("SandboxService initialized: maxConcurrency={}, timeout={}ms, docker available",
@@ -117,7 +119,14 @@ public class SandboxService {
 
             // 启动容器并等待（带超时）
             final String cid = containerId;
-            Future<SandboxResult> future = executor.submit(() -> startAndWait(cid, startTime));
+            Future<SandboxResult> future = executor.submit(() -> {
+                concurrencyLimiter.acquire();
+                try {
+                    return startAndWait(cid, startTime);
+                } finally {
+                    concurrencyLimiter.release();
+                }
+            });
 
             try {
                 return future.get(config.timeout().toMillis() + 2000, TimeUnit.MILLISECONDS);
@@ -193,32 +202,15 @@ public class SandboxService {
      */
     private SandboxResult startAndWait(String containerId, long startTime) throws Exception {
         Process startProcess = new ProcessBuilder("docker", "start", "-a", containerId)
-                .redirectErrorStream(false)
+                .redirectErrorStream(true)
                 .start();
 
-        String stdout = truncateOutput(startProcess.getInputStream().readAllBytes());
+        String output = truncateOutput(startProcess.getInputStream().readAllBytes());
         int exitCode = startProcess.waitFor();
         long duration = System.currentTimeMillis() - startTime;
 
-        // 获取 stderr（通过 docker logs）
-        String stderr = getContainerLogs(containerId);
-
-        return new SandboxResult(exitCode, stdout, stderr,
+        return new SandboxResult(exitCode, output, "",
                 exitCode == 124 || exitCode == 137, duration);
-    }
-
-    /**
-     * 获取容器日志（stderr）
-     */
-    private String getContainerLogs(String containerId) {
-        try {
-            Process logsProcess = new ProcessBuilder("docker", "logs", containerId)
-                    .redirectErrorStream(false)
-                    .start();
-            return truncateOutput(logsProcess.getInputStream().readAllBytes());
-        } catch (Exception e) {
-            return "";
-        }
     }
 
     /**

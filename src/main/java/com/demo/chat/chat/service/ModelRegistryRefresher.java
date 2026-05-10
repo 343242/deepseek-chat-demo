@@ -74,7 +74,15 @@ public class ModelRegistryRefresher {
                         String compositeKey = provider.getProviderId() + "/" + model.id();
                         newClients.put(compositeKey, client);
                         // 同时用纯 modelId 注册（向后兼容，最后一个同名 Provider 覆盖）
-                        newClients.putIfAbsent(model.id(), client);
+                        if (newClients.containsKey(model.id())) {
+                            log.warn("Model '{}' already registered by provider '{}', skipping registration from '{}' (use composite key '{}' instead)",
+                                    model.id(),
+                                    newIndex.get(model.id()),
+                                    provider.getProviderId(),
+                                    compositeKey);
+                        } else {
+                            newClients.put(model.id(), client);
+                        }
                         allModels.add(model);
                         // ★ createClient 成功后才写入反向索引
                         newIndex.putIfAbsent(model.id(), provider.getProviderId());

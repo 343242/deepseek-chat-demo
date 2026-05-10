@@ -7,6 +7,8 @@ import com.demo.chat.chat.provider.ModelProvider;
 import com.demo.chat.chat.provider.ProviderRegistry;
 import com.demo.chat.chat.service.ModelRegistryRefresher;
 import com.demo.chat.chat.service.ModelService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -23,6 +25,8 @@ import java.util.List;
  */
 @Service
 public class ModelServiceImpl implements ModelService {
+
+    private static final Logger log = LoggerFactory.getLogger(ModelServiceImpl.class);
 
     private final ChatClientRegistry registry;
     private final ModelRegistryRefresher refresher;
@@ -49,10 +53,7 @@ public class ModelServiceImpl implements ModelService {
                         provider.getProviderId(),
                         provider.getDisplayName()));
             } else {
-                result.add(new ProviderModelInfo(
-                        model.id(), "deepseek", "DeepSeek",
-                        "deepseek/" + model.id(),
-                        model.ownedBy(), model.created()));
+                log.warn("Model '{}' not found in provider index, skipping", model.id());
             }
         }
 

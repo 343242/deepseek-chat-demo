@@ -15,7 +15,20 @@ import java.util.*;
  * 管理所有已注册的 ChatClient 实例。
  * 单一职责：只负责存储和查询，不管创建。
  * <p>
- * 线程安全：registry 使用 volatile 引用 + 不可变 Map 保证读操作的线程安全。
+ * 线程安全策略：
+ * <ul>
+ *   <li>{@code registry} 使用 volatile 引用 + 不可变 Map，读操作无锁、线程安全</li>
+ *   <li>{@code cachedModels} 同样是 volatile + 不可变 List</li>
+ *   <li>写操作 ({@link #register}, {@link #replaceAll}) 使用 synchronized 保证原子性</li>
+ * </ul>
+ * <p>
+ * 并发语义说明：{@link #replaceAll} 构建新 Map/List 期间，{@link #get} 可能读到旧的
+ * registry 引用。这是设计预期内的最终一致性——旧 Map 不可变，读操作始终安全。
+ * 在 {@code replaceAll} 完成后，后续 {@code get} 调用会立即看到新 Map（volatile 保证可见性）。
+ * <p>
+ * 注意：{@code cachedModels} 和 {@code registry} 在 {@code replaceAll} 中一起更新，
+ * 但两者是独立的 volatile 字段，中间态下可能短暂不一致（新 registry + 旧 cachedModels
+ * 或反之）。调用方如果需要强一致性，应自行同步。
  */
 @Component
 public class ChatClientRegistry {

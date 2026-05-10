@@ -46,7 +46,7 @@ public class UsageController {
             return usageService.getByConversation(isolatedId);
         }
         if (model != null && !model.isBlank()) {
-            String prefix = ConversationIdUtil.buildLikePrefix(userId).replace("%", "_");
+            String prefix = ConversationIdUtil.buildLikePrefix(userId);
             return usageService.getByModelAndUser(model, prefix);
         }
         throw new BusinessException("请指定 model 或 conversation 参数");
@@ -58,7 +58,7 @@ public class UsageController {
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime startTime,
             @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime endTime) {
         Long userId = SecurityUtils.getCurrentUserId();
-        String prefix = ConversationIdUtil.buildLikePrefix(userId).replace("%", "_");
+        String prefix = ConversationIdUtil.buildLikePrefix(userId);
         return usageService.aggregateByModelForUser(model, prefix, startTime, endTime);
     }
 
@@ -72,7 +72,7 @@ public class UsageController {
             String isolatedId = ConversationIdUtil.buildIsolatedId(userId, conversation);
             return usageService.aggregateByConversation(isolatedId, startTime, endTime);
         }
-        String prefix = ConversationIdUtil.buildLikePrefix(userId).replace("%", "_");
+        String prefix = ConversationIdUtil.buildLikePrefix(userId);
         return usageService.aggregateByUserConversations(prefix, startTime, endTime);
     }
 }

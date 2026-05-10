@@ -37,21 +37,4 @@ public final class ConversationIdUtil {
     public static String buildLikePrefix(Long userId) {
         return PREFIX + userId + SEPARATOR + "%";
     }
-
-    /**
-     * 从存储的 conversationId 中剥离用户前缀
-     * <p>
-     * "u_123_default" → "default"
-     *
-     * @param isolatedConversationId 隔离后的 conversationId
-     * @return 原始 conversationId
-     */
-    public static String stripUserPrefix(String isolatedConversationId) {
-        if (isolatedConversationId == null) return null;
-        int firstUnderscore = isolatedConversationId.indexOf(SEPARATOR);
-        if (firstUnderscore < 0) return isolatedConversationId;
-        int secondUnderscore = isolatedConversationId.indexOf(SEPARATOR, firstUnderscore + 1);
-        if (secondUnderscore < 0) return isolatedConversationId;
-        return isolatedConversationId.substring(secondUnderscore + 1);
-    }
 }

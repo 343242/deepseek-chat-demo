@@ -6,6 +6,7 @@ import com.demo.chat.chat.dto.UsageStats;
 import com.demo.chat.chat.entity.TokenUsage;
 import com.demo.chat.chat.service.UsageService;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -23,9 +24,11 @@ public class UsageServiceImpl implements UsageService {
     private static final int DEFAULT_DAYS = 30;
 
     private final TokenUsageMapper mapper;
+    private final TransactionTemplate transactionTemplate;
 
-    public UsageServiceImpl(TokenUsageMapper mapper) {
+    public UsageServiceImpl(TokenUsageMapper mapper, TransactionTemplate transactionTemplate) {
         this.mapper = mapper;
+        this.transactionTemplate = transactionTemplate;
     }
 
     @Override
@@ -37,7 +40,7 @@ public class UsageServiceImpl implements UsageService {
                 promptTokens, completionTokens, totalTokens,
                 durationMs
         );
-        mapper.insert(usage);
+        transactionTemplate.executeWithoutResult(status -> mapper.insert(usage));
     }
 
     @Override

@@ -117,8 +117,11 @@ public class ChatServiceImpl implements ChatService {
 
         recordUsage(isolatedConversationId, route.toCompositeId(), aiResponse, duration);
 
-        return new ChatResponse(route.toCompositeId(), aiResponse.getResult().getOutput().getText(),
-                request.conversationId());
+        var generation = aiResponse.getResult();
+        String content = (generation != null && generation.getOutput() != null)
+                ? generation.getOutput().getText()
+                : "";
+        return new ChatResponse(route.toCompositeId(), content, request.conversationId());
     }
 
     @Override
@@ -162,7 +165,7 @@ public class ChatServiceImpl implements ChatService {
                                 savePartialResponse(isolatedConversationId, collectedContent.toString());
                             }
                             case ON_COMPLETE -> log.debug("Stream completed for conversation: {}", isolatedConversationId);
-                            default -> savePartialResponse(isolatedConversationId, collectedContent.toString());
+                            // ON_SUBSCRIBE, ON_NEXT — 无需处理
                         }
                     }
                     if (usageRecorded.compareAndSet(false, true)) {

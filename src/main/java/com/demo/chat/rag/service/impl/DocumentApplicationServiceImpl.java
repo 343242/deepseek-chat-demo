@@ -15,14 +15,13 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.io.Resource;
-import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.stereotype.Service;
+import org.springframework.util.unit.DataSize;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.io.IOException;
 import java.time.LocalDateTime;
-import java.util.List;
-import java.util.Set;
-import java.util.UUID;
+import java.util.*;
 
 /**
  * 文档应用服务实现
@@ -160,7 +159,24 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
     }
 
     /**
-     * 校验上传文件：非空 + MIME 白名单
+     * 文件魔数 → MIME 映射（用于服务端 MIME sniffing）
+     * 防止客户端伪造 Content-Type
+     */
+    private static final Map<String, String> MAGIC_NUMBER_MAP = Map.of(
+            "%PDF", "application/pdf",
+            "PK\u0003\u0004", "application/zip"  // docx / pptx 都是 ZIP 格式
+    );
+
+    /**
+     * ZIP 内部 MIME 映射（根据文件扩展名进一步判断）
+     */
+    private static final Map<String, String> EXTENSION_MIME_MAP = Map.of(
+            ".docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            ".pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+    );
+
+    /**
+     * 校验上传文件：非空 + 大小限制 + MIME 白名单 + 服务端 MIME 校验
      *
      * @throws IllegalArgumentException 校验失败
      */
@@ -168,10 +184,88 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
         if (file.isEmpty()) {
             throw new IllegalArgumentException("上传文件不能为空");
         }
-        String mimeType = file.getContentType();
-        if (mimeType == null || !getAllowedMimeTypes().contains(mimeType)) {
-            throw new IllegalArgumentException("不支持的文件类型: " + mimeType);
+
+        // 文件大小校验
+        long maxBytes = DataSize.parse(documentProperties.getMaxFileSize()).toBytes();
+        if (file.getSize() > maxBytes) {
+            throw new IllegalArgumentException(
+                    String.format("文件大小超出限制: %s > %s",
+                            DataSize.ofBytes(file.getSize()).toMegabytes() + "MB",
+                            documentProperties.getMaxFileSize()));
         }
+
+        // 客户端声明的 MIME 校验
+        String declaredMimeType = file.getContentType();
+        Set<String> allowed = getAllowedMimeTypes();
+        if (declaredMimeType == null || !allowed.contains(declaredMimeType)) {
+            throw new IllegalArgumentException("不支持的文件类型: " + declaredMimeType);
+        }
+
+        // 服务端 MIME sniffing 校验
+        String detectedMimeType = detectMimeType(file);
+        if (detectedMimeType != null && !allowed.contains(detectedMimeType)
+                && !isZipBasedOfficeDocument(declaredMimeType, detectedMimeType)) {
+            throw new IllegalArgumentException(
+                    String.format("文件实际类型(%s)与声明类型(%s)不匹配", detectedMimeType, declaredMimeType));
+        }
+    }
+
+    /**
+     * 检测文件实际 MIME 类型（基于文件头魔数）
+     */
+    private String detectMimeType(MultipartFile file) {
+        try {
+            byte[] header = new byte[8];
+            int read = file.getInputStream().readNBytes(header, 0, 8);
+            if (read < 4) return null;
+
+            String headerStr = new String(header, 0, Math.min(read, 4));
+
+            // PDF
+            if (headerStr.startsWith("%PDF")) {
+                return "application/pdf";
+            }
+
+            // ZIP-based (docx, pptx)
+            if (header[0] == 0x50 && header[1] == 0x4B && header[2] == 0x03 && header[3] == 0x04) {
+                String originalName = file.getOriginalFilename();
+                if (originalName != null) {
+                    String lower = originalName.toLowerCase();
+                    for (Map.Entry<String, String> entry : EXTENSION_MIME_MAP.entrySet()) {
+                        if (lower.endsWith(entry.getKey())) {
+                            return entry.getValue();
+                        }
+                    }
+                }
+                return "application/zip";
+            }
+
+            // Plain text (ASCII/UTF-8 printable)
+            boolean allPrintable = true;
+            for (int i = 0; i < read; i++) {
+                byte b = header[i];
+                if (b < 0x09 || (b > 0x0D && b < 0x20 && b != 0x1B)) {
+                    allPrintable = false;
+                    break;
+                }
+            }
+            if (allPrintable) {
+                return "text/plain";
+            }
+
+            return null;
+        } catch (IOException e) {
+            log.warn("Failed to detect MIME type: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * ZIP-based Office 文档的声明类型与检测类型兼容判断
+     * docx/pptx 的检测类型是 application/zip，声明类型是具体 Office MIME，应视为兼容
+     */
+    private boolean isZipBasedOfficeDocument(String declared, String detected) {
+        return "application/zip".equals(detected) && declared.contains("openxmlformats-officedocument");
     }
 
     /**

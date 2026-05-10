@@ -5,6 +5,8 @@ import com.demo.chat.chat.client.ChatClientRegistry;
 import com.demo.chat.chat.dto.ChatRequest;
 import com.demo.chat.chat.dto.ChatResponse;
 import com.demo.chat.chat.entity.ModelParams;
+import com.demo.chat.chat.mode.ChatModeStrategy;
+import com.demo.chat.chat.mode.ModeRouter;
 import com.demo.chat.chat.provider.ModelProvider;
 import com.demo.chat.chat.provider.ModelRouter;
 import com.demo.chat.chat.provider.ProviderRegistry;
@@ -37,16 +39,17 @@ import java.util.concurrent.atomic.AtomicReference;
  * 通过 Spring 自动注入的 List&lt;Advisor&gt; 获取所有 Advisor，
  * 不直接依赖任何具体 Advisor 实现。
  * <p>
- * 集成功能：
+ * 支持两种对话模式（通过 ModeRouter 路由）：
+ * <ul>
+ *   <li>SIMPLE: 单轮直接调用 LLM，无记忆、无上下文注入</li>
+ *   <li>MULTI_TURN: 多轮对话，自动维护会话记忆，支持 enableThinking</li>
+ * </ul>
+ * <p>
+ * 其他集成功能：
  * - 动态 System Prompt（数据库 > XML 模板，带缓存）
  * - 模型参数热调整（从 ModelParamsService 获取，带缓存）
  * - Token 用量统计（记录到 UsageService）
  * - 用户级对话隔离（conversationId 自动绑定 userId）
- * <p>
- * 多 Provider 支持：
- * - 通过 ModelRouter 解析 model ID（支持 "provider/model" 复合格式和纯 modelId 向后兼容）
- * - 通过 ProviderRegistry 获取对应厂商的 Provider
- * - 通过 Provider.buildOptions() 构建厂商特定的 ChatOptions（不泄漏到本类）
  */
 @Service
 public class ChatServiceImpl implements ChatService {
@@ -56,6 +59,7 @@ public class ChatServiceImpl implements ChatService {
     private final ChatClientRegistry registry;
     private final ProviderRegistry providerRegistry;
     private final ModelRouter modelRouter;
+    private final ModeRouter modeRouter;
     private final ChatMemory chatMemory;
     private final List<Advisor> advisors;
     private final ToolCallAdvisor toolCallAdvisor;
@@ -68,6 +72,7 @@ public class ChatServiceImpl implements ChatService {
     public ChatServiceImpl(ChatClientRegistry registry,
                            ProviderRegistry providerRegistry,
                            ModelRouter modelRouter,
+                           ModeRouter modeRouter,
                            ChatMemory chatMemory,
                            List<Advisor> advisors,
                            ToolCallAdvisor toolCallAdvisor,
@@ -79,6 +84,7 @@ public class ChatServiceImpl implements ChatService {
         this.registry = registry;
         this.providerRegistry = providerRegistry;
         this.modelRouter = modelRouter;
+        this.modeRouter = modeRouter;
         this.chatMemory = chatMemory;
         this.advisors = advisors;
         this.toolCallAdvisor = toolCallAdvisor;
@@ -92,18 +98,19 @@ public class ChatServiceImpl implements ChatService {
     @Override
     public ChatResponse chat(ChatRequest request) {
         Long userId = SecurityUtils.getCurrentUserId();
+        ChatModeStrategy modeStrategy = modeRouter.route(request.mode());
         String isolatedConversationId = ConversationIdUtil.buildIsolatedId(userId, request.conversationId());
 
         ModelRouter.Route route = modelRouter.resolve(request.model());
 
-        log.debug("Chat request: userId={}, rawModel={}, route={}, conversationId={}",
-                userId, request.model(), route.toCompositeId(), isolatedConversationId);
+        log.debug("Chat request: userId={}, rawModel={}, route={}, mode={}, conversationId={}",
+                userId, request.model(), route.toCompositeId(), modeStrategy.getMode(), isolatedConversationId);
 
         ChatClient chatClient = registry.get(route.toCompositeId());
         long startTime = System.currentTimeMillis();
 
         ChatClient.ChatClientRequestSpec requestSpec = buildRequestSpec(
-                chatClient, route, request.message(), isolatedConversationId, request.isRagEnabled());
+                chatClient, route, request, isolatedConversationId, modeStrategy);
 
         org.springframework.ai.chat.model.ChatResponse aiResponse = requestSpec.call().chatResponse();
         long duration = System.currentTimeMillis() - startTime;
@@ -117,18 +124,19 @@ public class ChatServiceImpl implements ChatService {
     @Override
     public Flux<String> chatStream(ChatRequest request) {
         Long userId = SecurityUtils.getCurrentUserId();
+        ChatModeStrategy modeStrategy = modeRouter.route(request.mode());
         String isolatedConversationId = ConversationIdUtil.buildIsolatedId(userId, request.conversationId());
 
         ModelRouter.Route route = modelRouter.resolve(request.model());
 
-        log.debug("Stream chat request: userId={}, rawModel={}, route={}, conversationId={}",
-                userId, request.model(), route.toCompositeId(), isolatedConversationId);
+        log.debug("Stream chat request: userId={}, rawModel={}, route={}, mode={}, conversationId={}",
+                userId, request.model(), route.toCompositeId(), modeStrategy.getMode(), isolatedConversationId);
 
         ChatClient chatClient = registry.get(route.toCompositeId());
         long startTime = System.currentTimeMillis();
 
         ChatClient.ChatClientRequestSpec requestSpec = buildRequestSpec(
-                chatClient, route, request.message(), isolatedConversationId, request.isRagEnabled());
+                chatClient, route, request, isolatedConversationId, modeStrategy);
 
         StringBuilder collectedContent = new StringBuilder();
         java.util.concurrent.atomic.AtomicBoolean usageRecorded = new java.util.concurrent.atomic.AtomicBoolean(false);
@@ -145,14 +153,17 @@ public class ChatServiceImpl implements ChatService {
                     return text;
                 })
                 .doFinally(signal -> {
-                    switch (signal) {
-                        case ON_ERROR, CANCEL -> {
-                            log.warn("Stream {} for conversation {}: collected {} chars",
-                                    signal, isolatedConversationId, collectedContent.length());
-                            savePartialResponse(isolatedConversationId, collectedContent.toString());
+                    // SIMPLE 模式不需要保存部分响应
+                    if (modeStrategy.isMemoryEnabled()) {
+                        switch (signal) {
+                            case ON_ERROR, CANCEL -> {
+                                log.warn("Stream {} for conversation {}: collected {} chars",
+                                        signal, isolatedConversationId, collectedContent.length());
+                                savePartialResponse(isolatedConversationId, collectedContent.toString());
+                            }
+                            case ON_COMPLETE -> log.debug("Stream completed for conversation: {}", isolatedConversationId);
+                            default -> savePartialResponse(isolatedConversationId, collectedContent.toString());
                         }
-                        case ON_COMPLETE -> log.debug("Stream completed for conversation: {}", isolatedConversationId);
-                        default -> savePartialResponse(isolatedConversationId, collectedContent.toString());
                     }
                     if (usageRecorded.compareAndSet(false, true)) {
                         long duration = System.currentTimeMillis() - startTime;
@@ -193,11 +204,13 @@ public class ChatServiceImpl implements ChatService {
     }
 
     private ChatClient.ChatClientRequestSpec buildRequestSpec(
-            ChatClient chatClient, ModelRouter.Route route, String message, String conversationId, boolean ragEnabled) {
+            ChatClient chatClient, ModelRouter.Route route,
+            ChatRequest request, String conversationId,
+            ChatModeStrategy modeStrategy) {
 
         ChatClient.ChatClientRequestSpec spec = chatClient.prompt()
-                .user(message)
-                .advisors(buildAdvisors(conversationId, ragEnabled));
+                .user(request.message())
+                .advisors(buildAdvisors(conversationId, request, modeStrategy));
 
         if (toolRegistry.hasTools()) {
             spec = spec.tools((Object) toolRegistry.getToolCallbacks());
@@ -226,19 +239,40 @@ public class ChatServiceImpl implements ChatService {
         return spec;
     }
 
-    private List<Advisor> buildAdvisors(String conversationId, boolean ragEnabled) {
+    /**
+     * 根据对话模式组装不同的 Advisor 链
+     * <p>
+     * SIMPLE: RateLimit → ContentFilter → [RAG] → [ToolCall]
+     * MULTI_TURN: ConversationContext → RateLimit → ContentFilter → [RAG] → [ToolCall] → Memory
+     */
+    private List<Advisor> buildAdvisors(String conversationId, ChatRequest request,
+                                        ChatModeStrategy modeStrategy) {
         List<Advisor> allAdvisors = new ArrayList<>();
-        allAdvisors.add(new ConversationContextAdvisor(conversationId));
+
+        // MULTI_TURN 模式：注入 conversationId 到 Advisor context
+        if (modeStrategy.isContextEnabled()) {
+            allAdvisors.add(new ConversationContextAdvisor(conversationId));
+        }
+
+        // 通用 Advisor（限流 + 内容安全）
         allAdvisors.addAll(advisors);
-        if (ragEnabled) {
+
+        // RAG（按请求启用，与模式无关）
+        if (request.isRagEnabled()) {
             allAdvisors.add(ragAdvisor);
             log.debug("RAG advisor enabled for conversation: {}", conversationId);
         }
+
+        // Tool Calling
         if (toolRegistry.hasTools()) {
             allAdvisors.add(toolCallAdvisor);
         }
-        allAdvisors.add(MessageChatMemoryAdvisor.builder(chatMemory)
-                .build());
+
+        // MULTI_TURN 模式：追加 Memory Advisor
+        if (modeStrategy.isMemoryEnabled()) {
+            allAdvisors.add(MessageChatMemoryAdvisor.builder(chatMemory).build());
+        }
+
         return allAdvisors;
     }
 

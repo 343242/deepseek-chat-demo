@@ -51,7 +51,7 @@ public class ChatController {
     /**
      * 阻塞式聊天
      * <p>
-     * ChatRequest 已通过 @NotBlank 注解定义校验规则，@Valid 触发校验，
+     * ChatRequest 已通过注解定义校验规则，@Valid 触发校验，
      * GlobalExceptionHandler 统一处理 MethodArgumentNotValidException。
      */
     @PostMapping("/chat")
@@ -61,13 +61,21 @@ public class ChatController {
 
     /**
      * SSE 流式聊天（GET 方式，方便 SSE 客户端测试）
+     *
+     * @param model          模型 ID
+     * @param message        用户消息
+     * @param conversationId 对话 ID（默认 "default"）
+     * @param mode           对话模式（SIMPLE / MULTI_TURN，默认 SIMPLE）
+     * @param ragEnabled     是否启用 RAG（默认 false）
      */
     @GetMapping(value = "/chat/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<String> chatStreamGet(
             @RequestParam @NotBlank(message = "model 不能为空") String model,
             @RequestParam @NotBlank(message = "message 不能为空") String message,
-            @RequestParam(defaultValue = "default") String conversationId) {
-        ChatRequest request = new ChatRequest(model, message, conversationId, false);
+            @RequestParam(defaultValue = "default") String conversationId,
+            @RequestParam(defaultValue = "SIMPLE") String mode,
+            @RequestParam(defaultValue = "false") boolean ragEnabled) {
+        ChatRequest request = new ChatRequest(model, message, conversationId, ragEnabled, mode, null);
         return chatService.chatStream(request);
     }
 

@@ -2,7 +2,7 @@
 
 基于 **Spring Boot 3.5 + Spring AI 1.1 + MyBatis-Plus 3.5** 的多厂商 AI 聊天助手后端。支持 **DeepSeek、智谱 AI (Zhipu)、MiniMax** 三家模型厂商，通过 Provider 抽象层实现统一路由。提供动态模型加载、SSE 流式响应、JDBC 对话记忆、**Tool Calling 工具调用**、RBAC 权限系统、滑块验证码、自研雪花 ID，并通过 Advisor 链实现限流与内容安全过滤。
 
-支持 **RAG（检索增强生成）**，通过 Apache Tika 多格式文档解析、Parent-Child 分块策略、PGvector 向量存储、阿里千问 text-embedding-v4 向量化，实现文档上传→解析→分块→向量化→检索增强的完整链路。
+支持 **RAG（检索增强生成）**，通过 Apache Tika 多格式文档解析、Parent-Child 分块策略、PGvector 向量存储、阿里千问 text-embedding-v4 向量化，实现文档上传→解析→分块→向量化→检索增强的完整链路。检索管道支持**查询改写、混合检索（向量+BM25）+RRF融合、百炼Rerank精排、MMR多样性重排**四阶段优化。
 
 ## 技术栈
 
@@ -11,6 +11,7 @@
 | Apache Tika | 随 Spring AI | 多格式文档解析（PDF/DOCX/PPTX/HTML 等） |
 | Caffeine | 3.x | 本地缓存（SystemPrompt / ModelParams / 验证码） |
 | DashScope text-embedding-v4 | - | 阿里千问 Embedding 模型（1024 维） |
+| Flyway | 随 Boot | 数据库版本化迁移 |
 | Java | 21 | 运行时 |
 | JJWT | 0.13.0 | JWT 双 Token（Access 15min + Refresh 24h） |
 | MinIO | 9.0.0 | 对象存储（RAG 文件管理） |
@@ -38,7 +39,9 @@
 cp .env.example .env   # 编辑 POSTGRES_PASSWORD 等配置
 docker compose up -d
 
-# 首次部署会自动执行 sql/schema.sql 建表
+# Flyway 自动执行数据库迁移：
+#   V1__init_schema.sql    — 完整表结构（用户/权限/RBAC/聊天/RAG）
+#   V2__vector_store_bm25.sql — BM25 全文检索支持
 # 初始管理员：admin / admin123（生产环境请立即修改）
 ```
 
@@ -49,7 +52,6 @@ docker compose up -d
 > docker build -f Dockerfile.node -t sandbox-node:bookworm .       # 需先拉取 node:22-bookworm
 > docker build -f Dockerfile.java -t sandbox-java:bookworm .       # 需先拉取 eclipse-temurin:21-jre-bookworm
 > ```
-```
 
 > PostgreSQL 18 变更了数据目录结构，docker-compose 已适配。如手动启动需注意 volume 挂载路径为 `/var/lib/postgresql`（而非旧版 `/var/lib/postgresql/data`）。
 
@@ -62,7 +64,7 @@ export ZHIPU_API_KEY=***         # 可选
 export MINIMAX_API_KEY=***       # 可选
 
 # RAG 配置（可选）
-export DASHSCOPE_API_KEY=sk-***       # 阿里千问 Embedding API Key
+export DASHSCOPE_API_KEY=sk-***       # 阿里千问 Embedding + Rerank API Key
 
 export JWT_SECRET=your-jwt-secret-at-least-32-characters-long!!
 
@@ -118,10 +120,10 @@ curl -X POST http://localhost:8080/api/chat \
   -b cookies.txt \
   -d '{"model":"deepseek/deepseek-chat","message":"文档里讲了什么？","ragEnabled":true}'
 
-# 8. 查看文档列表
+# 8. 查看文档列表（仅当前用户的文档）
 curl http://localhost:8080/api/documents -b cookies.txt
 
-# 9. 删除文档
+# 9. 删除文档（仅文档所有者可操作）
 curl -X DELETE http://localhost:8080/api/documents/1 -b cookies.txt
 ```
 
@@ -294,8 +296,14 @@ src/main/java/com/demo/chat/
 │   ├── config/                               #   RAG 配置
 │   │   ├── MinioConfig.java                  #     MinIO Client Bean
 │   │   ├── MinioProperties.java              #     spring.minio.* 配置
-│   │   ├── DocumentProperties.java           #     app.document.* 配置
-│   │   └── RagConfig.java                    #     RetrievalAugmentationAdvisor + ParentDocumentPostProcessor
+│   │   ├── DocumentProperties.java           #     app.document.* 配置（MIME 白名单 + 文件大小限制）
+│   │   ├── RagRetrievalProperties.java       #     app.rag.* 配置（检索四阶段参数）
+│   │   └── RagConfig.java                    #     RetrievalAugmentationAdvisor 组装（查询改写→混合检索→Rerank→MMR→父文档）
+│   │
+│   ├── retrieval/                            #   ★ 检索优化组件
+│   │   ├── HybridDocumentRetriever.java      #     向量 + BM25 混合检索 + RRF 融合
+│   │   ├── BailianRerankPostProcessor.java   #     百炼 qwen3-rerank 语义精排
+│   │   └── MmrDocumentPostProcessor.java     #     MMR 多样性去重
 │   │
 │   ├── parser/                               #   ★ 文档解析（策略模式）
 │   │   ├── DocumentParser.java               #     解析器接口
@@ -315,28 +323,30 @@ src/main/java/com/demo/chat/
 │   ├── etl/                                  #   ★ ETL Pipeline（接口分离）
 │   │   ├── Extractor.java                    #     Extract 阶段接口
 │   │   ├── Transformer.java                  #     Transform 阶段接口
-│   │   ├── Loader.java                       #     Load 阶段接口
+│   │   ├── Loader.java                       #     Load 阶段接口（含 deleteByDocumentId）
 │   │   ├── DocumentExtractor.java            #     MinIO 下载 + Parser 解析
 │   │   ├── StrategyTransformer.java          #     路由到 ChunkStrategyFactory
-│   │   └── VectorStoreLoader.java            #     写入 PGvector
+│   │   └── VectorStoreLoader.java            #     写入 PGvector + 按 documentId 清理
 │   │
 │   ├── embedding/                            #   ★ 向量化
 │   │   ├── DashScopeEmbeddingProperties.java #     DashScope 配置
 │   │   ├── DashScopeEmbeddingApi.java        #     API 请求/响应 DTO
-│   │   └── DashScopeEmbeddingModel.java      #     Spring AI EmbeddingModel 实现
+│   │   └── DashScopeEmbeddingModel.java      #     Spring AI EmbeddingModel 实现（空文本防护 + 30s 超时）
 │   │
 │   ├── service/                              #   编排服务
+│   │   ├── DocumentApplicationService.java   #     文档应用服务接口（SRP：Controller 仅做 HTTP 层）
 │   │   ├── FileStorageService.java           #     文件存储接口（MinIO/S3/本地）
 │   │   ├── EtlPipelineService.java           #     ETL Pipeline 接口
 │   │   └── impl/
+│   │       ├── DocumentApplicationServiceImpl.java  # 文档业务门面（校验/上传/查询/删除 + owner 校验）
 │   │       ├── MinioFileStorageService.java  #     MinIO 实现（上传/下载/删除/预签名）
-│   │       └── EtlPipelineServiceImpl.java   #     纯编排器（Extract→Transform→Load）
+│   │       └── EtlPipelineServiceImpl.java   #     纯编排器（Extract→Transform→Load）+ 编程式事务
 │   │
 │   ├── controller/
 │   │   └── DocumentController.java           #     /api/documents/* (上传/列表/详情/删除/状态)
 │   │
 │   ├── entity/
-│   │   └── RagDocument.java                  #     文档记录（状态机: UPLOADED→PARSING→CHUNKING→VECTORIZING→COMPLETED/FAILED）
+│   │   └── RagDocument.java                  #     文档记录（含 userId + 状态机: UPLOADED→...→COMPLETED/FAILED）
 │   │
 │   ├── dto/
 │   │   ├── DocumentDTO.java                  #     文档详情 DTO
@@ -355,6 +365,9 @@ src/main/java/com/demo/chat/
 
 resources/
 ├── application.yml / application-{profile}.yml
+├── db/migration/                             #   Flyway 数据库迁移
+│   ├── V1__init_schema.sql                   #     完整表结构（幂等）
+│   └── V2__vector_store_bm25.sql             #     BM25 全文检索（tsvector + GIN 索引）
 ├── static/prompt/                            # XML System Prompt 模板
 │   ├── default.xml
 │   ├── deepseek-chat.xml
@@ -368,7 +381,8 @@ resources/
     ├── TokenUsageMapper.xml
     ├── ConversationMapper.xml
     ├── ModelParamsMapper.xml
-    └── SystemPromptMapper.xml
+    ├── SystemPromptMapper.xml
+    └── rag/RagDocumentMapper.xml
 ```
 
 ## 架构设计
@@ -579,7 +593,7 @@ Database
 - **Mapper SQL 全部由 XML 维护**：不使用 `@Select`/`@Delete` 注解，SQL 集中在 `resources/mapper/*.xml`
 - **编程式事务** `TransactionTemplate`，不使用 `@Transactional`
 - DTO 全部使用 Java record，Entity 不暴露给前端
-- **sql/schema.sql** 全量建表脚本（IF NOT EXISTS 幂等），由 docker-compose 自动执行
+- **Flyway 数据库迁移**：`V1__init_schema.sql` 全量建表 + `V2__vector_store_bm25.sql` BM25 支持
 
 ### 11. 缓存策略
 
@@ -601,9 +615,10 @@ Database
         ▼
 DocumentController.upload()
         │
-        ├── 1. MinIO 存储（FileStorageService）
-        ├── 2. 创建 rag_document 记录
-        └── 3. ETL Pipeline（EtlPipelineService）
+        ├── 1. 文件校验（MIME 白名单 + 大小限制 + 魔数 sniffing）
+        ├── 2. MinIO 存储（FileStorageService）
+        ├── 3. 创建 rag_document 记录（含 userId）
+        └── 4. ETL Pipeline（EtlPipelineService，编程式事务）
                 │
                 ├── Extract: DocumentExtractor
                 │   └── DocumentParserFactory.getParser(mimeType)
@@ -614,11 +629,11 @@ DocumentController.upload()
                 ├── Transform: StrategyTransformer
                 │   └── ChunkStrategyFactory.getStrategy("parent-child")
                 │       └── ParentChildChunkStrategy
-                │           ├── 第 1 层: 2000 tokens → 父文档
-                │           └── 第 2 层: 500 tokens → 子切分 (metadata 含 parentId + parentContent)
+                │           ├── 第 1 层: 2000 tokens → 父文档（metadata: isParent=true）
+                │           └── 第 2 层: 500 tokens → 子切分 (metadata: parentId + parentContent)
                 │
                 └── Load: VectorStoreLoader
-                    └── VectorStore.add(childChunks) → PGvector
+                    └── VectorStore.add(chunks) → PGvector
 
 ---
 
@@ -627,19 +642,47 @@ DocumentController.upload()
         ▼
 ChatService → RetrievalAugmentationAdvisor
         │
-        ├── 1. VectorStore.similaritySearch(query) → 命中子切分
-        ├── 2. ParentDocumentPostProcessor: 子→父替换 + parentId 去重
-        └── 3. 父文档完整上下文 → 拼接到用户提问 → LLM 回答
+        ▼  四阶段检索管道（各阶段可独立开关）
+        │
+        ├── Stage 1: 查询改写 — RewriteQueryTransformer
+        │   └── LLM 将非正式查询转为结构化搜索词
+        │
+        ├── Stage 2: 混合检索 — HybridDocumentRetriever
+        │   ├── pgvector HNSW 向量检索（语义相似度）
+        │   ├── PostgreSQL tsvector 全文检索（BM25 词频匹配）
+        │   └── RRF (Reciprocal Rank Fusion) 倒数排名融合
+        │       公式：score(d) = Σ 1/(k + rank_i)
+        │
+        ├── Stage 3: 精排 — BailianRerankPostProcessor
+        │   └── 调用阿里云百炼 qwen3-rerank 语义级重排
+        │       API: POST /compatible-api/v1/reranks
+        │
+        ├── Stage 4: 多样性 — MmrDocumentPostProcessor
+        │   └── MMR 公式：argmax [ λ·sim(q,d) - (1-λ)·max sim(d,d') ]
+        │       消除语义冗余的检索结果
+        │
+        ├── Post: ParentDocumentPostProcessor
+        │   └── 子切分 → 父文档替换 + parentId 去重
+        │
+        └── 父文档完整上下文 → 拼接到用户提问 → LLM 回答
 ```
 
 **关键设计：**
 
+- **四阶段管道**：查询改写→混合检索→Rerank→MMR，各阶段通过 `app.rag.*` 配置独立开关
+- **混合检索 + RRF**：向量检索捕捉语义相关性，BM25 捕捉精确关键词匹配，RRF 融合两者优势
+- **BM25 全文检索**：通过 Flyway V2 迁移给 `vector_store` 表添加 `content_tsv` 列 + 触发器 + GIN 索引
+- **百炼 Rerank**：qwen3-rerank 模型进行语义级精排，比向量相似度更精准
+- **MMR 多样性**：λ=0.7 平衡相关性与多样性，消除重复内容
 - **策略模式**：`DocumentParser` 接口 + `ChunkStrategy` 接口，各自可独立扩展
 - **Parent-Child 策略**：子切分保证检索精度（500 tokens），父文档保证 LLM 上下文完整性（2000 tokens）
+- **SRP 重构**：`DocumentApplicationService` 接口抽离业务逻辑，Controller 仅做 HTTP 层
+- **资源级授权**：`RagDocument` 含 `userId`，`findAndVerifyOwner()` 统一校验，防枚举攻击
+- **MIME 安全校验**：白名单 + 文件大小限制 + 文件头魔数 sniffing，防止伪造 Content-Type
+- **向量清理**：删除文档时通过 `documentId` metadata 精准清理 PGvector 中的所有关联 chunk
+- **Embedding 防护**：空文本返回缓存零向量，API 调用加 30s Duration timeout
 - **ETL 解耦**：`Extractor`/`Transformer`/`Loader` 独立接口，Pipeline 只做编排，零业务逻辑
-- **DocumentPostProcessor**：Spring AI 原生扩展点，检索后子→父替换 + 去重
 - **DashScope Embedding**：通过 WebClient 调用阿里千问 OpenAI 兼容 API，实现 `EmbeddingModel` 接口
-- **向量维度**：`text-embedding-v4` 支持 64~2048 维，默认 1024（CMTEB 最佳平衡点）
 
 **分块策略对比：**
 
@@ -648,6 +691,23 @@ ChatService → RetrievalAugmentationAdvisor
 | token | Token 数机械切分 | 格式不固定的文档 | `token` |
 | paragraph | 段落/标题边界切分 + 短段落合并 | Markdown/纯文本 | `paragraph` |
 | parent-child | 双层切分（父 2000t / 子 500t） | 精准检索 + 完整上下文 | `parent-child` |
+
+**检索参数配置（`app.rag.*`）：**
+
+| 参数 | 默认值 | 说明 |
+|------|--------|------|
+| `query-rewrite-enabled` | `true` | 查询改写开关 |
+| `hybrid-retrieval-enabled` | `true` | 混合检索开关（关闭则纯向量） |
+| `vector-top-k` | `10` | 向量检索 topK |
+| `bm25-top-k` | `10` | BM25 全文检索 topK |
+| `rrf-k` | `60` | RRF 常数（越小对高排名越敏感） |
+| `rerank-enabled` | `true` | Rerank 开关 |
+| `rerank-model` | `qwen3-rerank` | Rerank 模型 |
+| `rerank-top-n` | `5` | Rerank 返回数量 |
+| `mmr-enabled` | `true` | MMR 开关 |
+| `mmr-lambda` | `0.7` | 平衡参数（0=最大多样性，1=最大相关性） |
+| `mmr-top-k` | `5` | MMR 返回数量 |
+| `similarity-threshold` | `0.5` | 向量相似度阈值 |
 
 ## 环境配置
 
@@ -684,6 +744,23 @@ spring.ai:
       model: MiniMax-M2.1
       temperature: 0.7
 
+  # DashScope Embedding
+  dashscope:
+    embedding:
+      base-url: ${DASHSCOPE_EMBEDDING_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode/v1}
+      api-key: ${DASHSCOPE_API_KEY}
+      model: text-embedding-v4
+      dimensions: 1024
+
+  # PGvector
+  vectorstore:
+    pgvector:
+      index-type: HNSW
+      distance-type: COSINE_DISTANCE
+      dimensions: 1024
+      initialize-schema: true
+      table-name: vector_store
+
 app:
   jwt:
     secret: ${JWT_SECRET}
@@ -701,28 +778,30 @@ app:
     secret-key: ${MINIO_ROOT_PASSWORD:minioadmin123}
     bucket: ${MINIO_BUCKET:rag-documents}
 
-  # DashScope Embedding
-  ai:
-    dashscope:
-      embedding:
-        base-url: ${DASHSCOPE_EMBEDDING_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode/v1}
-        api-key: ${DASHSCOPE_API_KEY}
-        model: text-embedding-v4
-        dimensions: 1024
-    vectorstore:
-      pgvector:
-        index-type: HNSW
-        distance-type: COSINE_DISTANCE
-        dimensions: 1024
-        initialize-schema: true
-
-app:
+  # 文档上传配置
   document:
     chunk-strategy: parent-child
     parent-chunk-size: 2000
     child-chunk-size: 500
     max-file-size: 50MB
     allowed-mime-types: application/pdf,...
+
+  # RAG 检索优化
+  rag:
+    query-rewrite-enabled: true
+    hybrid-retrieval-enabled: true
+    vector-top-k: 10
+    bm25-top-k: 10
+    rrf-k: 60
+    rerank-enabled: true
+    rerank-base-url: ${DASHSCOPE_RERANK_BASE_URL:https://dashscope.aliyuncs.com/compatible-api/v1}
+    rerank-api-key: ${DASHSCOPE_API_KEY}
+    rerank-model: qwen3-rerank
+    rerank-top-n: 5
+    mmr-enabled: true
+    mmr-lambda: 0.7
+    mmr-top-k: 5
+    similarity-threshold: 0.5
 
 model:
   router:
@@ -755,9 +834,10 @@ model:
 | **DTO 隔离** | Entity 不暴露给前端，全部通过 record DTO 转换 |
 | **数据访问下沉** | `LambdaQueryWrapper` 全部在 Mapper 层，Service 层不含 SQL 构建逻辑 |
 | **编程式事务** | `TransactionTemplate` 精确控制事务边界 |
-| **安全纵深** | JWT + Redis 吊销 + 用户状态 + IP 限流 + 滑块验证码 + Cookie SameSite |
+| **安全纵深** | JWT + Redis 吊销 + 用户状态 + IP 限流 + 滑块验证码 + Cookie SameSite + 资源级 owner 校验 |
 | **自研核心** | 雪花 ID 生成器、滑块验证码均为纯 Java 实现，无外部依赖 |
 | **模板方法 + 接口分离** | ETL Pipeline 拆分为 Extractor/Transformer/Loader 独立接口，Pipeline 只做编排 |
+| **四阶段检索管道** | 查询改写→混合检索+RRF→Rerank→MMR，各阶段独立可配，管道通过 `RagConfig` 统一装配 |
 | **双层检索（Parent-Child）** | 子切分保证检索精度，父文档保证 LLM 上下文完整性 |
 | **EmbeddingModel 接口适配** | 自建 DashScopeEmbeddingModel 实现标准接口，PgVectorStore 自动注入，零耦合 |
 

@@ -6,6 +6,10 @@ import com.demo.chat.chat.advisor.RateLimiter;
 import com.demo.chat.chat.advisor.TokenBucketLimiter;
 import com.demo.chat.chat.content.ContentFilterService;
 import com.demo.chat.chat.content.SensitiveWordFilterService;
+import com.demo.chat.chat.mode.ModeRouter;
+import com.demo.chat.chat.mode.ChatModeStrategy;
+import com.demo.chat.chat.mode.SimpleModeStrategy;
+import com.demo.chat.chat.mode.MultiTurnModeStrategy;
 import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.chat.memory.ChatMemoryRepository;
 import org.springframework.ai.chat.memory.MessageWindowChatMemory;
@@ -20,6 +24,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.transaction.PlatformTransactionManager;
 
 import java.time.Duration;
+import java.util.List;
 
 /**
  * Advisor 编排配置
@@ -103,5 +108,22 @@ public class AdvisorAutoConfiguration {
                 .chatMemoryRepository(chatMemoryRepository)
                 .maxMessages(maxMessages)
                 .build();
+    }
+
+    // ==================== 对话模式路由 ====================
+
+    @Bean
+    public ChatModeStrategy simpleModeStrategy() {
+        return new SimpleModeStrategy();
+    }
+
+    @Bean
+    public ChatModeStrategy multiTurnModeStrategy() {
+        return new MultiTurnModeStrategy();
+    }
+
+    @Bean
+    public ModeRouter modeRouter(List<ChatModeStrategy> strategies) {
+        return new ModeRouter(strategies);
     }
 }

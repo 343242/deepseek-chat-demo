@@ -1,31 +1,42 @@
-package com.demo.chat.rag.service.impl;
+package com.demo.chat.rag.chunk;
 
 import com.demo.chat.rag.config.DocumentProperties;
-import com.demo.chat.rag.service.DocumentChunkService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.transformer.splitter.TokenTextSplitter;
-import org.springframework.stereotype.Service;
+import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.List;
 
-@Service
-public class TokenTextSplitterChunkService implements DocumentChunkService {
+/**
+ * Token 数分块策略
+ * <p>
+ * 使用 Spring AI 内置的 {@link TokenTextSplitter} 按 token 数机械切分。
+ * 适用于格式不固定、无明确段落边界的文档。
+ * </p>
+ */
+@Component
+public class TokenChunkStrategy implements ChunkStrategy {
 
-    private static final Logger log = LoggerFactory.getLogger(TokenTextSplitterChunkService.class);
+    private static final Logger log = LoggerFactory.getLogger(TokenChunkStrategy.class);
 
-    private final DocumentProperties documentProperties;
+    private final DocumentProperties properties;
 
-    public TokenTextSplitterChunkService(DocumentProperties documentProperties) {
-        this.documentProperties = documentProperties;
+    public TokenChunkStrategy(DocumentProperties properties) {
+        this.properties = properties;
+    }
+
+    @Override
+    public String strategyName() {
+        return "token";
     }
 
     @Override
     public List<Document> chunk(List<Document> documents, String sourceFileName) {
         TokenTextSplitter splitter = TokenTextSplitter.builder()
-                .withChunkSize(documentProperties.getChunkSize())
+                .withChunkSize(properties.getChunkSize())
                 .build();
 
         List<Document> allChunks = new ArrayList<>();
@@ -33,8 +44,7 @@ public class TokenTextSplitterChunkService implements DocumentChunkService {
 
         for (Document doc : documents) {
             List<Document> chunks = splitter.apply(List.of(doc));
-            for (int i = 0; i < chunks.size(); i++) {
-                Document chunk = chunks.get(i);
+            for (Document chunk : chunks) {
                 chunk.getMetadata().put("source", sourceFileName);
                 chunk.getMetadata().put("chunkIndex", globalIndex);
                 allChunks.add(chunk);
@@ -46,10 +56,8 @@ public class TokenTextSplitterChunkService implements DocumentChunkService {
             chunk.getMetadata().put("totalChunks", allChunks.size());
         }
 
-        log.info("Split {} documents into {} chunks (chunkSize={}, overlap={}, source={})",
-                documents.size(), allChunks.size(),
-                documentProperties.getChunkSize(), documentProperties.getChunkOverlap(),
-                sourceFileName);
+        log.info("[TokenChunk] Split {} docs → {} chunks (chunkSize={}, source={})",
+                documents.size(), allChunks.size(), properties.getChunkSize(), sourceFileName);
 
         return allChunks;
     }

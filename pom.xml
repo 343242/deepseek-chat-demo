@@ -140,10 +140,16 @@
             <artifactId>spring-ai-starter-vector-store-pgvector</artifactId>
         </dependency>
 
-        <!-- Spring AI RAG Advisor (QuestionAnswerAdvisor) -->
+        <!-- Spring AI Vector Store Advisors (QuestionAnswerAdvisor) -->
         <dependency>
             <groupId>org.springframework.ai</groupId>
             <artifactId>spring-ai-advisors-vector-store</artifactId>
+        </dependency>
+
+        <!-- Spring AI RAG (RetrievalAugmentationAdvisor + DocumentPostProcessor) -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-rag</artifactId>
         </dependency>
 
         <!-- MinIO Object Storage -->

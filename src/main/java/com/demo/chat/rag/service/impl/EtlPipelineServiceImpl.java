@@ -1,10 +1,12 @@
 package com.demo.chat.rag.service.impl;
 
+import com.demo.chat.rag.chunk.ChunkStrategy;
+import com.demo.chat.rag.chunk.ChunkStrategyFactory;
+import com.demo.chat.rag.config.DocumentProperties;
 import com.demo.chat.rag.entity.RagDocument;
 import com.demo.chat.rag.mapper.RagDocumentMapper;
 import com.demo.chat.rag.parser.DocumentParser;
 import com.demo.chat.rag.parser.DocumentParserFactory;
-import com.demo.chat.rag.service.DocumentChunkService;
 import com.demo.chat.rag.service.EtlPipelineService;
 import com.demo.chat.rag.service.FileStorageService;
 import org.slf4j.Logger;
@@ -21,8 +23,8 @@ import java.util.List;
 /**
  * ETL Pipeline 编排服务实现
  * <p>
- * 流程：Extract(从 MinIO 下载 → Parser 解析) → Transform(分块) → Load(PGvector 写入)
- * 每个阶段更新 rag_document 表的 status 字段。
+ * 流程：Extract(从 MinIO 下载 → Parser 解析) → Transform(策略化分块) → Load(PGvector 写入)
+ * 分块策略由 {@link ChunkStrategyFactory} 按 YAML 配置路由。
  * </p>
  */
 @Service
@@ -32,18 +34,21 @@ public class EtlPipelineServiceImpl implements EtlPipelineService {
 
     private final FileStorageService fileStorageService;
     private final DocumentParserFactory parserFactory;
-    private final DocumentChunkService chunkService;
+    private final ChunkStrategyFactory chunkStrategyFactory;
+    private final DocumentProperties documentProperties;
     private final RagDocumentMapper ragDocumentMapper;
     private final VectorStore vectorStore;
 
     public EtlPipelineServiceImpl(FileStorageService fileStorageService,
                                   DocumentParserFactory parserFactory,
-                                  DocumentChunkService chunkService,
+                                  ChunkStrategyFactory chunkStrategyFactory,
+                                  DocumentProperties documentProperties,
                                   RagDocumentMapper ragDocumentMapper,
                                   VectorStore vectorStore) {
         this.fileStorageService = fileStorageService;
         this.parserFactory = parserFactory;
-        this.chunkService = chunkService;
+        this.chunkStrategyFactory = chunkStrategyFactory;
+        this.documentProperties = documentProperties;
         this.ragDocumentMapper = ragDocumentMapper;
         this.vectorStore = vectorStore;
     }
@@ -66,9 +71,10 @@ public class EtlPipelineServiceImpl implements EtlPipelineService {
             List<Document> rawDocuments = parser.parse(fileResource, mimeType);
             log.info("Extracted {} segments from {}", rawDocuments.size(), fileName);
 
-            // === Transform (Split) ===
+            // === Transform (Strategy-based Chunking) ===
             updateStatus(documentId, "CHUNKING");
-            List<Document> chunks = chunkService.chunk(rawDocuments, fileName);
+            ChunkStrategy strategy = chunkStrategyFactory.getStrategy(documentProperties.getChunkStrategy());
+            List<Document> chunks = strategy.chunk(rawDocuments, fileName);
 
             // === Load (写入 PGvector) ===
             updateStatus(documentId, "VECTORIZING");
@@ -81,7 +87,8 @@ public class EtlPipelineServiceImpl implements EtlPipelineService {
             doc.setUpdateTime(LocalDateTime.now());
             ragDocumentMapper.updateById(doc);
 
-            log.info("ETL pipeline completed for document: id={}, chunks={}", documentId, chunks.size());
+            log.info("ETL pipeline completed for document: id={}, chunks={}, strategy={}",
+                    documentId, chunks.size(), strategy.strategyName());
             return chunks.size();
 
         } catch (Exception e) {

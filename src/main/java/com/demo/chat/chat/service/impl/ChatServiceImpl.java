@@ -1,55 +1,39 @@
 package com.demo.chat.chat.service.impl;
 
-import com.demo.chat.chat.advisor.ConversationContextAdvisor;
 import com.demo.chat.chat.client.ChatClientRegistry;
 import com.demo.chat.chat.dto.ChatRequest;
 import com.demo.chat.chat.dto.ChatResponse;
-import com.demo.chat.chat.entity.ModelParams;
 import com.demo.chat.chat.mode.ChatModeStrategy;
 import com.demo.chat.chat.mode.ModeRouter;
-import com.demo.chat.chat.provider.ModelProvider;
 import com.demo.chat.chat.provider.ModelRouter;
-import com.demo.chat.chat.provider.ProviderRegistry;
-import com.demo.chat.chat.service.*;
-import com.demo.chat.chat.tool.ToolRegistry;
+import com.demo.chat.chat.service.ChatRequestSpecFactory;
+import com.demo.chat.chat.service.ChatService;
+import com.demo.chat.chat.service.UsageService;
 import com.demo.chat.chat.util.ConversationIdUtil;
 import com.demo.chat.security.util.SecurityUtils;
-import org.springframework.ai.rag.advisor.RetrievalAugmentationAdvisor;
-import org.springframework.ai.chat.client.advisor.ToolCallAdvisor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
-import org.springframework.ai.chat.client.advisor.api.Advisor;
-import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
 import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.metadata.Usage;
-import org.springframework.ai.chat.prompt.ChatOptions;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 
-import java.util.ArrayList;
-import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * 聊天服务
+ * 聊天服务（编排层）
  * <p>
- * 通过 ChatClientRegistry 获取模型对应的 ChatClient，
- * 通过 Spring 自动注入的 List&lt;Advisor&gt; 获取所有 Advisor，
- * 不直接依赖任何具体 Advisor 实现。
- * <p>
- * 支持两种对话模式（通过 ModeRouter 路由）：
+ * 职责：请求预处理（路由、隔离） → 委托工厂构建请求 → 调用并处理响应。
+ * 不再直接组装 Advisor 链或解析 System Prompt，这些逻辑分别委托给：
  * <ul>
- *   <li>SIMPLE: 单轮直接调用 LLM，无记忆、无上下文注入</li>
- *   <li>MULTI_TURN: 多轮对话，自动维护会话记忆，支持 enableThinking</li>
+ *   <li>{@link ChatRequestSpecFactory} — 请求规格构建（含 Advisor 链、Prompt、参数）</li>
+ *   <li>{@link com.demo.chat.chat.service.ChatAdvisorChainFactory} — Advisor 链组装</li>
  * </ul>
  * <p>
- * 其他集成功能：
- * - 动态 System Prompt（数据库 > XML 模板，带缓存）
- * - 模型参数热调整（从 ModelParamsService 获取，带缓存）
- * - Token 用量统计（记录到 UsageService）
- * - 用户级对话隔离（conversationId 自动绑定 userId）
+ * 依赖数量从 12 降至 6，每个依赖都有明确的单一职责。
  */
 @Service
 public class ChatServiceImpl implements ChatService {
@@ -57,143 +41,121 @@ public class ChatServiceImpl implements ChatService {
     private static final Logger log = LoggerFactory.getLogger(ChatServiceImpl.class);
 
     private final ChatClientRegistry registry;
-    private final ProviderRegistry providerRegistry;
     private final ModelRouter modelRouter;
     private final ModeRouter modeRouter;
-    private final ChatMemory chatMemory;
-    private final List<Advisor> advisors;
-    private final ToolCallAdvisor toolCallAdvisor;
-    private final ToolRegistry toolRegistry;
-    private final SystemPromptService systemPromptService;
-    private final ModelParamsService modelParamsService;
+    private final ChatRequestSpecFactory requestSpecFactory;
     private final UsageService usageService;
-    private final RetrievalAugmentationAdvisor ragAdvisor;
+    private final ChatMemory chatMemory;
 
     public ChatServiceImpl(ChatClientRegistry registry,
-                           ProviderRegistry providerRegistry,
                            ModelRouter modelRouter,
                            ModeRouter modeRouter,
-                           ChatMemory chatMemory,
-                           List<Advisor> advisors,
-                           ToolCallAdvisor toolCallAdvisor,
-                           ToolRegistry toolRegistry,
-                           SystemPromptService systemPromptService,
-                           ModelParamsService modelParamsService,
+                           ChatRequestSpecFactory requestSpecFactory,
                            UsageService usageService,
-                           RetrievalAugmentationAdvisor ragAdvisor) {
+                           ChatMemory chatMemory) {
         this.registry = registry;
-        this.providerRegistry = providerRegistry;
         this.modelRouter = modelRouter;
         this.modeRouter = modeRouter;
-        this.chatMemory = chatMemory;
-        this.advisors = advisors;
-        this.toolCallAdvisor = toolCallAdvisor;
-        this.toolRegistry = toolRegistry;
-        this.systemPromptService = systemPromptService;
-        this.modelParamsService = modelParamsService;
+        this.requestSpecFactory = requestSpecFactory;
         this.usageService = usageService;
-        this.ragAdvisor = ragAdvisor;
+        this.chatMemory = chatMemory;
     }
 
     @Override
     public ChatResponse chat(ChatRequest request) {
-        Long userId = SecurityUtils.getCurrentUserId();
-        ChatModeStrategy modeStrategy = modeRouter.route(request.mode());
-        String isolatedConversationId = ConversationIdUtil.buildIsolatedId(userId, request.conversationId());
+        ChatContext ctx = prepareContext(request);
 
-        ModelRouter.Route route = modelRouter.resolve(request.model());
-
-        log.debug("Chat request: userId={}, rawModel={}, route={}, mode={}, conversationId={}",
-                userId, request.model(), route.toCompositeId(), modeStrategy.getMode(), isolatedConversationId);
-
-        ChatClient chatClient = registry.get(route.toCompositeId());
-        long startTime = System.currentTimeMillis();
-
-        ChatClient.ChatClientRequestSpec requestSpec = buildRequestSpec(
-                chatClient, route, request, isolatedConversationId, modeStrategy);
+        ChatClient.ChatClientRequestSpec requestSpec = requestSpecFactory.createSpec(
+                ctx.chatClient, ctx.route, request, ctx.conversationId, ctx.modeStrategy);
 
         org.springframework.ai.chat.model.ChatResponse aiResponse = requestSpec.call().chatResponse();
-        long duration = System.currentTimeMillis() - startTime;
 
-        recordUsage(isolatedConversationId, route.toCompositeId(), aiResponse, duration);
+        recordUsage(ctx.conversationId, ctx.route.toCompositeId(), aiResponse, ctx.elapsed());
 
         var generation = aiResponse.getResult();
         String content = (generation != null && generation.getOutput() != null)
                 ? generation.getOutput().getText()
                 : "";
-        return new ChatResponse(route.toCompositeId(), content, request.conversationId());
+        return new ChatResponse(ctx.route.toCompositeId(), content, request.conversationId());
     }
 
     @Override
     public Flux<String> chatStream(ChatRequest request) {
-        Long userId = SecurityUtils.getCurrentUserId();
-        ChatModeStrategy modeStrategy = modeRouter.route(request.mode());
-        String isolatedConversationId = ConversationIdUtil.buildIsolatedId(userId, request.conversationId());
+        ChatContext ctx = prepareContext(request);
 
-        ModelRouter.Route route = modelRouter.resolve(request.model());
-
-        log.debug("Stream chat request: userId={}, rawModel={}, route={}, mode={}, conversationId={}",
-                userId, request.model(), route.toCompositeId(), modeStrategy.getMode(), isolatedConversationId);
-
-        ChatClient chatClient = registry.get(route.toCompositeId());
-        long startTime = System.currentTimeMillis();
-
-        ChatClient.ChatClientRequestSpec requestSpec = buildRequestSpec(
-                chatClient, route, request, isolatedConversationId, modeStrategy);
+        ChatClient.ChatClientRequestSpec requestSpec = requestSpecFactory.createSpec(
+                ctx.chatClient, ctx.route, request, ctx.conversationId, ctx.modeStrategy);
 
         StringBuilder collectedContent = new StringBuilder();
-        java.util.concurrent.atomic.AtomicBoolean usageRecorded = new java.util.concurrent.atomic.AtomicBoolean(false);
-
+        AtomicBoolean usageRecorded = new AtomicBoolean(false);
         AtomicReference<org.springframework.ai.chat.model.ChatResponse> lastAiResponse = new AtomicReference<>();
 
         return requestSpec.stream()
                 .chatResponse()
                 .mapNotNull(aiResponse -> {
                     lastAiResponse.set(aiResponse);
-                    aiResponse.getResult();
                     String text = aiResponse.getResult().getOutput().getText();
                     collectedContent.append(text);
                     return text;
                 })
                 .doFinally(signal -> {
-                    // SIMPLE 模式不需要保存部分响应
-                    if (modeStrategy.isMemoryEnabled()) {
+                    if (ctx.modeStrategy.isMemoryEnabled()) {
                         switch (signal) {
                             case ON_ERROR, CANCEL -> {
                                 log.warn("Stream {} for conversation {}: collected {} chars",
-                                        signal, isolatedConversationId, collectedContent.length());
-                                savePartialResponse(isolatedConversationId, collectedContent.toString());
+                                        signal, ctx.conversationId, collectedContent.length());
+                                savePartialResponse(ctx.conversationId, collectedContent.toString());
                             }
-                            case ON_COMPLETE -> log.debug("Stream completed for conversation: {}", isolatedConversationId);
+                            case ON_COMPLETE -> log.debug("Stream completed for conversation: {}", ctx.conversationId);
                             // ON_SUBSCRIBE, ON_NEXT — 无需处理
                         }
                     }
                     if (usageRecorded.compareAndSet(false, true)) {
-                        long duration = System.currentTimeMillis() - startTime;
+                        long duration = ctx.elapsed();
                         org.springframework.ai.chat.model.ChatResponse last = lastAiResponse.get();
                         if (last != null && last.getMetadata().getUsage() != null) {
                             Usage usage = last.getMetadata().getUsage();
                             usageService.recordUsage(
-                                    isolatedConversationId, route.toCompositeId(),
+                                    ctx.conversationId, ctx.route.toCompositeId(),
                                     usage.getPromptTokens(), usage.getCompletionTokens(),
                                     usage.getTotalTokens(), duration);
                         } else {
                             usageService.recordUsage(
-                                    isolatedConversationId, route.toCompositeId(),
+                                    ctx.conversationId, ctx.route.toCompositeId(),
                                     -1, -1, -1, duration);
                         }
                     }
                 });
     }
 
+    // ===== 内部辅助 =====
+
+    /**
+     * 预处理请求上下文：用户隔离、模式路由、模型路由、获取 ChatClient
+     */
+    private ChatContext prepareContext(ChatRequest request) {
+        Long userId = SecurityUtils.getCurrentUserId();
+        ChatModeStrategy modeStrategy = modeRouter.route(request.mode());
+        String conversationId = ConversationIdUtil.buildIsolatedId(userId, request.conversationId());
+        ModelRouter.Route route = modelRouter.resolve(request.model());
+        ChatClient chatClient = registry.get(route.toCompositeId());
+
+        log.debug("Chat request: userId={}, rawModel={}, route={}, mode={}, conversationId={}",
+                userId, request.model(), route.toCompositeId(), modeStrategy.getMode(), conversationId);
+
+        return new ChatContext(chatClient, route, conversationId, modeStrategy);
+    }
+
+    /**
+     * 保存流式部分响应（仅在流中断时调用）
+     */
     private void savePartialResponse(String conversationId, String content) {
         if (content != null && !content.isBlank()) {
             try {
                 var history = chatMemory.get(conversationId);
                 if (!history.isEmpty()) {
                     var lastMsg = history.getLast();
-                    if (lastMsg instanceof AssistantMessage am
-                            && content.equals(am.getText())) {
+                    if (lastMsg instanceof AssistantMessage am && content.equals(am.getText())) {
                         log.debug("MessageChatMemoryAdvisor already saved identical response, skipping");
                         return;
                     }
@@ -206,79 +168,9 @@ public class ChatServiceImpl implements ChatService {
         }
     }
 
-    private ChatClient.ChatClientRequestSpec buildRequestSpec(
-            ChatClient chatClient, ModelRouter.Route route,
-            ChatRequest request, String conversationId,
-            ChatModeStrategy modeStrategy) {
-
-        ChatClient.ChatClientRequestSpec spec = chatClient.prompt()
-                .user(request.message())
-                .advisors(buildAdvisors(conversationId, request, modeStrategy));
-
-        if (toolRegistry.hasTools()) {
-            spec = spec.tools((Object) toolRegistry.getToolCallbacks());
-        }
-
-        String systemPrompt = systemPromptService.getPrompt(route.toCompositeId());
-        if (systemPrompt == null || systemPrompt.isBlank()) {
-            systemPrompt = systemPromptService.getPrompt(route.modelId());
-        }
-        if (systemPrompt != null && !systemPrompt.isBlank()) {
-            spec = spec.system(systemPrompt);
-        }
-
-        ModelParams params = modelParamsService.getParams(route.toCompositeId());
-        if (params == null) {
-            params = modelParamsService.getParams(route.modelId());
-        }
-        if (params != null) {
-            ModelProvider provider = providerRegistry.get(route.providerId());
-            ChatOptions options = provider.buildOptions(params);
-            if (options != null) {
-                spec = spec.options(options);
-            }
-        }
-
-        return spec;
-    }
-
     /**
-     * 根据对话模式组装不同的 Advisor 链
-     * <p>
-     * SIMPLE: RateLimit → ContentFilter → [RAG] → [ToolCall]
-     * MULTI_TURN: ConversationContext → RateLimit → ContentFilter → [RAG] → [ToolCall] → Memory
+     * 记录 Token 用量
      */
-    private List<Advisor> buildAdvisors(String conversationId, ChatRequest request,
-                                        ChatModeStrategy modeStrategy) {
-        List<Advisor> allAdvisors = new ArrayList<>();
-
-        // MULTI_TURN 模式：注入 conversationId 到 Advisor context
-        if (modeStrategy.isContextEnabled()) {
-            allAdvisors.add(new ConversationContextAdvisor(conversationId));
-        }
-
-        // 通用 Advisor（限流 + 内容安全）
-        allAdvisors.addAll(advisors);
-
-        // RAG（按请求启用，与模式无关）
-        if (request.isRagEnabled()) {
-            allAdvisors.add(ragAdvisor);
-            log.debug("RAG advisor enabled for conversation: {}", conversationId);
-        }
-
-        // Tool Calling
-        if (toolRegistry.hasTools()) {
-            allAdvisors.add(toolCallAdvisor);
-        }
-
-        // MULTI_TURN 模式：追加 Memory Advisor
-        if (modeStrategy.isMemoryEnabled()) {
-            allAdvisors.add(MessageChatMemoryAdvisor.builder(chatMemory).build());
-        }
-
-        return allAdvisors;
-    }
-
     private void recordUsage(String conversationId, String modelId,
                              org.springframework.ai.chat.model.ChatResponse aiResponse, long durationMs) {
         try {
@@ -286,17 +178,38 @@ public class ChatServiceImpl implements ChatService {
             if (usage != null) {
                 usageService.recordUsage(
                         conversationId, modelId,
-                        usage.getPromptTokens(),
-                        usage.getCompletionTokens(),
-                        usage.getTotalTokens(),
-                        durationMs
-                );
+                        usage.getPromptTokens(), usage.getCompletionTokens(),
+                        usage.getTotalTokens(), durationMs);
                 log.debug("Usage recorded: model={}, prompt={}, completion={}, total={}, duration={}ms",
                         modelId, usage.getPromptTokens(), usage.getCompletionTokens(),
                         usage.getTotalTokens(), durationMs);
             }
         } catch (Exception e) {
             log.warn("Failed to record usage: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * 请求上下文 — 封装预处理结果，避免方法间传大量参数
+     */
+    private static class ChatContext {
+        final ChatClient chatClient;
+        final ModelRouter.Route route;
+        final String conversationId;
+        final ChatModeStrategy modeStrategy;
+        final long startTimeMs;
+
+        ChatContext(ChatClient chatClient, ModelRouter.Route route,
+                    String conversationId, ChatModeStrategy modeStrategy) {
+            this.chatClient = chatClient;
+            this.route = route;
+            this.conversationId = conversationId;
+            this.modeStrategy = modeStrategy;
+            this.startTimeMs = System.currentTimeMillis();
+        }
+
+        long elapsed() {
+            return System.currentTimeMillis() - startTimeMs;
         }
     }
 }

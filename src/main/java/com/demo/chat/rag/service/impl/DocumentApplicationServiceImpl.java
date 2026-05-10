@@ -9,10 +9,12 @@ import com.demo.chat.rag.mapper.RagDocumentMapper;
 import com.demo.chat.rag.service.DocumentApplicationService;
 import com.demo.chat.rag.service.EtlPipelineService;
 import com.demo.chat.rag.service.FileStorageService;
+import com.demo.chat.security.util.SecurityUtils;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.io.Resource;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -29,6 +31,7 @@ import java.util.UUID;
  *   <li>文件校验（MIME 白名单、非空）</li>
  *   <li>编排上传 → 存储 → 元数据 → ETL 全流程</li>
  *   <li>文档查询、删除（含存储清理）</li>
+ *   <li>资源级 owner 校验：用户只能操作自己的文档</li>
  * </ul>
  * </p>
  */
@@ -62,6 +65,7 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
     public DocumentUploadResponse upload(MultipartFile file) {
         validateFile(file);
 
+        Long currentUserId = SecurityUtils.getCurrentUserId();
         String mimeType = file.getContentType();
         String originalFilename = file.getOriginalFilename();
         String bucket = minioProperties.getBucket();
@@ -79,12 +83,13 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
         ragDoc.setMimeType(mimeType);
         ragDoc.setStorageKey(storageKey);
         ragDoc.setBucket(bucket);
+        ragDoc.setUserId(currentUserId);
         ragDoc.setStatus("UPLOADED");
         ragDoc.setCreateTime(LocalDateTime.now());
         ragDoc.setUpdateTime(LocalDateTime.now());
         ragDocumentMapper.insert(ragDoc);
 
-        log.info("Document uploaded: id={}, file={}, size={}", ragDoc.getId(), originalFilename, file.getSize());
+        log.info("Document uploaded: id={}, file={}, size={}, userId={}", ragDoc.getId(), originalFilename, file.getSize(), currentUserId);
 
         // 触发 ETL
         etlPipelineService.execute(ragDoc.getId(), bucket, storageKey, originalFilename, mimeType);
@@ -94,31 +99,53 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
 
     @Override
     public List<DocumentDTO> listAll() {
+        Long currentUserId = SecurityUtils.getCurrentUserId();
         List<RagDocument> docs = ragDocumentMapper.selectList(
                 new LambdaQueryWrapper<RagDocument>()
+                        .eq(RagDocument::getUserId, currentUserId)
                         .orderByDesc(RagDocument::getCreateTime));
         return docs.stream().map(this::toDTO).toList();
     }
 
     @Override
     public DocumentDTO getById(Long id) {
-        RagDocument doc = ragDocumentMapper.selectById(id);
+        RagDocument doc = findAndVerifyOwner(id);
         return doc != null ? toDTO(doc) : null;
     }
 
     @Override
     public boolean delete(Long id) {
-        RagDocument doc = ragDocumentMapper.selectById(id);
+        RagDocument doc = findAndVerifyOwner(id);
         if (doc == null) {
             return false;
         }
         fileStorageService.delete(doc.getBucket(), doc.getStorageKey());
         ragDocumentMapper.deleteById(id);
-        log.info("Document deleted: id={}, file={}", id, doc.getFileName());
+        log.info("Document deleted: id={}, file={}, userId={}", id, doc.getFileName(), doc.getUserId());
         return true;
     }
 
     // === 私有方法 ===
+
+    /**
+     * 查找文档并验证当前用户是否为所有者
+     *
+     * @param id 文档 ID
+     * @return 文档实体，不存在或无权限时返回 null
+     */
+    private RagDocument findAndVerifyOwner(Long id) {
+        RagDocument doc = ragDocumentMapper.selectById(id);
+        if (doc == null) {
+            return null;
+        }
+        Long currentUserId = SecurityUtils.getCurrentUserId();
+        if (!currentUserId.equals(doc.getUserId())) {
+            log.warn("Access denied: userId={} attempted to access document id={} owned by userId={}",
+                    currentUserId, id, doc.getUserId());
+            return null;
+        }
+        return doc;
+    }
 
     /**
      * 校验上传文件：非空 + MIME 白名单

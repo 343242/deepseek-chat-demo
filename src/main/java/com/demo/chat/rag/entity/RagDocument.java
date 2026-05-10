@@ -26,6 +26,9 @@ public class RagDocument {
     /** MinIO bucket */
     private String bucket;
 
+    /** 文档所有者（用户 ID） */
+    private Long userId;
+
     /** 解析后分块数 */
     private Integer chunkCount;
 
@@ -61,6 +64,9 @@ public class RagDocument {
 
     public String getBucket() { return bucket; }
     public void setBucket(String bucket) { this.bucket = bucket; }
+
+    public Long getUserId() { return userId; }
+    public void setUserId(Long userId) { this.userId = userId; }
 
     public Integer getChunkCount() { return chunkCount; }
     public void setChunkCount(Integer chunkCount) { this.chunkCount = chunkCount; }

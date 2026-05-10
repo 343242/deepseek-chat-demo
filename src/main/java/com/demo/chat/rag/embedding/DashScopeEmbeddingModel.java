@@ -11,6 +11,7 @@ import org.springframework.ai.embedding.EmbeddingResponse;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -27,6 +28,8 @@ import java.util.List;
  *   <li>策略模式：通过 EmbeddingModel 接口解耦，未来可替换为其他实现</li>
  *   <li>封装：DashScope API 细节不泄漏到上层</li>
  *   <li>批量分片：DashScope 单次最多 10 条输入，自动分批</li>
+ *   <li>空文本防护：空/null 文本返回零向量，不调用外部 API</li>
+ *   <li>超时保护：每次 API 调用有 30s 超时上限</li>
  * </ul>
  */
 @Component
@@ -36,9 +39,14 @@ public class DashScopeEmbeddingModel implements EmbeddingModel {
 
     /** DashScope 单次请求最大输入条数 */
     private static final int MAX_BATCH_SIZE = 10;
+    /** 单次 API 调用超时时间 */
+    private static final Duration API_TIMEOUT = Duration.ofSeconds(30);
 
     private final DashScopeEmbeddingProperties properties;
     private final WebClient webClient;
+
+    /** 缓存的零向量（维度固定，复用避免重复创建） */
+    private volatile float[] zeroVector;
 
     public DashScopeEmbeddingModel(DashScopeEmbeddingProperties properties,
                                    WebClient.Builder webClientBuilder) {
@@ -53,7 +61,7 @@ public class DashScopeEmbeddingModel implements EmbeddingModel {
     }
 
     @Override
-    public @NonNull EmbeddingResponse call(EmbeddingRequest request) {
+    public @NonNull EmbeddingResponse call(@NonNull EmbeddingRequest request) {
         List<String> texts = request.getInstructions();
         log.debug("Embedding {} texts via DashScope", texts.size());
 
@@ -70,23 +78,30 @@ public class DashScopeEmbeddingModel implements EmbeddingModel {
     }
 
     @Override
-    public float @NonNull [] embed(Document document) {
+    public float @NonNull [] embed(@NonNull Document document) {
         String content = document.getText();
-        float[] result = null;
-        if (content != null) {
-            result = embed(content);
+        if (content == null || content.isBlank()) {
+            log.debug("Embedding called with blank document content, returning zero vector");
+            return getZeroVector();
         }
-        return result;
+        return embed(content);
     }
 
     @Override
     public float @NonNull [] embed(@NonNull String text) {
+        if (text.isBlank()) {
+            log.debug("Embedding called with blank text, returning zero vector");
+            return getZeroVector();
+        }
         EmbeddingResponse response = call(new EmbeddingRequest(List.of(text), null));
         return response.getResult().getOutput();
     }
 
     @Override
     public @NonNull List<float[]> embed(@NonNull List<String> texts) {
+        if (texts.isEmpty()) {
+            return List.of();
+        }
         EmbeddingResponse response = call(new EmbeddingRequest(texts, null));
         return response.getResults().stream()
                 .map(Embedding::getOutput)
@@ -99,7 +114,7 @@ public class DashScopeEmbeddingModel implements EmbeddingModel {
     }
 
     /**
-     * 单批次调用 DashScope API
+     * 单批次调用 DashScope API（含超时保护）
      */
     private List<Embedding> callBatch(List<String> texts) {
         DashScopeEmbeddingApi.Request requestBody = new DashScopeEmbeddingApi.Request(
@@ -108,12 +123,20 @@ public class DashScopeEmbeddingModel implements EmbeddingModel {
                 properties.getDimensions()
         );
 
-        DashScopeEmbeddingApi.Response response = webClient.post()
-                .uri("/embeddings")
-                .bodyValue(requestBody)
-                .retrieve()
-                .bodyToMono(DashScopeEmbeddingApi.Response.class)
-                .block();
+        DashScopeEmbeddingApi.Response response;
+        try {
+            response = webClient.post()
+                    .uri("/embeddings")
+                    .bodyValue(requestBody)
+                    .retrieve()
+                    .bodyToMono(DashScopeEmbeddingApi.Response.class)
+                    .timeout(API_TIMEOUT)
+                    .block();
+        } catch (Exception e) {
+            throw new RuntimeException(
+                    String.format("DashScope embedding API call failed (timeout=%s, batch=%d texts): %s",
+                            API_TIMEOUT, texts.size(), e.getMessage()), e);
+        }
 
         if (response == null || response.getData() == null) {
             throw new RuntimeException("DashScope embedding API returned null response");
@@ -123,6 +146,20 @@ public class DashScopeEmbeddingModel implements EmbeddingModel {
                 .map(data -> toFloatArray(data.getEmbedding()))
                 .map(embedding -> new Embedding(embedding, null))
                 .toList();
+    }
+
+    /**
+     * 获取零向量（惰性初始化，线程安全）
+     */
+    private float[] getZeroVector() {
+        if (zeroVector == null) {
+            synchronized (this) {
+                if (zeroVector == null) {
+                    zeroVector = new float[properties.getDimensions()];
+                }
+            }
+        }
+        return zeroVector;
     }
 
     /**

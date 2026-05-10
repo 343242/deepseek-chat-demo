@@ -183,7 +183,12 @@ src/main/java/com/demo/chat/
 │       └── SecurityUtils.java                #   getCurrentUserId / extractToken
 │
 ├── user/                                     # RBAC 用户模块
-│   ├── entity/                               #   SysUser(雪花ID), SysRole, SysPermission, ...
+│   ├── entity/                               #   数据实体
+│   │   ├── SysUser.java                      #     用户表（雪花ID，含 password / status / email）
+│   │   ├── SysRole.java                      #     角色表
+│   │   ├── SysPermission.java                #     权限表（resource + action）
+│   │   ├── SysRolePermission.java            #     角色-权限关联
+│   │   └── SysUserRole.java                  #     用户-角色关联
 │   ├── enums/UserStatus.java                 #   用户状态枚举
 │   ├── mapper/                               #   语义化查询接口 + XML
 │   │   ├── SysUserMapper.java                #     selectByUsername / selectActiveById / selectByEmailExcludingId
@@ -197,7 +202,21 @@ src/main/java/com/demo/chat/
 │   │   ├── SysRoleService.java               #     角色管理
 │   │   └── SysPermissionService.java         #     权限 CRUD
 │   ├── service/impl/                         #   实现层（业务编排，不含 SQL）
-│   ├── dto/                                  #   Login/Register/Refresh/ChangePassword/...
+│   │   ├── AuthServiceImpl.java              #     JWT 双 Token + Redis 吊销 + BCrypt
+│   │   ├── SysUserServiceImpl.java           #     用户增删改查 + 密码修改
+│   │   ├── SysRoleServiceImpl.java           #     角色增删改查 + 权限分配
+│   │   └── SysPermissionServiceImpl.java     #     权限增删改查
+│   ├── dto/                                  #   请求/响应 DTO（全部 record）
+│   │   ├── LoginRequest.java                 #     登录请求
+│   │   ├── LoginResponse.java                #     登录响应（双 Token）
+│   │   ├── RegisterRequest.java              #     注册请求
+│   │   ├── RefreshRequest.java               #     刷新 Token 请求
+│   │   ├── ChangePasswordRequest.java        #     修改密码请求
+│   │   ├── UserUpdateRequest.java            #     用户信息更新
+│   │   ├── CreateRoleRequest.java            #     创建角色请求
+│   │   ├── UpdateRoleRequest.java            #     更新角色请求
+│   │   ├── AssignRolesRequest.java           #     分配角色请求
+│   │   └── AssignPermissionsRequest.java     #     分配权限请求
 │   └── controller/                           #   HTTP 转发
 │       ├── AuthController.java               #     /api/auth/*
 │       ├── UserController.java               #     /api/users/* (ADMIN)
@@ -225,6 +244,13 @@ src/main/java/com/demo/chat/
 │   ├── content/                              #   内容安全
 │   │   ├── ContentFilterService.java         #     过滤服务接口
 │   │   └── SensitiveWordFilterService.java   #     sensitive-word DFA 实现
+│   │
+│   ├── mode/                                 #   ★ 对话模式路由（策略模式）
+│   │   ├── ChatMode.java                     #     模式枚举（SIMPLE / MULTI_TURN）
+│   │   ├── ChatModeStrategy.java             #     策略接口
+│   │   ├── SimpleModeStrategy.java           #     单轮模式（无记忆、无思考输出）
+│   │   ├── MultiTurnModeStrategy.java        #     多轮模式（ChatMemory + 思考输出）
+│   │   └── ModeRouter.java                   #     模式路由器
 │   │
 │   ├── tool/                                 #   ★ 工具集（模型可调用的工具）
 │   │   ├── ToolRegistry.java                 #     工具注册中心（自动发现 @Tool Bean）
@@ -335,7 +361,6 @@ src/main/java/com/demo/chat/
 │   │   ├── EtlResult.java                    #     ETL 结果 record
 │   │   ├── EtlRouteStrategy.java             #     策略接口
 │   │   ├── EtlRouteStrategyFactory.java      #     自动发现策略 Bean + order 排序
-│   │   ├── EtlExecutorProperties.java        #     IO/CPU 双线程池配置
 │   │   ├── EtlExecutorConfig.java            #     线程池 Bean 注册
 │   │   ├── EtlTaskExecutorBridge.java        #     执行器门面
 │   │   ├── StandardStrategy.java             #     标准并发策略（IO→CPU→IO）

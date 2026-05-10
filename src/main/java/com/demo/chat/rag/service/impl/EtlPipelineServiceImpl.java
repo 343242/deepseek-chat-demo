@@ -1,5 +1,6 @@
 package com.demo.chat.rag.service.impl;
 
+import com.demo.chat.exception.BusinessException;
 import com.demo.chat.rag.etl.Extractor;
 import com.demo.chat.rag.etl.Loader;
 import com.demo.chat.rag.etl.Transformer;
@@ -10,7 +11,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.document.Document;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -22,6 +23,13 @@ import java.util.List;
  * 各阶段的具体逻辑封装在独立的 {@link Extractor}、{@link Transformer}、{@link Loader} 实现中，
  * 本类不包含任何解析/分块/存储的细节代码。
  * </p>
+ *
+ * <p>事务策略：</p>
+ * <ul>
+ *   <li>不使用 @Transactional，因为 ETL 包含外部 IO（MinIO 读取、向量库写入）</li>
+ *   <li>使用 {@link TransactionTemplate} 对状态更新做独立事务提交</li>
+ *   <li>确保 FAILED 状态不随异常回滚而丢失</li>
+ * </ul>
  */
 @Service
 public class EtlPipelineServiceImpl implements EtlPipelineService {
@@ -32,34 +40,36 @@ public class EtlPipelineServiceImpl implements EtlPipelineService {
     private final Transformer transformer;
     private final Loader loader;
     private final RagDocumentMapper ragDocumentMapper;
+    private final TransactionTemplate transactionTemplate;
 
     public EtlPipelineServiceImpl(Extractor extractor,
                                   Transformer transformer,
                                   Loader loader,
-                                  RagDocumentMapper ragDocumentMapper) {
+                                  RagDocumentMapper ragDocumentMapper,
+                                  TransactionTemplate transactionTemplate) {
         this.extractor = extractor;
         this.transformer = transformer;
         this.loader = loader;
         this.ragDocumentMapper = ragDocumentMapper;
+        this.transactionTemplate = transactionTemplate;
     }
 
     @Override
-    @Transactional
     public int execute(Long documentId, String bucket, String objectKey, String fileName, String mimeType) {
         log.info("ETL pipeline started: id={}, file={}", documentId, fileName);
 
         RagDocument doc = ragDocumentMapper.selectById(documentId);
         if (doc == null) {
-            throw new IllegalArgumentException("Document not found: " + documentId);
+            throw new BusinessException("文档不存在: " + documentId);
         }
 
         try {
             // === Extract ===
-            updateStatus(documentId, "PARSING");
+            updateStatusInTransaction(documentId, "PARSING");
             List<Document> rawDocuments = extractor.extract(bucket, objectKey, mimeType);
 
             // === Transform ===
-            updateStatus(documentId, "CHUNKING");
+            updateStatusInTransaction(documentId, "CHUNKING");
             List<Document> chunks = transformer.transform(rawDocuments, fileName);
 
             // 为每个 chunk 注入 documentId，用于后续按文档删除向量数据
@@ -69,46 +79,59 @@ public class EtlPipelineServiceImpl implements EtlPipelineService {
             }
 
             // === Load ===
-            updateStatus(documentId, "VECTORIZING");
+            updateStatusInTransaction(documentId, "VECTORIZING");
             loader.load(chunks);
 
             // === Complete ===
-            completeDocument(documentId, chunks.size());
+            completeDocumentInTransaction(documentId, chunks.size());
 
             log.info("ETL completed: id={}, chunks={}", documentId, chunks.size());
             return chunks.size();
 
         } catch (Exception e) {
-            failDocument(documentId, e);
-            throw new RuntimeException("Document processing failed: " + fileName, e);
+            failDocumentInTransaction(documentId, e);
+            throw new BusinessException("文档处理失败: " + fileName, e);
         }
     }
 
-    private void updateStatus(Long documentId, String status) {
-        RagDocument update = new RagDocument();
-        update.setId(documentId);
-        update.setStatus(status);
-        update.setUpdateTime(LocalDateTime.now());
-        ragDocumentMapper.updateById(update);
+    /**
+     * 在独立事务中更新文档状态，确保状态变更不受外部 IO 异常回滚影响
+     */
+    private void updateStatusInTransaction(Long documentId, String status) {
+        transactionTemplate.executeWithoutResult(ts -> {
+            RagDocument update = new RagDocument();
+            update.setId(documentId);
+            update.setStatus(status);
+            update.setUpdateTime(LocalDateTime.now());
+            ragDocumentMapper.updateById(update);
+        });
     }
 
-    private void completeDocument(Long documentId, int chunkCount) {
-        RagDocument doc = new RagDocument();
-        doc.setId(documentId);
-        doc.setStatus("COMPLETED");
-        doc.setChunkCount(chunkCount);
-        doc.setUpdateTime(LocalDateTime.now());
-        ragDocumentMapper.updateById(doc);
-    }
-
-    private void failDocument(Long documentId, Exception e) {
-        log.error("ETL failed for document: id={}", documentId, e);
-        RagDocument doc = ragDocumentMapper.selectById(documentId);
-        if (doc != null) {
-            doc.setStatus("FAILED");
-            doc.setErrorMessage(truncate(e.getMessage(), 2000));
+    private void completeDocumentInTransaction(Long documentId, int chunkCount) {
+        transactionTemplate.executeWithoutResult(ts -> {
+            RagDocument doc = new RagDocument();
+            doc.setId(documentId);
+            doc.setStatus("COMPLETED");
+            doc.setChunkCount(chunkCount);
             doc.setUpdateTime(LocalDateTime.now());
             ragDocumentMapper.updateById(doc);
+        });
+    }
+
+    private void failDocumentInTransaction(Long documentId, Exception e) {
+        log.error("ETL failed for document: id={}", documentId, e);
+        try {
+            transactionTemplate.executeWithoutResult(ts -> {
+                RagDocument doc = ragDocumentMapper.selectById(documentId);
+                if (doc != null) {
+                    doc.setStatus("FAILED");
+                    doc.setErrorMessage(truncate(e.getMessage(), 2000));
+                    doc.setUpdateTime(LocalDateTime.now());
+                    ragDocumentMapper.updateById(doc);
+                }
+            });
+        } catch (Exception txEx) {
+            log.error("Failed to persist FAILED status for document: id={}", documentId, txEx);
         }
     }
 

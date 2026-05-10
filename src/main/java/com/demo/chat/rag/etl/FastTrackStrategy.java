@@ -103,7 +103,7 @@ public class FastTrackStrategy implements EtlRouteStrategy {
                         .map(Document::getText)
                         .collect(Collectors.joining("\n\n"));
 
-                writeBm25Row(c.documentId(), fullContent);
+                writeBm25Row(c.documentId(), fullContent, c.userId());
                 statusManager.completeDocument(c.documentId(), 0);
 
                 results.add(EtlResult.success(c.documentId(), 0));
@@ -138,8 +138,8 @@ public class FastTrackStrategy implements EtlRouteStrategy {
      * 将原文直接写入 vector_store 表，content_tsv 由触发器自动填充。
      * embedding 设为 NULL（无向量），BM25 检索仍可通过 content_tsv 命中。
      */
-    private void writeBm25Row(Long documentId, String content) {
-        String metadataJson = "{\"documentId\": \"" + documentId + "\", \"fastTrack\": true}";
+    private void writeBm25Row(Long documentId, String content, Long userId) {
+        String metadataJson = "{\"documentId\": \"" + documentId + "\", \"userId\": \"" + userId + "\", \"fastTrack\": true}";
         jdbcTemplate.update("""
                 INSERT INTO vector_store (id, content, metadata, embedding)
                 VALUES (gen_random_uuid(), ?, ?::json, NULL)
@@ -161,8 +161,10 @@ public class FastTrackStrategy implements EtlRouteStrategy {
                     // CPU 池：Transform
                     List<Document> chunks = transformer.transform(docs, c.fileName());
                     String docIdStr = String.valueOf(c.documentId());
+                    String userIdStr = String.valueOf(c.userId());
                     for (Document chunk : chunks) {
                         chunk.getMetadata().put("documentId", docIdStr);
+                        chunk.getMetadata().put("userId", userIdStr);
                     }
                     return chunks;
                 }, cpuExecutor)

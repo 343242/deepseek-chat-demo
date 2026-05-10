@@ -8,17 +8,18 @@ import org.springframework.ai.rag.Query;
 import org.springframework.ai.rag.retrieval.search.DocumentRetriever;
 import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.ai.vectorstore.VectorStore;
+import org.springframework.ai.vectorstore.filter.FilterExpressionBuilder;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.util.*;
 
 /**
- * 混合检索器 — 向量检索 + BM25 全文检索 + RRF 融合
+ * 混合检索器 — 向量检索 + BM25 全文检索 + RRF 融合 + 用户隔离
  * <p>
  * 检索流程：
  * <ol>
- *   <li>pgvector HNSW 向量检索（语义相似度）</li>
- *   <li>PostgreSQL tsvector 全文检索（BM25 词频匹配）</li>
+ *   <li>pgvector HNSW 向量检索（语义相似度，按 userId 过滤）</li>
+ *   <li>PostgreSQL tsvector 全文检索（BM25 词频匹配，按 userId 过滤）</li>
  *   <li>RRF (Reciprocal Rank Fusion) 倒数排名融合</li>
  * </ol>
  *
@@ -35,13 +36,16 @@ public class HybridDocumentRetriever implements DocumentRetriever {
     private final VectorStore vectorStore;
     private final JdbcTemplate jdbcTemplate;
     private final RagRetrievalProperties properties;
+    private final Long userId;
 
     public HybridDocumentRetriever(VectorStore vectorStore,
                                    JdbcTemplate jdbcTemplate,
-                                   RagRetrievalProperties properties) {
+                                   RagRetrievalProperties properties,
+                                   Long userId) {
         this.vectorStore = vectorStore;
         this.jdbcTemplate = jdbcTemplate;
         this.properties = properties;
+        this.userId = userId;
     }
 
     @Override
@@ -71,11 +75,15 @@ public class HybridDocumentRetriever implements DocumentRetriever {
     // === 向量检索 ===
 
     private List<Document> vectorSearch(String queryText, int topK) {
+        FilterExpressionBuilder filterBuilder = new FilterExpressionBuilder();
+        var userIdFilter = filterBuilder.eq("userId", String.valueOf(userId)).build();
+
         return vectorStore.similaritySearch(
                 SearchRequest.builder()
                         .query(queryText)
                         .topK(topK)
                         .similarityThreshold(properties.getSimilarityThreshold())
+                        .filterExpression(userIdFilter)
                         .build()
         );
     }
@@ -109,11 +117,13 @@ public class HybridDocumentRetriever implements DocumentRetriever {
         }
 
         try {
-            // 检查 content_tsv 列是否存在
+            // 检查 content_tsv 列是否存在，同时按 userId 隔离
+            String userIdStr = String.valueOf(userId);
             String sql = """
                 SELECT id, content, metadata
                 FROM vector_store
                 WHERE content_tsv @@ plainto_tsquery('simple', ?)
+                  AND metadata->>'userId' = ?
                 ORDER BY ts_rank_cd(content_tsv, plainto_tsquery('simple', ?)) DESC
                 LIMIT ?
                 """;
@@ -130,7 +140,7 @@ public class HybridDocumentRetriever implements DocumentRetriever {
                         Document doc = new Document(id, content, metadata);
                         return new ScoredDocument(doc, rowNum + 1);
                     },
-                    sanitized, sanitized, topK
+                    sanitized, userIdStr, sanitized, topK
             );
 
             return results;

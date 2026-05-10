@@ -11,6 +11,7 @@ public class DocumentDTO {
     private Integer chunkCount;
     private String status;
     private String errorMessage;
+    private Long userId;
     private LocalDateTime createTime;
 
     public Long getId() { return id; }
@@ -27,6 +28,8 @@ public class DocumentDTO {
     public void setStatus(String status) { this.status = status; }
     public String getErrorMessage() { return errorMessage; }
     public void setErrorMessage(String errorMessage) { this.errorMessage = errorMessage; }
+    public Long getUserId() { return userId; }
+    public void setUserId(Long userId) { this.userId = userId; }
     public LocalDateTime getCreateTime() { return createTime; }
     public void setCreateTime(LocalDateTime createTime) { this.createTime = createTime; }
 }

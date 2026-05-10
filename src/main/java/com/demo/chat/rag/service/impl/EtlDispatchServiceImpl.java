@@ -44,7 +44,7 @@ public class EtlDispatchServiceImpl implements EtlDispatchService {
 
     @Override
     public int executeSingle(Long documentId, String bucket, String objectKey, String fileName, String mimeType, long fileSize) {
-        EtlCandidate candidate = new EtlCandidate(documentId, bucket, objectKey, fileName, mimeType, fileSize);
+        EtlCandidate candidate = new EtlCandidate(documentId, bucket, objectKey, fileName, mimeType, fileSize, userId);
         List<EtlResult> results = dispatch(List.of(candidate));
 
         if (results.isEmpty()) {

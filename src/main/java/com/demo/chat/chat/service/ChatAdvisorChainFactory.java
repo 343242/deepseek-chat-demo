@@ -4,11 +4,13 @@ import com.demo.chat.chat.advisor.ConversationContextAdvisor;
 import com.demo.chat.chat.dto.ChatRequest;
 import com.demo.chat.chat.mode.ChatModeStrategy;
 import com.demo.chat.chat.tool.ToolRegistry;
-import org.springframework.ai.rag.advisor.RetrievalAugmentationAdvisor;
+import com.demo.chat.rag.config.RagAdvisorFactory;
+import com.demo.chat.security.util.SecurityUtils;
 import org.springframework.ai.chat.client.advisor.ToolCallAdvisor;
 import org.springframework.ai.chat.client.advisor.api.Advisor;
 import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
 import org.springframework.ai.chat.memory.ChatMemory;
+import org.springframework.ai.rag.advisor.RetrievalAugmentationAdvisor;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.stereotype.Component;
 
@@ -34,18 +36,18 @@ public class ChatAdvisorChainFactory {
     private final List<Advisor> globalAdvisors;
     private final ToolCallAdvisor toolCallAdvisor;
     private final ToolRegistry toolRegistry;
-    private final RetrievalAugmentationAdvisor ragAdvisor;
+    private final RagAdvisorFactory ragAdvisorFactory;
 
     public ChatAdvisorChainFactory(ChatMemory chatMemory,
                                    List<Advisor> globalAdvisors,
                                    ToolCallAdvisor toolCallAdvisor,
                                    ToolRegistry toolRegistry,
-                                   RetrievalAugmentationAdvisor ragAdvisor) {
+                                   RagAdvisorFactory ragAdvisorFactory) {
         this.chatMemory = chatMemory;
         this.globalAdvisors = globalAdvisors;
         this.toolCallAdvisor = toolCallAdvisor;
         this.toolRegistry = toolRegistry;
-        this.ragAdvisor = ragAdvisor;
+        this.ragAdvisorFactory = ragAdvisorFactory;
     }
 
     /**
@@ -82,6 +84,8 @@ public class ChatAdvisorChainFactory {
         chain.addAll(globalAdvisors);
 
         if (request.isRagEnabled()) {
+            Long userId = SecurityUtils.getCurrentUserId();
+            RetrievalAugmentationAdvisor ragAdvisor = ragAdvisorFactory.create(userId);
             chain.add(ragAdvisor);
         }
 

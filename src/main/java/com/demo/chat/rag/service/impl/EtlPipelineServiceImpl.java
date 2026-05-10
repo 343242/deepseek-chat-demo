@@ -50,6 +50,13 @@ public class EtlPipelineServiceImpl implements EtlPipelineService {
 
     @Override
     public int execute(Long documentId, String bucket, String objectKey, String fileName, String mimeType) {
+        throw new UnsupportedOperationException("Use EtlDispatchService.executeSingle() instead");
+    }
+
+    /**
+     * 带用户隔离的 ETL 执行（由 EtlDispatchService 委托调用）
+     */
+    public int executeWithUserId(Long documentId, String bucket, String objectKey, String fileName, String mimeType, Long userId) {
         log.info("ETL pipeline started: id={}, file={}", documentId, fileName);
 
         RagDocument doc = ragDocumentMapper.selectById(documentId);
@@ -67,8 +74,10 @@ public class EtlPipelineServiceImpl implements EtlPipelineService {
             List<Document> chunks = transformer.transform(rawDocuments, fileName);
 
             String docIdStr = String.valueOf(documentId);
+            String userIdStr = String.valueOf(userId);
             for (Document chunk : chunks) {
                 chunk.getMetadata().put("documentId", docIdStr);
+                chunk.getMetadata().put("userId", userIdStr);
             }
 
             // === Load ===

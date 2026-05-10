@@ -98,7 +98,7 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
         log.info("Document uploaded: id={}, file={}, size={}, userId={}", ragDoc.getId(), originalFilename, file.getSize(), currentUserId);
 
         // 单文档走 ETL dispatch（会被路由到 StandardStrategy）
-        etlDispatchService.executeSingle(ragDoc.getId(), bucket, storageKey, originalFilename, mimeType, file.getSize());
+        etlDispatchService.executeSingle(ragDoc.getId(), bucket, storageKey, originalFilename, mimeType, file.getSize(), currentUserId);
 
         return new DocumentUploadResponse(ragDoc.getId(), originalFilename, "COMPLETED");
     }
@@ -145,7 +145,7 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
 
             log.info("Document uploaded (batch): id={}, file={}, size={}, userId={}", ragDoc.getId(), originalFilename, file.getSize(), currentUserId);
 
-            candidates.add(new EtlCandidate(ragDoc.getId(), bucket, storageKey, originalFilename, mimeType, file.getSize()));
+            candidates.add(new EtlCandidate(ragDoc.getId(), bucket, storageKey, originalFilename, mimeType, file.getSize(), currentUserId));
             responses.add(new DocumentUploadResponse(ragDoc.getId(), originalFilename, EtlStatus.PROCESSING));
         }
 
@@ -187,16 +187,31 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
             return false;
         }
 
-        // 清理向量库中该文档的所有 chunk
+        // 清理向量库中该文档的所有 chunk（失败不影响后续清理）
+        boolean vectorDeleted = false;
         try {
             vectorStoreLoader.deleteByDocumentId(id);
+            vectorDeleted = true;
         } catch (Exception e) {
-            log.warn("Failed to delete vectors for documentId={}, continuing with cleanup: {}", id, e.getMessage());
+            log.error("Failed to delete vectors for documentId={}, will retry on next cleanup pass: {}", id, e.getMessage());
         }
 
-        fileStorageService.delete(doc.getBucket(), doc.getStorageKey());
+        // 清理文件存储
+        try {
+            fileStorageService.delete(doc.getBucket(), doc.getStorageKey());
+        } catch (Exception e) {
+            log.error("Failed to delete file for documentId={}, storageKey={}: {}", id, doc.getStorageKey(), e.getMessage());
+            // 文件删除失败不影响数据库记录删除，MinIO 可通过 lifecycle 策略回收
+        }
+
+        // 最后删除数据库记录（逻辑删除）
         ragDocumentMapper.deleteById(id);
-        log.info("Document deleted: id={}, file={}, userId={}", id, doc.getFileName(), doc.getUserId());
+
+        if (!vectorDeleted) {
+            log.warn("Document {} deleted from DB/Storage but vectors remain — manual cleanup may be required", id);
+        }
+
+        log.info("Document deleted: id={}, file={}, userId={}, vectorClean={}", id, doc.getFileName(), doc.getUserId(), vectorDeleted);
         return true;
     }
 
@@ -331,6 +346,7 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
         dto.setChunkCount(doc.getChunkCount());
         dto.setStatus(doc.getStatus());
         dto.setErrorMessage(doc.getErrorMessage());
+        dto.setUserId(doc.getUserId());
         dto.setCreateTime(doc.getCreateTime());
         return dto;
     }

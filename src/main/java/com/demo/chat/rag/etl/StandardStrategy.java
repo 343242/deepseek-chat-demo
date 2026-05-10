@@ -109,8 +109,10 @@ public class StandardStrategy implements EtlRouteStrategy {
                         statusManager.updateStatus(c.documentId(), EtlStatus.CHUNKING);
                         List<Document> chunks = transformer.transform(extractedMap.get(c.documentId()), c.fileName());
                         String docIdStr = String.valueOf(c.documentId());
+                        String userIdStr = String.valueOf(c.userId());
                         for (Document chunk : chunks) {
                             chunk.getMetadata().put("documentId", docIdStr);
+                            chunk.getMetadata().put("userId", userIdStr);
                         }
                         return new TransformOutput(c.documentId(), chunks, null);
                     } catch (Exception e) {

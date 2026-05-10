@@ -2,7 +2,7 @@
 
 基于 **Spring Boot 3.5 + Spring AI 1.1 + MyBatis-Plus 3.5** 的多厂商 AI 聊天助手后端。支持 **DeepSeek、智谱 AI (Zhipu)、MiniMax** 三家模型厂商，通过 Provider 抽象层实现统一路由。提供动态模型加载、SSE 流式响应、JDBC 对话记忆、**Tool Calling 工具调用**、RBAC 权限系统、滑块验证码、自研雪花 ID，并通过 Advisor 链实现限流与内容安全过滤。
 
-支持 **RAG（检索增强生成）**，通过 Apache Tika 多格式文档解析、Parent-Child 分块策略、PGvector 向量存储、阿里千问 text-embedding-v4 向量化，实现文档上传→解析→分块→向量化→检索增强的完整链路。检索管道支持**查询改写、混合检索（向量+BM25）+RRF融合、百炼Rerank精排、MMR多样性重排**四阶段优化。
+支持 **RAG（检索增强生成）**，通过 Apache Tika 多格式文档解析、Parent-Child 分块策略、PGvector 向量存储、阿里千问 text-embedding-v4 向量化，实现文档上传→解析→分块→向量化→检索增强的完整链路。检索管道支持**查询改写、混合检索（向量+BM25）+RRF融合、百炼Rerank精排、MMR多样性重排**四阶段优化。ETL 支持双线程池并发处理，小文档走**快速通道 BM25 即搜即用**（异步向量化补齐）。
 
 ## 技术栈
 
@@ -11,7 +11,7 @@
 | Apache Tika | 随 Spring AI | 多格式文档解析（PDF/DOCX/PPTX/HTML 等） |
 | Caffeine | 3.x | 本地缓存（SystemPrompt / ModelParams / 验证码） |
 | DashScope text-embedding-v4 | - | 阿里千问 Embedding 模型（1024 维） |
-| Flyway | 随 Boot | 数据库版本化迁移 |
+| Flyway | 随 Boot | 数据库版本化迁移（schema.sql 初始化） |
 | Java | 21 | 运行时 |
 | JJWT | 0.13.0 | JWT 双 Token（Access 15min + Refresh 24h） |
 | MinIO | 9.0.0 | 对象存储（RAG 文件管理） |
@@ -298,6 +298,8 @@ src/main/java/com/demo/chat/
 │   │   ├── MinioProperties.java              #     spring.minio.* 配置
 │   │   ├── DocumentProperties.java           #     app.document.* 配置（MIME 白名单 + 文件大小限制）
 │   │   ├── RagRetrievalProperties.java       #     app.rag.* 配置（检索四阶段参数）
+│   │   ├── EtlExecutorProperties.java        #     app.etl.executor.* 配置（IO/CPU 线程池参数）
+│   │   ├── EtlFastTrackProperties.java       #     app.etl.fast-track.* 配置（快速通道阈值）
 │   │   └── RagConfig.java                    #     RetrievalAugmentationAdvisor 组装（查询改写→混合检索→Rerank→MMR→父文档）
 │   │
 │   ├── retrieval/                            #   ★ 检索优化组件
@@ -320,13 +322,24 @@ src/main/java/com/demo/chat/
 │   │   ├── ParentChildChunkStrategy.java     #     父子双层切分（默认）
 │   │   └── ParentDocumentPostProcessor.java  #     检索后子→父替换 + 去重
 │   │
-│   ├── etl/                                  #   ★ ETL Pipeline（接口分离）
+│   ├── etl/                                  #   ★ ETL Pipeline（接口分离 + 并发 + 策略路由）
 │   │   ├── Extractor.java                    #     Extract 阶段接口
 │   │   ├── Transformer.java                  #     Transform 阶段接口
 │   │   ├── Loader.java                       #     Load 阶段接口（含 deleteByDocumentId）
 │   │   ├── DocumentExtractor.java            #     MinIO 下载 + Parser 解析
 │   │   ├── StrategyTransformer.java          #     路由到 ChunkStrategyFactory
-│   │   └── VectorStoreLoader.java            #     写入 PGvector + 按 documentId 清理
+│   │   ├── VectorStoreLoader.java            #     写入 PGvector + 按 documentId 清理
+│   │   ├── EtlStatus.java                    #     文档状态常量（PARSING/CHUNKING/COMPLETED...）
+│   │   ├── EtlStatusManager.java             #     状态管理器（独立事务，Standard/FastTrack 共享）
+│   │   ├── EtlCandidate.java                 #     ETL 候选文档 record
+│   │   ├── EtlResult.java                    #     ETL 结果 record
+│   │   ├── EtlRouteStrategy.java             #     策略接口
+│   │   ├── EtlRouteStrategyFactory.java      #     自动发现策略 Bean + order 排序
+│   │   ├── EtlExecutorProperties.java        #     IO/CPU 双线程池配置
+│   │   ├── EtlExecutorConfig.java            #     线程池 Bean 注册
+│   │   ├── EtlTaskExecutorBridge.java        #     执行器门面
+│   │   ├── StandardStrategy.java             #     标准并发策略（IO→CPU→IO）
+│   │   └── FastTrackStrategy.java            #     快速通道（BM25 先行 + 异步向量化）
 │   │
 │   ├── embedding/                            #   ★ 向量化
 │   │   ├── DashScopeEmbeddingProperties.java #     DashScope 配置
@@ -336,11 +349,13 @@ src/main/java/com/demo/chat/
 │   ├── service/                              #   编排服务
 │   │   ├── DocumentApplicationService.java   #     文档应用服务接口（SRP：Controller 仅做 HTTP 层）
 │   │   ├── FileStorageService.java           #     文件存储接口（MinIO/S3/本地）
-│   │   ├── EtlPipelineService.java           #     ETL Pipeline 接口
+│   │   ├── EtlPipelineService.java           #     ETL Pipeline 接口（直接调用场景）
+│   │   ├── EtlDispatchService.java           #     ETL 调度服务接口（路由 + 并发编排入口）
 │   │   └── impl/
 │   │       ├── DocumentApplicationServiceImpl.java  # 文档业务门面（校验/上传/查询/删除 + owner 校验）
 │   │       ├── MinioFileStorageService.java  #     MinIO 实现（上传/下载/删除/预签名）
-│   │       └── EtlPipelineServiceImpl.java   #     纯编排器（Extract→Transform→Load）+ 编程式事务
+│   │       ├── EtlPipelineServiceImpl.java   #     纯编排器（委托 EtlStatusManager）
+│   │       └── EtlDispatchServiceImpl.java   #     调度实现（StrategyFactory 路由）
 │   │
 │   ├── controller/
 │   │   └── DocumentController.java           #     /api/documents/* (上传/列表/详情/删除/状态)
@@ -618,22 +633,22 @@ DocumentController.upload()
         ├── 1. 文件校验（MIME 白名单 + 大小限制 + 魔数 sniffing）
         ├── 2. MinIO 存储（FileStorageService）
         ├── 3. 创建 rag_document 记录（含 userId）
-        └── 4. ETL Pipeline（EtlPipelineService，编程式事务）
+        └── 4. ETL 调度（EtlDispatchService → 策略路由）
                 │
-                ├── Extract: DocumentExtractor
-                │   └── DocumentParserFactory.getParser(mimeType)
-                │       ├── application/pdf → PdfDocumentParser (页码元数据)
-                │       ├── text/markdown  → MarkdownDocumentParser (标题层级)
-                │       └── 其他           → TikaDocumentParser (兜底)
+                ├─── 小文档？(≤10 个 且 ≤5MB) ──→ FastTrackStrategy
+                │       │
+                │       ├── IO 池并行 Extract
+                │       ├── 同步写入 BM25 原文行 (embedding=NULL)
+                │       ├── 立即返回 COMPLETED
+                │       └── 异步 Transform + Load (CPU池→IO池)
+                │           └── 完成后删除 BM25 行，替换为分块
+                │           └── 失败标记 VECTOR_FAILED (BM25 仍可用)
                 │
-                ├── Transform: StrategyTransformer
-                │   └── ChunkStrategyFactory.getStrategy("parent-child")
-                │       └── ParentChildChunkStrategy
-                │           ├── 第 1 层: 2000 tokens → 父文档（metadata: isParent=true）
-                │           └── 第 2 层: 500 tokens → 子切分 (metadata: parentId + parentContent)
-                │
-                └── Load: VectorStoreLoader
-                    └── VectorStore.add(chunks) → PGvector
+                └─── 大文档？──→ StandardStrategy
+                        │
+                        ├── IO 池并行 Extract
+                        ├── CPU 池并行 Transform (分块)
+                        └── IO 池并行 Load (写入 PGvector)
 
 ---
 
@@ -669,6 +684,9 @@ ChatService → RetrievalAugmentationAdvisor
 
 **关键设计：**
 
+- **并发 ETL**：IO/CPU 双线程池分离，Extract 和 Load 走 IO 池，Transform 走 CPU 池，每个文档状态独立事务
+- **策略路由**：`EtlRouteStrategyFactory` 自动发现所有策略 Bean，按 `order` 排序，FastTrack 优先判定
+- **快速通道 BM25**：小文档（≤10 个且 ≤5MB）原文直接写入 `vector_store`（embedding=NULL），BM25 即搜即用，异步完成向量化后替换
 - **四阶段管道**：查询改写→混合检索→Rerank→MMR，各阶段通过 `app.rag.*` 配置独立开关
 - **混合检索 + RRF**：向量检索捕捉语义相关性，BM25 捕捉精确关键词匹配，RRF 融合两者优势
 - **BM25 全文检索**：通过 Flyway V2 迁移给 `vector_store` 表添加 `content_tsv` 列 + 触发器 + GIN 索引
@@ -786,6 +804,20 @@ app:
     max-file-size: 50MB
     allowed-mime-types: application/pdf,...
 
+  # ETL 并发配置
+  etl:
+    executor:
+      io-pool-core-size: 4
+      io-pool-max-size: 8
+      io-queue-capacity: 50
+      cpu-pool-core-size: 2
+      cpu-pool-max-size: 4
+      cpu-queue-capacity: 20
+    fast-track:
+      enabled: true
+      max-doc-count: 10
+      max-total-size: 5MB
+
   # RAG 检索优化
   rag:
     query-rewrite-enabled: true
@@ -839,6 +871,8 @@ model:
 | **模板方法 + 接口分离** | ETL Pipeline 拆分为 Extractor/Transformer/Loader 独立接口，Pipeline 只做编排 |
 | **四阶段检索管道** | 查询改写→混合检索+RRF→Rerank→MMR，各阶段独立可配，管道通过 `RagConfig` 统一装配 |
 | **双层检索（Parent-Child）** | 子切分保证检索精度，父文档保证 LLM 上下文完整性 |
+| **并发 ETL + 策略路由** | IO/CPU 双线程池分离，FastTrack/Standard 策略路由，OCP 零改旧代码 |
+| **ETL 状态集中管理** | EtlStatus 常量类 + EtlStatusManager 独立事务，消除重复代码 |
 | **EmbeddingModel 接口适配** | 自建 DashScopeEmbeddingModel 实现标准接口，PgVectorStore 自动注入，零耦合 |
 
 ## License

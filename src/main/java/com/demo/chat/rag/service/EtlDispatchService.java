@@ -32,7 +32,8 @@ public interface EtlDispatchService {
      * @param objectKey  MinIO object key
      * @param fileName   文件名
      * @param mimeType   MIME 类型
+     * @param fileSize   文件大小（字节），用于路由策略判定
      * @return 分块数量
      */
-    int executeSingle(Long documentId, String bucket, String objectKey, String fileName, String mimeType);
+    int executeSingle(Long documentId, String bucket, String objectKey, String fileName, String mimeType, long fileSize);
 }

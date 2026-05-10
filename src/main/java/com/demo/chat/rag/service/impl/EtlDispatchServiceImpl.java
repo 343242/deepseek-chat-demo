@@ -5,6 +5,7 @@ import com.demo.chat.rag.etl.EtlCandidate;
 import com.demo.chat.rag.etl.EtlResult;
 import com.demo.chat.rag.etl.EtlRouteStrategy;
 import com.demo.chat.rag.etl.EtlRouteStrategyFactory;
+import com.demo.chat.rag.etl.EtlStatus;
 import com.demo.chat.rag.service.EtlDispatchService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -42,8 +43,8 @@ public class EtlDispatchServiceImpl implements EtlDispatchService {
     }
 
     @Override
-    public int executeSingle(Long documentId, String bucket, String objectKey, String fileName, String mimeType) {
-        EtlCandidate candidate = new EtlCandidate(documentId, bucket, objectKey, fileName, mimeType, 0);
+    public int executeSingle(Long documentId, String bucket, String objectKey, String fileName, String mimeType, long fileSize) {
+        EtlCandidate candidate = new EtlCandidate(documentId, bucket, objectKey, fileName, mimeType, fileSize);
         List<EtlResult> results = dispatch(List.of(candidate));
 
         if (results.isEmpty()) {
@@ -51,7 +52,7 @@ public class EtlDispatchServiceImpl implements EtlDispatchService {
         }
 
         EtlResult result = results.get(0);
-        if ("FAILED".equals(result.status())) {
+        if (EtlStatus.FAILED.equals(result.status())) {
             throw new BusinessException("文档处理失败: " + fileName + " - " + result.errorMessage());
         }
 

@@ -1,15 +1,11 @@
 package com.demo.chat.rag.etl;
 
-import com.demo.chat.exception.BusinessException;
-import com.demo.chat.rag.entity.RagDocument;
-import com.demo.chat.rag.mapper.RagDocumentMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.document.Document;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.support.TransactionTemplate;
 
-import java.time.LocalDateTime;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
@@ -30,22 +26,22 @@ public class StandardStrategy implements EtlRouteStrategy {
     private final Extractor extractor;
     private final Transformer transformer;
     private final Loader loader;
-    private final RagDocumentMapper ragDocumentMapper;
-    private final TransactionTemplate transactionTemplate;
-    private final EtlTaskExecutorBridge executorBridge;
+    private final EtlStatusManager statusManager;
+    private final ThreadPoolTaskExecutor ioExecutor;
+    private final ThreadPoolTaskExecutor cpuExecutor;
 
     public StandardStrategy(Extractor extractor,
                             Transformer transformer,
                             Loader loader,
-                            RagDocumentMapper ragDocumentMapper,
-                            TransactionTemplate transactionTemplate,
-                            EtlTaskExecutorBridge executorBridge) {
+                            EtlStatusManager statusManager,
+                            ThreadPoolTaskExecutor etlIoExecutor,
+                            ThreadPoolTaskExecutor etlCpuExecutor) {
         this.extractor = extractor;
         this.transformer = transformer;
         this.loader = loader;
-        this.ragDocumentMapper = ragDocumentMapper;
-        this.transactionTemplate = transactionTemplate;
-        this.executorBridge = executorBridge;
+        this.statusManager = statusManager;
+        this.ioExecutor = etlIoExecutor;
+        this.cpuExecutor = etlCpuExecutor;
     }
 
     @Override
@@ -81,20 +77,20 @@ public class StandardStrategy implements EtlRouteStrategy {
 
     private Map<Long, List<Document>> extractAll(List<EtlCandidate> candidates) {
         List<CompletableFuture<ExtractOutput>> futures = candidates.stream()
-                .map(c -> executorBridge.submitIo(() -> {
+                .map(c -> CompletableFuture.supplyAsync(() -> {
                     try {
-                        updateStatus(c.documentId(), "PARSING");
+                        statusManager.updateStatus(c.documentId(), EtlStatus.PARSING);
                         List<Document> docs = extractor.extract(c.bucket(), c.objectKey(), c.mimeType());
                         return new ExtractOutput(c.documentId(), docs, null);
                     } catch (Exception e) {
                         log.error("Extract failed: id={}, file={}", c.documentId(), c.fileName(), e);
-                        failDocument(c.documentId(), e);
+                        statusManager.failDocument(c.documentId(), e);
                         return new ExtractOutput(c.documentId(), List.of(), e);
                     }
-                }))
+                }, ioExecutor))
                 .toList();
 
-        executorBridge.awaitAll(futures);
+        joinAll(futures);
 
         return futures.stream()
                 .map(CompletableFuture::join)
@@ -108,11 +104,10 @@ public class StandardStrategy implements EtlRouteStrategy {
                                                     Map<Long, List<Document>> extractedMap) {
         List<CompletableFuture<TransformOutput>> futures = candidates.stream()
                 .filter(c -> extractedMap.containsKey(c.documentId()))
-                .map(c -> executorBridge.submitCpu(() -> {
+                .map(c -> CompletableFuture.supplyAsync(() -> {
                     try {
-                        updateStatus(c.documentId(), "CHUNKING");
+                        statusManager.updateStatus(c.documentId(), EtlStatus.CHUNKING);
                         List<Document> chunks = transformer.transform(extractedMap.get(c.documentId()), c.fileName());
-                        // 注入 documentId metadata
                         String docIdStr = String.valueOf(c.documentId());
                         for (Document chunk : chunks) {
                             chunk.getMetadata().put("documentId", docIdStr);
@@ -120,13 +115,13 @@ public class StandardStrategy implements EtlRouteStrategy {
                         return new TransformOutput(c.documentId(), chunks, null);
                     } catch (Exception e) {
                         log.error("Transform failed: id={}, file={}", c.documentId(), c.fileName(), e);
-                        failDocument(c.documentId(), e);
+                        statusManager.failDocument(c.documentId(), e);
                         return new TransformOutput(c.documentId(), List.of(), e);
                     }
-                }))
+                }, cpuExecutor))
                 .toList();
 
-        executorBridge.awaitAll(futures);
+        joinAll(futures);
 
         return futures.stream()
                 .map(CompletableFuture::join)
@@ -140,22 +135,22 @@ public class StandardStrategy implements EtlRouteStrategy {
                                         Map<Long, List<Document>> chunkMap) {
         List<CompletableFuture<LoadOutput>> futures = candidates.stream()
                 .filter(c -> chunkMap.containsKey(c.documentId()))
-                .map(c -> executorBridge.submitIo(() -> {
+                .map(c -> CompletableFuture.supplyAsync(() -> {
                     try {
-                        updateStatus(c.documentId(), "VECTORIZING");
+                        statusManager.updateStatus(c.documentId(), EtlStatus.VECTORIZING);
                         List<Document> chunks = chunkMap.get(c.documentId());
                         loader.load(chunks);
-                        completeDocument(c.documentId(), chunks.size());
+                        statusManager.completeDocument(c.documentId(), chunks.size());
                         return new LoadOutput(c.documentId(), chunks.size(), null);
                     } catch (Exception e) {
                         log.error("Load failed: id={}, file={}", c.documentId(), c.fileName(), e);
-                        failDocument(c.documentId(), e);
+                        statusManager.failDocument(c.documentId(), e);
                         return new LoadOutput(c.documentId(), 0, e);
                     }
-                }))
+                }, ioExecutor))
                 .toList();
 
-        executorBridge.awaitAll(futures);
+        joinAll(futures);
 
         return futures.stream()
                 .map(CompletableFuture::join)
@@ -168,15 +163,12 @@ public class StandardStrategy implements EtlRouteStrategy {
                                    Map<Long, List<Document>> extractedMap,
                                    Map<Long, List<Document>> chunkMap,
                                    Map<Long, Integer> loadResultMap) {
-        // 如果 Extract 就失败了
         if (!extractedMap.containsKey(c.documentId())) {
             return EtlResult.failed(c.documentId(), "Extract failed");
         }
-        // 如果 Transform 失败了
         if (!chunkMap.containsKey(c.documentId())) {
             return EtlResult.failed(c.documentId(), "Transform failed");
         }
-        // Load 结果
         Integer chunkCount = loadResultMap.get(c.documentId());
         if (chunkCount == null) {
             return EtlResult.failed(c.documentId(), "Load failed");
@@ -184,52 +176,12 @@ public class StandardStrategy implements EtlRouteStrategy {
         return EtlResult.success(c.documentId(), chunkCount);
     }
 
-    // ==================== 状态管理（独立事务） ====================
-
-    private void updateStatus(Long documentId, String status) {
-        transactionTemplate.executeWithoutResult(ts -> {
-            RagDocument update = new RagDocument();
-            update.setId(documentId);
-            update.setStatus(status);
-            update.setUpdateTime(LocalDateTime.now());
-            ragDocumentMapper.updateById(update);
-        });
+    /**
+     * 等待所有 Future 完成（不吞异常，异常由各阶段内部处理）
+     */
+    private void joinAll(List<? extends CompletableFuture<?>> futures) {
+        CompletableFuture.allOf(futures.toArray(CompletableFuture[]::new)).join();
     }
-
-    private void completeDocument(Long documentId, int chunkCount) {
-        transactionTemplate.executeWithoutResult(ts -> {
-            RagDocument doc = new RagDocument();
-            doc.setId(documentId);
-            doc.setStatus("COMPLETED");
-            doc.setChunkCount(chunkCount);
-            doc.setUpdateTime(LocalDateTime.now());
-            ragDocumentMapper.updateById(doc);
-        });
-    }
-
-    private void failDocument(Long documentId, Exception e) {
-        log.error("ETL failed for document: id={}", documentId, e);
-        try {
-            transactionTemplate.executeWithoutResult(ts -> {
-                RagDocument doc = ragDocumentMapper.selectById(documentId);
-                if (doc != null) {
-                    doc.setStatus("FAILED");
-                    doc.setErrorMessage(truncate(e.getMessage(), 2000));
-                    doc.setUpdateTime(LocalDateTime.now());
-                    ragDocumentMapper.updateById(doc);
-                }
-            });
-        } catch (Exception txEx) {
-            log.error("Failed to persist FAILED status for document: id={}", documentId, txEx);
-        }
-    }
-
-    private static String truncate(String str, int maxLen) {
-        if (str == null) return null;
-        return str.length() <= maxLen ? str : str.substring(0, maxLen);
-    }
-
-    // ==================== 内部记录 ====================
 
     private record ExtractOutput(Long documentId, List<Document> documents, Exception error) {}
     private record TransformOutput(Long documentId, List<Document> chunks, Exception error) {}

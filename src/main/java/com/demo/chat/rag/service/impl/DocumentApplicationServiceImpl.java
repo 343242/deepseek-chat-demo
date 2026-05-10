@@ -5,6 +5,7 @@ import com.demo.chat.rag.config.MinioProperties;
 import com.demo.chat.rag.dto.DocumentDTO;
 import com.demo.chat.rag.dto.DocumentUploadResponse;
 import com.demo.chat.rag.etl.EtlCandidate;
+import com.demo.chat.rag.etl.EtlStatus;
 import com.demo.chat.rag.etl.Loader;
 import com.demo.chat.rag.entity.RagDocument;
 import com.demo.chat.rag.mapper.RagDocumentMapper;
@@ -89,7 +90,7 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
         ragDoc.setStorageKey(storageKey);
         ragDoc.setBucket(bucket);
         ragDoc.setUserId(currentUserId);
-        ragDoc.setStatus("UPLOADED");
+        ragDoc.setStatus(EtlStatus.UPLOADED);
         ragDoc.setCreateTime(LocalDateTime.now());
         ragDoc.setUpdateTime(LocalDateTime.now());
         ragDocumentMapper.insert(ragDoc);
@@ -97,7 +98,7 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
         log.info("Document uploaded: id={}, file={}, size={}, userId={}", ragDoc.getId(), originalFilename, file.getSize(), currentUserId);
 
         // 单文档走 ETL dispatch（会被路由到 StandardStrategy）
-        etlDispatchService.executeSingle(ragDoc.getId(), bucket, storageKey, originalFilename, mimeType);
+        etlDispatchService.executeSingle(ragDoc.getId(), bucket, storageKey, originalFilename, mimeType, file.getSize());
 
         return new DocumentUploadResponse(ragDoc.getId(), originalFilename, "COMPLETED");
     }
@@ -137,7 +138,7 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
             ragDoc.setStorageKey(storageKey);
             ragDoc.setBucket(bucket);
             ragDoc.setUserId(currentUserId);
-            ragDoc.setStatus("UPLOADED");
+            ragDoc.setStatus(EtlStatus.UPLOADED);
             ragDoc.setCreateTime(LocalDateTime.now());
             ragDoc.setUpdateTime(LocalDateTime.now());
             ragDocumentMapper.insert(ragDoc);
@@ -145,7 +146,7 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
             log.info("Document uploaded (batch): id={}, file={}, size={}, userId={}", ragDoc.getId(), originalFilename, file.getSize(), currentUserId);
 
             candidates.add(new EtlCandidate(ragDoc.getId(), bucket, storageKey, originalFilename, mimeType, file.getSize()));
-            responses.add(new DocumentUploadResponse(ragDoc.getId(), originalFilename, "PROCESSING"));
+            responses.add(new DocumentUploadResponse(ragDoc.getId(), originalFilename, EtlStatus.PROCESSING));
         }
 
         // 3. 批量调度 ETL（自动路由策略）

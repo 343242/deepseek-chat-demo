@@ -1,5 +1,6 @@
 package com.demo.chat.rag.embedding;
 
+import org.jspecify.annotations.NonNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.document.Document;
@@ -7,13 +8,11 @@ import org.springframework.ai.embedding.Embedding;
 import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.ai.embedding.EmbeddingRequest;
 import org.springframework.ai.embedding.EmbeddingResponse;
-import org.springframework.ai.embedding.EmbeddingResponseMetadata;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 
 /**
  * 基于阿里千问 text-embedding-v4 的 Embedding 模型实现。
@@ -54,7 +53,7 @@ public class DashScopeEmbeddingModel implements EmbeddingModel {
     }
 
     @Override
-    public EmbeddingResponse call(EmbeddingRequest request) {
+    public @NonNull EmbeddingResponse call(EmbeddingRequest request) {
         List<String> texts = request.getInstructions();
         log.debug("Embedding {} texts via DashScope", texts.size());
 
@@ -71,20 +70,23 @@ public class DashScopeEmbeddingModel implements EmbeddingModel {
     }
 
     @Override
-    public float[] embed(Document document) {
+    public float @NonNull [] embed(Document document) {
         String content = document.getText();
-        float[] result = embed(content);
+        float[] result = null;
+        if (content != null) {
+            result = embed(content);
+        }
         return result;
     }
 
     @Override
-    public float[] embed(String text) {
+    public float @NonNull [] embed(@NonNull String text) {
         EmbeddingResponse response = call(new EmbeddingRequest(List.of(text), null));
         return response.getResult().getOutput();
     }
 
     @Override
-    public List<float[]> embed(List<String> texts) {
+    public @NonNull List<float[]> embed(@NonNull List<String> texts) {
         EmbeddingResponse response = call(new EmbeddingRequest(texts, null));
         return response.getResults().stream()
                 .map(Embedding::getOutput)

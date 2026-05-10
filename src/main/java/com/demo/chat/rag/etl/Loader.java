@@ -15,4 +15,11 @@ public interface Loader {
      * @param documents 待写入的文档列表
      */
     void load(List<Document> documents);
+
+    /**
+     * 按文档 ID 删除关联的所有向量数据
+     *
+     * @param documentId 文档 ID
+     */
+    void deleteByDocumentId(Long documentId);
 }

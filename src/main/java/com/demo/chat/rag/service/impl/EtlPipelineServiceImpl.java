@@ -62,6 +62,12 @@ public class EtlPipelineServiceImpl implements EtlPipelineService {
             updateStatus(documentId, "CHUNKING");
             List<Document> chunks = transformer.transform(rawDocuments, fileName);
 
+            // 为每个 chunk 注入 documentId，用于后续按文档删除向量数据
+            String docIdStr = String.valueOf(documentId);
+            for (Document chunk : chunks) {
+                chunk.getMetadata().put("documentId", docIdStr);
+            }
+
             // === Load ===
             updateStatus(documentId, "VECTORIZING");
             loader.load(chunks);

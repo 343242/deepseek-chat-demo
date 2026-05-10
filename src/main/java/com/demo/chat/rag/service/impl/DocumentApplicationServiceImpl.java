@@ -4,6 +4,7 @@ import com.demo.chat.rag.config.DocumentProperties;
 import com.demo.chat.rag.config.MinioProperties;
 import com.demo.chat.rag.dto.DocumentDTO;
 import com.demo.chat.rag.dto.DocumentUploadResponse;
+import com.demo.chat.rag.etl.Loader;
 import com.demo.chat.rag.entity.RagDocument;
 import com.demo.chat.rag.mapper.RagDocumentMapper;
 import com.demo.chat.rag.service.DocumentApplicationService;
@@ -43,6 +44,7 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
     private final FileStorageService fileStorageService;
     private final EtlPipelineService etlPipelineService;
     private final RagDocumentMapper ragDocumentMapper;
+    private final Loader vectorStoreLoader;
     private final MinioProperties minioProperties;
     private final DocumentProperties documentProperties;
 
@@ -52,11 +54,13 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
     public DocumentApplicationServiceImpl(FileStorageService fileStorageService,
                                           EtlPipelineService etlPipelineService,
                                           RagDocumentMapper ragDocumentMapper,
+                                          Loader vectorStoreLoader,
                                           MinioProperties minioProperties,
                                           DocumentProperties documentProperties) {
         this.fileStorageService = fileStorageService;
         this.etlPipelineService = etlPipelineService;
         this.ragDocumentMapper = ragDocumentMapper;
+        this.vectorStoreLoader = vectorStoreLoader;
         this.minioProperties = minioProperties;
         this.documentProperties = documentProperties;
     }
@@ -119,6 +123,14 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
         if (doc == null) {
             return false;
         }
+
+        // 清理向量库中该文档的所有 chunk
+        try {
+            vectorStoreLoader.deleteByDocumentId(id);
+        } catch (Exception e) {
+            log.warn("Failed to delete vectors for documentId={}, continuing with cleanup: {}", id, e.getMessage());
+        }
+
         fileStorageService.delete(doc.getBucket(), doc.getStorageKey());
         ragDocumentMapper.deleteById(id);
         log.info("Document deleted: id={}, file={}, userId={}", id, doc.getFileName(), doc.getUserId());

@@ -25,9 +25,9 @@ public class RagConfig {
     private static final Logger log = LoggerFactory.getLogger(RagConfig.class);
 
     @Bean
-    public ParentDocumentPostProcessor parentDocumentPostProcessor() {
-        log.info("ParentDocumentPostProcessor registered");
-        return new ParentDocumentPostProcessor();
+    public ParentDocumentPostProcessor parentDocumentPostProcessor(VectorStore vectorStore) {
+        log.info("ParentDocumentPostProcessor registered (with VectorStore for parent lookup)");
+        return new ParentDocumentPostProcessor(vectorStore);
     }
 
     @Bean

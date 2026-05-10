@@ -22,13 +22,14 @@ import java.util.UUID;
  *
  * <p>存储模型：</p>
  * <ul>
- *   <li>子切分存入向量库（用于精准检索）</li>
- *   <li>每个子切分的 metadata 携带 parentId + parentContent</li>
- *   <li>检索命中子切分后，由 {@link com.demo.chat.rag.chunk.ParentDocumentPostProcessor}
- *       将子切分替换为父文档内容，提供完整上下文</li>
+ *   <li>父文档存入向量库（标记 isParent=true），用于检索后回查</li>
+ *   <li>子切分存入向量库（用于精准检索），metadata 只存 parentId（不含父文内容）</li>
+ *   <li>检索命中子切分后，由 {@link ParentDocumentPostProcessor}
+ *       通过 parentId 从向量库回查父文档，替换子切分为父文档内容</li>
  * </ul>
  *
- * <p>优势：小切分保证检索精度，大上下文保证 LLM 理解完整性。</p>
+ * <p>优势：小切分保证检索精度，大上下文保证 LLM 理解完整性。
+ * 只存 parentId 避免向量库膨胀和脱敏/删除/迁移困难。</p>
  */
 @Component
 public class ParentChildChunkStrategy implements ChunkStrategy {
@@ -37,14 +38,14 @@ public class ParentChildChunkStrategy implements ChunkStrategy {
 
     /** metadata key: 父文档 ID */
     public static final String META_PARENT_ID = "parentId";
-    /** metadata key: 父文档完整内容 */
-    public static final String META_PARENT_CONTENT = "parentContent";
     /** metadata key: 是否为父文档 */
     public static final String META_IS_PARENT = "isParent";
     /** metadata key: 在父文档内的子切分序号 */
     public static final String META_CHILD_INDEX_IN_PARENT = "childIndexInParent";
     /** metadata key: 该父文档的子切分总数 */
     public static final String META_CHILD_COUNT = "childCount";
+    /** metadata key: 父文档的向量 ID（用于回查） */
+    public static final String META_PARENT_VECTOR_ID = "parentVectorId";
 
     private final DocumentProperties properties;
 
@@ -70,7 +71,7 @@ public class ParentChildChunkStrategy implements ChunkStrategy {
                 .withChunkSize(childSize)
                 .build();
 
-        List<Document> childChunks = new ArrayList<>();
+        List<Document> allChunks = new ArrayList<>();
         int globalChildIndex = 0;
         int parentCount = 0;
 
@@ -80,8 +81,14 @@ public class ParentChildChunkStrategy implements ChunkStrategy {
 
             for (Document parent : parents) {
                 String parentId = UUID.randomUUID().toString();
-                String parentContent = parent.getText();
                 parentCount++;
+
+                // 父文档也写入输出列表（标记为 parent），后续一起存入向量库
+                parent.getMetadata().put(META_IS_PARENT, true);
+                parent.getMetadata().put("parentId", parentId);
+                parent.getMetadata().put("source", sourceFileName);
+                parent.getMetadata().put("chunkType", "parent");
+                allChunks.add(parent);
 
                 // === 第二层：将父文档切分为子切分 ===
                 List<Document> children = childSplitter.apply(List.of(parent));
@@ -89,9 +96,8 @@ public class ParentChildChunkStrategy implements ChunkStrategy {
                 for (int i = 0; i < children.size(); i++) {
                     Document child = children.get(i);
 
-                    // 附加子切分元数据
+                    // 子切分只存 parentId，不存父文内容
                     child.getMetadata().put(META_PARENT_ID, parentId);
-                    child.getMetadata().put(META_PARENT_CONTENT, parentContent);
                     child.getMetadata().put(META_IS_PARENT, false);
                     child.getMetadata().put(META_CHILD_INDEX_IN_PARENT, i);
                     child.getMetadata().put(META_CHILD_COUNT, children.size());
@@ -99,22 +105,22 @@ public class ParentChildChunkStrategy implements ChunkStrategy {
                     child.getMetadata().put("chunkIndex", globalChildIndex);
                     child.getMetadata().put("chunkType", "child");
 
-                    childChunks.add(child);
+                    allChunks.add(child);
                     globalChildIndex++;
                 }
             }
         }
 
         // 回写 totalChunks
-        for (Document child : childChunks) {
-            child.getMetadata().put("totalChunks", childChunks.size());
+        for (Document chunk : allChunks) {
+            chunk.getMetadata().put("totalChunks", allChunks.size());
         }
 
-        log.info("[ParentChildChunk] {} raw docs → {} parents → {} children " +
+        log.info("[ParentChildChunk] {} raw docs → {} parents + children = {} total " +
                         "(parentSize={}, childSize={}, source={})",
-                documents.size(), parentCount, childChunks.size(),
+                documents.size(), parentCount, allChunks.size(),
                 parentSize, childSize, sourceFileName);
 
-        return childChunks;
+        return allChunks;
     }
 }

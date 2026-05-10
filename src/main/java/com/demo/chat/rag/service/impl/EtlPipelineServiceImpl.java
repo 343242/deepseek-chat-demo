@@ -10,6 +10,7 @@ import com.demo.chat.rag.service.FileStorageService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.document.Document;
+import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.core.io.Resource;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -17,6 +18,13 @@ import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
 import java.util.List;
 
+/**
+ * ETL Pipeline 编排服务实现
+ * <p>
+ * 流程：Extract(从 MinIO 下载 → Parser 解析) → Transform(分块) → Load(PGvector 写入)
+ * 每个阶段更新 rag_document 表的 status 字段。
+ * </p>
+ */
 @Service
 public class EtlPipelineServiceImpl implements EtlPipelineService {
 
@@ -26,15 +34,18 @@ public class EtlPipelineServiceImpl implements EtlPipelineService {
     private final DocumentParserFactory parserFactory;
     private final DocumentChunkService chunkService;
     private final RagDocumentMapper ragDocumentMapper;
+    private final VectorStore vectorStore;
 
     public EtlPipelineServiceImpl(FileStorageService fileStorageService,
                                   DocumentParserFactory parserFactory,
                                   DocumentChunkService chunkService,
-                                  RagDocumentMapper ragDocumentMapper) {
+                                  RagDocumentMapper ragDocumentMapper,
+                                  VectorStore vectorStore) {
         this.fileStorageService = fileStorageService;
         this.parserFactory = parserFactory;
         this.chunkService = chunkService;
         this.ragDocumentMapper = ragDocumentMapper;
+        this.vectorStore = vectorStore;
     }
 
     @Override
@@ -59,8 +70,10 @@ public class EtlPipelineServiceImpl implements EtlPipelineService {
             updateStatus(documentId, "CHUNKING");
             List<Document> chunks = chunkService.chunk(rawDocuments, fileName);
 
-            // === Load (Phase 2: 写入 PGvector) ===
-            // TODO: vectorStore.add(chunks);
+            // === Load (写入 PGvector) ===
+            updateStatus(documentId, "VECTORIZING");
+            vectorStore.add(chunks);
+            log.info("Loaded {} chunks into vector store for document {}", chunks.size(), documentId);
 
             // === Complete ===
             doc.setChunkCount(chunks.size());

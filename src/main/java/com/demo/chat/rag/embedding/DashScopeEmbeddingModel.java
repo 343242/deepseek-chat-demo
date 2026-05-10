@@ -8,7 +8,6 @@ import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.ai.embedding.EmbeddingRequest;
 import org.springframework.ai.embedding.EmbeddingResponse;
 import org.springframework.ai.embedding.EmbeddingResponseMetadata;
-import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 
@@ -48,7 +47,7 @@ public class DashScopeEmbeddingModel implements EmbeddingModel {
         this.webClient = webClientBuilder
                 .baseUrl(properties.getBaseUrl())
                 .defaultHeader("Authorization", "Bearer " + properties.getApiKey())
-                .defaultContentType(MediaType.APPLICATION_JSON)
+                .defaultHeader("Content-Type", "application/json")
                 .build();
         log.info("DashScopeEmbeddingModel initialized: model={}, dimensions={}, baseUrl={}",
                 properties.getModel(), properties.getDimensions(), properties.getBaseUrl());

@@ -12,6 +12,7 @@ import com.demo.chat.chat.service.*;
 import com.demo.chat.chat.tool.ToolRegistry;
 import com.demo.chat.chat.util.ConversationIdUtil;
 import com.demo.chat.security.util.SecurityUtils;
+import org.springframework.ai.chat.client.advisor.vectorstore.QuestionAnswerAdvisor;
 import org.springframework.ai.chat.client.advisor.ToolCallAdvisor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -62,6 +63,7 @@ public class ChatServiceImpl implements ChatService {
     private final SystemPromptService systemPromptService;
     private final ModelParamsService modelParamsService;
     private final UsageService usageService;
+    private final QuestionAnswerAdvisor questionAnswerAdvisor;
 
     public ChatServiceImpl(ChatClientRegistry registry,
                            ProviderRegistry providerRegistry,
@@ -72,7 +74,8 @@ public class ChatServiceImpl implements ChatService {
                            ToolRegistry toolRegistry,
                            SystemPromptService systemPromptService,
                            ModelParamsService modelParamsService,
-                           UsageService usageService) {
+                           UsageService usageService,
+                           QuestionAnswerAdvisor questionAnswerAdvisor) {
         this.registry = registry;
         this.providerRegistry = providerRegistry;
         this.modelRouter = modelRouter;
@@ -83,6 +86,7 @@ public class ChatServiceImpl implements ChatService {
         this.systemPromptService = systemPromptService;
         this.modelParamsService = modelParamsService;
         this.usageService = usageService;
+        this.questionAnswerAdvisor = questionAnswerAdvisor;
     }
 
     @Override
@@ -99,7 +103,7 @@ public class ChatServiceImpl implements ChatService {
         long startTime = System.currentTimeMillis();
 
         ChatClient.ChatClientRequestSpec requestSpec = buildRequestSpec(
-                chatClient, route, request.message(), isolatedConversationId);
+                chatClient, route, request.message(), isolatedConversationId, request.isRagEnabled());
 
         org.springframework.ai.chat.model.ChatResponse aiResponse = requestSpec.call().chatResponse();
         long duration = System.currentTimeMillis() - startTime;
@@ -124,7 +128,7 @@ public class ChatServiceImpl implements ChatService {
         long startTime = System.currentTimeMillis();
 
         ChatClient.ChatClientRequestSpec requestSpec = buildRequestSpec(
-                chatClient, route, request.message(), isolatedConversationId);
+                chatClient, route, request.message(), isolatedConversationId, request.isRagEnabled());
 
         StringBuilder collectedContent = new StringBuilder();
         java.util.concurrent.atomic.AtomicBoolean usageRecorded = new java.util.concurrent.atomic.AtomicBoolean(false);
@@ -189,11 +193,11 @@ public class ChatServiceImpl implements ChatService {
     }
 
     private ChatClient.ChatClientRequestSpec buildRequestSpec(
-            ChatClient chatClient, ModelRouter.Route route, String message, String conversationId) {
+            ChatClient chatClient, ModelRouter.Route route, String message, String conversationId, boolean ragEnabled) {
 
         ChatClient.ChatClientRequestSpec spec = chatClient.prompt()
                 .user(message)
-                .advisors(buildAdvisors(conversationId));
+                .advisors(buildAdvisors(conversationId, ragEnabled));
 
         if (toolRegistry.hasTools()) {
             spec = spec.tools((Object) toolRegistry.getToolCallbacks());
@@ -222,10 +226,14 @@ public class ChatServiceImpl implements ChatService {
         return spec;
     }
 
-    private List<Advisor> buildAdvisors(String conversationId) {
+    private List<Advisor> buildAdvisors(String conversationId, boolean ragEnabled) {
         List<Advisor> allAdvisors = new ArrayList<>();
         allAdvisors.add(new ConversationContextAdvisor(conversationId));
         allAdvisors.addAll(advisors);
+        if (ragEnabled) {
+            allAdvisors.add(questionAnswerAdvisor);
+            log.debug("RAG advisor enabled for conversation: {}", conversationId);
+        }
         if (toolRegistry.hasTools()) {
             allAdvisors.add(toolCallAdvisor);
         }

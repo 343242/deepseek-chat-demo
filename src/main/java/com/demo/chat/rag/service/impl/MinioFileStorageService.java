@@ -2,8 +2,8 @@ package com.demo.chat.rag.service.impl;
 
 import com.demo.chat.rag.config.MinioProperties;
 import com.demo.chat.rag.service.FileStorageService;
+import io.minio.Http;
 import io.minio.*;
-import io.minio.http.Method;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.io.ByteArrayResource;
@@ -47,7 +47,7 @@ public class MinioFileStorageService implements FileStorageService {
                     PutObjectArgs.builder()
                             .bucket(bucket)
                             .object(objectKey)
-                            .stream(is, resource.contentLength(), -1)
+                            .stream(is, resource.contentLength(), -1L)
                             .contentType(mimeType)
                             .build());
             log.debug("Uploaded file to MinIO: {}/{}", bucket, objectKey);
@@ -86,7 +86,7 @@ public class MinioFileStorageService implements FileStorageService {
         try {
             return minioClient.getPresignedObjectUrl(
                     GetPresignedObjectUrlArgs.builder()
-                            .method(Method.GET)
+                            .method(Http.Method.GET)
                             .bucket(bucket)
                             .object(objectKey)
                             .expiry(expirySeconds, TimeUnit.SECONDS)

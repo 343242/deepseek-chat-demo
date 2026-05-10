@@ -67,7 +67,7 @@ public class ChatController {
             @RequestParam @NotBlank(message = "model 不能为空") String model,
             @RequestParam @NotBlank(message = "message 不能为空") String message,
             @RequestParam(defaultValue = "default") String conversationId) {
-        ChatRequest request = new ChatRequest(model, message, conversationId);
+        ChatRequest request = new ChatRequest(model, message, conversationId, false);
         return chatService.chatStream(request);
     }
 

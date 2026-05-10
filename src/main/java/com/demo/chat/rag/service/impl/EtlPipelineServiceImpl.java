@@ -1,19 +1,14 @@
 package com.demo.chat.rag.service.impl;
 
-import com.demo.chat.rag.chunk.ChunkStrategy;
-import com.demo.chat.rag.chunk.ChunkStrategyFactory;
-import com.demo.chat.rag.config.DocumentProperties;
+import com.demo.chat.rag.etl.Extractor;
+import com.demo.chat.rag.etl.Loader;
+import com.demo.chat.rag.etl.Transformer;
 import com.demo.chat.rag.entity.RagDocument;
 import com.demo.chat.rag.mapper.RagDocumentMapper;
-import com.demo.chat.rag.parser.DocumentParser;
-import com.demo.chat.rag.parser.DocumentParserFactory;
 import com.demo.chat.rag.service.EtlPipelineService;
-import com.demo.chat.rag.service.FileStorageService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.document.Document;
-import org.springframework.ai.vectorstore.VectorStore;
-import org.springframework.core.io.Resource;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -21,10 +16,11 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * ETL Pipeline 编排服务实现
+ * ETL Pipeline 编排器
  * <p>
- * 流程：Extract(从 MinIO 下载 → Parser 解析) → Transform(策略化分块) → Load(PGvector 写入)
- * 分块策略由 {@link ChunkStrategyFactory} 按 YAML 配置路由。
+ * 只负责串联 Extract → Transform → Load 三个阶段，并管理文档状态流转。
+ * 各阶段的具体逻辑封装在独立的 {@link Extractor}、{@link Transformer}、{@link Loader} 实现中，
+ * 本类不包含任何解析/分块/存储的细节代码。
  * </p>
  */
 @Service
@@ -32,31 +28,25 @@ public class EtlPipelineServiceImpl implements EtlPipelineService {
 
     private static final Logger log = LoggerFactory.getLogger(EtlPipelineServiceImpl.class);
 
-    private final FileStorageService fileStorageService;
-    private final DocumentParserFactory parserFactory;
-    private final ChunkStrategyFactory chunkStrategyFactory;
-    private final DocumentProperties documentProperties;
+    private final Extractor extractor;
+    private final Transformer transformer;
+    private final Loader loader;
     private final RagDocumentMapper ragDocumentMapper;
-    private final VectorStore vectorStore;
 
-    public EtlPipelineServiceImpl(FileStorageService fileStorageService,
-                                  DocumentParserFactory parserFactory,
-                                  ChunkStrategyFactory chunkStrategyFactory,
-                                  DocumentProperties documentProperties,
-                                  RagDocumentMapper ragDocumentMapper,
-                                  VectorStore vectorStore) {
-        this.fileStorageService = fileStorageService;
-        this.parserFactory = parserFactory;
-        this.chunkStrategyFactory = chunkStrategyFactory;
-        this.documentProperties = documentProperties;
+    public EtlPipelineServiceImpl(Extractor extractor,
+                                  Transformer transformer,
+                                  Loader loader,
+                                  RagDocumentMapper ragDocumentMapper) {
+        this.extractor = extractor;
+        this.transformer = transformer;
+        this.loader = loader;
         this.ragDocumentMapper = ragDocumentMapper;
-        this.vectorStore = vectorStore;
     }
 
     @Override
     @Transactional
     public int execute(Long documentId, String bucket, String objectKey, String fileName, String mimeType) {
-        log.info("ETL pipeline started for document: id={}, file={}, mime={}", documentId, fileName, mimeType);
+        log.info("ETL pipeline started: id={}, file={}", documentId, fileName);
 
         RagDocument doc = ragDocumentMapper.selectById(documentId);
         if (doc == null) {
@@ -66,37 +56,24 @@ public class EtlPipelineServiceImpl implements EtlPipelineService {
         try {
             // === Extract ===
             updateStatus(documentId, "PARSING");
-            Resource fileResource = fileStorageService.download(bucket, objectKey);
-            DocumentParser parser = parserFactory.getParser(mimeType);
-            List<Document> rawDocuments = parser.parse(fileResource, mimeType);
-            log.info("Extracted {} segments from {}", rawDocuments.size(), fileName);
+            List<Document> rawDocuments = extractor.extract(bucket, objectKey, mimeType);
 
-            // === Transform (Strategy-based Chunking) ===
+            // === Transform ===
             updateStatus(documentId, "CHUNKING");
-            ChunkStrategy strategy = chunkStrategyFactory.getStrategy(documentProperties.getChunkStrategy());
-            List<Document> chunks = strategy.chunk(rawDocuments, fileName);
+            List<Document> chunks = transformer.transform(rawDocuments, fileName);
 
-            // === Load (写入 PGvector) ===
+            // === Load ===
             updateStatus(documentId, "VECTORIZING");
-            vectorStore.add(chunks);
-            log.info("Loaded {} chunks into vector store for document {}", chunks.size(), documentId);
+            loader.load(chunks);
 
             // === Complete ===
-            doc.setChunkCount(chunks.size());
-            doc.setStatus("COMPLETED");
-            doc.setUpdateTime(LocalDateTime.now());
-            ragDocumentMapper.updateById(doc);
+            completeDocument(documentId, chunks.size());
 
-            log.info("ETL pipeline completed for document: id={}, chunks={}, strategy={}",
-                    documentId, chunks.size(), strategy.strategyName());
+            log.info("ETL completed: id={}, chunks={}", documentId, chunks.size());
             return chunks.size();
 
         } catch (Exception e) {
-            log.error("ETL pipeline failed for document: id={}", documentId, e);
-            doc.setStatus("FAILED");
-            doc.setErrorMessage(truncate(e.getMessage(), 2000));
-            doc.setUpdateTime(LocalDateTime.now());
-            ragDocumentMapper.updateById(doc);
+            failDocument(documentId, e);
             throw new RuntimeException("Document processing failed: " + fileName, e);
         }
     }
@@ -107,6 +84,26 @@ public class EtlPipelineServiceImpl implements EtlPipelineService {
         update.setStatus(status);
         update.setUpdateTime(LocalDateTime.now());
         ragDocumentMapper.updateById(update);
+    }
+
+    private void completeDocument(Long documentId, int chunkCount) {
+        RagDocument doc = new RagDocument();
+        doc.setId(documentId);
+        doc.setStatus("COMPLETED");
+        doc.setChunkCount(chunkCount);
+        doc.setUpdateTime(LocalDateTime.now());
+        ragDocumentMapper.updateById(doc);
+    }
+
+    private void failDocument(Long documentId, Exception e) {
+        log.error("ETL failed for document: id={}", documentId, e);
+        RagDocument doc = ragDocumentMapper.selectById(documentId);
+        if (doc != null) {
+            doc.setStatus("FAILED");
+            doc.setErrorMessage(truncate(e.getMessage(), 2000));
+            doc.setUpdateTime(LocalDateTime.now());
+            ragDocumentMapper.updateById(doc);
+        }
     }
 
     private static String truncate(String str, int maxLen) {

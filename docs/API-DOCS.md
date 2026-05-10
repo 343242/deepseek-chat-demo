@@ -13,6 +13,7 @@
 - [对话管理](#对话管理)
 - [系统提示词](#系统提示词)
 - [模型参数](#模型参数)
+- [RAG 文档管理](#rag-文档管理)
 - [用量统计](#用量统计)
 - [用户管理](#用户管理)
 - [角色权限](#角色权限)
@@ -286,6 +287,9 @@
 | model | ✅ | 最多 100 字符。支持复合格式 `providerId/modelId`（如 `zhipu/glm-5.1`）或简单格式（如 `deepseek-chat`，默认路由） |
 | message | ✅ | 最多 10000 字符 |
 | conversationId | | 字母/数字/下划线/连字符，默认 `"default"` |
+| ragEnabled | | Boolean，默认 false。启用后通过 RAG 检索增强回答 |
+| mode | | `SIMPLE`（单轮）或 `MULTI_TURN`（多轮，自动维护会话记忆），默认 SIMPLE |
+| enableThinking | | Boolean，默认 false。仅 MULTI_TURN 模式生效，启用思考过程输出 |
 
 **Response：**
 
@@ -318,6 +322,8 @@ SSE 流式聊天（query params）。
 | model | ✅ | 模型 ID（同 POST /api/chat 的路由规则） |
 | message | ✅ | 消息内容 |
 | conversationId | | 对话 ID |
+| ragEnabled | | Boolean，默认 false。启用后通过 RAG 检索增强回答 |
+| mode | | `SIMPLE`（单轮）或 `MULTI_TURN`（多轮），默认 SIMPLE |
 
 **Response：** `text/event-stream`
 
@@ -562,6 +568,155 @@ SSE 流式聊天（JSON body）。
 ```
 
 **Response（无配置）：** 404 Not Found
+
+---
+
+## RAG 文档管理
+
+> 所有文档接口需要登录（`@PreAuthorize("isAuthenticated()")`），且自动绑定当前用户，只能查看和管理自己的文档。
+
+### POST /api/documents/upload
+
+上传单个文档并触发 ETL 处理。
+
+**权限：** 需要登录
+
+**Request：** `multipart/form-data`
+
+| 参数 | 必填 | 说明 |
+|------|------|------|
+| file | ✅ | 上传的文档文件 |
+
+**Response：**
+
+```json
+{
+  "id": 1,
+  "fileName": "report.pdf",
+  "status": "UPLOADED"
+}
+```
+
+> 文档上传后自动进入 ETL 流水线：UPLOADED → PARSING → CHUNKING → VECTORIZING → COMPLETED / FAILED。
+
+---
+
+### POST /api/documents/upload/batch
+
+批量上传文档。根据文档数量和总大小自动路由处理策略：
+- 小批量（≤10 个且 ≤5MB）→ 快速通道（BM25 先行 + 异步向量化）
+- 其他 → 标准并发 ETL
+
+**权限：** 需要登录
+
+**Request：** `multipart/form-data`
+
+| 参数 | 必填 | 说明 |
+|------|------|------|
+| files | ✅ | 上传的文档文件数组 |
+
+**Response：**
+
+```json
+[
+  { "id": 1, "fileName": "doc1.pdf", "status": "UPLOADED" },
+  { "id": 2, "fileName": "doc2.pdf", "status": "UPLOADED" }
+]
+```
+
+---
+
+### GET /api/documents
+
+获取文档列表（仅当前用户的文档，按创建时间倒序）。
+
+**权限：** 需要登录
+
+**Response：**
+
+```json
+[
+  {
+    "id": 1,
+    "fileName": "report.pdf",
+    "fileSize": 1048576,
+    "mimeType": "application/pdf",
+    "chunkCount": 42,
+    "status": "COMPLETED",
+    "errorMessage": null,
+    "userId": 1,
+    "createTime": "2026-05-10T14:30:00"
+  }
+]
+```
+
+**DocumentDTO 字段说明：**
+
+| 字段 | 说明 |
+|------|------|
+| id | 文档 ID |
+| fileName | 文件名 |
+| fileSize | 文件大小（字节） |
+| mimeType | MIME 类型 |
+| chunkCount | 分块数量 |
+| status | 处理状态：UPLOADED / PARSING / CHUNKING / VECTORIZING / COMPLETED / FAILED |
+| errorMessage | 失败时的错误信息 |
+| userId | 所属用户 ID |
+| createTime | 创建时间 |
+
+---
+
+### GET /api/documents/{id}
+
+获取文档详情。
+
+**权限：** 需要登录
+
+**Response：** 单个 DocumentDTO（同上）
+
+**Response（未找到）：** 404 Not Found
+
+---
+
+### DELETE /api/documents/{id}
+
+删除文档（含存储 + 向量 + 元数据清理）。仅文档所有者可操作。
+
+**权限：** 需要登录
+
+**Response（成功）：** 204 No Content
+
+**Response（未找到）：** 404 Not Found
+
+---
+
+### GET /api/documents/{id}/status
+
+查询文档处理状态。
+
+**权限：** 需要登录
+
+**Response：** 单个 DocumentDTO（同上）
+
+**Response（未找到）：** 404 Not Found
+
+---
+
+**文档状态流转：**
+
+```
+UPLOADED → PARSING → CHUNKING → VECTORIZING → COMPLETED
+                                                ↘ FAILED
+```
+
+| 状态 | 说明 |
+|------|------|
+| UPLOADED | 已上传，等待解析 |
+| PARSING | 正在解析文档内容 |
+| CHUNKING | 正在分块 |
+| VECTORIZING | 正在生成向量嵌入 |
+| COMPLETED | 处理完成，可用于 RAG 检索 |
+| FAILED | 处理失败，查看 errorMessage 了解原因 |
 
 ---
 

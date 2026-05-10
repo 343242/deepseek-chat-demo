@@ -30,7 +30,7 @@ public class DocumentController {
         this.documentService = documentService;
     }
 
-    /** 上传文档并触发 ETL 处理 */
+    /** 上传单个文档并触发 ETL 处理 */
     @PostMapping("/upload")
     public ResponseEntity<DocumentUploadResponse> upload(@RequestParam("file") MultipartFile file) {
         try {
@@ -42,7 +42,25 @@ public class DocumentController {
         }
     }
 
-    /** 获取文档列表 */
+    /**
+     * 批量上传文档
+     * <p>
+     * 根据文档数量和总大小自动路由处理策略：
+     * - 小批量（≤10 个且 ≤5MB）→ 快速通道（BM25 先行 + 异步向量化）
+     * - 其他 → 标准并发 ETL
+     */
+    @PostMapping("/upload/batch")
+    public ResponseEntity<List<DocumentUploadResponse>> uploadBatch(@RequestParam("files") MultipartFile[] files) {
+        try {
+            List<DocumentUploadResponse> responses = documentService.uploadBatch(List.of(files));
+            return ResponseEntity.ok(responses);
+        } catch (IllegalArgumentException e) {
+            log.warn("Batch upload rejected: {}", e.getMessage());
+            return ResponseEntity.badRequest().build();
+        }
+    }
+
+    /** 获取文档列表（仅当前用户的文档） */
     @GetMapping
     public ResponseEntity<List<DocumentDTO>> list() {
         return ResponseEntity.ok(documentService.listAll());
@@ -58,7 +76,7 @@ public class DocumentController {
         return ResponseEntity.ok(dto);
     }
 
-    /** 删除文档 */
+    /** 删除文档（仅文档所有者可操作） */
     @DeleteMapping("/{id}")
     public ResponseEntity<Void> delete(@PathVariable Long id) {
         boolean deleted = documentService.delete(id);

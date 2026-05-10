@@ -1,0 +1,20 @@
+package com.demo.chat.rag.etl;
+
+/**
+ * ETL 候选文档 — 路由策略的输入参数
+ *
+ * @param documentId 文档 ID
+ * @param bucket     MinIO bucket
+ * @param objectKey  MinIO object key
+ * @param fileName   文件名
+ * @param mimeType   MIME 类型
+ * @param fileSize   文件大小（字节）
+ */
+public record EtlCandidate(
+        Long documentId,
+        String bucket,
+        String objectKey,
+        String fileName,
+        String mimeType,
+        long fileSize
+) {}

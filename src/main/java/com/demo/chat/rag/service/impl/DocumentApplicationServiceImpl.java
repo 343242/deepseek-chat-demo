@@ -4,11 +4,12 @@ import com.demo.chat.rag.config.DocumentProperties;
 import com.demo.chat.rag.config.MinioProperties;
 import com.demo.chat.rag.dto.DocumentDTO;
 import com.demo.chat.rag.dto.DocumentUploadResponse;
+import com.demo.chat.rag.etl.EtlCandidate;
 import com.demo.chat.rag.etl.Loader;
 import com.demo.chat.rag.entity.RagDocument;
 import com.demo.chat.rag.mapper.RagDocumentMapper;
 import com.demo.chat.rag.service.DocumentApplicationService;
-import com.demo.chat.rag.service.EtlPipelineService;
+import com.demo.chat.rag.service.EtlDispatchService;
 import com.demo.chat.rag.service.FileStorageService;
 import com.demo.chat.security.util.SecurityUtils;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
@@ -28,10 +29,11 @@ import java.util.*;
  * <p>
  * 职责：
  * <ul>
- *   <li>文件校验（MIME 白名单、非空）</li>
- *   <li>编排上传 → 存储 → 元数据 → ETL 全流程</li>
+ *   <li>文件校验（MIME 白名单、非空、大小限制）</li>
+ *   <li>编排上传 → 存储 → 元数据 → ETL 调度全流程</li>
  *   <li>文档查询、删除（含存储清理）</li>
  *   <li>资源级 owner 校验：用户只能操作自己的文档</li>
+ *   <li>批量上传通过 EtlDispatchService 自动路由策略</li>
  * </ul>
  * </p>
  */
@@ -41,7 +43,7 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
     private static final Logger log = LoggerFactory.getLogger(DocumentApplicationServiceImpl.class);
 
     private final FileStorageService fileStorageService;
-    private final EtlPipelineService etlPipelineService;
+    private final EtlDispatchService etlDispatchService;
     private final RagDocumentMapper ragDocumentMapper;
     private final Loader vectorStoreLoader;
     private final MinioProperties minioProperties;
@@ -51,13 +53,13 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
     private volatile Set<String> cachedAllowedMimeTypes;
 
     public DocumentApplicationServiceImpl(FileStorageService fileStorageService,
-                                          EtlPipelineService etlPipelineService,
+                                          EtlDispatchService etlDispatchService,
                                           RagDocumentMapper ragDocumentMapper,
                                           Loader vectorStoreLoader,
                                           MinioProperties minioProperties,
                                           DocumentProperties documentProperties) {
         this.fileStorageService = fileStorageService;
-        this.etlPipelineService = etlPipelineService;
+        this.etlDispatchService = etlDispatchService;
         this.ragDocumentMapper = ragDocumentMapper;
         this.vectorStoreLoader = vectorStoreLoader;
         this.minioProperties = minioProperties;
@@ -94,10 +96,71 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
 
         log.info("Document uploaded: id={}, file={}, size={}, userId={}", ragDoc.getId(), originalFilename, file.getSize(), currentUserId);
 
-        // 触发 ETL
-        etlPipelineService.execute(ragDoc.getId(), bucket, storageKey, originalFilename, mimeType);
+        // 单文档走 ETL dispatch（会被路由到 StandardStrategy）
+        etlDispatchService.executeSingle(ragDoc.getId(), bucket, storageKey, originalFilename, mimeType);
 
         return new DocumentUploadResponse(ragDoc.getId(), originalFilename, "COMPLETED");
+    }
+
+    @Override
+    public List<DocumentUploadResponse> uploadBatch(List<MultipartFile> files) {
+        if (files == null || files.isEmpty()) {
+            throw new IllegalArgumentException("上传文件列表不能为空");
+        }
+
+        Long currentUserId = SecurityUtils.getCurrentUserId();
+        String bucket = minioProperties.getBucket();
+        fileStorageService.ensureBucketExists(bucket);
+
+        // 1. 校验所有文件
+        for (MultipartFile file : files) {
+            validateFile(file);
+        }
+
+        // 2. 存储文件 + 持久化元数据
+        List<EtlCandidate> candidates = new ArrayList<>();
+        List<DocumentUploadResponse> responses = new ArrayList<>();
+
+        for (MultipartFile file : files) {
+            String mimeType = file.getContentType();
+            String originalFilename = file.getOriginalFilename();
+            String storageKey = UUID.randomUUID().toString();
+
+            // 存储
+            fileStorageService.upload(bucket, storageKey, file.getResource(), mimeType);
+
+            // 持久化
+            RagDocument ragDoc = new RagDocument();
+            ragDoc.setFileName(originalFilename);
+            ragDoc.setFileSize(file.getSize());
+            ragDoc.setMimeType(mimeType);
+            ragDoc.setStorageKey(storageKey);
+            ragDoc.setBucket(bucket);
+            ragDoc.setUserId(currentUserId);
+            ragDoc.setStatus("UPLOADED");
+            ragDoc.setCreateTime(LocalDateTime.now());
+            ragDoc.setUpdateTime(LocalDateTime.now());
+            ragDocumentMapper.insert(ragDoc);
+
+            log.info("Document uploaded (batch): id={}, file={}, size={}, userId={}", ragDoc.getId(), originalFilename, file.getSize(), currentUserId);
+
+            candidates.add(new EtlCandidate(ragDoc.getId(), bucket, storageKey, originalFilename, mimeType, file.getSize()));
+            responses.add(new DocumentUploadResponse(ragDoc.getId(), originalFilename, "PROCESSING"));
+        }
+
+        // 3. 批量调度 ETL（自动路由策略）
+        etlDispatchService.dispatch(candidates);
+
+        // 4. 更新响应状态（对于标准通道已经是最终状态，快速通道是 BM25 可用）
+        for (int i = 0; i < responses.size(); i++) {
+            DocumentUploadResponse resp = responses.get(i);
+            RagDocument doc = ragDocumentMapper.selectById(resp.getId());
+            if (doc != null) {
+                responses.set(i, new DocumentUploadResponse(resp.getId(), resp.getFileName(), doc.getStatus()));
+            }
+        }
+
+        return responses;
     }
 
     @Override
@@ -140,9 +203,6 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
 
     /**
      * 查找文档并验证当前用户是否为所有者
-     *
-     * @param id 文档 ID
-     * @return 文档实体，不存在或无权限时返回 null
      */
     private RagDocument findAndVerifyOwner(Long id) {
         RagDocument doc = ragDocumentMapper.selectById(id);
@@ -160,16 +220,12 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
 
     /**
      * 文件魔数 → MIME 映射（用于服务端 MIME sniffing）
-     * 防止客户端伪造 Content-Type
      */
     private static final Map<String, String> MAGIC_NUMBER_MAP = Map.of(
             "%PDF", "application/pdf",
-            "PK\u0003\u0004", "application/zip"  // docx / pptx 都是 ZIP 格式
+            "PK\u0003\u0004", "application/zip"
     );
 
-    /**
-     * ZIP 内部 MIME 映射（根据文件扩展名进一步判断）
-     */
     private static final Map<String, String> EXTENSION_MIME_MAP = Map.of(
             ".docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             ".pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation"
@@ -177,15 +233,12 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
 
     /**
      * 校验上传文件：非空 + 大小限制 + MIME 白名单 + 服务端 MIME 校验
-     *
-     * @throws IllegalArgumentException 校验失败
      */
     private void validateFile(MultipartFile file) {
         if (file.isEmpty()) {
             throw new IllegalArgumentException("上传文件不能为空");
         }
 
-        // 文件大小校验
         long maxBytes = DataSize.parse(documentProperties.getMaxFileSize()).toBytes();
         if (file.getSize() > maxBytes) {
             throw new IllegalArgumentException(
@@ -194,14 +247,12 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
                             documentProperties.getMaxFileSize()));
         }
 
-        // 客户端声明的 MIME 校验
         String declaredMimeType = file.getContentType();
         Set<String> allowed = getAllowedMimeTypes();
         if (declaredMimeType == null || !allowed.contains(declaredMimeType)) {
             throw new IllegalArgumentException("不支持的文件类型: " + declaredMimeType);
         }
 
-        // 服务端 MIME sniffing 校验
         String detectedMimeType = detectMimeType(file);
         if (detectedMimeType != null && !allowed.contains(detectedMimeType)
                 && !isZipBasedOfficeDocument(declaredMimeType, detectedMimeType)) {
@@ -210,9 +261,6 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
         }
     }
 
-    /**
-     * 检测文件实际 MIME 类型（基于文件头魔数）
-     */
     private String detectMimeType(MultipartFile file) {
         try {
             byte[] header = new byte[8];
@@ -221,12 +269,10 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
 
             String headerStr = new String(header, 0, Math.min(read, 4));
 
-            // PDF
             if (headerStr.startsWith("%PDF")) {
                 return "application/pdf";
             }
 
-            // ZIP-based (docx, pptx)
             if (header[0] == 0x50 && header[1] == 0x4B && header[2] == 0x03 && header[3] == 0x04) {
                 String originalName = file.getOriginalFilename();
                 if (originalName != null) {
@@ -240,7 +286,6 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
                 return "application/zip";
             }
 
-            // Plain text (ASCII/UTF-8 printable)
             boolean allPrintable = true;
             for (int i = 0; i < read; i++) {
                 byte b = header[i];
@@ -260,17 +305,10 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
         }
     }
 
-    /**
-     * ZIP-based Office 文档的声明类型与检测类型兼容判断
-     * docx/pptx 的检测类型是 application/zip，声明类型是具体 Office MIME，应视为兼容
-     */
     private boolean isZipBasedOfficeDocument(String declared, String detected) {
         return "application/zip".equals(detected) && declared.contains("openxmlformats-officedocument");
     }
 
-    /**
-     * 从 DocumentProperties 解析并缓存 MIME 白名单
-     */
     private Set<String> getAllowedMimeTypes() {
         if (cachedAllowedMimeTypes == null) {
             synchronized (this) {

@@ -39,11 +39,17 @@ public class DeepSeekModelProvider implements ModelProvider {
 
     private final DeepSeekProperties properties;
     private final RestClient restClient;
+    private final DeepSeekApi sharedApi;
 
     public DeepSeekModelProvider(DeepSeekProperties properties,
                                  @Qualifier("deepSeekRestClient") RestClient restClient) {
         this.properties = properties;
         this.restClient = restClient;
+        this.sharedApi = DeepSeekApi.builder()
+                .baseUrl(properties.baseUrl())
+                .apiKey(properties.apiKey())
+                .completionsPath("/chat/completions")
+                .build();
     }
 
     @Override
@@ -98,12 +104,6 @@ public class DeepSeekModelProvider implements ModelProvider {
      */
     @Override
     public ChatClient createClient(String modelId, Double temperature) {
-        DeepSeekApi deepSeekApi = DeepSeekApi.builder()
-                .baseUrl(properties.baseUrl())
-                .apiKey(properties.apiKey())
-                .completionsPath("/chat/completions")
-                .build();
-
         DeepSeekChatOptions.Builder optionsBuilder = DeepSeekChatOptions.builder()
                 .model(modelId);
 
@@ -119,7 +119,7 @@ public class DeepSeekModelProvider implements ModelProvider {
         }
 
         DeepSeekChatModel chatModel = DeepSeekChatModel.builder()
-                .deepSeekApi(deepSeekApi)
+                .deepSeekApi(sharedApi)
                 .defaultOptions(optionsBuilder.build())
                 .build();
 

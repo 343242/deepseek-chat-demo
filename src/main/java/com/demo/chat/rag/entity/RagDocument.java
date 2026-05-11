@@ -2,6 +2,7 @@ package com.demo.chat.rag.entity;
 
 import com.baomidou.mybatisplus.annotation.*;
 import com.baomidou.mybatisplus.annotation.TableLogic;
+import com.demo.chat.rag.etl.EtlStatus;
 
 import java.time.LocalDateTime;
 
@@ -32,8 +33,8 @@ public class RagDocument {
     /** 解析后分块数 */
     private Integer chunkCount;
 
-    /** 处理状态: UPLOADED, PARSING, CHUNKING, COMPLETED, FAILED */
-    private String status;
+    /** 处理状态 */
+    private EtlStatus status;
 
     /** 错误信息（失败时记录） */
     private String errorMessage;
@@ -71,8 +72,8 @@ public class RagDocument {
     public Integer getChunkCount() { return chunkCount; }
     public void setChunkCount(Integer chunkCount) { this.chunkCount = chunkCount; }
 
-    public String getStatus() { return status; }
-    public void setStatus(String status) { this.status = status; }
+    public EtlStatus getStatus() { return status; }
+    public void setStatus(EtlStatus status) { this.status = status; }
 
     public String getErrorMessage() { return errorMessage; }
     public void setErrorMessage(String errorMessage) { this.errorMessage = errorMessage; }

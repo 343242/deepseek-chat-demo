@@ -10,15 +10,15 @@ package com.demo.chat.rag.etl;
  */
 public record EtlResult(
         Long documentId,
-        String status,
+        EtlStatus status,
         int chunkCount,
         String errorMessage
 ) {
     public static EtlResult success(Long documentId, int chunkCount) {
-        return new EtlResult(documentId, "COMPLETED", chunkCount, null);
+        return new EtlResult(documentId, EtlStatus.COMPLETED, chunkCount, null);
     }
 
     public static EtlResult failed(Long documentId, String errorMessage) {
-        return new EtlResult(documentId, "FAILED", 0, errorMessage);
+        return new EtlResult(documentId, EtlStatus.FAILED, 0, errorMessage);
     }
 }

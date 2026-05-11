@@ -31,6 +31,8 @@ class DeepSeekModelProviderTest {
 
     @BeforeEach
     void setUp() {
+        lenient().when(properties.baseUrl()).thenReturn("https://api.deepseek.com");
+        lenient().when(properties.apiKey()).thenReturn("sk-test");
         provider = new DeepSeekModelProvider(properties, restClient);
     }
 
@@ -122,8 +124,6 @@ class DeepSeekModelProviderTest {
         @Test
         @DisplayName("创建 ChatClient 不为 null")
         void createClient_notNull() {
-            when(properties.apiKey()).thenReturn("sk-test");
-            when(properties.baseUrl()).thenReturn("https://api.deepseek.com");
             when(properties.chat()).thenReturn(chatOptions);
             when(chatOptions.temperature()).thenReturn(0.7);
             when(chatOptions.topP()).thenReturn(null);

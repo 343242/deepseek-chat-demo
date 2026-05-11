@@ -33,7 +33,7 @@ public class EtlStatusManager {
     /**
      * 更新文档状态（独立事务）
      */
-    public void updateStatus(Long documentId, String status) {
+    public void updateStatus(Long documentId, EtlStatus status) {
         transactionTemplate.executeWithoutResult(ts -> {
             RagDocument update = new RagDocument();
             update.setId(documentId);

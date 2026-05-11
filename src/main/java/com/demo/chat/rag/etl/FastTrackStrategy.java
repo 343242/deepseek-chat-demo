@@ -139,7 +139,18 @@ public class FastTrackStrategy implements EtlRouteStrategy {
      * embedding 设为 NULL（无向量），BM25 检索仍可通过 content_tsv 命中。
      */
     private void writeBm25Row(Long documentId, String content, Long userId) {
-        String metadataJson = "{\"documentId\": \"" + documentId + "\", \"userId\": \"" + userId + "\", \"fastTrack\": true}";
+        Map<String, Object> metadata = Map.of(
+                "documentId", String.valueOf(documentId),
+                "userId", String.valueOf(userId),
+                "fastTrack", true
+        );
+        String metadataJson;
+        try {
+            metadataJson = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(metadata);
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            log.error("Failed to serialize BM25 metadata for documentId={}", documentId, e);
+            throw new RuntimeException(e);
+        }
         jdbcTemplate.update("""
                 INSERT INTO vector_store (id, content, metadata, embedding)
                 VALUES (gen_random_uuid(), ?, ?::json, NULL)

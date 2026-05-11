@@ -74,8 +74,9 @@ public class ChatController {
             @RequestParam @NotBlank(message = "message 不能为空") String message,
             @RequestParam(defaultValue = "default") String conversationId,
             @RequestParam(defaultValue = "SIMPLE") String mode,
-            @RequestParam(defaultValue = "false") boolean ragEnabled) {
-        ChatRequest request = new ChatRequest(model, message, conversationId, ragEnabled, mode, null);
+            @RequestParam(defaultValue = "false") boolean ragEnabled,
+            @RequestParam(defaultValue = "false") boolean enableThinking) {
+        ChatRequest request = new ChatRequest(model, message, conversationId, ragEnabled, mode, enableThinking);
         return chatService.chatStream(request);
     }
 

@@ -7,10 +7,8 @@ import com.demo.chat.rag.retrieval.MmrDocumentPostProcessor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
-import org.springframework.ai.chat.prompt.PromptTemplate;
 import org.springframework.ai.rag.advisor.RetrievalAugmentationAdvisor;
 import org.springframework.ai.rag.preretrieval.query.transformation.QueryTransformer;
-import org.springframework.ai.rag.preretrieval.query.transformation.RewriteQueryTransformer;
 import org.springframework.ai.rag.retrieval.search.DocumentRetriever;
 import org.springframework.ai.rag.retrieval.search.VectorStoreDocumentRetriever;
 import org.springframework.ai.vectorstore.VectorStore;
@@ -43,17 +41,20 @@ public class RagAdvisorFactory {
     private final JdbcTemplate jdbcTemplate;
     private final RagRetrievalProperties properties;
     private final ParentDocumentPostProcessor parentDocumentPostProcessor;
+    private final QueryTransformer rewriteQueryTransformer;
 
     public RagAdvisorFactory(ChatClient.Builder chatClientBuilder,
                              VectorStore vectorStore,
                              JdbcTemplate jdbcTemplate,
                              RagRetrievalProperties properties,
-                             ParentDocumentPostProcessor parentDocumentPostProcessor) {
+                             ParentDocumentPostProcessor parentDocumentPostProcessor,
+                             QueryTransformer rewriteQueryTransformer) {
         this.chatClientBuilder = chatClientBuilder;
         this.vectorStore = vectorStore;
         this.jdbcTemplate = jdbcTemplate;
         this.properties = properties;
         this.parentDocumentPostProcessor = parentDocumentPostProcessor;
+        this.rewriteQueryTransformer = rewriteQueryTransformer;
     }
 
     /**
@@ -63,21 +64,9 @@ public class RagAdvisorFactory {
      * @return 带用户过滤的 RetrievalAugmentationAdvisor
      */
     public RetrievalAugmentationAdvisor create(Long userId) {
-        // 查询改写
         List<QueryTransformer> queryTransformers = new ArrayList<>();
         if (properties.isQueryRewriteEnabled()) {
-            String template = """
-                    Given the following user query, rewrite it into a clear and specific search query \
-                    suitable for document retrieval. Keep the core intent, remove conversational filler, \
-                    and use precise terminology.
-                    
-                    Original query: {query}
-                    
-                    Rewritten search query:""";
-            queryTransformers.add(RewriteQueryTransformer.builder()
-                    .chatClientBuilder(chatClientBuilder)
-                    .promptTemplate(new PromptTemplate(template))
-                    .build());
+            queryTransformers.add(rewriteQueryTransformer);
         }
 
         // 用户隔离的检索器

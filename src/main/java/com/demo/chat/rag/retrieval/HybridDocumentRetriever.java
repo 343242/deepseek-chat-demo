@@ -1,6 +1,8 @@
 package com.demo.chat.rag.retrieval;
 
 import com.demo.chat.rag.config.RagRetrievalProperties;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.document.Document;
@@ -209,36 +211,22 @@ public class HybridDocumentRetriever implements DocumentRetriever {
                 .trim();
     }
 
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+
     /**
-     * 解析 metadata JSON 字符串（简单处理，避免引入额外依赖）
+     * 解析 metadata JSON 字符串（使用 Jackson，安全处理嵌套结构和转义）
      */
+    @SuppressWarnings("unchecked")
     private Map<String, Object> parseMetadata(String json) {
-        Map<String, Object> result = new HashMap<>();
         if (json == null || json.isBlank() || "null".equals(json)) {
-            return result;
+            return new HashMap<>();
         }
-        // PostgreSQL JSON 格式简单解析
         try {
-            if (json.startsWith("{") && json.endsWith("}")) {
-                String content = json.substring(1, json.length() - 1);
-                String[] pairs = content.split(",");
-                for (String pair : pairs) {
-                    int idx = pair.indexOf(':');
-                    if (idx > 0) {
-                        String key = pair.substring(0, idx).trim().replace("\"", "");
-                        String value = pair.substring(idx + 1).trim();
-                        if (value.startsWith("\"") && value.endsWith("\"")) {
-                            result.put(key, value.substring(1, value.length() - 1));
-                        } else {
-                            result.put(key, value);
-                        }
-                    }
-                }
-            }
+            return OBJECT_MAPPER.readValue(json, new TypeReference<Map<String, Object>>() {});
         } catch (Exception e) {
             log.debug("Failed to parse metadata JSON: {}", e.getMessage());
+            return new HashMap<>();
         }
-        return result;
     }
 
     /**

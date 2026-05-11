@@ -84,8 +84,9 @@ public class ModelRegistryRefresher {
                             newClients.put(model.id(), client);
                         }
                         allModels.add(model);
-                        // ★ createClient 成功后才写入反向索引
+                        // ★ createClient 成功后才写入反向索引（同时索引纯 modelId 和 compositeKey）
                         newIndex.putIfAbsent(model.id(), provider.getProviderId());
+                        newIndex.putIfAbsent(compositeKey, provider.getProviderId());
                     } catch (Exception e) {
                         log.warn("Failed to create client for {}/{}: {}",
                                 provider.getProviderId(), model.id(), e.getMessage());

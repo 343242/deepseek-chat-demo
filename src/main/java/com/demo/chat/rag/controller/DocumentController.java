@@ -17,6 +17,7 @@ import java.util.List;
  * <p>
  * 职责仅限于 HTTP 协议层：参数接收、状态码映射、响应封装。
  * 所有业务逻辑委托给 {@link DocumentApplicationService}。
+ * 异常由 GlobalExceptionHandler 统一处理。
  * </p>
  */
 @RestController
@@ -35,13 +36,8 @@ public class DocumentController {
     /** 上传单个文档并触发 ETL 处理 */
     @PostMapping("/upload")
     public ResponseEntity<DocumentUploadResponse> upload(@RequestParam("file") MultipartFile file) {
-        try {
-            DocumentUploadResponse response = documentService.upload(file);
-            return ResponseEntity.ok(response);
-        } catch (IllegalArgumentException e) {
-            log.warn("Upload rejected: {}", e.getMessage());
-            return ResponseEntity.badRequest().build();
-        }
+        DocumentUploadResponse response = documentService.upload(file);
+        return ResponseEntity.ok(response);
     }
 
     /**
@@ -53,13 +49,8 @@ public class DocumentController {
      */
     @PostMapping("/upload/batch")
     public ResponseEntity<List<DocumentUploadResponse>> uploadBatch(@RequestParam("files") MultipartFile[] files) {
-        try {
-            List<DocumentUploadResponse> responses = documentService.uploadBatch(List.of(files));
-            return ResponseEntity.ok(responses);
-        } catch (IllegalArgumentException e) {
-            log.warn("Batch upload rejected: {}", e.getMessage());
-            return ResponseEntity.badRequest().build();
-        }
+        List<DocumentUploadResponse> responses = documentService.uploadBatch(List.of(files));
+        return ResponseEntity.ok(responses);
     }
 
     /** 获取文档列表（仅当前用户的文档） */

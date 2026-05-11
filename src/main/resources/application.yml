@@ -8,6 +8,13 @@ app:
   chat:
     memory:
       max-messages: ${CHAT_MEMORY_MAX_MESSAGES:20}
+    fallback:
+      enabled: ${CHAT_FALLBACK_ENABLED:true}
+      max-attempts: ${CHAT_FALLBACK_MAX_ATTEMPTS:3}
+      default-chain:
+        - deepseek/deepseek-v4-flash
+        - zhipu/glm-4.7-flash
+        - minimax/MiniMax-M2.1
   sandbox:
     enabled: ${SANDBOX_ENABLED:true}
     max-concurrency: ${SANDBOX_MAX_CONCURRENCY:3}

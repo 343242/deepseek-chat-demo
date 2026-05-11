@@ -43,6 +43,13 @@ public class ChatAdvisorChainFactory {
     private final ObjectProvider<ToolRegistry> toolRegistryProvider;
     private final RagAdvisorFactory ragAdvisorFactory;
 
+    /** 缓存的全局 Advisor 列表（不可变，初始化后不再变化） */
+    private volatile List<Advisor> cachedGlobalAdvisors;
+    /** 缓存的工具可用状态 */
+    private volatile Boolean cachedHasTools;
+    /** 缓存的工具回调数组（不可变引用） */
+    private volatile ToolCallback[] cachedToolCallbacks;
+
     public ChatAdvisorChainFactory(ChatMemory chatMemory,
                                    ObjectProvider<List<Advisor>> globalAdvisors,
                                    ObjectProvider<ToolCallAdvisor> toolCallAdvisor,
@@ -56,17 +63,34 @@ public class ChatAdvisorChainFactory {
     }
 
     /**
-     * 是否有可用工具
+     * 是否有可用工具（首次调用后缓存）
      */
     public boolean hasTools() {
-        return toolRegistryProvider.getIfAvailable(ToolRegistry::empty).hasTools();
+        if (cachedHasTools == null) {
+            cachedHasTools = toolRegistryProvider.getIfAvailable(ToolRegistry::empty).hasTools();
+        }
+        return cachedHasTools;
     }
 
     /**
-     * 获取工具回调数组
+     * 获取工具回调数组（首次调用后缓存）
      */
     public ToolCallback[] getToolCallbacks() {
-        return toolRegistryProvider.getIfAvailable(ToolRegistry::empty).getToolCallbacks();
+        if (cachedToolCallbacks == null) {
+            cachedToolCallbacks = toolRegistryProvider.getIfAvailable(ToolRegistry::empty).getToolCallbacks();
+        }
+        return cachedToolCallbacks;
+    }
+
+    /**
+     * 获取缓存的全局 Advisor 列表（首次调用后缓存）
+     */
+    private List<Advisor> getGlobalAdvisors() {
+        if (cachedGlobalAdvisors == null) {
+            cachedGlobalAdvisors = List.copyOf(
+                    globalAdvisorsProvider.getIfAvailable(Collections::emptyList));
+        }
+        return cachedGlobalAdvisors;
     }
 
     /**
@@ -86,7 +110,7 @@ public class ChatAdvisorChainFactory {
             chain.add(new ConversationContextAdvisor(conversationId));
         }
 
-        List<Advisor> globals = globalAdvisorsProvider.getIfAvailable(Collections::emptyList);
+        List<Advisor> globals = getGlobalAdvisors();
         chain.addAll(globals);
 
         if (request.isRagEnabled()) {

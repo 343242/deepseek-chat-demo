@@ -43,6 +43,9 @@ public class RagAdvisorFactory {
     private final ParentDocumentPostProcessor parentDocumentPostProcessor;
     private final QueryTransformer rewriteQueryTransformer;
 
+    /** 缓存的后处理器链（配置不变时复用） */
+    private volatile List<org.springframework.ai.rag.postretrieval.document.DocumentPostProcessor> cachedPostProcessors;
+
     public RagAdvisorFactory(ChatClient.Builder chatClientBuilder,
                              VectorStore vectorStore,
                              JdbcTemplate jdbcTemplate,
@@ -72,8 +75,8 @@ public class RagAdvisorFactory {
         // 用户隔离的检索器
         DocumentRetriever retriever = createUserIsolatedRetriever(userId);
 
-        // 后处理器链
-        List<org.springframework.ai.rag.postretrieval.document.DocumentPostProcessor> postProcessors = buildPostProcessors();
+        // 后处理器链（缓存复用）
+        List<org.springframework.ai.rag.postretrieval.document.DocumentPostProcessor> postProcessors = getPostProcessors();
 
         // 构建 Advisor
         var builder = RetrievalAugmentationAdvisor.builder()
@@ -109,6 +112,16 @@ public class RagAdvisorFactory {
                 .topK(properties.getVectorTopK())
                 .filterExpression(userIdFilter)
                 .build();
+    }
+
+    /**
+     * 获取后处理器链（首次构建后缓存）
+     */
+    private List<org.springframework.ai.rag.postretrieval.document.DocumentPostProcessor> getPostProcessors() {
+        if (cachedPostProcessors == null) {
+            cachedPostProcessors = List.copyOf(buildPostProcessors());
+        }
+        return cachedPostProcessors;
     }
 
     /**

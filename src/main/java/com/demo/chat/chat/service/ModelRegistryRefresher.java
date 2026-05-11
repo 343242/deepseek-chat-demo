@@ -10,6 +10,9 @@ import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.stereotype.Component;
 
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
 
 /**
  * 模型注册刷新器（多 Provider 版）
@@ -29,6 +32,9 @@ import java.util.*;
 public class ModelRegistryRefresher {
 
     private static final Logger log = LoggerFactory.getLogger(ModelRegistryRefresher.class);
+
+    /** 并行拉取模型列表用的虚拟线程池 */
+    private static final Executor FETCH_EXECUTOR = Executors.newVirtualThreadPerTaskExecutor();
 
     private final ProviderRegistry providerRegistry;
     private final ChatClientRegistry chatClientRegistry;
@@ -51,52 +57,67 @@ public class ModelRegistryRefresher {
      * @return true 至少有一个 Provider 刷新成功
      */
     public boolean refresh() {
+        List<ModelProvider> providers = new ArrayList<>(providerRegistry.getAll());
         log.info("Refreshing models from {} providers: {}",
-                providerRegistry.size(), providerRegistry.getAvailableProviderIds());
+                providers.size(), providerRegistry.getAvailableProviderIds());
 
+        // ====== 阶段1: 并行拉取模型列表（网络 I/O 密集） ======
+        List<CompletableFuture<ProviderResult>> futures = providers.stream()
+                .map(provider -> CompletableFuture.supplyAsync(() -> {
+                    try {
+                        List<ModelInfo> models = provider.fetchModels();
+                        return new ProviderResult(provider, models, null);
+                    } catch (Exception e) {
+                        log.error("Failed to fetch models from {}: {}", provider.getProviderId(), e.getMessage());
+                        return new ProviderResult(provider, List.of(), e);
+                    }
+                }, FETCH_EXECUTOR))
+                .toList();
+
+        // 等待所有拉取完成
+        List<ProviderResult> results = futures.stream()
+                .map(CompletableFuture::join)
+                .toList();
+
+        // ====== 阶段2: 串行创建 ChatClient 并注册（CPU 密集，需要原子性） ======
         Map<String, ChatClient> newClients = new LinkedHashMap<>();
         List<ModelInfo> allModels = new ArrayList<>();
         Map<String, String> newIndex = new HashMap<>();
         int successCount = 0;
 
-        for (ModelProvider provider : providerRegistry.getAll()) {
-            try {
-                List<ModelInfo> models = provider.fetchModels();
-                if (models.isEmpty()) {
-                    log.warn("Provider {} returned empty model list", provider.getProviderId());
-                    continue;
-                }
-
-                for (ModelInfo model : models) {
-                    try {
-                        ChatClient client = provider.createClient(model.id(), null);
-                        // 用复合格式作为 key: "deepseek/deepseek-chat"
-                        String compositeKey = provider.getProviderId() + "/" + model.id();
-                        newClients.put(compositeKey, client);
-                        // 同时用纯 modelId 注册（向后兼容，最后一个同名 Provider 覆盖）
-                        if (newClients.containsKey(model.id())) {
-                            log.warn("Model '{}' already registered by provider '{}', skipping registration from '{}' (use composite key '{}' instead)",
-                                    model.id(),
-                                    newIndex.get(model.id()),
-                                    provider.getProviderId(),
-                                    compositeKey);
-                        } else {
-                            newClients.put(model.id(), client);
-                        }
-                        allModels.add(model);
-                        // ★ createClient 成功后才写入反向索引（同时索引纯 modelId 和 compositeKey）
-                        newIndex.putIfAbsent(model.id(), provider.getProviderId());
-                        newIndex.putIfAbsent(compositeKey, provider.getProviderId());
-                    } catch (Exception e) {
-                        log.warn("Failed to create client for {}/{}: {}",
-                                provider.getProviderId(), model.id(), e.getMessage());
-                    }
-                }
-                successCount++;
-                log.info("Provider {}: registered {} models", provider.getProviderId(), models.size());
-            } catch (Exception e) {
-                log.error("Failed to refresh provider {}: {}", provider.getProviderId(), e.getMessage());
+        for (ProviderResult result : results) {
+            if (result.error() != null) {
+                continue;
             }
+            if (result.models().isEmpty()) {
+                log.warn("Provider {} returned empty model list", result.provider().getProviderId());
+                continue;
+            }
+
+            for (ModelInfo model : result.models()) {
+                try {
+                    ChatClient client = result.provider().createClient(model.id(), null);
+                    String compositeKey = result.provider().getProviderId() + "/" + model.id();
+                    newClients.put(compositeKey, client);
+                    if (newClients.containsKey(model.id())) {
+                        log.warn("Model '{}' already registered by provider '{}', skipping registration from '{}' (use composite key '{}' instead)",
+                                model.id(),
+                                newIndex.get(model.id()),
+                                result.provider().getProviderId(),
+                                compositeKey);
+                    } else {
+                        newClients.put(model.id(), client);
+                    }
+                    allModels.add(model);
+                    newIndex.putIfAbsent(model.id(), result.provider().getProviderId());
+                    newIndex.putIfAbsent(compositeKey, result.provider().getProviderId());
+                } catch (Exception e) {
+                    log.warn("Failed to create client for {}/{}: {}",
+                            result.provider().getProviderId(), model.id(), e.getMessage());
+                }
+            }
+            successCount++;
+            log.info("Provider {}: registered {} models", result.provider().getProviderId(), result.models().size());
         }
 
         boolean hasClients = !newClients.isEmpty();
@@ -106,10 +127,15 @@ public class ModelRegistryRefresher {
         }
 
         log.info("Refresh complete: {} clients, {} models from {}/{} providers",
-                newClients.size(), allModels.size(), successCount, providerRegistry.size());
+                newClients.size(), allModels.size(), successCount, providers.size());
 
         return successCount > 0;
     }
+
+    /**
+     * Provider 拉取结果载体
+     */
+    private record ProviderResult(ModelProvider provider, List<ModelInfo> models, Exception error) {}
 
     /**
      * 查找模型所属的 Provider（O(1)，基于刷新时构建的索引）

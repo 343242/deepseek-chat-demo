@@ -15,10 +15,13 @@ package com.demo.chat.rag.embedding;
  */
 public enum TextType {
 
-    /** 查询文本 — 入库/聚类/分类场景 */
+    /** 自动判断：embed(Document) → document, embed(String) → query */
+    AUTO(null),
+
+    /** 查询文本 — 强制 query */
     QUERY("query"),
 
-    /** 文档文本 — 用户查询场景 */
+    /** 文档文本 — 强制 document */
     DOCUMENT("document"),
 
     /** 不传 text_type */

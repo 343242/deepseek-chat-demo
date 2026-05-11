@@ -155,8 +155,8 @@ public class DashScopeEmbeddingModel implements EmbeddingModel {
     private TextType resolveTextType(TextType inferredType) {
         return switch (properties.getTextType()) {
             case QUERY, DOCUMENT -> properties.getTextType();  // 强制模式
+            case AUTO -> inferredType;                          // 自动推断
             case DISABLED -> TextType.DISABLED;                 // 不传
-            default -> inferredType;                            // auto 或 null，使用推断值
         };
     }
 

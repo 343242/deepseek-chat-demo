@@ -1,6 +1,7 @@
 package com.demo.chat.rag.embedding;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.springframework.stereotype.Component;
 
 /**
  * DashScope Embedding 模型配置属性。
@@ -10,6 +11,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * </p>
  */
 @ConfigurationProperties(prefix = "spring.ai.dashscope.embedding")
+@Component
 public class DashScopeEmbeddingProperties {
 
     /** DashScope API Base URL */
@@ -33,7 +35,7 @@ public class DashScopeEmbeddingProperties {
      *   <li>disabled — 不传 text_type</li>
      * </ul>
      */
-    private TextType textType = TextType.DISABLED;
+    private TextType textType = TextType.AUTO;
 
     /**
      * 自定义任务指令（仅 text_type=query 时生效）。

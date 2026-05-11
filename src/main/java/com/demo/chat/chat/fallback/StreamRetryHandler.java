@@ -1,5 +1,6 @@
 package com.demo.chat.chat.fallback;
 
+import com.demo.chat.exception.BusinessException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import reactor.core.publisher.Flux;
@@ -58,7 +59,7 @@ public class StreamRetryHandler {
                                 StreamFactory streamFactory) {
         if (chainIndex >= chain.size()) {
             log.error("All fallback attempts exhausted for stream, tried: {}", chain);
-            return Flux.error(new com.demo.chat.exception.BusinessException(
+            return Flux.error(new BusinessException(
                     "所有模型均不可用，请稍后重试（已尝试 " + chain.size() + " 个模型）"));
         }
 

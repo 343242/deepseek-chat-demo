@@ -20,23 +20,21 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- 3. 回填已有数据（使用分页 UPDATE 避免长事务锁表）
---    每次处理 5000 行，直到全部更新完毕
+--    直接将所有行用 jiebacfg 重新分词，不依赖旧配置判断
 DO $$
 DECLARE
-    updated_count INT;
+    batch_count INT := 1;
 BEGIN
-    LOOP
+    WHILE batch_count > 0 LOOP
         UPDATE vector_store
         SET content_tsv = to_tsvector('jiebacfg', COALESCE(content, ''))
         WHERE id IN (
             SELECT id FROM vector_store
-            WHERE content_tsv IS NULL
-               OR content_tsv = to_tsvector('simple', COALESCE(content, ''))
-            LIMIT 5000
-        );
+            LIMIT 5000 OFFSET 0
+        )
+        AND content_tsv IS DISTINCT FROM to_tsvector('jiebacfg', COALESCE(content, ''));
 
-        GET DIAGNOSTICS updated_count = ROW_COUNT;
-        EXIT WHEN updated_count = 0;
+        GET DIAGNOSTICS batch_count = ROW_COUNT;
     END LOOP;
 END $$;
 

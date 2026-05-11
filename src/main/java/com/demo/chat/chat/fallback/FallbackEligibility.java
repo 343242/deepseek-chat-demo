@@ -1,5 +1,6 @@
 package com.demo.chat.chat.fallback;
 
+import com.demo.chat.exception.BusinessException;
 import com.demo.chat.exception.ContentFilteredException;
 import org.springframework.stereotype.Component;
 
@@ -32,6 +33,6 @@ public class FallbackEligibility {
      */
     public boolean isEligible(Throwable e) {
         return !(e instanceof ContentFilteredException
-                || e instanceof com.demo.chat.exception.BusinessException);
+                || e instanceof BusinessException);
     }
 }

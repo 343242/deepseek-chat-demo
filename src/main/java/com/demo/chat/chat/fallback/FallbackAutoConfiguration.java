@@ -8,10 +8,10 @@ import org.springframework.context.annotation.Configuration;
  * 兜底策略自动配置
  * <p>
  * 启用 {@link ChatFallbackProperties} 配置绑定，
- * 并创建 {@link StreamRetryHandler} Bean（需要运行时参数，通过 Bean 方法注入）。
+ * 并创建 {@link StreamRetryHandler} Bean。
  * <p>
- * {@link FallbackChainResolver} 和 {@link FallbackEligibility} 已通过
- * {@code @Component} 自动注册。
+ * {@link FallbackChainResolver}（实现 {@link com.demo.chat.chat.fallback.FallbackChainProvider}）
+ * 和 {@link FallbackEligibility} 已通过 {@code @Component} 自动注册。
  */
 @Configuration
 @EnableConfigurationProperties(ChatFallbackProperties.class)

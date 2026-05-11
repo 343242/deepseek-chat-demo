@@ -10,6 +10,7 @@ import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.tool.resolution.StaticToolCallbackResolver;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Lazy;
 
 import java.util.List;
 
@@ -33,6 +34,7 @@ public class ToolAutoConfiguration {
      * <p>
      * 从 ToolRegistry 获取所有已注册的 ToolCallback，通过 StaticToolCallbackResolver 注册。
      */
+    @Lazy
     @Bean
     public ToolCallingManager toolCallingManager(ToolRegistry toolRegistry) {
         ToolCallback[] callbacks = toolRegistry.getToolCallbacks();
@@ -51,6 +53,7 @@ public class ToolAutoConfiguration {
      * order=2：位于 RateLimit(0) 和 ContentFilter(1) 之后。
      * 禁用内部对话历史管理（disableMemory），由 MessageChatMemoryAdvisor 统一管理。
      */
+    @Lazy
     @Bean
     public ToolCallAdvisor toolCallAdvisor(ToolCallingManager toolCallingManager) {
         return ToolCallAdvisor.builder()

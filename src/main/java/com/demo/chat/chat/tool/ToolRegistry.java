@@ -29,10 +29,10 @@ public class ToolRegistry {
     private final ToolCallback[] callbacks;
 
     /**
-     * 通过 ObjectProvider 延迟收集所有工具 Bean。
+     * 在构造时立即收集所有工具 Bean。
      * <p>
      * 使用 ObjectProvider 而非 List 注入，避免无工具 Bean 时启动失败。
-     * 收集时机：首次调用 {@link #getToolCallbacks()} 时触发。
+     * 收集时机：构造器执行时（Spring 容器初始化阶段），非延迟。
      *
      * @param toolBeans 所有包含 @Tool 方法的 Spring Bean
      */
@@ -68,6 +68,20 @@ public class ToolRegistry {
      */
     public boolean hasTools() {
         return callbacks.length > 0;
+    }
+
+    /**
+     * 空注册表 — 供 ObjectProvider#getIfAvailable 的 fallback
+     */
+    public static ToolRegistry empty() {
+        return new ToolRegistry();
+    }
+
+    /**
+     * 内部无参构造，仅用于 empty() 工厂方法
+     */
+    private ToolRegistry() {
+        this.callbacks = new ToolCallback[0];
     }
 
     /**

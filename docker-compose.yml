@@ -14,7 +14,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?请在 .env 中设置 POSTGRES_PASSWORD}
     volumes:
       - pgdata:/var/lib/postgresql
-      - ./sql/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      # schema.sql 已废弃，改由 Flyway (db/migration/) 管理数据库迁移
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-chat_demo}"]
       interval: 5s

@@ -12,9 +12,11 @@ import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
 import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.rag.advisor.RetrievalAugmentationAdvisor;
 import org.springframework.ai.tool.ToolCallback;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 /**
@@ -28,25 +30,28 @@ import java.util.List;
  *   <li>SIMPLE: RateLimit → ContentFilter → [RAG] → [ToolCall]</li>
  *   <li>MULTI_TURN: ConversationContext → RateLimit → ContentFilter → [RAG] → [ToolCall] → Memory</li>
  * </ul>
+ * <p>
+ * 使用 {@link ObjectProvider} 延迟解析 ToolCallAdvisor / ToolRegistry / globalAdvisors，
+ * 打断构造器注入循环链。
  */
 @Component
 public class ChatAdvisorChainFactory {
 
     private final ChatMemory chatMemory;
-    private final List<Advisor> globalAdvisors;
-    private final ToolCallAdvisor toolCallAdvisor;
-    private final ToolRegistry toolRegistry;
+    private final ObjectProvider<List<Advisor>> globalAdvisorsProvider;
+    private final ObjectProvider<ToolCallAdvisor> toolCallAdvisorProvider;
+    private final ObjectProvider<ToolRegistry> toolRegistryProvider;
     private final RagAdvisorFactory ragAdvisorFactory;
 
     public ChatAdvisorChainFactory(ChatMemory chatMemory,
-                                   List<Advisor> globalAdvisors,
-                                   ToolCallAdvisor toolCallAdvisor,
-                                   ToolRegistry toolRegistry,
+                                   ObjectProvider<List<Advisor>> globalAdvisors,
+                                   ObjectProvider<ToolCallAdvisor> toolCallAdvisor,
+                                   ObjectProvider<ToolRegistry> toolRegistry,
                                    RagAdvisorFactory ragAdvisorFactory) {
         this.chatMemory = chatMemory;
-        this.globalAdvisors = globalAdvisors;
-        this.toolCallAdvisor = toolCallAdvisor;
-        this.toolRegistry = toolRegistry;
+        this.globalAdvisorsProvider = globalAdvisors;
+        this.toolCallAdvisorProvider = toolCallAdvisor;
+        this.toolRegistryProvider = toolRegistry;
         this.ragAdvisorFactory = ragAdvisorFactory;
     }
 
@@ -54,14 +59,14 @@ public class ChatAdvisorChainFactory {
      * 是否有可用工具
      */
     public boolean hasTools() {
-        return toolRegistry.hasTools();
+        return toolRegistryProvider.getIfAvailable(ToolRegistry::empty).hasTools();
     }
 
     /**
      * 获取工具回调数组
      */
     public ToolCallback[] getToolCallbacks() {
-        return toolRegistry.getToolCallbacks();
+        return toolRegistryProvider.getIfAvailable(ToolRegistry::empty).getToolCallbacks();
     }
 
     /**
@@ -81,7 +86,8 @@ public class ChatAdvisorChainFactory {
             chain.add(new ConversationContextAdvisor(conversationId));
         }
 
-        chain.addAll(globalAdvisors);
+        List<Advisor> globals = globalAdvisorsProvider.getIfAvailable(Collections::emptyList);
+        chain.addAll(globals);
 
         if (request.isRagEnabled()) {
             Long userId = SecurityUtils.getCurrentUserId();
@@ -90,7 +96,7 @@ public class ChatAdvisorChainFactory {
         }
 
         if (hasTools()) {
-            chain.add(toolCallAdvisor);
+            chain.add(toolCallAdvisorProvider.getObject());
         }
 
         if (modeStrategy.isMemoryEnabled()) {

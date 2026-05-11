@@ -55,14 +55,4 @@ public record ChatRequest(
     public boolean isThinkingEnabled() {
         return resolveMode() == ChatMode.MULTI_TURN && enableThinking != null && enableThinking;
     }
-
-    /**
-     * 创建模型替换副本（用于兜底降级时切换模型）
-     *
-     * @param newModel 新的模型 ID
-     * @return 除 model 外其余字段不变的 ChatRequest
-     */
-    public ChatRequest withModel(String newModel) {
-        return new ChatRequest(newModel, message, conversationId, ragEnabled, mode, enableThinking);
-    }
 }

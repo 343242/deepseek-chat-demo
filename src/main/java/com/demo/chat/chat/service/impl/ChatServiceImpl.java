@@ -3,8 +3,6 @@ package com.demo.chat.chat.service.impl;
 import com.demo.chat.chat.client.ChatClientRegistry;
 import com.demo.chat.chat.dto.ChatRequest;
 import com.demo.chat.chat.dto.ChatResponse;
-import com.demo.chat.chat.fallback.ChatFallbackProperties;
-import com.demo.chat.chat.fallback.FallbackChainResolver;
 import com.demo.chat.chat.mode.ChatModeStrategy;
 import com.demo.chat.chat.mode.ModeRouter;
 import com.demo.chat.chat.provider.ModelRouter;
@@ -12,7 +10,6 @@ import com.demo.chat.chat.service.ChatRequestSpecFactory;
 import com.demo.chat.chat.service.ChatService;
 import com.demo.chat.chat.service.UsageService;
 import com.demo.chat.chat.util.ConversationIdUtil;
-import com.demo.chat.exception.BusinessException;
 import com.demo.chat.security.util.SecurityUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -23,21 +20,20 @@ import org.springframework.ai.chat.metadata.Usage;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 
-import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * 聊天服务（编排层）
  * <p>
- * 职责：请求预处理（路由、隔离）→ 委托工厂构建请求 → 调用并处理响应。
- * 集成兜底策略：主模型调用失败时自动降级到备选模型。
- * <p>
- * 兜底策略：
+ * 职责：请求预处理（路由、隔离） → 委托工厂构建请求 → 调用并处理响应。
+ * 不再直接组装 Advisor 链或解析 System Prompt，这些逻辑分别委托给：
  * <ul>
- *   <li>阻塞式（chat）— 全链路降级，每次尝试独立，失败后立即切换</li>
- *   <li>流式（chatStream）— 连接阶段降级，首个 token 发出后不再切换</li>
+ *   <li>{@link ChatRequestSpecFactory} — 请求规格构建（含 Advisor 链、Prompt、参数）</li>
+ *   <li>{@link com.demo.chat.chat.service.ChatAdvisorChainFactory} — Advisor 链组装</li>
  * </ul>
+ * <p>
+ * 依赖数量从 12 降至 6，每个依赖都有明确的单一职责。
  */
 @Service
 public class ChatServiceImpl implements ChatService {
@@ -50,124 +46,23 @@ public class ChatServiceImpl implements ChatService {
     private final ChatRequestSpecFactory requestSpecFactory;
     private final UsageService usageService;
     private final ChatMemory chatMemory;
-    private final ChatFallbackProperties fallbackProperties;
-    private final FallbackChainResolver fallbackChainResolver;
 
     public ChatServiceImpl(ChatClientRegistry registry,
                            ModelRouter modelRouter,
                            ModeRouter modeRouter,
                            ChatRequestSpecFactory requestSpecFactory,
                            UsageService usageService,
-                           ChatMemory chatMemory,
-                           ChatFallbackProperties fallbackProperties,
-                           FallbackChainResolver fallbackChainResolver) {
+                           ChatMemory chatMemory) {
         this.registry = registry;
         this.modelRouter = modelRouter;
         this.modeRouter = modeRouter;
         this.requestSpecFactory = requestSpecFactory;
         this.usageService = usageService;
         this.chatMemory = chatMemory;
-        this.fallbackProperties = fallbackProperties;
-        this.fallbackChainResolver = fallbackChainResolver;
     }
-
-    // ==================== 阻塞式聊天 ====================
 
     @Override
     public ChatResponse chat(ChatRequest request) {
-        if (!fallbackProperties.enabled()) {
-            return doChat(request, false);
-        }
-
-        List<String> chain = fallbackChainResolver.resolve(request.model());
-        Exception lastException = null;
-
-        for (int i = 0; i < chain.size(); i++) {
-            String candidateModel = chain.get(i);
-            boolean isFallback = i > 0;
-
-            try {
-                ChatRequest candidateRequest = isFallback
-                        ? request.withModel(candidateModel)
-                        : request;
-
-                ChatResponse response = doChat(candidateRequest, isFallback);
-
-                if (isFallback) {
-                    log.info("Fallback succeeded: '{}' → '{}' (attempt {}/{})",
-                            request.model(), candidateModel, i + 1, chain.size());
-                }
-                return response;
-            } catch (Exception e) {
-                if (!fallbackChainResolver.isFallbackEligible(e)) {
-                    throw e;
-                }
-                lastException = e;
-                log.warn("Chat attempt {}/{} failed for model '{}': {}",
-                        i + 1, chain.size(), candidateModel, e.getMessage());
-            }
-        }
-
-        log.error("All {} fallback attempts exhausted for model '{}'",
-                chain.size(), request.model(), lastException);
-        throw new BusinessException(
-                "所有模型均不可用，请稍后重试（已尝试 " + chain.size() + " 个模型）");
-    }
-
-    // ==================== 流式聊天 ====================
-
-    @Override
-    public Flux<String> chatStream(ChatRequest request) {
-        if (!fallbackProperties.enabled()) {
-            return doStream(request);
-        }
-
-        List<String> chain = fallbackChainResolver.resolve(request.model());
-        return streamWithFallback(request, chain, 0);
-    }
-
-    /**
-     * 流式降级 — 递归构建降级链
-     * <p>
-     * 对每个候选模型创建延迟执行的 Flux，当前候选失败时切换到下一个。
-     * 递归深度受 maxAttempts 限制（默认 3），不会栈溢出。
-     *
-     * @param request 原始请求（模型字段会在递归中被替换）
-     * @param chain   降级候选链
-     * @param index   当前尝试的索引
-     * @return Flux 流
-     */
-    private Flux<String> streamWithFallback(ChatRequest request, List<String> chain, int index) {
-        if (index >= chain.size()) {
-            return Flux.error(new BusinessException(
-                    "所有模型均不可用，请稍后重试（已尝试 " + chain.size() + " 个模型）"));
-        }
-
-        String candidateModel = chain.get(index);
-        boolean isFallback = index > 0;
-        ChatRequest candidateRequest = isFallback ? request.withModel(candidateModel) : request;
-
-        return Flux.defer(() -> doStream(candidateRequest))
-                .onErrorResume(e -> {
-                    if (!fallbackChainResolver.isFallbackEligible(e)) {
-                        return Flux.error(e);
-                    }
-                    log.warn("Stream attempt {}/{} failed for model '{}': {}",
-                            index + 1, chain.size(), candidateModel, e.getMessage());
-                    return streamWithFallback(request, chain, index + 1);
-                });
-    }
-
-    // ==================== 单次调用核心 ====================
-
-    /**
-     * 执行单次阻塞式聊天（无降级逻辑）
-     *
-     * @param request   聊天请求
-     * @param fallback  是否为降级调用
-     * @return 聊天响应
-     */
-    private ChatResponse doChat(ChatRequest request, boolean fallback) {
         ChatContext ctx = prepareContext(request);
 
         ChatClient.ChatClientRequestSpec requestSpec = requestSpecFactory.createSpec(
@@ -181,17 +76,11 @@ public class ChatServiceImpl implements ChatService {
         String content = (generation != null && generation.getOutput() != null)
                 ? generation.getOutput().getText()
                 : "";
-        return new ChatResponse(ctx.route.toCompositeId(), content, request.conversationId(),
-                fallback ? true : null);
+        return new ChatResponse(ctx.route.toCompositeId(), content, request.conversationId());
     }
 
-    /**
-     * 执行单次流式聊天（无降级逻辑）
-     *
-     * @param request 聊天请求
-     * @return SSE 文本流
-     */
-    private Flux<String> doStream(ChatRequest request) {
+    @Override
+    public Flux<String> chatStream(ChatRequest request) {
         ChatContext ctx = prepareContext(request);
 
         ChatClient.ChatClientRequestSpec requestSpec = requestSpecFactory.createSpec(
@@ -239,7 +128,7 @@ public class ChatServiceImpl implements ChatService {
                 });
     }
 
-    // ==================== 内部辅助 ====================
+    // ===== 内部辅助 =====
 
     /**
      * 预处理请求上下文：用户隔离、模式路由、模型路由、获取 ChatClient

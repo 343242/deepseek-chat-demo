@@ -3,7 +3,7 @@
 
 services:
   postgres:
-    image: postgres:18-bookworm
+    build: ./docker/postgres
     container_name: chat-demo-db
     restart: unless-stopped
     ports:

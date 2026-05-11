@@ -51,7 +51,7 @@ public class EtlDispatchServiceImpl implements EtlDispatchService {
             throw new BusinessException("ETL 处理无结果: " + fileName);
         }
 
-        EtlResult result = results.get(0);
+        EtlResult result = results.getFirst();
         if (EtlStatus.FAILED.equals(result.status())) {
             throw new BusinessException("文档处理失败: " + fileName + " - " + result.errorMessage());
         }

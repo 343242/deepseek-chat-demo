@@ -25,6 +25,8 @@ app:
         minimax/MiniMax-M2.1:
           - deepseek/deepseek-v4-flash
           - zhipu/glm-4.7-flash
+  rag:
+    fts-config: ${RAG_FTS_CONFIG:jiebacfg}
   sandbox:
     enabled: ${SANDBOX_ENABLED:true}
     max-concurrency: ${SANDBOX_MAX_CONCURRENCY:3}

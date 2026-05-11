@@ -20,6 +20,8 @@ public class RagRetrievalProperties {
     // === 混合检索 ===
     /** 是否启用混合检索（向量 + BM25） */
     private boolean hybridRetrievalEnabled = true;
+    /** PostgreSQL 全文检索配置名（如 jiebacfg、simple） */
+    private String ftsConfig = "jiebacfg";
     /** 向量检索 topK */
     private int vectorTopK = 10;
     /** BM25 全文检索 topK */
@@ -57,6 +59,9 @@ public class RagRetrievalProperties {
 
     public boolean isHybridRetrievalEnabled() { return hybridRetrievalEnabled; }
     public void setHybridRetrievalEnabled(boolean hybridRetrievalEnabled) { this.hybridRetrievalEnabled = hybridRetrievalEnabled; }
+
+    public String getFtsConfig() { return ftsConfig; }
+    public void setFtsConfig(String ftsConfig) { this.ftsConfig = ftsConfig; }
 
     public int getVectorTopK() { return vectorTopK; }
     public void setVectorTopK(int vectorTopK) { this.vectorTopK = vectorTopK; }

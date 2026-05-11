@@ -37,6 +37,7 @@ public class HybridDocumentRetriever implements DocumentRetriever {
     private final JdbcTemplate jdbcTemplate;
     private final RagRetrievalProperties properties;
     private final Long userId;
+    private final String ftsConfig;
 
     public HybridDocumentRetriever(VectorStore vectorStore,
                                    JdbcTemplate jdbcTemplate,
@@ -46,6 +47,7 @@ public class HybridDocumentRetriever implements DocumentRetriever {
         this.jdbcTemplate = jdbcTemplate;
         this.properties = properties;
         this.userId = userId;
+        this.ftsConfig = properties.getFtsConfig();
     }
 
     @Override
@@ -122,9 +124,9 @@ public class HybridDocumentRetriever implements DocumentRetriever {
             String sql = """
                 SELECT id, content, metadata
                 FROM vector_store
-                WHERE content_tsv @@ plainto_tsquery('simple', ?)
+                WHERE content_tsv @@ plainto_tsquery(?, ?)
                   AND metadata->>'userId' = ?
-                ORDER BY ts_rank_cd(content_tsv, plainto_tsquery('simple', ?)) DESC
+                ORDER BY ts_rank_cd(content_tsv, plainto_tsquery(?, ?)) DESC
                 LIMIT ?
                 """;
 
@@ -140,7 +142,7 @@ public class HybridDocumentRetriever implements DocumentRetriever {
                         Document doc = new Document(id, content, metadata);
                         return new ScoredDocument(doc, rowNum + 1);
                     },
-                    sanitized, userIdStr, sanitized, topK
+                    ftsConfig, sanitized, userIdStr, ftsConfig, sanitized, topK
             );
 
             return results;

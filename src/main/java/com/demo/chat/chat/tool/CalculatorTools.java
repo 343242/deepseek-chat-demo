@@ -2,7 +2,7 @@ package com.demo.chat.chat.tool;
 
 import net.objecthunter.exp4j.Expression;
 import net.objecthunter.exp4j.ExpressionBuilder;
-import net.objecthunter.exp4j.UnknownFunctionException;
+import net.objecthunter.exp4j.tokenizer.UnknownFunctionOrVariableException;
 import org.springframework.ai.tool.annotation.Tool;
 import org.springframework.ai.tool.annotation.ToolParam;
 import org.springframework.stereotype.Component;
@@ -41,8 +41,8 @@ public class CalculatorTools {
                 return sanitized + " = " + (long) result;
             }
             return sanitized + " = " + result;
-        } catch (UnknownFunctionException e) {
-            return "错误：不支持的函数 - " + e.getMessage();
+        } catch (UnknownFunctionOrVariableException e) {
+            return "错误：不支持的函数或变量 - " + e.getMessage();
         } catch (IllegalArgumentException e) {
             return "表达式错误：" + e.getMessage();
         } catch (ArithmeticException e) {

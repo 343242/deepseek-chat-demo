@@ -1,7 +1,6 @@
 package com.demo.chat.rag.config;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
-import org.springframework.stereotype.Component;
 
 /**
  * ETL 线程池配置属性
@@ -11,7 +10,6 @@ import org.springframework.stereotype.Component;
  * <p>
  * 对应 application.yml 中 app.etl.executor.* 配置项。
  */
-@Component
 @ConfigurationProperties(prefix = "app.etl.executor")
 public class EtlExecutorProperties {
 

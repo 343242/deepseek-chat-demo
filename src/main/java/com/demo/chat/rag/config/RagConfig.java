@@ -39,7 +39,7 @@ public class RagConfig {
     public RewriteQueryTransformer rewriteQueryTransformer(ChatClient.Builder chatClientBuilder) {
         String template = """
                 Given the following user query, rewrite it into a clear and specific search query \
-                suitable for document retrieval. Keep the core intent, remove conversational filler, \
+                suitable for querying a {target}. Keep the core intent, remove conversational filler, \
                 and use precise terminology.
                 
                 Original query: {query}

@@ -1,0 +1,581 @@
+package com.demo.chat.rag.upload;
+
+import com.demo.chat.common.errorcode.ErrorCode;
+import com.demo.chat.exception.BusinessException;
+import com.demo.chat.rag.config.MinioProperties;
+import com.demo.chat.rag.entity.RagDocument;
+import com.demo.chat.rag.etl.EtlStatus;
+import com.demo.chat.rag.mapper.RagDocumentMapper;
+import com.demo.chat.rag.service.EtlDispatchService;
+import com.demo.chat.rag.service.impl.DocumentValidator;
+import com.demo.chat.security.util.SecurityUtils;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import io.minio.*;
+import io.minio.SourceObject;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.core.io.ClassPathResource;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
+import org.springframework.stereotype.Service;
+import org.springframework.util.unit.DataSize;
+
+import java.io.ByteArrayInputStream;
+import java.io.InputStream;
+import java.security.MessageDigest;
+import java.time.LocalDateTime;
+import java.util.*;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.stream.Collectors;
+
+/**
+ * 分片上传服务实现。
+ * <p>
+ * 编排 Redis（会话状态 + Lua 原子操作）+ MinIO（putObject 分片 + composeObject 合并）+ DB（文档元数据）。
+ * <p>
+ * MinIO SDK 9.0.0 不对外暴露 Multipart Upload API（createMultipartUpload/uploadPart/completeMultipartUpload），
+ * 因此采用 composeObject 方案：
+ * <ol>
+ *   <li>每个分片 putObject 到临时路径 chunks/{uploadId}/part-{chunkIndex}</li>
+ *   <li>所有分片上传完后，composeObject 合并所有临时对象为目标对象</li>
+ *   <li>合并后删除临时对象</li>
+ * </ol>
+ */
+@Service
+public class ChunkUploadServiceImpl implements ChunkUploadService {
+
+    private static final Logger log = LoggerFactory.getLogger(ChunkUploadServiceImpl.class);
+
+    private final StringRedisTemplate redisTemplate;
+    private final MinioClient minioClient;
+    private final MinioProperties minioProperties;
+    private final ChunkSizeStrategy chunkSizeStrategy;
+    private final DocumentValidator documentValidator;
+    private final RagDocumentMapper ragDocumentMapper;
+    private final EtlDispatchService etlDispatchService;
+    private final DefaultRedisScript<List> atomicChunkUploadScript;
+    private final ThreadPoolTaskExecutor mergeExecutor;
+
+    public ChunkUploadServiceImpl(
+            StringRedisTemplate redisTemplate,
+            MinioClient minioClient,
+            MinioProperties minioProperties,
+            ChunkSizeStrategy chunkSizeStrategy,
+            DocumentValidator documentValidator,
+            RagDocumentMapper ragDocumentMapper,
+            EtlDispatchService etlDispatchService,
+            ThreadPoolTaskExecutor mergeExecutor
+    ) {
+        this.redisTemplate = redisTemplate;
+        this.minioClient = minioClient;
+        this.minioProperties = minioProperties;
+        this.chunkSizeStrategy = chunkSizeStrategy;
+        this.documentValidator = documentValidator;
+        this.ragDocumentMapper = ragDocumentMapper;
+        this.etlDispatchService = etlDispatchService;
+        this.mergeExecutor = mergeExecutor;
+
+        this.atomicChunkUploadScript = new DefaultRedisScript<>();
+        this.atomicChunkUploadScript.setLocation(new ClassPathResource("scripts/atomic_chunk_upload.lua"));
+        this.atomicChunkUploadScript.setResultType(List.class);
+    }
+
+    // ==================== init ====================
+
+    @Override
+    public ChunkUploadResult init(ChunkUploadInitRequest request) {
+        Long userId = SecurityUtils.getCurrentUserId();
+
+        validateMimeType(request.mimeType());
+        validateFileSize(request.fileSize());
+
+        // 秒传检查
+        RagDocument existing = findExistingForQuickUpload(request.fileMd5(), userId);
+        if (existing != null) {
+            log.info("Quick upload hit: fileMd5={}, userId={}, docId={}", request.fileMd5(), userId, existing.getId());
+            return ChunkUploadResult.quickUploaded(existing.getId(), existing.getFileName());
+        }
+
+        // 续传检查
+        String existingUploadId = redisTemplate.opsForValue().get(UploadRedisConstants.fileKey(userId, request.fileMd5()));
+        if (existingUploadId != null) {
+            ChunkUploadResult resumed = tryResume(existingUploadId, request, userId);
+            if (resumed != null) {
+                return resumed;
+            }
+        }
+
+        return createNewSession(request, userId);
+    }
+
+    // ==================== uploadChunk ====================
+
+    @Override
+    public ChunkUploadResponse uploadChunk(String uploadId, int chunkIndex, String chunkMd5, byte[] chunkData) {
+        Long userId = SecurityUtils.getCurrentUserId();
+        Map<String, String> session = validateSession(uploadId, userId);
+
+        int totalChunks = Integer.parseInt(session.get("totalChunks"));
+
+        if (chunkIndex < 0 || chunkIndex >= totalChunks) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "分片序号超出范围: " + chunkIndex);
+        }
+        if (chunkData.length > 50 * 1024 * 1024) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "单分片大小不能超过50MB");
+        }
+
+        // 幂等检查
+        Boolean exists = redisTemplate.opsForHash().hasKey(
+                UploadRedisConstants.partsKey(uploadId), String.valueOf(chunkIndex));
+        if (Boolean.TRUE.equals(exists)) {
+            log.debug("Chunk already uploaded: uploadId={}, index={}", uploadId, chunkIndex);
+            return ChunkUploadResponse.uploaded(uploadId, chunkIndex);
+        }
+
+        // 分片 MD5 校验
+        String actualChunkMd5 = md5Hex(chunkData);
+        if (!actualChunkMd5.equalsIgnoreCase(chunkMd5)) {
+            log.warn("Chunk MD5 mismatch: uploadId={}, index={}, expected={}, actual={}",
+                    uploadId, chunkIndex, chunkMd5, actualChunkMd5);
+            throw new BusinessException(ErrorCode.UPLOAD_CHUNK_MD5_MISMATCH);
+        }
+
+        // 上传分片到 MinIO 临时路径
+        String bucket = session.get("bucket");
+        String chunkObjectKey = session.get("objectName") + "/part-" + chunkIndex;
+        putObjectToMinio(bucket, chunkObjectKey, chunkData, session.get("mimeType"));
+
+        // ETag 用分片 MD5 代替（composeObject 不需要 S3 ETag）
+        String etag = actualChunkMd5;
+
+        // Lua 原子操作
+        List result = redisTemplate.execute(
+                atomicChunkUploadScript,
+                List.of(UploadRedisConstants.partsKey(uploadId)),
+                String.valueOf(chunkIndex), etag,
+                String.valueOf(totalChunks), UploadRedisConstants.MERGING_FIELD
+        );
+
+        boolean shouldMerge = false;
+        if (result != null && !result.isEmpty()) {
+            long trigger = ((Number) result.get(0)).longValue();
+            shouldMerge = trigger == 1;
+        }
+
+        if (shouldMerge) {
+            log.info("All chunks uploaded, triggering async merge: uploadId={}", uploadId);
+            mergeExecutor.execute(() -> {
+                try {
+                    performMerge(uploadId);
+                } catch (Exception e) {
+                    log.error("Auto-merge failed: uploadId={}", uploadId, e);
+                    redisTemplate.opsForHash().delete(UploadRedisConstants.partsKey(uploadId), UploadRedisConstants.MERGING_FIELD);
+                }
+            });
+            return ChunkUploadResponse.merging(uploadId, chunkIndex);
+        }
+
+        return ChunkUploadResponse.uploaded(uploadId, chunkIndex);
+    }
+
+    // ==================== status ====================
+
+    @Override
+    public ChunkUploadStatusResponse status(String uploadId) {
+        Long userId = SecurityUtils.getCurrentUserId();
+        Map<String, String> session = validateSession(uploadId, userId);
+
+        String partsKey = UploadRedisConstants.partsKey(uploadId);
+        Set<Object> keys = redisTemplate.opsForHash().keys(partsKey);
+
+        List<Integer> uploadedChunks = keys.stream()
+                .map(Object::toString)
+                .filter(k -> !UploadRedisConstants.MERGING_FIELD.equals(k))
+                .map(Integer::parseInt)
+                .sorted()
+                .collect(Collectors.toList());
+
+        int totalChunks = Integer.parseInt(session.get("totalChunks"));
+        boolean completed = uploadedChunks.size() == totalChunks;
+        Boolean merging = redisTemplate.opsForHash().hasKey(partsKey, UploadRedisConstants.MERGING_FIELD);
+
+        return new ChunkUploadStatusResponse(
+                uploadId, session.get("fileName"), totalChunks,
+                uploadedChunks, completed, Boolean.TRUE.equals(merging), null
+        );
+    }
+
+    // ==================== complete ====================
+
+    @Override
+    public Long complete(String uploadId, String fileMd5) {
+        Long userId = SecurityUtils.getCurrentUserId();
+
+        String sessionKey = UploadRedisConstants.sessionKey(uploadId);
+        Map<Object, Object> rawSession = redisTemplate.opsForHash().entries(sessionKey);
+
+        if (rawSession.isEmpty()) {
+            RagDocument doc = findExistingForQuickUpload(fileMd5, userId);
+            if (doc != null) {
+                log.info("Complete idempotent: uploadId={} already merged as docId={}", uploadId, doc.getId());
+                return doc.getId();
+            }
+            throw new BusinessException(ErrorCode.UPLOAD_SESSION_NOT_FOUND);
+        }
+
+        Map<String, String> session = toStringMap(rawSession);
+        validateOwner(session, userId);
+
+        if (!fileMd5.equalsIgnoreCase(session.get("fileMd5"))) {
+            throw new BusinessException(ErrorCode.UPLOAD_FILE_MD5_MISMATCH, "声明的文件MD5与会话不匹配");
+        }
+
+        performMerge(uploadId);
+
+        RagDocument doc = findExistingForQuickUpload(fileMd5, userId);
+        return doc != null ? doc.getId() : null;
+    }
+
+    // ==================== abort ====================
+
+    @Override
+    public void abort(String uploadId) {
+        Long userId = SecurityUtils.getCurrentUserId();
+        Map<String, String> session = validateSession(uploadId, userId);
+
+        String bucket = session.get("bucket");
+        String basePath = session.get("objectName");
+
+        // 删除所有已上传的临时分片
+        try {
+            int totalChunks = Integer.parseInt(session.get("totalChunks"));
+            for (int i = 0; i < totalChunks; i++) {
+                try {
+                    String chunkKey = basePath + "/part-" + i;
+                    Boolean exists = redisTemplate.opsForHash().hasKey(
+                            UploadRedisConstants.partsKey(uploadId), String.valueOf(i));
+                    if (Boolean.TRUE.equals(exists)) {
+                        minioClient.removeObject(RemoveObjectArgs.builder()
+                                .bucket(bucket).object(chunkKey).build());
+                    }
+                } catch (Exception e) {
+                    log.warn("Failed to delete chunk {} during abort: {}", i, e.getMessage());
+                }
+            }
+            log.info("Chunk upload aborted: uploadId={}, user={}", uploadId, userId);
+        } catch (Exception e) {
+            log.error("Error during abort cleanup: uploadId={}", uploadId, e);
+        }
+
+        cleanupRedis(uploadId, session.get("userId"), session.get("fileMd5"));
+    }
+
+    // ==================== 合并流程 ====================
+
+    void performMerge(String uploadId) {
+        String sessionKey = UploadRedisConstants.sessionKey(uploadId);
+        Map<String, String> session = toStringMap(redisTemplate.opsForHash().entries(sessionKey));
+
+        if (session.isEmpty()) {
+            log.warn("Merge skipped: session already cleaned, uploadId={}", uploadId);
+            return;
+        }
+
+        String bucket = session.get("bucket");
+        String basePath = session.get("objectName");
+        int totalChunks = Integer.parseInt(session.get("totalChunks"));
+
+        // 1. 构建 Source 列表用于 composeObject
+        List<SourceObject> sources = new ArrayList<>();
+        for (int i = 0; i < totalChunks; i++) {
+            String chunkObjectKey = basePath + "/part-" + i;
+            sources.add(SourceObject.builder()
+                    .bucket(bucket)
+                    .object(chunkObjectKey)
+                    .build());
+        }
+
+        // 2. 合并目标路径
+        String targetObjectKey = "documents/" + session.get("userId") + "/" + UUID.randomUUID();
+
+        // 3. composeObject 合并
+        composeObjects(bucket, targetObjectKey, sources);
+
+        // 4. 流式读取合并后文件，计算实际 MD5
+        String actualMd5 = computeFileMd5FromMinio(bucket, targetObjectKey);
+        String declaredMd5 = session.get("fileMd5");
+
+        if (!actualMd5.equalsIgnoreCase(declaredMd5)) {
+            log.warn("File MD5 mismatch: uploadId={}, expected={}, actual={}", uploadId, declaredMd5, actualMd5);
+            deleteFromMinio(bucket, targetObjectKey);
+            cleanupTempChunks(bucket, basePath, totalChunks);
+            redisTemplate.opsForHash().delete(UploadRedisConstants.partsKey(uploadId), UploadRedisConstants.MERGING_FIELD);
+            throw new BusinessException(ErrorCode.UPLOAD_FILE_MD5_MISMATCH, "文件校验失败");
+        }
+
+        // 5. 持久化 rag_document
+        Long userId = Long.parseLong(session.get("userId"));
+        Long docId = persistDocument(session, targetObjectKey, actualMd5, userId);
+        log.info("Chunk upload merged: uploadId={}, docId={}, md5={}", uploadId, docId, actualMd5);
+
+        // 6. 清理临时分片
+        cleanupTempChunks(bucket, basePath, totalChunks);
+
+        // 7. 清理 Redis
+        cleanupRedis(uploadId, session.get("userId"), declaredMd5);
+
+        // 8. 触发 ETL
+        etlDispatchService.dispatchAsync(
+                docId, bucket, targetObjectKey, session.get("fileName"),
+                session.get("mimeType"), Long.parseLong(session.get("fileSize")), userId
+        );
+    }
+
+    // ==================== 私有方法 ====================
+
+    private void validateMimeType(String mimeType) {
+        Set<String> allowed = Set.of(
+                "application/pdf",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                "text/plain", "text/markdown", "text/html"
+        );
+        if (!allowed.contains(mimeType)) {
+            throw new BusinessException(ErrorCode.UPLOAD_MIME_UNSUPPORTED, "不支持的文件类型: " + mimeType);
+        }
+    }
+
+    private void validateFileSize(Long fileSize) {
+        long maxBytes = DataSize.parse("50MB").toBytes();
+        if (fileSize > maxBytes) {
+            throw new BusinessException(ErrorCode.UPLOAD_FILE_TOO_LARGE);
+        }
+    }
+
+    private RagDocument findExistingForQuickUpload(String fileMd5, Long userId) {
+        return ragDocumentMapper.selectOne(
+                new LambdaQueryWrapper<RagDocument>()
+                        .eq(RagDocument::getFileMd5, fileMd5)
+                        .eq(RagDocument::getUserId, userId)
+                        .in(RagDocument::getStatus, EtlStatus.COMPLETED, EtlStatus.PROCESSING)
+                        .eq(RagDocument::getDeleted, 0)
+                        .last("LIMIT 1")
+        );
+    }
+
+    private ChunkUploadResult tryResume(String uploadId, ChunkUploadInitRequest request, Long userId) {
+        String sessionKey = UploadRedisConstants.sessionKey(uploadId);
+        Map<Object, Object> rawSession = redisTemplate.opsForHash().entries(sessionKey);
+        if (rawSession.isEmpty()) {
+            redisTemplate.delete(UploadRedisConstants.fileKey(userId, request.fileMd5()));
+            return null;
+        }
+
+        Map<String, String> session = toStringMap(rawSession);
+        validateOwner(session, userId);
+
+        int chunkSize = Integer.parseInt(session.get("chunkSize"));
+        int totalChunks = Integer.parseInt(session.get("totalChunks"));
+
+        Set<Object> keys = redisTemplate.opsForHash().keys(UploadRedisConstants.partsKey(uploadId));
+        List<Integer> uploadedChunks = keys.stream()
+                .map(Object::toString)
+                .filter(k -> !UploadRedisConstants.MERGING_FIELD.equals(k))
+                .map(Integer::parseInt)
+                .sorted()
+                .collect(Collectors.toList());
+
+        log.info("Chunk upload resumed: uploadId={}, uploaded={}/{}", uploadId, uploadedChunks.size(), totalChunks);
+        return ChunkUploadResult.resumeSession(uploadId, chunkSize, totalChunks, uploadedChunks);
+    }
+
+    private ChunkUploadResult createNewSession(ChunkUploadInitRequest request, Long userId) {
+        int chunkSize = chunkSizeStrategy.calculateChunkSize(request.fileSize());
+        int totalChunks = request.fileSize() <= chunkSize ? 1 : (int) ((request.fileSize() + chunkSize - 1) / chunkSize);
+
+        if (request.fileSize() <= chunkSize) {
+            chunkSize = (int) (long) request.fileSize();
+        }
+
+        String bucket = minioProperties.getBucket();
+        String objectBasePath = "chunks/" + userId + "/" + UUID.randomUUID();
+        String uploadId = UUID.randomUUID().toString();
+
+        // Redis 写入 session
+        String sessionKey = UploadRedisConstants.sessionKey(uploadId);
+        Map<String, String> sessionFields = Map.ofEntries(
+                Map.entry("fileMd5", request.fileMd5()),
+                Map.entry("fileName", request.fileName()),
+                Map.entry("fileSize", String.valueOf(request.fileSize())),
+                Map.entry("mimeType", request.mimeType()),
+                Map.entry("chunkSize", String.valueOf(chunkSize)),
+                Map.entry("totalChunks", String.valueOf(totalChunks)),
+                Map.entry("userId", String.valueOf(userId)),
+                Map.entry("bucket", bucket),
+                Map.entry("objectName", objectBasePath),
+                Map.entry("createdAt", String.valueOf(System.currentTimeMillis()))
+        );
+        redisTemplate.opsForHash().putAll(sessionKey, sessionFields);
+        redisTemplate.expire(sessionKey, UploadRedisConstants.SESSION_TTL);
+
+        // parts key TTL
+        redisTemplate.expire(UploadRedisConstants.partsKey(uploadId), UploadRedisConstants.SESSION_TTL);
+
+        // 反向索引
+        redisTemplate.opsForValue().set(
+                UploadRedisConstants.fileKey(userId, request.fileMd5()),
+                uploadId, UploadRedisConstants.SESSION_TTL);
+
+        log.info("Chunk upload init: uploadId={}, file={}, size={}, chunks={}, user={}",
+                uploadId, request.fileName(), request.fileSize(), totalChunks, userId);
+
+        return ChunkUploadResult.newSession(uploadId, chunkSize, totalChunks);
+    }
+
+    private Map<String, String> validateSession(String uploadId, Long userId) {
+        String sessionKey = UploadRedisConstants.sessionKey(uploadId);
+        Map<Object, Object> rawSession = redisTemplate.opsForHash().entries(sessionKey);
+        if (rawSession.isEmpty()) {
+            throw new BusinessException(ErrorCode.UPLOAD_SESSION_NOT_FOUND);
+        }
+        Map<String, String> session = toStringMap(rawSession);
+        validateOwner(session, userId);
+        return session;
+    }
+
+    private void validateOwner(Map<String, String> session, Long userId) {
+        Long owner = Long.parseLong(session.get("userId"));
+        if (!owner.equals(userId)) {
+            log.warn("Upload owner mismatch: expected={}, actual={}", owner, userId);
+            throw new BusinessException(ErrorCode.FORBIDDEN);
+        }
+    }
+
+    // ==================== MinIO 操作 ====================
+
+    private void putObjectToMinio(String bucket, String objectKey, byte[] data, String contentType) {
+        try {
+            minioClient.putObject(
+                    PutObjectArgs.builder()
+                            .bucket(bucket)
+                            .object(objectKey)
+                            .stream(new ByteArrayInputStream(data), (long) data.length, -1L)
+                            .contentType(contentType)
+                            .build()
+            );
+            log.debug("Uploaded chunk to MinIO: {}/{}", bucket, objectKey);
+        } catch (Exception e) {
+            log.error("MinIO putObject error: bucket={}, object={}", bucket, objectKey, e);
+            throw new BusinessException(ErrorCode.UPLOAD_FAILED, "存储服务异常");
+        }
+    }
+
+    private void composeObjects(String bucket, String targetObjectKey, List<SourceObject> sources) {
+        try {
+            minioClient.composeObject(
+                    ComposeObjectArgs.builder()
+                            .bucket(bucket)
+                            .object(targetObjectKey)
+                            .sources(sources)
+                            .build()
+            );
+            log.info("Composed object: {}/{} from {} parts", bucket, targetObjectKey, sources.size());
+        } catch (Exception e) {
+            log.error("MinIO composeObject error: bucket={}, target={}", bucket, targetObjectKey, e);
+            throw new BusinessException(ErrorCode.UPLOAD_FAILED, "合并分片失败");
+        }
+    }
+
+    private String computeFileMd5FromMinio(String bucket, String objectName) {
+        try (InputStream is = minioClient.getObject(
+                GetObjectArgs.builder().bucket(bucket).object(objectName).build())) {
+            MessageDigest md = MessageDigest.getInstance("MD5");
+            byte[] buffer = new byte[8192];
+            int read;
+            while ((read = is.read(buffer)) != -1) {
+                md.update(buffer, 0, read);
+            }
+            return hexFormat(md.digest());
+        } catch (Exception e) {
+            log.error("Failed to compute file MD5 from MinIO: bucket={}, object={}", bucket, objectName, e);
+            throw new BusinessException(ErrorCode.UPLOAD_FAILED, "文件校验失败");
+        }
+    }
+
+    private void deleteFromMinio(String bucket, String objectName) {
+        try {
+            minioClient.removeObject(
+                    RemoveObjectArgs.builder().bucket(bucket).object(objectName).build());
+        } catch (Exception e) {
+            log.error("Failed to delete from MinIO: bucket={}, object={}", bucket, objectName, e);
+        }
+    }
+
+    private void cleanupTempChunks(String bucket, String basePath, int totalChunks) {
+        for (int i = 0; i < totalChunks; i++) {
+            try {
+                minioClient.removeObject(RemoveObjectArgs.builder()
+                        .bucket(bucket)
+                        .object(basePath + "/part-" + i)
+                        .build());
+            } catch (Exception e) {
+                log.warn("Failed to cleanup chunk {}: {}", i, e.getMessage());
+            }
+        }
+    }
+
+    // ==================== DB 持久化 ====================
+
+    private Long persistDocument(Map<String, String> session, String targetObjectKey, String actualMd5, Long userId) {
+        RagDocument doc = new RagDocument();
+        doc.setFileName(session.get("fileName"));
+        doc.setFileSize(Long.parseLong(session.get("fileSize")));
+        doc.setMimeType(session.get("mimeType"));
+        doc.setStorageKey(targetObjectKey);
+        doc.setBucket(session.get("bucket"));
+        doc.setUserId(userId);
+        doc.setFileMd5(actualMd5);
+        doc.setStatus(EtlStatus.PROCESSING);
+        doc.setDeleted(0);
+        doc.setCreateTime(LocalDateTime.now());
+        doc.setUpdateTime(LocalDateTime.now());
+        ragDocumentMapper.insert(doc);
+        return doc.getId();
+    }
+
+    // ==================== Redis 清理 ====================
+
+    private void cleanupRedis(String uploadId, String userId, String fileMd5) {
+        redisTemplate.delete(UploadRedisConstants.sessionKey(uploadId));
+        redisTemplate.delete(UploadRedisConstants.partsKey(uploadId));
+        if (userId != null && fileMd5 != null) {
+            redisTemplate.delete(UploadRedisConstants.fileKey(Long.parseLong(userId), fileMd5));
+        }
+    }
+
+    // ==================== 工具方法 ====================
+
+    private static String md5Hex(byte[] data) {
+        try {
+            MessageDigest md = MessageDigest.getInstance("MD5");
+            return hexFormat(md.digest(data));
+        } catch (Exception e) {
+            throw new RuntimeException("MD5 computation failed", e);
+        }
+    }
+
+    private static String hexFormat(byte[] bytes) {
+        StringBuilder sb = new StringBuilder(bytes.length * 2);
+        for (byte b : bytes) {
+            sb.append(String.format("%02x", b));
+        }
+        return sb.toString();
+    }
+
+    private static Map<String, String> toStringMap(Map<Object, Object> raw) {
+        Map<String, String> result = new HashMap<>(raw.size());
+        raw.forEach((k, v) -> result.put(k.toString(), v != null ? v.toString() : ""));
+        return result;
+    }
+}

@@ -60,6 +60,24 @@ public class EtlExecutorConfig {
     }
 
     /**
+     * 分片上传合并线程池 — 异步执行 composeObject + MD5 校验 + DB 写入 + ETL 触发
+     */
+    @Bean("mergeExecutor")
+    public ThreadPoolTaskExecutor mergeExecutor() {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(2);
+        executor.setMaxPoolSize(4);
+        executor.setQueueCapacity(20);
+        executor.setThreadNamePrefix("merge-");
+        executor.setRejectedExecutionHandler(new java.util.concurrent.ThreadPoolExecutor.CallerRunsPolicy());
+        executor.setWaitForTasksToCompleteOnShutdown(true);
+        executor.setAwaitTerminationSeconds(120);
+        executor.initialize();
+        log.info("Merge executor initialized: core=2, max=4, queue=20");
+        return executor;
+    }
+
+    /**
      * ETL 路由策略工厂 — 自动发现所有 EtlRouteStrategy 实现
      */
     @Bean

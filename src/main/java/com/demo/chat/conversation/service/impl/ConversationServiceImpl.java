@@ -2,7 +2,7 @@ package com.demo.chat.conversation.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
-import com.demo.chat.common.snowflake.SnowflakeIdGenerator;
+import com.demo.chat.common.uuid.UuidV7;
 import com.demo.chat.conversation.dto.ConversationCreateRequest;
 import com.demo.chat.conversation.dto.ConversationDetail;
 import com.demo.chat.conversation.dto.ConversationSummary;
@@ -40,24 +40,21 @@ public class ConversationServiceImpl implements ConversationService {
     private final ConversationMapper conversationMapper;
     private final ConversationMessageService messageService;
     private final ChatMemoryRepository chatMemoryRepository;
-    private final SnowflakeIdGenerator snowflakeIdGenerator;
     private final TransactionTemplate transactionTemplate;
 
     public ConversationServiceImpl(ConversationMapper conversationMapper,
                                    ConversationMessageService messageService,
                                    ChatMemoryRepository chatMemoryRepository,
-                                   SnowflakeIdGenerator snowflakeIdGenerator,
                                    TransactionTemplate transactionTemplate) {
         this.conversationMapper = conversationMapper;
         this.messageService = messageService;
         this.chatMemoryRepository = chatMemoryRepository;
-        this.snowflakeIdGenerator = snowflakeIdGenerator;
         this.transactionTemplate = transactionTemplate;
     }
 
     @Override
     public ConversationSummary create(Long userId, ConversationCreateRequest request) {
-        String rawId = String.valueOf(snowflakeIdGenerator.nextId());
+        String rawId = UuidV7.generateCompact();
         String conversationId = ConversationIdUtil.buildIsolatedId(userId, rawId);
 
         Conversation entity = new Conversation(conversationId, userId, request.modelId());

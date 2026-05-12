@@ -7,7 +7,7 @@ import com.baomidou.mybatisplus.annotation.TableName;
 import com.demo.chat.conversation.enums.ConversationStatus;
 import com.demo.chat.conversation.enums.TitleSource;
 
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 
 /**
  * 会话实体
@@ -46,13 +46,13 @@ public class Conversation {
     private Integer messageCount;
 
     @TableField("last_message_at")
-    private LocalDateTime lastMessageAt;
+    private OffsetDateTime lastMessageAt;
 
     @TableField("created_at")
-    private LocalDateTime createdAt;
+    private OffsetDateTime createdAt;
 
     @TableField("updated_at")
-    private LocalDateTime updatedAt;
+    private OffsetDateTime updatedAt;
 
     public Conversation() {
     }
@@ -68,8 +68,8 @@ public class Conversation {
         this.pinned = false;
         this.status = ConversationStatus.ACTIVE;
         this.messageCount = 0;
-        this.createdAt = LocalDateTime.now();
-        this.updatedAt = LocalDateTime.now();
+        this.createdAt = OffsetDateTime.now();
+        this.updatedAt = OffsetDateTime.now();
     }
 
     // ==================== Getters ====================
@@ -83,9 +83,9 @@ public class Conversation {
     public Boolean getPinned() { return pinned; }
     public ConversationStatus getStatus() { return status; }
     public Integer getMessageCount() { return messageCount; }
-    public LocalDateTime getLastMessageAt() { return lastMessageAt; }
-    public LocalDateTime getCreatedAt() { return createdAt; }
-    public LocalDateTime getUpdatedAt() { return updatedAt; }
+    public OffsetDateTime getLastMessageAt() { return lastMessageAt; }
+    public OffsetDateTime getCreatedAt() { return createdAt; }
+    public OffsetDateTime getUpdatedAt() { return updatedAt; }
 
     // ==================== Setters ====================
 
@@ -98,9 +98,9 @@ public class Conversation {
     public void setPinned(Boolean pinned) { this.pinned = pinned; }
     public void setStatus(ConversationStatus status) { this.status = status; }
     public void setMessageCount(Integer messageCount) { this.messageCount = messageCount; }
-    public void setLastMessageAt(LocalDateTime lastMessageAt) { this.lastMessageAt = lastMessageAt; }
-    public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
-    public void setUpdatedAt(LocalDateTime updatedAt) { this.updatedAt = updatedAt; }
+    public void setLastMessageAt(OffsetDateTime lastMessageAt) { this.lastMessageAt = lastMessageAt; }
+    public void setCreatedAt(OffsetDateTime createdAt) { this.createdAt = createdAt; }
+    public void setUpdatedAt(OffsetDateTime updatedAt) { this.updatedAt = updatedAt; }
 
     // ==================== 业务方法 ====================
 

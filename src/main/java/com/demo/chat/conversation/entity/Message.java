@@ -6,7 +6,7 @@ import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import com.demo.chat.conversation.enums.MessageStatus;
 
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 
 /**
  * 消息实体
@@ -48,10 +48,10 @@ public class Message {
     private Long durationMs;
 
     @TableField("created_at")
-    private LocalDateTime createdAt;
+    private OffsetDateTime createdAt;
 
     @TableField("updated_at")
-    private LocalDateTime updatedAt;
+    private OffsetDateTime updatedAt;
 
     public Message() {
     }
@@ -67,8 +67,8 @@ public class Message {
         msg.content = content;
         msg.status = MessageStatus.FINISHED;
         msg.thinkingEnabled = false;
-        msg.createdAt = LocalDateTime.now();
-        msg.updatedAt = LocalDateTime.now();
+        msg.createdAt = OffsetDateTime.now();
+        msg.updatedAt = OffsetDateTime.now();
         return msg;
     }
 
@@ -88,8 +88,8 @@ public class Message {
         msg.thinkingEnabled = false;
         msg.tokenUsage = tokenUsage;
         msg.durationMs = durationMs;
-        msg.createdAt = LocalDateTime.now();
-        msg.updatedAt = LocalDateTime.now();
+        msg.createdAt = OffsetDateTime.now();
+        msg.updatedAt = OffsetDateTime.now();
         return msg;
     }
 
@@ -105,8 +105,8 @@ public class Message {
     public Boolean getThinkingEnabled() { return thinkingEnabled; }
     public Integer getTokenUsage() { return tokenUsage; }
     public Long getDurationMs() { return durationMs; }
-    public LocalDateTime getCreatedAt() { return createdAt; }
-    public LocalDateTime getUpdatedAt() { return updatedAt; }
+    public OffsetDateTime getCreatedAt() { return createdAt; }
+    public OffsetDateTime getUpdatedAt() { return updatedAt; }
 
     // ==================== Setters ====================
 
@@ -120,8 +120,8 @@ public class Message {
     public void setThinkingEnabled(Boolean thinkingEnabled) { this.thinkingEnabled = thinkingEnabled; }
     public void setTokenUsage(Integer tokenUsage) { this.tokenUsage = tokenUsage; }
     public void setDurationMs(Long durationMs) { this.durationMs = durationMs; }
-    public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
-    public void setUpdatedAt(LocalDateTime updatedAt) { this.updatedAt = updatedAt; }
+    public void setCreatedAt(OffsetDateTime createdAt) { this.createdAt = createdAt; }
+    public void setUpdatedAt(OffsetDateTime updatedAt) { this.updatedAt = updatedAt; }
 
     // ==================== 业务方法 ====================
 

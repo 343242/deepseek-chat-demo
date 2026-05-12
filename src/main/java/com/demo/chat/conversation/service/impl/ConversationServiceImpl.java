@@ -26,7 +26,7 @@ import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.util.List;
 
 /**
@@ -187,7 +187,7 @@ public class ConversationServiceImpl implements ConversationService {
         }
 
         // 原子递增消息计数 + 更新最后消息时间
-        conversationMapper.incrementMessageCount(conversationId, delta, LocalDateTime.now());
+        conversationMapper.incrementMessageCount(conversationId, delta, OffsetDateTime.now());
 
         // 首次消息时自动设置标题（CAS 防并发）
         if (userContent != null && !userContent.isBlank()) {

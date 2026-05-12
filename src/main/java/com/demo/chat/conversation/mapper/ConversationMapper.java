@@ -8,7 +8,7 @@ import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Update;
 
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 
 /**
  * 会话 Mapper
@@ -24,7 +24,7 @@ public interface ConversationMapper extends BaseMapper<Conversation> {
             "WHERE conversation_id = #{conversationId} AND status != 'DELETED'")
     int incrementMessageCount(@Param("conversationId") String conversationId,
                               @Param("delta") int delta,
-                              @Param("lastMessageAt") LocalDateTime lastMessageAt);
+                              @Param("lastMessageAt") OffsetDateTime lastMessageAt);
 
     /**
      * 条件更新标题：仅当 message_count = 0 且 title_source = SYSTEM 时更新（CAS 防并发）

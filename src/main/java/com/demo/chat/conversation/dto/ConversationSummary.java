@@ -1,6 +1,6 @@
 package com.demo.chat.conversation.dto;
 
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 
 /**
  * 会话摘要 DTO（用于列表展示）
@@ -14,6 +14,6 @@ public record ConversationSummary(
     boolean pinned,
     String status,
     int messageCount,
-    LocalDateTime lastMessageAt,
-    LocalDateTime createdAt
+    OffsetDateTime lastMessageAt,
+    OffsetDateTime createdAt
 ) {}

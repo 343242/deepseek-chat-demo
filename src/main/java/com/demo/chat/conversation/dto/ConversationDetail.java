@@ -1,6 +1,6 @@
 package com.demo.chat.conversation.dto;
 
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.util.List;
 
 /**
@@ -15,7 +15,7 @@ public record ConversationDetail(
     boolean pinned,
     String status,
     int messageCount,
-    LocalDateTime lastMessageAt,
-    LocalDateTime createdAt,
+    OffsetDateTime lastMessageAt,
+    OffsetDateTime createdAt,
     List<MessageVO> messages
 ) {}

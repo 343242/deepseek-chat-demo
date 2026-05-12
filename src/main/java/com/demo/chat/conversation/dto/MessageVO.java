@@ -2,7 +2,7 @@ package com.demo.chat.conversation.dto;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.util.List;
 
 /**
@@ -19,7 +19,7 @@ public record MessageVO(
     Boolean thinkingEnabled,
     Integer tokenUsage,
     Long durationMs,
-    LocalDateTime createdAt,
+    OffsetDateTime createdAt,
     /** 子消息（分支，仅加载一层） */
     List<MessageVO> children
 ) {}

@@ -17,7 +17,9 @@ import com.demo.chat.chat.provider.ModelRouter;
 import com.demo.chat.chat.service.ChatRequestSpecFactory;
 import com.demo.chat.chat.service.ChatService;
 import com.demo.chat.chat.service.UsageService;
-import com.demo.chat.chat.util.ConversationIdUtil;
+import com.demo.chat.conversation.service.ConversationQueryService;
+import com.demo.chat.conversation.entity.Message;
+import com.demo.chat.conversation.util.ConversationIdUtil;
 import com.demo.chat.exception.BusinessException;
 import com.demo.chat.security.util.SecurityUtils;
 import org.slf4j.Logger;
@@ -26,6 +28,7 @@ import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.metadata.Usage;
+import org.springframework.ai.chat.model.Generation;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 
@@ -62,6 +65,8 @@ public class ChatServiceImpl implements ChatService {
     private final StreamRetryHandler streamRetryHandler;
     private final RequestContextManager cagContextManager;
     private final CagProperties cagProperties;
+    private final com.demo.chat.conversation.service.ConversationService conversationService;
+    private final ConversationQueryService conversationQueryService;
 
     public ChatServiceImpl(ChatClientRegistry registry,
                            ModelRouter modelRouter,
@@ -74,7 +79,9 @@ public class ChatServiceImpl implements ChatService {
                            FallbackEligibility fallbackEligibility,
                            StreamRetryHandler streamRetryHandler,
                            RequestContextManager cagContextManager,
-                           CagProperties cagProperties) {
+                           CagProperties cagProperties,
+                           com.demo.chat.conversation.service.ConversationService conversationService,
+                           ConversationQueryService conversationQueryService) {
         this.registry = registry;
         this.modelRouter = modelRouter;
         this.modeRouter = modeRouter;
@@ -87,6 +94,8 @@ public class ChatServiceImpl implements ChatService {
         this.streamRetryHandler = streamRetryHandler;
         this.cagContextManager = cagContextManager;
         this.cagProperties = cagProperties;
+        this.conversationService = conversationService;
+        this.conversationQueryService = conversationQueryService;
     }
 
     // ==================== 阻塞式聊天 ====================
@@ -173,6 +182,7 @@ public class ChatServiceImpl implements ChatService {
      */
     private ChatResponse doChat(ChatRequest request, FallbackMeta fallback) {
         ChatContext ctx = prepareContext(request);
+        ensureConversationExists(ctx, request);
         RequestContext cagCtx = buildCagContext(ctx, request);
 
         ChatClient.ChatClientRequestSpec requestSpec = requestSpecFactory.createSpec(
@@ -182,10 +192,18 @@ public class ChatServiceImpl implements ChatService {
 
         recordUsage(ctx.conversationId, ctx.route.toCompositeId(), aiResponse, ctx.elapsed());
 
-        var generation = aiResponse.getResult();
-        String content = (generation != null && generation.getOutput() != null)
+        Generation generation = null;
+        if (aiResponse != null) {
+            generation = aiResponse.getResult();
+        }
+        String content = generation != null
                 ? generation.getOutput().getText()
                 : "";
+
+        // 写入业务消息记录 + 通知会话更新
+        saveMessagesAndNotify(ctx, request.message(), content, ctx.route.toCompositeId(),
+                aiResponse, ctx.elapsed());
+
         return new ChatResponse(ctx.route.toCompositeId(), content, request.conversationId(), fallback);
     }
 
@@ -198,6 +216,7 @@ public class ChatServiceImpl implements ChatService {
      */
     private Flux<String> doStream(String modelId, ChatRequest request) {
         ChatContext ctx = prepareContext(request);
+        ensureConversationExists(ctx, request);
         RequestContext cagCtx = buildCagContext(ctx, request);
 
         ChatClient.ChatClientRequestSpec requestSpec = requestSpecFactory.createSpec(
@@ -223,7 +242,13 @@ public class ChatServiceImpl implements ChatService {
                                         signal, ctx.conversationId, collectedContent.length());
                                 savePartialResponse(ctx.conversationId, collectedContent.toString());
                             }
-                            case ON_COMPLETE -> log.debug("Stream completed for conversation: {}", ctx.conversationId);
+                            case ON_COMPLETE -> {
+                                log.debug("Stream completed for conversation: {}", ctx.conversationId);
+                                // 写入业务消息记录 + 通知会话更新
+                                saveMessagesAndNotify(ctx, request.message(),
+                                        collectedContent.toString(), ctx.route.toCompositeId(),
+                                        lastAiResponse.get(), ctx.elapsed());
+                            }
                             // ON_SUBSCRIBE, ON_NEXT — 无需处理
                         }
                     }
@@ -280,6 +305,47 @@ public class ChatServiceImpl implements ChatService {
         int msgCount = chatMemory.get(ctx.conversationId).size();
         return cagContextManager.buildContext(
                 ctx.userId, ctx.conversationId, request.isRagEnabled(), msgCount);
+    }
+
+    /**
+     * 确保会话记录存在（自动创建）
+     */
+    private void ensureConversationExists(ChatContext ctx, ChatRequest request) {
+        try {
+            conversationService.getOrCreate(ctx.userId, ctx.conversationId, request.model());
+        } catch (Exception e) {
+            log.warn("Failed to ensure conversation exists: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * 保存业务消息记录并通知会话更新
+     */
+    private void saveMessagesAndNotify(ChatContext ctx, String userContent, String assistantContent,
+                                       String modelId,
+                                       org.springframework.ai.chat.model.ChatResponse aiResponse,
+                                       long durationMs) {
+        try {
+            // 写入 USER 消息
+            Message userMsg = Message.userMessage(ctx.conversationId, null, userContent);
+            conversationQueryService.saveMessage(userMsg);
+
+            // 写入 ASSISTANT 消息
+            int totalTokens = -1;
+            if (aiResponse != null && aiResponse.getMetadata().getUsage() != null) {
+                Usage usage = aiResponse.getMetadata().getUsage();
+                totalTokens = usage.getTotalTokens() != null ? usage.getTotalTokens().intValue() : -1;
+            }
+            Message assistantMsg = Message.assistantMessage(
+                    ctx.conversationId, userMsg.getId(), assistantContent,
+                    modelId, totalTokens, durationMs);
+            conversationQueryService.saveMessage(assistantMsg);
+
+            // 通知会话更新计数和标题
+            conversationService.onNewMessages(ctx.conversationId, userContent, 2);
+        } catch (Exception e) {
+            log.warn("Failed to save message records: {}", e.getMessage());
+        }
     }
 
     /**

@@ -3,7 +3,7 @@ package com.demo.chat.chat.controller;
 import com.demo.chat.chat.dto.TokenUsageDTO;
 import com.demo.chat.chat.dto.UsageStats;
 import com.demo.chat.chat.service.UsageService;
-import com.demo.chat.chat.util.ConversationIdUtil;
+import com.demo.chat.conversation.util.ConversationIdUtil;
 import com.demo.chat.exception.BusinessException;
 import com.demo.chat.security.util.SecurityUtils;
 import org.springframework.format.annotation.DateTimeFormat;

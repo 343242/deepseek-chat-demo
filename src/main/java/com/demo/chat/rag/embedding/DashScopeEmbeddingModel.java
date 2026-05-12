@@ -41,8 +41,8 @@ public class DashScopeEmbeddingModel implements EmbeddingModel {
 
     /** DashScope 单次请求最大输入条数 */
     private static final int MAX_BATCH_SIZE = 10;
-    /** 单次 API 调用超时时间 */
-    private static final Duration API_TIMEOUT = Duration.ofSeconds(30);
+    /** 单次 API 调用超时时间（从配置读取） */
+    private final Duration apiTimeout;
     /** DashScope 原生 Embedding 端点 */
     private static final String EMBEDDING_PATH =
             "/api/v1/services/embeddings/text-embedding/text-embedding";
@@ -61,10 +61,11 @@ public class DashScopeEmbeddingModel implements EmbeddingModel {
                 .defaultHeader("Authorization", "Bearer " + properties.getApiKey())
                 .defaultHeader("Content-Type", "application/json")
                 .build();
+        this.apiTimeout = Duration.ofSeconds(properties.getTimeoutSeconds());
         log.info("DashScopeEmbeddingModel initialized: model={}, dimensions={}, baseUrl={}, " +
-                 "textType={}, instruct='{}'",
+                 "textType={}, instruct='{}', timeout={}s",
                 properties.getModel(), properties.getDimensions(), properties.getBaseUrl(),
-                properties.getTextType(), properties.getInstruct());
+                properties.getTextType(), properties.getInstruct(), properties.getTimeoutSeconds());
     }
 
     // ======================== 场景识别入口 ========================
@@ -190,6 +191,9 @@ public class DashScopeEmbeddingModel implements EmbeddingModel {
     /**
      * 调用 DashScope 原生 Embedding API（含超时保护）。
      */
+    private static final int MAX_RETRIES = 3;
+    private static final long INITIAL_BACKOFF_MS = 500;
+
     private DashScopeEmbeddingApi.Response callApi(List<String> texts, TextType textType) {
         String effectiveInstruct = (textType == TextType.QUERY)
                 ? properties.getInstruct() : null;
@@ -204,26 +208,51 @@ public class DashScopeEmbeddingModel implements EmbeddingModel {
                     properties.getModel(), texts.size(), textType, effectiveInstruct);
         }
 
-        DashScopeEmbeddingApi.Response response;
-        try {
-            response = webClient.post()
-                    .uri(EMBEDDING_PATH)
-                    .bodyValue(request)
-                    .retrieve()
-                    .bodyToMono(DashScopeEmbeddingApi.Response.class)
-                    .timeout(API_TIMEOUT)
-                    .block();
-        } catch (Exception e) {
-            throw new RuntimeException(
-                    String.format("DashScope embedding API call failed (timeout=%s, batch=%d texts, textType=%s): %s",
-                            API_TIMEOUT, texts.size(), textType, e.getMessage()), e);
-        }
+        Exception lastException = null;
+        for (int attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+            try {
+                DashScopeEmbeddingApi.Response response = webClient.post()
+                        .uri(EMBEDDING_PATH)
+                        .bodyValue(request)
+                        .retrieve()
+                        .bodyToMono(DashScopeEmbeddingApi.Response.class)
+                        .timeout(apiTimeout)
+                        .block();
 
-        if (response == null) {
-            throw new RuntimeException("DashScope embedding API returned null response");
+                if (response == null) {
+                    throw new RuntimeException("DashScope embedding API returned null response");
+                }
+                return response;
+            } catch (Exception e) {
+                lastException = e;
+                if (isRetryable(e) && attempt < MAX_RETRIES) {
+                    long backoff = INITIAL_BACKOFF_MS * (1L << (attempt - 1));
+                    log.warn("DashScope API call failed (attempt {}/{}), retrying in {}ms: {}",
+                            attempt, MAX_RETRIES, backoff, e.getMessage());
+                    try { Thread.sleep(backoff); } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        throw new RuntimeException("Interrupted during backoff", ie);
+                    }
+                } else {
+                    break;
+                }
+            }
         }
+        throw new RuntimeException(
+                String.format("DashScope embedding API call failed after %d attempts (timeout=%s, batch=%d texts, textType=%s): %s",
+                        MAX_RETRIES, apiTimeout, texts.size(), textType, lastException.getMessage()), lastException);
+    }
 
-        return response;
+    /**
+     * 判断异常是否可重试（超时、429 限流、503 服务不可用、网络错误）
+     */
+    private boolean isRetryable(Exception e) {
+        String msg = e.getMessage();
+        if (msg == null) return true;
+        return msg.contains("429") || msg.contains("Too Many Requests")
+                || msg.contains("503") || msg.contains("Service Unavailable")
+                || msg.contains("timeout") || msg.contains("Timeout")
+                || msg.contains("Connection") || msg.contains("SocketException");
     }
 
     /**

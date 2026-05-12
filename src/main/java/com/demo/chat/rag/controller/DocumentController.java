@@ -50,8 +50,8 @@ public class DocumentController {
         return GlobalResponse.ok("文档已删除");
     }
 
-    @GetMapping("/{id}/status")
-    public GlobalResponse<DocumentDTO> getStatus(@PathVariable Long id) {
-        return GlobalResponse.ok(documentService.getById(id));
+    @PostMapping("/{id}/retry")
+    public GlobalResponse<DocumentUploadResponse> retry(@PathVariable Long id) {
+        return GlobalResponse.ok(documentService.retry(id));
     }
 }

@@ -51,7 +51,9 @@ public class EtlPipelineServiceImpl implements EtlPipelineService {
 
     @Override
     public int execute(Long documentId, String bucket, String objectKey, String fileName, String mimeType) {
-        throw new UnsupportedOperationException("Use EtlDispatchService.executeSingle() instead");
+        // 委托给带 userId 的方法，兼容旧接口调用方
+        // 注意：缺少 userId 的调用无法进行用户隔离，不建议使用
+        throw new UnsupportedOperationException("Use EtlDispatchService.dispatchAsync() instead");
     }
 
     /**

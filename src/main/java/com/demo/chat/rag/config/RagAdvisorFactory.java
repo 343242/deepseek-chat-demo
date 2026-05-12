@@ -5,6 +5,7 @@ import com.demo.chat.rag.retrieval.BailianRerankPostProcessor;
 import com.demo.chat.rag.retrieval.HybridDocumentRetriever;
 import com.demo.chat.rag.retrieval.MmrDocumentPostProcessor;
 import com.demo.chat.rag.retrieval.QueryNormalizer;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
@@ -19,6 +20,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * RAG Advisor 工厂 — 按请求动态创建带用户隔离的 RetrievalAugmentationAdvisor
@@ -44,9 +46,13 @@ public class RagAdvisorFactory {
     private final ParentDocumentPostProcessor parentDocumentPostProcessor;
     private final QueryTransformer rewriteQueryTransformer;
     private final QueryNormalizer queryNormalizer;
+    private final ObjectMapper objectMapper;
 
     /** 缓存的后处理器链（配置不变时复用） */
     private volatile List<org.springframework.ai.rag.postretrieval.document.DocumentPostProcessor> cachedPostProcessors;
+
+    /** 按 userId 缓存的 Advisor 实例（避免每次请求重建） */
+    private final ConcurrentHashMap<Long, RetrievalAugmentationAdvisor> advisorCache = new ConcurrentHashMap<>();
 
     public RagAdvisorFactory(ChatClient.Builder chatClientBuilder,
                              VectorStore vectorStore,
@@ -54,7 +60,8 @@ public class RagAdvisorFactory {
                              RagRetrievalProperties properties,
                              ParentDocumentPostProcessor parentDocumentPostProcessor,
                              QueryTransformer rewriteQueryTransformer,
-                             QueryNormalizer queryNormalizer) {
+                             QueryNormalizer queryNormalizer,
+                             ObjectMapper objectMapper) {
         this.chatClientBuilder = chatClientBuilder;
         this.vectorStore = vectorStore;
         this.jdbcTemplate = jdbcTemplate;
@@ -62,15 +69,23 @@ public class RagAdvisorFactory {
         this.parentDocumentPostProcessor = parentDocumentPostProcessor;
         this.rewriteQueryTransformer = rewriteQueryTransformer;
         this.queryNormalizer = queryNormalizer;
+        this.objectMapper = objectMapper;
     }
 
     /**
-     * 为指定用户创建 RAG Advisor
+     * 为指定用户获取 RAG Advisor（按 userId 缓存，避免每次请求重建）
      *
      * @param userId 当前用户 ID，用于检索隔离
      * @return 带用户过滤的 RetrievalAugmentationAdvisor
      */
     public RetrievalAugmentationAdvisor create(Long userId) {
+        return advisorCache.computeIfAbsent(userId, this::buildAdvisor);
+    }
+
+    /**
+     * 构建新的 Advisor 实例
+     */
+    private RetrievalAugmentationAdvisor buildAdvisor(Long userId) {
         List<QueryTransformer> queryTransformers = new ArrayList<>();
         if (properties.isQueryRewriteEnabled()) {
             queryTransformers.add(rewriteQueryTransformer);
@@ -107,7 +122,7 @@ public class RagAdvisorFactory {
         var userIdFilter = filterBuilder.eq("userId", String.valueOf(userId)).build();
 
         if (properties.isHybridRetrievalEnabled()) {
-            return new HybridDocumentRetriever(vectorStore, jdbcTemplate, properties, queryNormalizer, userId);
+            return new HybridDocumentRetriever(vectorStore, jdbcTemplate, properties, queryNormalizer, userId, objectMapper);
         }
 
         return VectorStoreDocumentRetriever.builder()

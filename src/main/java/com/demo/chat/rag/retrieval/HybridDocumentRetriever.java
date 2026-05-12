@@ -46,13 +46,15 @@ public class HybridDocumentRetriever implements DocumentRetriever {
                                    JdbcTemplate jdbcTemplate,
                                    RagRetrievalProperties properties,
                                    QueryNormalizer queryNormalizer,
-                                   Long userId) {
+                                   Long userId,
+                                   ObjectMapper objectMapper) {
         this.vectorStore = vectorStore;
         this.jdbcTemplate = jdbcTemplate;
         this.properties = properties;
         this.queryNormalizer = queryNormalizer;
         this.userId = userId;
         this.ftsConfig = properties.getFtsConfig();
+        this.objectMapper = objectMapper;
     }
 
     @Override
@@ -215,7 +217,7 @@ public class HybridDocumentRetriever implements DocumentRetriever {
                 .trim();
     }
 
-    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+    private final ObjectMapper objectMapper;
 
     /**
      * 解析 metadata JSON 字符串（使用 Jackson，安全处理嵌套结构和转义）
@@ -226,7 +228,7 @@ public class HybridDocumentRetriever implements DocumentRetriever {
             return new HashMap<>();
         }
         try {
-            return OBJECT_MAPPER.readValue(json, new TypeReference<Map<String, Object>>() {});
+            return objectMapper.readValue(json, new TypeReference<Map<String, Object>>() {});
         } catch (Exception e) {
             log.debug("Failed to parse metadata JSON: {}", e.getMessage());
             return new HashMap<>();

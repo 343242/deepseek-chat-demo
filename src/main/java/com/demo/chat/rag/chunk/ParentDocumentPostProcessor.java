@@ -1,13 +1,13 @@
 package com.demo.chat.rag.chunk;
 
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.rag.Query;
 import org.springframework.ai.rag.postretrieval.document.DocumentPostProcessor;
-import org.springframework.ai.vectorstore.SearchRequest;
-import org.springframework.ai.vectorstore.VectorStore;
-import org.springframework.ai.vectorstore.filter.FilterExpressionBuilder;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.util.*;
 
@@ -17,23 +17,25 @@ import java.util.*;
  * 在向量检索命中子切分后，执行以下处理：
  * <ol>
  *   <li>识别子切分（metadata 中有 parentId 且 isParent=false）</li>
- *   <li>通过 parentId 从向量库回查父文档内容</li>
+ *   <li>通过 parentId 从 vector_store 表批量回查父文档内容</li>
  *   <li>将子切分替换为其父文档内容（提供完整上下文）</li>
  *   <li>按 parentId 去重（同一父文档的多个子切分只保留一个父文档）</li>
  *   <li>保持原始检索顺序（按首次命中的子切分排序）</li>
  * </ol>
  *
- * <p>注意：父文档也存储在向量库中（isParent=true），子块 metadata 只存 parentId，
- * 不复制完整父文内容，避免向量库膨胀。</p>
+ * <p>优化：使用 JdbcTemplate 直接查询 PG 的 vector_store 表，一条 SQL 批量拉取所有父文档，
+ * 替代原先逐个 parentId 调用 VectorStore.similaritySearch 的 N+1 问题。</p>
  */
 public class ParentDocumentPostProcessor implements DocumentPostProcessor {
 
     private static final Logger log = LoggerFactory.getLogger(ParentDocumentPostProcessor.class);
 
-    private final VectorStore vectorStore;
+    private final JdbcTemplate jdbcTemplate;
+    private final ObjectMapper objectMapper;
 
-    public ParentDocumentPostProcessor(VectorStore vectorStore) {
-        this.vectorStore = vectorStore;
+    public ParentDocumentPostProcessor(JdbcTemplate jdbcTemplate, ObjectMapper objectMapper) {
+        this.jdbcTemplate = jdbcTemplate;
+        this.objectMapper = objectMapper;
     }
 
     @Override
@@ -64,7 +66,7 @@ public class ParentDocumentPostProcessor implements DocumentPostProcessor {
             }
         }
 
-        // 批量回查父文档
+        // 批量回查父文档（一条 SQL）
         Map<String, Document> parentDocMap = fetchParentDocuments(parentIdsToFetch);
 
         // 构建结果：子切分 → 父文档（去重，保持顺序）
@@ -100,39 +102,67 @@ public class ParentDocumentPostProcessor implements DocumentPostProcessor {
     }
 
     /**
-     * 从向量库批量回查父文档
+     * 从 vector_store 表批量回查父文档
      * <p>
-     * 由于 VectorStore API 限制（不支持批量 metadata 查询），
-     * 逐个 parentId 查询。如果性能成为瓶颈，可考虑加缓存。
-     * </p>
+     * 使用 JdbcTemplate 直接查询 PG，一条 SQL 按 parentId 批量拉取，
+     * 替代原先逐个 VectorStore.similaritySearch 的 N+1 问题。
+     * 查询条件：metadata->>'parentId' IN (...) AND metadata->>'isParent' = 'true'
      */
     private Map<String, Document> fetchParentDocuments(Set<String> parentIds) {
+        if (parentIds.isEmpty()) {
+            return Map.of();
+        }
+
         Map<String, Document> result = new HashMap<>();
-        FilterExpressionBuilder b = new FilterExpressionBuilder();
 
-        for (String parentId : parentIds) {
-            try {
-                // 查询条件：parentId=xxx AND isParent=true
-                var filter = b.and(
-                        b.eq(ParentChildChunkStrategy.META_PARENT_ID, parentId),
-                        b.eq(ParentChildChunkStrategy.META_IS_PARENT, true)
-                ).build();
+        try {
+            // 构建 IN 子句的占位符
+            String placeholders = String.join(",", Collections.nCopies(parentIds.size(), "?"));
+            String sql = """
+                SELECT id, content, metadata
+                FROM vector_store
+                WHERE metadata->>'parentId' IN (%s)
+                  AND metadata->>'isParent' = 'true'
+                """.formatted(placeholders);
 
-                List<Document> found = vectorStore.similaritySearch(
-                        SearchRequest.builder()
-                                .filterExpression(filter)
-                                .topK(1)
-                                .build()
-                );
+            Object[] params = parentIds.toArray();
 
-                if (!found.isEmpty()) {
-                    result.put(parentId, found.get(0));
+            List<Document> docs = jdbcTemplate.query(sql,
+                    (rs, rowNum) -> {
+                        String id = rs.getString("id");
+                        String content = rs.getString("content");
+                        String metadataJson = rs.getString("metadata");
+
+                        Map<String, Object> metadata = parseMetadata(metadataJson);
+                        return new Document(id, content, metadata);
+                    },
+                    params);
+
+            for (Document doc : docs) {
+                Object pid = doc.getMetadata().get(ParentChildChunkStrategy.META_PARENT_ID);
+                if (pid != null) {
+                    result.put(pid.toString(), doc);
                 }
-            } catch (Exception e) {
-                log.warn("Failed to fetch parent document for parentId={}: {}", parentId, e.getMessage());
             }
+
+            log.debug("Batch fetched {} parent docs for {} parentIds", docs.size(), parentIds.size());
+        } catch (Exception e) {
+            log.warn("Batch parent fetch failed, falling back to child chunks: {}", e.getMessage());
         }
 
         return result;
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> parseMetadata(String json) {
+        if (json == null || json.isBlank() || "null".equals(json)) {
+            return new HashMap<>();
+        }
+        try {
+            return objectMapper.readValue(json, new TypeReference<Map<String, Object>>() {});
+        } catch (Exception e) {
+            log.debug("Failed to parse metadata JSON: {}", e.getMessage());
+            return new HashMap<>();
+        }
     }
 }

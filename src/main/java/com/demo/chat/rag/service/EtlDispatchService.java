@@ -37,4 +37,26 @@ public interface EtlDispatchService {
      * @return 分块数量
      */
     int executeSingle(Long documentId, String bucket, String objectKey, String fileName, String mimeType, long fileSize, Long userId);
+
+    /**
+     * 单文档异步调度 — 上传后立即返回，ETL 在 IO/CPU 线程池中执行。
+     * <p>
+     * 与 {@link #executeSingle} 的区别：不阻塞调用线程，失败记录到文档状态。
+     *
+     * @param documentId 文档 ID
+     * @param bucket     MinIO bucket
+     * @param objectKey  MinIO object key
+     * @param fileName   文件名
+     * @param mimeType   MIME 类型
+     * @param fileSize   文件大小
+     * @param userId     文档所有者 ID
+     */
+    void dispatchAsync(Long documentId, String bucket, String objectKey, String fileName, String mimeType, long fileSize, Long userId);
+
+    /**
+     * 清理指定文档的向量数据（重试前调用）
+     *
+     * @param documentId 文档 ID
+     */
+    void deleteVectors(Long documentId);
 }

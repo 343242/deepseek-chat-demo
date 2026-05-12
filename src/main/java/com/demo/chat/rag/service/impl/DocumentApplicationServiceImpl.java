@@ -71,9 +71,9 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
         RagDocument ragDoc = persistDocument(originalFilename, file.getSize(), mimeType, storageKey, bucket, currentUserId);
         log.info("Document uploaded: id={}, file={}, size={}, userId={}", ragDoc.getId(), originalFilename, file.getSize(), currentUserId);
 
-        etlDispatchService.executeSingle(ragDoc.getId(), bucket, storageKey, originalFilename, mimeType, file.getSize(), currentUserId);
+        etlDispatchService.dispatchAsync(ragDoc.getId(), bucket, storageKey, originalFilename, mimeType, file.getSize(), currentUserId);
 
-        return new DocumentUploadResponse(ragDoc.getId(), originalFilename, EtlStatus.COMPLETED);
+        return new DocumentUploadResponse(ragDoc.getId(), originalFilename, EtlStatus.PROCESSING);
     }
 
     @Override
@@ -109,14 +109,6 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
 
         etlDispatchService.dispatch(candidates);
 
-        for (int i = 0; i < responses.size(); i++) {
-            DocumentUploadResponse resp = responses.get(i);
-            RagDocument doc = ragDocumentMapper.selectById(resp.id());
-            if (doc != null) {
-                responses.set(i, new DocumentUploadResponse(resp.id(), resp.fileName(), doc.getStatus()));
-            }
-        }
-
         return responses;
     }
 
@@ -143,6 +135,32 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
             return false;
         }
         return documentLifecycleService.cascadeDelete(doc);
+    }
+
+    @Override
+    public DocumentUploadResponse retry(Long id) {
+        RagDocument doc = findAndVerifyOwner(id);
+        if (doc == null) {
+            throw new BusinessException(ErrorCode.DOCUMENT_NOT_FOUND, "文档不存在: " + id);
+        }
+        if (doc.getStatus() != EtlStatus.FAILED && doc.getStatus() != EtlStatus.VECTOR_FAILED) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "仅 FAILED / VECTOR_FAILED 状态的文档可以重试，当前状态: " + doc.getStatus());
+        }
+
+        log.info("Retrying ETL for document: id={}, file={}, status={}", id, doc.getFileName(), doc.getStatus());
+
+        // 清理旧的向量数据（如果有的话）
+        try {
+            etlDispatchService.deleteVectors(id);
+        } catch (Exception e) {
+            log.warn("Failed to clean old vectors for retry doc={}: {}", id, e.getMessage());
+        }
+
+        // 重置状态并异步重新执行 ETL
+        etlDispatchService.dispatchAsync(id, doc.getBucket(), doc.getStorageKey(),
+                doc.getFileName(), doc.getMimeType(), doc.getFileSize(), doc.getUserId());
+
+        return new DocumentUploadResponse(id, doc.getFileName(), EtlStatus.PROCESSING);
     }
 
     // === 私有方法 ===

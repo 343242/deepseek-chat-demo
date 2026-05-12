@@ -44,6 +44,9 @@ public class DashScopeEmbeddingProperties {
      */
     private String instruct = "";
 
+    /** 单次 API 调用超时时间（秒），默认 10 秒 */
+    private int timeoutSeconds = 10;
+
     public String getBaseUrl() { return baseUrl; }
     public void setBaseUrl(String baseUrl) { this.baseUrl = baseUrl; }
     public String getApiKey() { return apiKey; }
@@ -56,4 +59,6 @@ public class DashScopeEmbeddingProperties {
     public void setTextType(TextType textType) { this.textType = textType; }
     public String getInstruct() { return instruct; }
     public void setInstruct(String instruct) { this.instruct = instruct; }
+    public int getTimeoutSeconds() { return timeoutSeconds; }
+    public void setTimeoutSeconds(int timeoutSeconds) { this.timeoutSeconds = timeoutSeconds; }
 }

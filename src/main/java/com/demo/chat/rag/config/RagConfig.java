@@ -1,6 +1,7 @@
 package com.demo.chat.rag.config;
 
 import com.demo.chat.rag.chunk.ParentDocumentPostProcessor;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
@@ -9,6 +10,7 @@ import org.springframework.ai.rag.preretrieval.query.transformation.RewriteQuery
 import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.jdbc.core.JdbcTemplate;
 
 /**
  * RAG 配置
@@ -55,9 +57,11 @@ public class RagConfig {
     // ======================== 后处理器 ========================
 
     @Bean
-    public ParentDocumentPostProcessor parentDocumentPostProcessor(VectorStore vectorStore) {
+    public ParentDocumentPostProcessor parentDocumentPostProcessor(VectorStore vectorStore,
+                                                                       JdbcTemplate jdbcTemplate,
+                                                                       ObjectMapper objectMapper) {
         log.info("ParentDocumentPostProcessor registered");
-        return new ParentDocumentPostProcessor(vectorStore);
+        return new ParentDocumentPostProcessor(jdbcTemplate, objectMapper);
     }
 
     // ======================== RAG Advisor 集成 ========================

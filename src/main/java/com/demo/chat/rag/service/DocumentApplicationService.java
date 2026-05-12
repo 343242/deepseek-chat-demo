@@ -59,4 +59,15 @@ public interface DocumentApplicationService {
      * @return true 表示成功删除，false 表示文档不存在
      */
     boolean delete(Long id);
+
+    /**
+     * 重试失败的 ETL 处理
+     * <p>
+     * 仅对 FAILED / VECTOR_FAILED 状态的文档有效。
+     * 清理旧的向量数据后重新执行 ETL。
+     *
+     * @param id 文档 ID
+     * @return 上传响应（含处理状态）
+     */
+    DocumentUploadResponse retry(Long id);
 }

@@ -40,6 +40,7 @@ public class FastTrackStrategy implements EtlRouteStrategy {
     private final JdbcTemplate jdbcTemplate;
     private final ThreadPoolTaskExecutor ioExecutor;
     private final ThreadPoolTaskExecutor cpuExecutor;
+    private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
 
     /** 追踪进行中的异步向量化任务，支持优雅停机 */
     private final Set<CompletableFuture<?>> activeAsyncTasks = ConcurrentHashMap.newKeySet();
@@ -51,7 +52,8 @@ public class FastTrackStrategy implements EtlRouteStrategy {
                              EtlFastTrackProperties fastTrackProperties,
                              JdbcTemplate jdbcTemplate,
                              ThreadPoolTaskExecutor etlIoExecutor,
-                             ThreadPoolTaskExecutor etlCpuExecutor) {
+                             ThreadPoolTaskExecutor etlCpuExecutor,
+                             com.fasterxml.jackson.databind.ObjectMapper objectMapper) {
         this.extractor = extractor;
         this.transformer = transformer;
         this.loader = loader;
@@ -60,6 +62,7 @@ public class FastTrackStrategy implements EtlRouteStrategy {
         this.jdbcTemplate = jdbcTemplate;
         this.ioExecutor = etlIoExecutor;
         this.cpuExecutor = etlCpuExecutor;
+        this.objectMapper = objectMapper;
     }
 
     @Override
@@ -146,7 +149,7 @@ public class FastTrackStrategy implements EtlRouteStrategy {
         );
         String metadataJson;
         try {
-            metadataJson = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(metadata);
+            metadataJson = objectMapper.writeValueAsString(metadata);
         } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
             log.error("Failed to serialize BM25 metadata for documentId={}", documentId, e);
             throw new RuntimeException(e);

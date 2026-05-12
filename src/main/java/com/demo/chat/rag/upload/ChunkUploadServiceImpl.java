@@ -6,6 +6,7 @@ import com.demo.chat.rag.config.MinioProperties;
 import com.demo.chat.rag.entity.RagDocument;
 import com.demo.chat.rag.etl.EtlStatus;
 import com.demo.chat.rag.mapper.RagDocumentMapper;
+import com.demo.chat.rag.service.FileStorageService;
 import com.demo.chat.rag.service.EtlDispatchService;
 import com.demo.chat.rag.service.impl.DocumentValidator;
 import com.demo.chat.security.util.SecurityUtils;
@@ -52,6 +53,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
     private final MinioProperties minioProperties;
     private final ChunkSizeStrategy chunkSizeStrategy;
     private final DocumentValidator documentValidator;
+    private final FileStorageService fileStorageService;
     private final RagDocumentMapper ragDocumentMapper;
     private final EtlDispatchService etlDispatchService;
     private final DefaultRedisScript<List> atomicChunkUploadScript;
@@ -63,6 +65,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
             MinioProperties minioProperties,
             ChunkSizeStrategy chunkSizeStrategy,
             DocumentValidator documentValidator,
+            FileStorageService fileStorageService,
             RagDocumentMapper ragDocumentMapper,
             EtlDispatchService etlDispatchService,
             ThreadPoolTaskExecutor mergeExecutor
@@ -72,6 +75,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         this.minioProperties = minioProperties;
         this.chunkSizeStrategy = chunkSizeStrategy;
         this.documentValidator = documentValidator;
+        this.fileStorageService = fileStorageService;
         this.ragDocumentMapper = ragDocumentMapper;
         this.etlDispatchService = etlDispatchService;
         this.mergeExecutor = mergeExecutor;
@@ -399,6 +403,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         }
 
         String bucket = minioProperties.getBucket();
+        fileStorageService.ensureBucketExists(bucket);
         String objectBasePath = "chunks/" + userId + "/" + UUID.randomUUID();
         String uploadId = UUID.randomUUID().toString();
 

@@ -38,23 +38,27 @@ public class HybridDocumentRetriever implements DocumentRetriever {
     private final VectorStore vectorStore;
     private final JdbcTemplate jdbcTemplate;
     private final RagRetrievalProperties properties;
+    private final QueryNormalizer queryNormalizer;
     private final Long userId;
     private final String ftsConfig;
 
     public HybridDocumentRetriever(VectorStore vectorStore,
                                    JdbcTemplate jdbcTemplate,
                                    RagRetrievalProperties properties,
+                                   QueryNormalizer queryNormalizer,
                                    Long userId) {
         this.vectorStore = vectorStore;
         this.jdbcTemplate = jdbcTemplate;
         this.properties = properties;
+        this.queryNormalizer = queryNormalizer;
         this.userId = userId;
         this.ftsConfig = properties.getFtsConfig();
     }
 
     @Override
     public List<Document> retrieve(Query query) {
-        String queryText = query.text();
+        // 归一化处理：全角→半角、Unicode NFC、空白压缩
+        String queryText = queryNormalizer.normalize(query.text());
         int vectorTopK = properties.getVectorTopK();
         int bm25TopK = properties.getBm25TopK();
 

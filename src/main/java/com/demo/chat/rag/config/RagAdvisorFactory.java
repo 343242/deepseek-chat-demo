@@ -4,6 +4,7 @@ import com.demo.chat.rag.chunk.ParentDocumentPostProcessor;
 import com.demo.chat.rag.retrieval.BailianRerankPostProcessor;
 import com.demo.chat.rag.retrieval.HybridDocumentRetriever;
 import com.demo.chat.rag.retrieval.MmrDocumentPostProcessor;
+import com.demo.chat.rag.retrieval.QueryNormalizer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
@@ -42,6 +43,7 @@ public class RagAdvisorFactory {
     private final RagRetrievalProperties properties;
     private final ParentDocumentPostProcessor parentDocumentPostProcessor;
     private final QueryTransformer rewriteQueryTransformer;
+    private final QueryNormalizer queryNormalizer;
 
     /** 缓存的后处理器链（配置不变时复用） */
     private volatile List<org.springframework.ai.rag.postretrieval.document.DocumentPostProcessor> cachedPostProcessors;
@@ -51,13 +53,15 @@ public class RagAdvisorFactory {
                              JdbcTemplate jdbcTemplate,
                              RagRetrievalProperties properties,
                              ParentDocumentPostProcessor parentDocumentPostProcessor,
-                             QueryTransformer rewriteQueryTransformer) {
+                             QueryTransformer rewriteQueryTransformer,
+                             QueryNormalizer queryNormalizer) {
         this.chatClientBuilder = chatClientBuilder;
         this.vectorStore = vectorStore;
         this.jdbcTemplate = jdbcTemplate;
         this.properties = properties;
         this.parentDocumentPostProcessor = parentDocumentPostProcessor;
         this.rewriteQueryTransformer = rewriteQueryTransformer;
+        this.queryNormalizer = queryNormalizer;
     }
 
     /**
@@ -103,7 +107,7 @@ public class RagAdvisorFactory {
         var userIdFilter = filterBuilder.eq("userId", String.valueOf(userId)).build();
 
         if (properties.isHybridRetrievalEnabled()) {
-            return new HybridDocumentRetriever(vectorStore, jdbcTemplate, properties, userId);
+            return new HybridDocumentRetriever(vectorStore, jdbcTemplate, properties, queryNormalizer, userId);
         }
 
         return VectorStoreDocumentRetriever.builder()

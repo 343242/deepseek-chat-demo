@@ -1,6 +1,8 @@
 package com.demo.chat.rag.upload;
 
 import io.minio.*;
+import io.minio.messages.DeleteRequest;
+import io.minio.messages.DeleteResult;
 import io.minio.messages.Item;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -10,7 +12,8 @@ import org.springframework.stereotype.Component;
 
 import java.time.Duration;
 import java.time.Instant;
-import java.util.Map;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -69,28 +72,42 @@ public class OrphanChunkCleaner {
                             .build()
             );
 
+            // 收集孤儿对象，批量删除
+            List<DeleteRequest.Object> orphans = new ArrayList<>();
             for (io.minio.Result<Item> result : results) {
                 try {
                     Item item = result.get();
-                    // 超过阈值的对象视为孤儿
                     if (item.lastModified() != null && item.lastModified().toInstant().isBefore(threshold)) {
-                        // 检查是否仍有活跃 session（从路径提取 uploadId）
                         String objectName = item.objectName();
                         if (!hasActiveSession(objectName)) {
-                            minioClient.removeObject(
-                                    RemoveObjectArgs.builder()
-                                            .bucket(bucket)
-                                            .object(objectName)
-                                            .build()
-                            );
-                            cleaned++;
-                            log.debug("Cleaned orphan chunk: {}/{}", bucket, objectName);
+                            orphans.add(new DeleteRequest.Object(objectName));
                         }
                     }
                 } catch (Exception e) {
                     errors++;
                     log.warn("Failed to process chunk object: {}", e.getMessage());
                 }
+            }
+
+            // 批量删除（MinIO removeObjects 支持迭代器）
+            if (!orphans.isEmpty()) {
+                Iterable<io.minio.Result<DeleteResult.Error>> deleteResults =
+                        minioClient.removeObjects(
+                                RemoveObjectsArgs.builder()
+                                        .bucket(bucket)
+                                        .objects(orphans)
+                                        .build()
+                        );
+                for (io.minio.Result<DeleteResult.Error> r : deleteResults) {
+                    try {
+                        DeleteResult.Error err = r.get();
+                        log.warn("Failed to delete {}: {}", err.objectName(), err.message());
+                        errors++;
+                    } catch (Exception e) {
+                        // 忽略：成功删除不会产生 Error
+                    }
+                }
+                cleaned = orphans.size();
             }
         } catch (Exception e) {
             log.error("Orphan chunk cleanup failed", e);

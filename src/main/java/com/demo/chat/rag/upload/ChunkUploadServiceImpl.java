@@ -2,6 +2,7 @@ package com.demo.chat.rag.upload;
 
 import com.demo.chat.common.errorcode.ErrorCode;
 import com.demo.chat.exception.BusinessException;
+import com.demo.chat.rag.config.DocumentProperties;
 import com.demo.chat.rag.config.MinioProperties;
 import com.demo.chat.rag.entity.RagDocument;
 import com.demo.chat.rag.etl.EtlStatus;
@@ -27,7 +28,6 @@ import java.io.InputStream;
 import java.security.MessageDigest;
 import java.time.LocalDateTime;
 import java.util.*;
-import java.util.concurrent.ThreadPoolExecutor;
 import java.util.stream.Collectors;
 
 /**
@@ -52,6 +52,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
     private final MinioClient minioClient;
     private final MinioProperties minioProperties;
     private final ChunkSizeStrategy chunkSizeStrategy;
+    private final DocumentProperties documentProperties;
     private final DocumentValidator documentValidator;
     private final FileStorageService fileStorageService;
     private final RagDocumentMapper ragDocumentMapper;
@@ -64,6 +65,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
             MinioClient minioClient,
             MinioProperties minioProperties,
             ChunkSizeStrategy chunkSizeStrategy,
+            DocumentProperties documentProperties,
             DocumentValidator documentValidator,
             FileStorageService fileStorageService,
             RagDocumentMapper ragDocumentMapper,
@@ -74,6 +76,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         this.minioClient = minioClient;
         this.minioProperties = minioProperties;
         this.chunkSizeStrategy = chunkSizeStrategy;
+        this.documentProperties = documentProperties;
         this.documentValidator = documentValidator;
         this.fileStorageService = fileStorageService;
         this.ragDocumentMapper = ragDocumentMapper;
@@ -93,6 +96,9 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
 
         validateMimeType(request.mimeType());
         validateFileSize(request.fileSize());
+
+        // init 端点速率限制
+        checkRateLimit(userId);
 
         // 秒传检查
         RagDocument existing = findExistingForQuickUpload(request.fileMd5(), userId);
@@ -174,7 +180,8 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
                     performMerge(uploadId);
                 } catch (Exception e) {
                     log.error("Auto-merge failed: uploadId={}", uploadId, e);
-                    redisTemplate.opsForHash().delete(UploadRedisConstants.partsKey(uploadId), UploadRedisConstants.MERGING_FIELD);
+                    // 不清除 __merging 标记，允许客户端通过 complete 接口手动重试
+                    // __merging 会在 session TTL 24h 后随 key 过期自动清除
                 }
             });
             return ChunkUploadResponse.merging(uploadId, chunkIndex);
@@ -339,12 +346,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
     // ==================== 私有方法 ====================
 
     private void validateMimeType(String mimeType) {
-        Set<String> allowed = Set.of(
-                "application/pdf",
-                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-                "text/plain", "text/markdown", "text/html"
-        );
+        Set<String> allowed = Set.of(documentProperties.getAllowedMimeTypes().split(","));
         if (!allowed.contains(mimeType)) {
             throw new BusinessException(ErrorCode.UPLOAD_MIME_UNSUPPORTED, "不支持的文件类型: " + mimeType);
         }
@@ -354,6 +356,17 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         long maxBytes = DataSize.parse("50MB").toBytes();
         if (fileSize > maxBytes) {
             throw new BusinessException(ErrorCode.UPLOAD_FILE_TOO_LARGE);
+        }
+    }
+
+    private void checkRateLimit(Long userId) {
+        String rateKey = UploadRedisConstants.rateKey(userId);
+        Long count = redisTemplate.opsForValue().increment(rateKey);
+        if (count != null && count == 1) {
+            redisTemplate.expire(rateKey, UploadRedisConstants.RATE_WINDOW);
+        }
+        if (count != null && count > UploadRedisConstants.RATE_LIMIT) {
+            throw new BusinessException(ErrorCode.RATE_LIMITED, "上传初始化请求过于频繁");
         }
     }
 
@@ -439,6 +452,10 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
     }
 
     private Map<String, String> validateSession(String uploadId, Long userId) {
+        // 格式校验：防止路径遍历
+        if (uploadId == null || !uploadId.matches("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "无效的上传会话ID");
+        }
         String sessionKey = UploadRedisConstants.sessionKey(uploadId);
         Map<Object, Object> rawSession = redisTemplate.opsForHash().entries(sessionKey);
         if (rawSession.isEmpty()) {
@@ -570,17 +587,20 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         }
     }
 
+    private static final char[] HEX_CHARS = "0123456789abcdef".toCharArray();
+
     private static String hexFormat(byte[] bytes) {
-        StringBuilder sb = new StringBuilder(bytes.length * 2);
-        for (byte b : bytes) {
-            sb.append(String.format("%02x", b));
+        char[] chars = new char[bytes.length * 2];
+        for (int i = 0; i < bytes.length; i++) {
+            chars[i * 2] = HEX_CHARS[(bytes[i] >> 4) & 0x0f];
+            chars[i * 2 + 1] = HEX_CHARS[bytes[i] & 0x0f];
         }
-        return sb.toString();
+        return new String(chars);
     }
 
     private static Map<String, String> toStringMap(Map<Object, Object> raw) {
         Map<String, String> result = new HashMap<>(raw.size());
         raw.forEach((k, v) -> result.put(k.toString(), v != null ? v.toString() : ""));
-        return result;
+        return Collections.unmodifiableMap(result);
     }
 }

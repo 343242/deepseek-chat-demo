@@ -1,8 +1,11 @@
 package com.demo.chat.rag.upload;
 
+import com.demo.chat.common.errorcode.ErrorCode;
 import com.demo.chat.common.response.GlobalResponse;
+import com.demo.chat.exception.BusinessException;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
@@ -40,9 +43,13 @@ public class ChunkUploadController {
      * </ol>
      */
     @PostMapping
-    @ResponseStatus(HttpStatus.CREATED)
-    public GlobalResponse<ChunkUploadResult> init(@Valid @RequestBody ChunkUploadInitRequest request) {
-        return GlobalResponse.ok(chunkUploadService.init(request), "上传会话已创建");
+    public ResponseEntity<GlobalResponse<ChunkUploadResult>> init(@Valid @RequestBody ChunkUploadInitRequest request) {
+        ChunkUploadResult result = chunkUploadService.init(request);
+        if (result.uploaded()) {
+            return ResponseEntity.ok(GlobalResponse.ok(result, "秒传成功"));
+        }
+        return ResponseEntity.status(HttpStatus.CREATED)
+                .body(GlobalResponse.ok(result, "上传会话已创建"));
     }
 
     /**
@@ -56,6 +63,9 @@ public class ChunkUploadController {
             @PathVariable int chunkIndex,
             @RequestHeader("X-Chunk-MD5") String chunkMd5,
             @RequestBody byte[] chunkData) {
+        if (chunkMd5 == null || !chunkMd5.matches("^[0-9a-fA-F]{32}$")) {
+            throw new BusinessException(ErrorCode.VALIDATION_ERROR, "分片MD5格式错误");
+        }
         return GlobalResponse.ok(chunkUploadService.uploadChunk(uploadId, chunkIndex, chunkMd5, chunkData));
     }
 
@@ -74,10 +84,11 @@ public class ChunkUploadController {
      * 此接口用于自动合并失败后的手动重试。
      */
     @PostMapping("/{uploadId}/complete")
-    public GlobalResponse<Long> complete(
+    public GlobalResponse<ChunkUploadCompleteResult> complete(
             @PathVariable String uploadId,
             @Valid @RequestBody ChunkUploadCompleteRequest request) {
-        return GlobalResponse.ok(chunkUploadService.complete(uploadId, request.fileMd5()), "文件合并完成");
+        Long docId = chunkUploadService.complete(uploadId, request.fileMd5());
+        return GlobalResponse.ok(new ChunkUploadCompleteResult(docId), "文件合并完成");
     }
 
     /**

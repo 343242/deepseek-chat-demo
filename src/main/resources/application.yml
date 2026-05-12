@@ -1,6 +1,10 @@
 spring:
   main:
     allow-circular-references: true
+  servlet:
+    multipart:
+      max-request-size: 55MB
+      max-file-size: 55MB
   profiles:
     active: ${SPRING_PROFILES_ACTIVE:dev}
 

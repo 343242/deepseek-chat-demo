@@ -33,7 +33,7 @@ public class Message {
     private String content;
 
     @TableField("status")
-    private String status;
+    private MessageStatus status;
 
     @TableField("model_id")
     private String modelId;
@@ -65,7 +65,7 @@ public class Message {
         msg.parentId = parentId;
         msg.role = "USER";
         msg.content = content;
-        msg.status = MessageStatus.FINISHED.name();
+        msg.status = MessageStatus.FINISHED;
         msg.thinkingEnabled = false;
         msg.createdAt = LocalDateTime.now();
         msg.updatedAt = LocalDateTime.now();
@@ -83,7 +83,7 @@ public class Message {
         msg.parentId = parentId;
         msg.role = "ASSISTANT";
         msg.content = content;
-        msg.status = MessageStatus.FINISHED.name();
+        msg.status = MessageStatus.FINISHED;
         msg.modelId = modelId;
         msg.thinkingEnabled = false;
         msg.tokenUsage = tokenUsage;
@@ -100,7 +100,7 @@ public class Message {
     public Long getParentId() { return parentId; }
     public String getRole() { return role; }
     public String getContent() { return content; }
-    public String getStatus() { return status; }
+    public MessageStatus getStatus() { return status; }
     public String getModelId() { return modelId; }
     public Boolean getThinkingEnabled() { return thinkingEnabled; }
     public Integer getTokenUsage() { return tokenUsage; }
@@ -115,7 +115,7 @@ public class Message {
     public void setParentId(Long parentId) { this.parentId = parentId; }
     public void setRole(String role) { this.role = role; }
     public void setContent(String content) { this.content = content; }
-    public void setStatus(String status) { this.status = status; }
+    public void setStatus(MessageStatus status) { this.status = status; }
     public void setModelId(String modelId) { this.modelId = modelId; }
     public void setThinkingEnabled(Boolean thinkingEnabled) { this.thinkingEnabled = thinkingEnabled; }
     public void setTokenUsage(Integer tokenUsage) { this.tokenUsage = tokenUsage; }
@@ -130,6 +130,6 @@ public class Message {
     }
 
     public boolean isFinished() {
-        return MessageStatus.FINISHED.name().equals(this.status);
+        return MessageStatus.FINISHED == this.status;
     }
 }

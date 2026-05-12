@@ -1,27 +1,29 @@
 package com.demo.chat.conversation.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.demo.chat.common.snowflake.SnowflakeIdGenerator;
 import com.demo.chat.conversation.dto.ConversationCreateRequest;
 import com.demo.chat.conversation.dto.ConversationDetail;
 import com.demo.chat.conversation.dto.ConversationSummary;
 import com.demo.chat.conversation.dto.ConversationUpdateRequest;
 import com.demo.chat.conversation.dto.MessageVO;
 import com.demo.chat.conversation.entity.Conversation;
-import com.demo.chat.conversation.entity.Message;
 import com.demo.chat.conversation.enums.ConversationStatus;
 import com.demo.chat.conversation.enums.TitleSource;
 import com.demo.chat.conversation.mapper.ConversationMapper;
-import com.demo.chat.conversation.mapper.MessageMapper;
+import com.demo.chat.conversation.service.ConversationMessageService;
 import com.demo.chat.conversation.service.ConversationService;
+import com.demo.chat.conversation.util.ConversationIdUtil;
 import com.demo.chat.exception.BusinessException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.memory.ChatMemoryRepository;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.LocalDateTime;
-import java.util.Collections;
 import java.util.List;
 
 /**
@@ -36,28 +38,32 @@ public class ConversationServiceImpl implements ConversationService {
     private static final int AUTO_TITLE_MAX_LENGTH = 20;
 
     private final ConversationMapper conversationMapper;
-    private final MessageMapper messageMapper;
+    private final ConversationMessageService messageService;
     private final ChatMemoryRepository chatMemoryRepository;
+    private final SnowflakeIdGenerator snowflakeIdGenerator;
+    private final TransactionTemplate transactionTemplate;
 
     public ConversationServiceImpl(ConversationMapper conversationMapper,
-                                   MessageMapper messageMapper,
-                                   ChatMemoryRepository chatMemoryRepository) {
+                                   ConversationMessageService messageService,
+                                   ChatMemoryRepository chatMemoryRepository,
+                                   SnowflakeIdGenerator snowflakeIdGenerator,
+                                   TransactionTemplate transactionTemplate) {
         this.conversationMapper = conversationMapper;
-        this.messageMapper = messageMapper;
+        this.messageService = messageService;
         this.chatMemoryRepository = chatMemoryRepository;
+        this.snowflakeIdGenerator = snowflakeIdGenerator;
+        this.transactionTemplate = transactionTemplate;
     }
 
     @Override
-    @Transactional
     public ConversationSummary create(Long userId, ConversationCreateRequest request) {
-        // 由调用方负责生成 conversationId，这里用 snowflake 或时间戳
-        String rawId = String.valueOf(System.currentTimeMillis());
-        String conversationId = "u_" + userId + "_" + rawId;
+        String rawId = String.valueOf(snowflakeIdGenerator.nextId());
+        String conversationId = ConversationIdUtil.buildIsolatedId(userId, rawId);
 
         Conversation entity = new Conversation(conversationId, userId, request.modelId());
         if (request.title() != null && !request.title().isBlank()) {
-            entity.setTitle(request.title());
-            entity.setTitleSource(TitleSource.USER.name());
+            entity.setTitle(request.title().strip());
+            entity.setTitleSource(TitleSource.USER);
         }
 
         conversationMapper.insert(entity);
@@ -68,27 +74,35 @@ public class ConversationServiceImpl implements ConversationService {
     }
 
     @Override
-    @Transactional
     public ConversationSummary getOrCreate(Long userId, String conversationId, String modelId) {
         Conversation existing = findByConversationId(conversationId);
         if (existing != null) {
-            // 已存在且未删除，直接返回
-            if (!ConversationStatus.DELETED.name().equals(existing.getStatus())) {
+            if (existing.getStatus() != ConversationStatus.DELETED) {
                 return toSummary(existing);
             }
             // 已删除则恢复为活跃
-            conversationMapper.updateStatus(existing.getId(), ConversationStatus.ACTIVE.name());
-            existing.setStatus(ConversationStatus.ACTIVE.name());
+            conversationMapper.updateStatus(existing.getId(), ConversationStatus.ACTIVE.getValue());
+            existing.setStatus(ConversationStatus.ACTIVE);
             existing.setModelId(modelId);
             log.info("Conversation restored: id={}, conversationId={}", existing.getId(), conversationId);
             return toSummary(existing);
         }
 
-        // 自动创建
+        // 自动创建（并发安全：唯一约束兜底）
         Conversation entity = new Conversation(conversationId, userId, modelId);
-        conversationMapper.insert(entity);
-        log.info("Conversation auto-created: id={}, userId={}, conversationId={}",
-                entity.getId(), userId, conversationId);
+        try {
+            conversationMapper.insert(entity);
+            log.info("Conversation auto-created: id={}, userId={}, conversationId={}",
+                    entity.getId(), userId, conversationId);
+        } catch (DuplicateKeyException e) {
+            // 并发创建冲突，重新查询
+            log.debug("Conversation concurrent create detected, re-querying: {}", conversationId);
+            existing = findByConversationId(conversationId);
+            if (existing != null && existing.getStatus() != ConversationStatus.DELETED) {
+                return toSummary(existing);
+            }
+            throw e;
+        }
         return toSummary(entity);
     }
 
@@ -96,60 +110,63 @@ public class ConversationServiceImpl implements ConversationService {
     public List<ConversationSummary> list(Long userId, String status, int page, int size) {
         LambdaQueryWrapper<Conversation> wrapper = new LambdaQueryWrapper<Conversation>()
                 .eq(Conversation::getUserId, userId)
-                .ne(Conversation::getStatus, ConversationStatus.DELETED.name());
+                .ne(Conversation::getStatus, ConversationStatus.DELETED);
 
         if (status != null && !status.isBlank()) {
-            wrapper.eq(Conversation::getStatus, status);
+            wrapper.eq(Conversation::getStatus, ConversationStatus.valueOf(status));
         }
 
         // 置顶优先，然后按最后消息时间降序
         wrapper.orderByDesc(Conversation::getPinned)
                .orderByDesc(Conversation::getLastMessageAt);
 
-        // 分页
-        wrapper.last("LIMIT " + size + " OFFSET " + (page - 1) * size);
+        Page<Conversation> pageResult = conversationMapper.selectPage(
+                new Page<>(page, size), wrapper);
 
-        List<Conversation> conversations = conversationMapper.selectList(wrapper);
-        return conversations.stream().map(this::toSummary).toList();
+        return pageResult.getRecords().stream().map(this::toSummary).toList();
     }
 
     @Override
     public ConversationDetail getDetail(Long userId, String conversationId) {
         Conversation conv = findAndVerify(userId, conversationId);
-        List<MessageVO> messages = buildMessageTree(conv.getConversationId());
+        List<MessageVO> messages = messageService.buildMessageTree(conv.getConversationId());
         return toDetail(conv, messages);
     }
 
     @Override
-    @Transactional
     public void update(Long userId, String conversationId, ConversationUpdateRequest request) {
         Conversation conv = findAndVerify(userId, conversationId);
 
         if (request.title() != null) {
-            conversationMapper.updateTitle(conv.getId(), request.title(), TitleSource.USER.name());
+            conversationMapper.updateTitle(conv.getId(), request.title().strip(), TitleSource.USER.getValue());
         }
         if (request.pinned() != null) {
             conversationMapper.updatePinned(conv.getId(), request.pinned());
         }
         if (request.status() != null) {
-            if (!isValidStatus(request.status())) {
-                throw new BusinessException("无效的会话状态: " + request.status());
-            }
-            conversationMapper.updateStatus(conv.getId(), request.status());
+            ConversationStatus newStatus = ConversationStatus.valueOf(request.status());
+            conversationMapper.updateStatus(conv.getId(), newStatus.getValue());
         }
         log.info("Conversation updated: id={}, userId={}", conv.getId(), userId);
     }
 
     @Override
-    @Transactional
     public void delete(Long userId, String conversationId) {
         Conversation conv = findAndVerify(userId, conversationId);
 
-        // 软删除会话
-        conversationMapper.updateStatus(conv.getId(), ConversationStatus.DELETED.name());
+        transactionTemplate.executeWithoutResult(status -> {
+            // 软删除会话
+            conversationMapper.updateStatus(conv.getId(), ConversationStatus.DELETED.getValue());
+            // 清理 message 表记录
+            messageService.deleteByConversationId(conversationId);
+        });
 
-        // 清空 Spring AI memory
-        chatMemoryRepository.deleteByConversationId(conversationId);
+        // 清空 Spring AI memory（在事务外执行，不影响主事务）
+        try {
+            chatMemoryRepository.deleteByConversationId(conversationId);
+        } catch (Exception e) {
+            log.warn("Failed to clear Spring AI memory for conversation {}: {}", conversationId, e.getMessage());
+        }
 
         log.info("Conversation deleted: id={}, userId={}, conversationId={}",
                 conv.getId(), userId, conversationId);
@@ -158,11 +175,10 @@ public class ConversationServiceImpl implements ConversationService {
     @Override
     public List<MessageVO> listMessages(Long userId, String conversationId) {
         findAndVerify(userId, conversationId);
-        return buildMessageTree(conversationId);
+        return messageService.buildMessageTree(conversationId);
     }
 
     @Override
-    @Transactional
     public void onNewMessages(String conversationId, String userContent, int delta) {
         Conversation conv = findByConversationId(conversationId);
         if (conv == null) {
@@ -170,31 +186,30 @@ public class ConversationServiceImpl implements ConversationService {
             return;
         }
 
-        // 更新消息计数和最后消息时间
+        // 原子递增消息计数 + 更新最后消息时间
         conversationMapper.incrementMessageCount(conversationId, delta, LocalDateTime.now());
 
-        // 首次消息时自动设置标题（仅 SYSTEM 生成且标题为空时）
-        if (conv.getMessageCount() == 0 && conv.getTitle() == null
-                && TitleSource.SYSTEM.name().equals(conv.getTitleSource())
-                && userContent != null && !userContent.isBlank()) {
-            String autoTitle = userContent.length() > AUTO_TITLE_MAX_LENGTH
-                    ? userContent.substring(0, AUTO_TITLE_MAX_LENGTH) + "…"
-                    : userContent;
-            conversationMapper.updateTitle(conv.getId(), autoTitle, TitleSource.SYSTEM.name());
+        // 首次消息时自动设置标题（CAS 防并发）
+        if (userContent != null && !userContent.isBlank()) {
+            String sanitized = userContent.strip().replace("\n", " ");
+            String autoTitle = sanitized.length() > AUTO_TITLE_MAX_LENGTH
+                    ? sanitized.substring(0, AUTO_TITLE_MAX_LENGTH) + "…"
+                    : sanitized;
+            conversationMapper.updateTitleIfFirst(conv.getId(), autoTitle, TitleSource.SYSTEM.getValue());
         }
     }
 
     // ==================== 内部方法 ====================
 
     private Conversation findByConversationId(String conversationId) {
-        LambdaQueryWrapper<Conversation> wrapper = new LambdaQueryWrapper<Conversation>()
-                .eq(Conversation::getConversationId, conversationId);
-        return conversationMapper.selectOne(wrapper);
+        return conversationMapper.selectOne(
+                new LambdaQueryWrapper<Conversation>()
+                        .eq(Conversation::getConversationId, conversationId));
     }
 
     private Conversation findAndVerify(Long userId, String conversationId) {
         Conversation conv = findByConversationId(conversationId);
-        if (conv == null || ConversationStatus.DELETED.name().equals(conv.getStatus())) {
+        if (conv == null || conv.getStatus() == ConversationStatus.DELETED) {
             throw new BusinessException("会话不存在");
         }
         if (!conv.getUserId().equals(userId)) {
@@ -203,44 +218,14 @@ public class ConversationServiceImpl implements ConversationService {
         return conv;
     }
 
-    /**
-     * 构建消息树（根消息 + 一层子消息）
-     */
-    private List<MessageVO> buildMessageTree(String conversationId) {
-        List<Message> roots = messageMapper.selectRootMessages(conversationId);
-        if (roots.isEmpty()) {
-            return Collections.emptyList();
-        }
-        return roots.stream().map(root -> {
-            List<Message> children = messageMapper.selectChildren(root.getId());
-            List<MessageVO> childVOs = children.stream()
-                    .map(this::toMessageVO)
-                    .toList();
-            MessageVO rootVO = toMessageVO(root);
-            return new MessageVO(
-                    rootVO.id(), rootVO.parentId(), rootVO.role(), rootVO.content(),
-                    rootVO.status(), rootVO.modelId(), rootVO.thinkingEnabled(),
-                    rootVO.tokenUsage(), rootVO.durationMs(), rootVO.createdAt(),
-                    childVOs.isEmpty() ? null : childVOs
-            );
-        }).toList();
-    }
-
-    private boolean isValidStatus(String status) {
-        try {
-            ConversationStatus.valueOf(status);
-            return true;
-        } catch (IllegalArgumentException e) {
-            return false;
-        }
-    }
-
     // ==================== 转换方法 ====================
 
     private ConversationSummary toSummary(Conversation c) {
         return new ConversationSummary(
-                c.getId(), c.getConversationId(), c.getTitle(), c.getTitleSource(),
-                c.getModelId(), Boolean.TRUE.equals(c.getPinned()), c.getStatus(),
+                c.getId(), c.getConversationId(), c.getTitle(),
+                c.getTitleSource() != null ? c.getTitleSource().getValue() : null,
+                c.getModelId(), Boolean.TRUE.equals(c.getPinned()),
+                c.getStatus() != null ? c.getStatus().getValue() : null,
                 c.getMessageCount() != null ? c.getMessageCount() : 0,
                 c.getLastMessageAt(), c.getCreatedAt()
         );
@@ -248,19 +233,12 @@ public class ConversationServiceImpl implements ConversationService {
 
     private ConversationDetail toDetail(Conversation c, List<MessageVO> messages) {
         return new ConversationDetail(
-                c.getId(), c.getConversationId(), c.getTitle(), c.getTitleSource(),
-                c.getModelId(), Boolean.TRUE.equals(c.getPinned()), c.getStatus(),
+                c.getId(), c.getConversationId(), c.getTitle(),
+                c.getTitleSource() != null ? c.getTitleSource().getValue() : null,
+                c.getModelId(), Boolean.TRUE.equals(c.getPinned()),
+                c.getStatus() != null ? c.getStatus().getValue() : null,
                 c.getMessageCount() != null ? c.getMessageCount() : 0,
                 c.getLastMessageAt(), c.getCreatedAt(), messages
-        );
-    }
-
-    private MessageVO toMessageVO(Message m) {
-        return new MessageVO(
-                m.getId(), m.getParentId(), m.getRole(), m.getContent(),
-                m.getStatus(), m.getModelId(), m.getThinkingEnabled(),
-                m.getTokenUsage(), m.getDurationMs(), m.getCreatedAt(),
-                null  // children 由 buildMessageTree 单独填充
         );
     }
 }

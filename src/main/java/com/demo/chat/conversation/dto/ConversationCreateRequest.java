@@ -1,5 +1,6 @@
 package com.demo.chat.conversation.dto;
 
+import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
 
 /**
@@ -13,5 +14,6 @@ public record ConversationCreateRequest(
     String title,
 
     @Size(max = 100, message = "模型 ID 最长 100 字符")
+    @Pattern(regexp = "^[a-zA-Z0-9._/-]*$", message = "模型 ID 格式不合法")
     String modelId
 ) {}

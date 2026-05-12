@@ -31,7 +31,7 @@ public class Conversation {
     private String title;
 
     @TableField("title_source")
-    private String titleSource;
+    private TitleSource titleSource;
 
     @TableField("model_id")
     private String modelId;
@@ -40,7 +40,7 @@ public class Conversation {
     private Boolean pinned;
 
     @TableField("status")
-    private String status;
+    private ConversationStatus status;
 
     @TableField("message_count")
     private Integer messageCount;
@@ -64,9 +64,9 @@ public class Conversation {
         this.conversationId = conversationId;
         this.userId = userId;
         this.modelId = modelId;
-        this.titleSource = TitleSource.SYSTEM.name();
+        this.titleSource = TitleSource.SYSTEM;
         this.pinned = false;
-        this.status = ConversationStatus.ACTIVE.name();
+        this.status = ConversationStatus.ACTIVE;
         this.messageCount = 0;
         this.createdAt = LocalDateTime.now();
         this.updatedAt = LocalDateTime.now();
@@ -78,10 +78,10 @@ public class Conversation {
     public String getConversationId() { return conversationId; }
     public Long getUserId() { return userId; }
     public String getTitle() { return title; }
-    public String getTitleSource() { return titleSource; }
+    public TitleSource getTitleSource() { return titleSource; }
     public String getModelId() { return modelId; }
     public Boolean getPinned() { return pinned; }
-    public String getStatus() { return status; }
+    public ConversationStatus getStatus() { return status; }
     public Integer getMessageCount() { return messageCount; }
     public LocalDateTime getLastMessageAt() { return lastMessageAt; }
     public LocalDateTime getCreatedAt() { return createdAt; }
@@ -93,10 +93,10 @@ public class Conversation {
     public void setConversationId(String conversationId) { this.conversationId = conversationId; }
     public void setUserId(Long userId) { this.userId = userId; }
     public void setTitle(String title) { this.title = title; }
-    public void setTitleSource(String titleSource) { this.titleSource = titleSource; }
+    public void setTitleSource(TitleSource titleSource) { this.titleSource = titleSource; }
     public void setModelId(String modelId) { this.modelId = modelId; }
     public void setPinned(Boolean pinned) { this.pinned = pinned; }
-    public void setStatus(String status) { this.status = status; }
+    public void setStatus(ConversationStatus status) { this.status = status; }
     public void setMessageCount(Integer messageCount) { this.messageCount = messageCount; }
     public void setLastMessageAt(LocalDateTime lastMessageAt) { this.lastMessageAt = lastMessageAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
@@ -105,10 +105,17 @@ public class Conversation {
     // ==================== 业务方法 ====================
 
     public boolean isActive() {
-        return ConversationStatus.ACTIVE.name().equals(this.status);
+        return ConversationStatus.ACTIVE == this.status;
     }
 
     public boolean isTitleUserEdited() {
-        return TitleSource.USER.name().equals(this.titleSource);
+        return TitleSource.USER == this.titleSource;
+    }
+
+    /** 是否需要自动生成标题（系统生成 + 标题为空 + 首条消息） */
+    public boolean needsAutoTitle() {
+        return titleSource == TitleSource.SYSTEM
+                && title == null
+                && (messageCount == null || messageCount == 0);
     }
 }

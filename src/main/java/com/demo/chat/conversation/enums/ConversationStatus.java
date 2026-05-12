@@ -1,21 +1,26 @@
 package com.demo.chat.conversation.enums;
 
+import com.baomidou.mybatisplus.annotation.EnumValue;
+import com.fasterxml.jackson.annotation.JsonValue;
+
 /**
  * 会话状态枚举
  */
 public enum ConversationStatus {
 
-    ACTIVE("活跃"),
-    ARCHIVED("已归档"),
-    DELETED("已删除");
+    ACTIVE("ACTIVE"),
+    ARCHIVED("ARCHIVED"),
+    DELETED("DELETED");
 
-    private final String description;
+    @EnumValue
+    @JsonValue
+    private final String value;
 
-    ConversationStatus(String description) {
-        this.description = description;
+    ConversationStatus(String value) {
+        this.value = value;
     }
 
-    public String getDescription() {
-        return description;
+    public String getValue() {
+        return value;
     }
 }

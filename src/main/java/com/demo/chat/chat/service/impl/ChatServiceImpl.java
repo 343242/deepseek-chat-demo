@@ -17,7 +17,7 @@ import com.demo.chat.chat.provider.ModelRouter;
 import com.demo.chat.chat.service.ChatRequestSpecFactory;
 import com.demo.chat.chat.service.ChatService;
 import com.demo.chat.chat.service.UsageService;
-import com.demo.chat.conversation.service.ConversationQueryService;
+import com.demo.chat.conversation.service.ConversationMessageService;
 import com.demo.chat.conversation.entity.Message;
 import com.demo.chat.conversation.util.ConversationIdUtil;
 import com.demo.chat.exception.BusinessException;
@@ -29,7 +29,9 @@ import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.metadata.Usage;
 import org.springframework.ai.chat.model.Generation;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionTemplate;
 import reactor.core.publisher.Flux;
 
 import java.util.List;
@@ -66,7 +68,8 @@ public class ChatServiceImpl implements ChatService {
     private final RequestContextManager cagContextManager;
     private final CagProperties cagProperties;
     private final com.demo.chat.conversation.service.ConversationService conversationService;
-    private final ConversationQueryService conversationQueryService;
+    private final ConversationMessageService conversationMessageService;
+    private final TransactionTemplate transactionTemplate;
 
     public ChatServiceImpl(ChatClientRegistry registry,
                            ModelRouter modelRouter,
@@ -81,7 +84,8 @@ public class ChatServiceImpl implements ChatService {
                            RequestContextManager cagContextManager,
                            CagProperties cagProperties,
                            com.demo.chat.conversation.service.ConversationService conversationService,
-                           ConversationQueryService conversationQueryService) {
+                           ConversationMessageService conversationMessageService,
+                           TransactionTemplate transactionTemplate) {
         this.registry = registry;
         this.modelRouter = modelRouter;
         this.modeRouter = modeRouter;
@@ -95,7 +99,8 @@ public class ChatServiceImpl implements ChatService {
         this.cagContextManager = cagContextManager;
         this.cagProperties = cagProperties;
         this.conversationService = conversationService;
-        this.conversationQueryService = conversationQueryService;
+        this.conversationMessageService = conversationMessageService;
+        this.transactionTemplate = transactionTemplate;
     }
 
     // ==================== 阻塞式聊天 ====================
@@ -313,38 +318,52 @@ public class ChatServiceImpl implements ChatService {
     private void ensureConversationExists(ChatContext ctx, ChatRequest request) {
         try {
             conversationService.getOrCreate(ctx.userId, ctx.conversationId, request.model());
+        } catch (DuplicateKeyException e) {
+            // 并发创建冲突，唯一约束兜底，忽略
+            log.debug("Conversation already exists (concurrent create): {}", ctx.conversationId);
         } catch (Exception e) {
-            log.warn("Failed to ensure conversation exists: {}", e.getMessage());
+            log.error("Failed to ensure conversation exists: conversationId={}", ctx.conversationId, e);
+            throw e;
         }
     }
 
     /**
      * 保存业务消息记录并通知会话更新
      */
+    /**
+     * 保存业务消息记录并通知会话更新
+     * <p>
+     * 使用编程式事务保证 USER 消息 + ASSISTANT 消息 + 会话计数的原子性。
+     * 事务失败时向上传播异常，调用方决定是否影响主流程。
+     */
     private void saveMessagesAndNotify(ChatContext ctx, String userContent, String assistantContent,
                                        String modelId,
                                        org.springframework.ai.chat.model.ChatResponse aiResponse,
                                        long durationMs) {
         try {
-            // 写入 USER 消息
-            Message userMsg = Message.userMessage(ctx.conversationId, null, userContent);
-            conversationQueryService.saveMessage(userMsg);
+            transactionTemplate.executeWithoutResult(status -> {
+                // 写入 USER 消息
+                Message userMsg = Message.userMessage(ctx.conversationId, null, userContent);
+                conversationMessageService.saveMessage(userMsg);
 
-            // 写入 ASSISTANT 消息
-            int totalTokens = -1;
-            if (aiResponse != null && aiResponse.getMetadata().getUsage() != null) {
-                Usage usage = aiResponse.getMetadata().getUsage();
-                totalTokens = usage.getTotalTokens() != null ? usage.getTotalTokens().intValue() : -1;
-            }
-            Message assistantMsg = Message.assistantMessage(
-                    ctx.conversationId, userMsg.getId(), assistantContent,
-                    modelId, totalTokens, durationMs);
-            conversationQueryService.saveMessage(assistantMsg);
+                // 写入 ASSISTANT 消息
+                int totalTokens = -1;
+                if (aiResponse != null && aiResponse.getMetadata().getUsage() != null) {
+                    Usage usage = aiResponse.getMetadata().getUsage();
+                    totalTokens = usage.getTotalTokens() != null ? usage.getTotalTokens().intValue() : -1;
+                }
+                Message assistantMsg = Message.assistantMessage(
+                        ctx.conversationId, userMsg.getId(), assistantContent,
+                        modelId, totalTokens, durationMs);
+                conversationMessageService.saveMessage(assistantMsg);
 
-            // 通知会话更新计数和标题
-            conversationService.onNewMessages(ctx.conversationId, userContent, 2);
+                // 通知会话更新计数和标题
+                conversationService.onNewMessages(ctx.conversationId, userContent, 2);
+            });
         } catch (Exception e) {
-            log.warn("Failed to save message records: {}", e.getMessage());
+            // 消息持久化失败不影响已返回给用户的响应，但必须记录完整异常栈
+            log.error("Failed to save message records: conversationId={}, model={}",
+                    ctx.conversationId, modelId, e);
         }
     }
 

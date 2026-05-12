@@ -1,21 +1,26 @@
 package com.demo.chat.conversation.enums;
 
+import com.baomidou.mybatisplus.annotation.EnumValue;
+import com.fasterxml.jackson.annotation.JsonValue;
+
 /**
  * 消息状态枚举
  */
 public enum MessageStatus {
 
-    IN_PROGRESS("生成中"),
-    FINISHED("已完成"),
-    ERROR("出错");
+    IN_PROGRESS("IN_PROGRESS"),
+    FINISHED("FINISHED"),
+    ERROR("ERROR");
 
-    private final String description;
+    @EnumValue
+    @JsonValue
+    private final String value;
 
-    MessageStatus(String description) {
-        this.description = description;
+    MessageStatus(String value) {
+        this.value = value;
     }
 
-    public String getDescription() {
-        return description;
+    public String getValue() {
+        return value;
     }
 }

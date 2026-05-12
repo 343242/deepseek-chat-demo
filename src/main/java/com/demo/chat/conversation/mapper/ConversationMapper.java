@@ -3,6 +3,7 @@ package com.demo.chat.conversation.mapper;
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.demo.chat.conversation.entity.Conversation;
 import com.demo.chat.conversation.enums.ConversationStatus;
+import com.demo.chat.conversation.enums.TitleSource;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Update;
@@ -16,7 +17,7 @@ import java.time.LocalDateTime;
 public interface ConversationMapper extends BaseMapper<Conversation> {
 
     /**
-     * 递增消息计数 + 更新最后消息时间
+     * 递增消息计数 + 更新最后消息时间（原子操作）
      */
     @Update("UPDATE conversation SET message_count = message_count + #{delta}, " +
             "last_message_at = #{lastMessageAt}, updated_at = NOW() " +
@@ -26,7 +27,17 @@ public interface ConversationMapper extends BaseMapper<Conversation> {
                               @Param("lastMessageAt") LocalDateTime lastMessageAt);
 
     /**
-     * 更新会话标题
+     * 条件更新标题：仅当 message_count = 0 且 title_source = SYSTEM 时更新（CAS 防并发）
+     */
+    @Update("UPDATE conversation SET title = #{title}, title_source = #{titleSource}, " +
+            "updated_at = NOW() " +
+            "WHERE id = #{id} AND message_count = 0 AND title_source = 'SYSTEM'")
+    int updateTitleIfFirst(@Param("id") Long id,
+                           @Param("title") String title,
+                           @Param("titleSource") String titleSource);
+
+    /**
+     * 更新会话标题（用户编辑）
      */
     @Update("UPDATE conversation SET title = #{title}, title_source = #{titleSource}, " +
             "updated_at = NOW() WHERE id = #{id}")

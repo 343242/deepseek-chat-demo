@@ -3,7 +3,7 @@
 > **任务编号**: 05-12-cag-context-manager
 > **日期**: 2026-05-12
 > **来源**: [超越 RAG：用 Spring Boot 构建具备上下文感知能力的 AI 系统](https://3g.k.sohu.com/t/n1004942643)
-> **状态**: 设计评审中
+> **状态**: 设计评审通过（v2 修正版）
 
 ---
 
@@ -35,11 +35,12 @@ CAG（Context-Augmented Generation，上下文增强生成）提出：
 ## 二、设计目标
 
 1. **将运行时上下文提升为一等架构要素**：用户画像、会话状态、策略约束统一管理
-2. **OCP 遵循**：新增功能 = 新增类，不改旧类（检索器、后处理器不动）
+2. **OCP 遵循**：新增功能 = 新增类，检索器/后处理器不动
 3. **策略模式**：上下文收集的每个维度独立策略，可替换、可扩展
 4. **渐进式引入**：最小化第一步（system prompt 注入），后续可扩展到检索过滤
 5. **降级容错**：任何上下文解析失败，返回默认值，不阻断主流程
 6. **可观测性**：上下文组装过程可审计、可追踪
+7. **安全纵深**：注入 LLM 的文本必须做 sanitize，防止间接 prompt injection
 
 ---
 
@@ -63,7 +64,29 @@ ChatClient → LLM
 
 **关键约束**：ContextManager 位于请求组装阶段，不修改现有的 RAG 组件（检索器、后处理器、Advisor）。
 
-### 3.2 新增类清单
+### 3.2 会修改的旧类 vs 不会修改的旧类
+
+**会修改的旧类**：
+
+| 类 | 修改内容 | 影响面 |
+|----|----------|--------|
+| `ChatServiceImpl` | 新增 `RequestContextManager` + `CagProperties` 注入；`doChat()`/`doStream()` 中构建 CAG 上下文并传给 `createSpec()` | 注入扩展 + 参数传递 |
+| `ChatRequestSpecFactory` | `createSpec()` 新增 `RequestContext` 参数；新增 `ContextPromptInjector` 注入 | 签名扩展 + prompt 增强 |
+
+**不会修改的旧类**：
+
+| 类 | 原因 |
+|----|------|
+| `RagAdvisorFactory` | 用户隔离逻辑不变 |
+| `HybridDocumentRetriever` | 检索逻辑不变 |
+| `BailianRerankPostProcessor` | 后处理器不变 |
+| `MmrDocumentPostProcessor` | 后处理器不变 |
+| `ParentDocumentPostProcessor` | 后处理器不变 |
+| `QueryNormalizer` | 查询归一化不变 |
+| `ChatAdvisorChainFactory` | Advisor 链构建逻辑不变 |
+| `RagConfig` | Bean 定义不变 |
+
+### 3.3 新增类清单
 
 ```
 com.demo.chat.chat.context/
@@ -73,25 +96,27 @@ com.demo.chat.chat.context/
 ├── UserProfileResolver.java        // 用户画像解析策略接口
 ├── DefaultUserProfileResolver.java // 默认：DB 读角色+权限
 ├── SessionContextResolver.java     // 会话上下文解析策略接口
-├── DefaultSessionContextResolver.java// 默认：从 ChatMemory 读摘要
+├── DefaultSessionContextResolver.java// 默认：推断对话阶段
 ├── PolicyConstraintResolver.java   // 策略约束解析策略接口
 ├── DefaultPolicyConstraintResolver.java// 默认：基于角色生成约束文本
-└── ContextPromptInjector.java      // 将 RequestContext 注入 system prompt
+├── ContextPromptInjector.java      // 将 RequestContext 注入 system prompt
+└── CagProperties.java              // CAG 配置开关
 ```
 
-### 3.3 类关系
+### 3.4 类关系
 
 ```
 RequestContextManager (接口)
   └── DefaultRequestContextManager
         ├── UserProfileResolver (策略)
-        │     └── DefaultUserProfileResolver
+        │     └── DefaultUserProfileResolver → SysUserMapper, SysUserRoleMapper, SysRoleMapper
         ├── SessionContextResolver (策略)
-        │     └── DefaultSessionContextResolver
+        │     └── DefaultSessionContextResolver (推断对话阶段)
         └── PolicyConstraintResolver (策略)
-              └── DefaultPolicyConstraintResolver
+              └── DefaultPolicyConstraintResolver (角色→约束映射)
 
-ContextPromptInjector (工具类，消费 RequestContext)
+ContextPromptInjector (工具类，消费 RequestContext + CagProperties)
+CagProperties (@ConfigurationProperties)
 ```
 
 ---
@@ -114,21 +139,36 @@ public record RequestContext(
 ) {
     /**
      * 生成注入 LLM system prompt 的上下文文本段
+     * 
+     * 安全边界：只输出昵称和角色名，不输出权限列表（permissions）、
+     * 用户 ID、邮箱等敏感字段。
      */
     public String toPromptSegment() {
         StringBuilder sb = new StringBuilder();
         if (user != null) {
-            sb.append("当前用户：").append(user.nickname())
-              .append("，角色：").append(String.join("、", user.roles()));
+            sb.append("当前用户：").append(sanitize(user.nickname()))
+              .append("，角色：").append(user.roles().stream()
+                      .map(RequestContext::sanitize)
+                      .collect(Collectors.joining("、")));
         }
-        if (session != null && session.messageCount() > 0) {
-            sb.append("\n会话状态：已交流 ").append(session.messageCount()).append(" 轮");
+        if (session != null && session.stage() != null) {
+            sb.append("\n对话阶段：").append(sanitize(session.stage()));
         }
         if (policy != null && !policy.constraints().isEmpty()) {
             sb.append("\n回答约束：\n");
-            policy.constraints().forEach(c -> sb.append("- ").append(c).append("\n"));
+            policy.constraints().forEach(c -> sb.append("- ").append(sanitize(c)).append("\n"));
         }
         return sb.toString();
+    }
+
+    /**
+     * 清理注入文本，移除控制字符，防止间接 prompt injection。
+     * 防御纵深：即使角色名由管理员设置，注入 LLM 的文本也应做清理。
+     */
+    private static String sanitize(String input) {
+        if (input == null) return "";
+        return input.replaceAll("[\\x00-\\x08\\x0B\\x0C\\x0E-\\x1F]", "")
+                     .replaceAll("[\\r\\n]", " ");
     }
 
     /**
@@ -139,8 +179,13 @@ public record RequestContext(
     }
 }
 
+/** 用户画像（安全边界：permissions 不注入到 LLM，仅供内部策略判断） */
 public record UserContext(Long userId, String nickname, Set<String> roles, Set<String> permissions) {}
-public record SessionContext(String conversationId, int messageCount, String recentTopic) {}
+
+/** 会话上下文（stage 由 SessionContextResolver 推断） */
+public record SessionContext(String conversationId, int messageCount, String stage) {}
+
+/** 策略约束 */
 public record PolicyContext(List<String> constraints, boolean ragRestricted) {}
 ```
 
@@ -158,7 +203,7 @@ public interface RequestContextManager {
      * 收集并组装当前请求的完整上下文
      *
      * @param userId          当前用户 ID
-     * @param conversationId  隔离后的对话 ID
+     * @param conversationId  隔离后的对话 ID（必须传 ConversationIdUtil.buildIsolatedId 的结果）
      * @param ragEnabled      是否启用 RAG
      * @param messageCount    当前会话消息数量（上游传入，避免重复查 ChatMemory）
      */
@@ -176,23 +221,18 @@ public class DefaultRequestContextManager implements RequestContextManager {
     private final UserProfileResolver userResolver;
     private final SessionContextResolver sessionResolver;
     private final PolicyConstraintResolver policyResolver;
+    private final CagProperties cagProperties;
 
     public DefaultRequestContextManager(UserProfileResolver userResolver,
                                         SessionContextResolver sessionResolver,
-                                        PolicyConstraintResolver policyResolver) {
+                                        PolicyConstraintResolver policyResolver,
+                                        CagProperties cagProperties) {
         this.userResolver = userResolver;
         this.sessionResolver = sessionResolver;
         this.policyResolver = policyResolver;
+        this.cagProperties = cagProperties;
     }
 
-    /**
-     * 收集并组装当前请求的完整上下文
-     *
-     * @param userId          当前用户 ID
-     * @param conversationId  隔离后的对话 ID（修正 9.2）
-     * @param ragEnabled      是否启用 RAG
-     * @param messageCount    当前会话消息数量（修正 9.3：上游传入，避免重复查 ChatMemory）
-     */
     @Override
     public RequestContext buildContext(Long userId, String conversationId, 
                                         boolean ragEnabled, int messageCount) {
@@ -206,11 +246,13 @@ public class DefaultRequestContextManager implements RequestContextManager {
 
         RequestContext ctx = new RequestContext(user, session, policy);
 
-        log.info("CAG context assembled: userId={}, roles={}, ragEnabled={}, constraints={}",
-                userId,
-                user != null ? user.roles() : "unknown",
-                ragEnabled,
-                policy != null ? policy.constraints().size() : 0);
+        if (cagProperties.isLogContext()) {
+            log.info("CAG context assembled: userId={}, roles={}, ragEnabled={}, constraints={}",
+                    userId,
+                    user != null ? user.roles() : "unknown",
+                    ragEnabled,
+                    policy != null ? policy.constraints().size() : 0);
+        }
 
         return ctx;
     }
@@ -251,6 +293,7 @@ public class DefaultUserProfileResolver implements UserProfileResolver {
 
     private final SysUserMapper userMapper;
     private final SysUserRoleMapper userRoleMapper;
+    private final SysRoleMapper roleMapper;
     private final SysRolePermissionMapper rolePermissionMapper;
 
     @Override
@@ -260,19 +303,34 @@ public class DefaultUserProfileResolver implements UserProfileResolver {
             return new UserContext(userId, "unknown", Set.of(), Set.of());
         }
 
-        // 查询角色
+        // 1. 查询用户关联的角色 ID
         List<SysUserRole> userRoles = userRoleMapper.selectByUserId(userId);
-        Set<String> roles = userRoles.stream()
-                .map(ur -> /* 查 role name */ ...)
+        List<Long> roleIds = userRoles.stream()
+                .map(SysUserRole::getRoleId)
+                .toList();
+
+        if (roleIds.isEmpty()) {
+            return new UserContext(userId, user.getNickname(), Set.of(), Set.of());
+        }
+
+        // 2. 批量查角色名（避免 N+1）
+        List<SysRole> roles = roleMapper.selectByIds(roleIds);
+        Set<String> roleNames = roles.stream()
+                .map(SysRole::getRoleName)
                 .collect(Collectors.toSet());
 
-        // 查询权限
-        Set<String> permissions = /* 基于 roleIds 查 sys_permission */ ...;
+        // 3. 批量查权限
+        Set<String> permissions = rolePermissionMapper.selectPermissionsByRoleIds(roleIds)
+                .stream()
+                .map(SysPermission::getPermissionName)
+                .collect(Collectors.toSet());
 
-        return new UserContext(userId, user.getNickname(), roles, permissions);
+        return new UserContext(userId, user.getNickname(), roleNames, permissions);
     }
 }
 ```
+
+> **依赖**：需要在 `SysRoleMapper` 中新增 `List<SysRole> selectByIds(List<Long> ids)` 批量方法。
 
 ### 4.4 SessionContextResolver（策略接口 + 默认实现）
 
@@ -280,10 +338,8 @@ public class DefaultUserProfileResolver implements UserProfileResolver {
 /**
  * 会话上下文解析策略
  * 
- * 基于上游已知的会话信息构建上下文。
- * 
- * 注意（修正 9.3）：不自行查 ChatMemory，避免与 ConversationContextAdvisor 重复查询。
- * 消息数量由上游传入。
+ * 基于上游传入的消息数量，推断对话阶段并构建会话上下文。
+ * 不自行查 ChatMemory，避免与 ConversationContextAdvisor 重复查询。
  */
 public interface SessionContextResolver {
     SessionContext resolve(String conversationId, int messageCount);
@@ -296,7 +352,18 @@ public class DefaultSessionContextResolver implements SessionContextResolver {
 
     @Override
     public SessionContext resolve(String conversationId, int messageCount) {
-        return new SessionContext(conversationId, messageCount, null);
+        String stage = inferStage(messageCount);
+        return new SessionContext(conversationId, messageCount, stage);
+    }
+
+    /**
+     * 从消息数量推断对话阶段，帮助 LLM 理解当前对话的深度
+     */
+    private String inferStage(int messageCount) {
+        if (messageCount == 0) return "首次对话";
+        if (messageCount < 5) return "对话初期";
+        if (messageCount < 15) return "深入交流";
+        return "长对话";
     }
 }
 ```
@@ -327,7 +394,7 @@ public class DefaultPolicyConstraintResolver implements PolicyConstraintResolver
             return new PolicyContext(constraints, false);
         }
 
-        // 基于角色生成约束
+        // 基于角色生成约束（v1 硬编码，v2 改为配置驱动）
         if (user.roles().contains("ADMIN")) {
             constraints.add("你是管理员，可以访问所有信息");
         } else {
@@ -344,7 +411,7 @@ public class DefaultPolicyConstraintResolver implements PolicyConstraintResolver
 }
 ```
 
-> **注意**：`DefaultPolicyConstraintResolver` 的约束规则是初始版本。后续可通过配置文件或数据库驱动，不需要改代码（OCP）。
+> **注意**：`DefaultPolicyConstraintResolver` 的约束规则是 v1 硬编码版本。v2 改为配置驱动（yml 或数据库映射），加新约束不改代码。
 
 ### 4.6 ContextPromptInjector（上下文注入器）
 
@@ -354,9 +421,16 @@ public class DefaultPolicyConstraintResolver implements PolicyConstraintResolver
  * 
  * 将 RequestContext 转化为文本段，注入到 system prompt 中。
  * 注入位置：在原有 system prompt 之前，用明确的标记分隔。
+ * 受 CagProperties.injectPrompt 开关控制。
  */
 @Component
 public class ContextPromptInjector {
+
+    private final CagProperties cagProperties;
+
+    public ContextPromptInjector(CagProperties cagProperties) {
+        this.cagProperties = cagProperties;
+    }
 
     /**
      * 注入上下文到 system prompt
@@ -366,6 +440,10 @@ public class ContextPromptInjector {
      * @return 增强后的 system prompt
      */
     public String inject(String originalPrompt, RequestContext context) {
+        if (!cagProperties.isInjectPrompt()) {
+            return originalPrompt;
+        }
+
         if (context == null) {
             return originalPrompt;
         }
@@ -389,48 +467,183 @@ public class ContextPromptInjector {
 }
 ```
 
+### 4.7 CagProperties（配置类）
+
+```java
+/**
+ * CAG 上下文增强配置
+ * 
+ * 对应 application.yml 中 app.cag.* 配置项。
+ * 所有开关默认开启，可按需关闭。
+ */
+@Component
+@ConfigurationProperties(prefix = "app.cag")
+public class CagProperties {
+    /** 是否启用 CAG（总开关，关闭后不构建上下文） */
+    private boolean enabled = true;
+    /** 是否将上下文注入到 system prompt */
+    private boolean injectPrompt = true;
+    /** 是否记录上下文组装日志（可观测性） */
+    private boolean logContext = true;
+    // getter/setter
+}
+```
+
+配置文件：
+
+```yaml
+# application.yml
+app:
+  cag:
+    enabled: true       # CAG 总开关
+    inject-prompt: true  # 是否注入到 system prompt
+    log-context: true    # 是否记录上下文日志
+```
+
 ---
 
 ## 五、集成点
 
-### 5.1 ChatRequestSpecFactory（修改点 1）
+### 5.1 ChatServiceImpl（修改点 1：构建 CAG 上下文）
 
 ```java
-// 新增注入
-private final ContextPromptInjector contextPromptInjector;
+@Service
+public class ChatServiceImpl implements ChatService {
 
-// createSpec 新增 RequestContext 参数（修正 9.1：避免重复查 userId）
-public ChatClient.ChatClientRequestSpec createSpec(
-        ChatClient chatClient, ModelRouter.Route route,
-        ChatRequest request, String conversationId, ChatModeStrategy modeStrategy,
-        RequestContext cagContext) {  // ← 由调用方传入，不再内部调 SecurityUtils
+    // 新增注入
+    private final RequestContextManager cagContextManager;
+    private final CagProperties cagProperties;
 
-    List<Advisor> advisors = advisorChainFactory.buildChain(conversationId, request, modeStrategy);
-    ChatClient.ChatClientRequestSpec spec = chatClient.prompt()
-            .user(request.message())
-            .advisors(advisors);
-
-    if (advisorChainFactory.hasTools()) {
-        spec = spec.tools((Object) advisorChainFactory.getToolCallbacks());
+    public ChatServiceImpl(ChatClientRegistry registry,
+                           ModelRouter modelRouter,
+                           ModeRouter modeRouter,
+                           ChatRequestSpecFactory requestSpecFactory,
+                           UsageService usageService,
+                           ChatMemory chatMemory,
+                           ChatFallbackProperties fallbackProperties,
+                           FallbackChainProvider fallbackChainProvider,
+                           FallbackEligibility fallbackEligibility,
+                           StreamRetryHandler streamRetryHandler,
+                           RequestContextManager cagContextManager,   // 新增
+                           CagProperties cagProperties) {             // 新增
+        // ... 现有赋值
+        this.cagContextManager = cagContextManager;
+        this.cagProperties = cagProperties;
     }
 
-    // CAG: 注入 system prompt
-    String systemPrompt = resolveSystemPrompt(route);
-    systemPrompt = contextPromptInjector.inject(systemPrompt, cagContext);
-    if (systemPrompt != null && !systemPrompt.isBlank()) {
-        spec = spec.system(systemPrompt);
+    private ChatResponse doChat(ChatRequest request, FallbackMeta fallback) {
+        ChatContext ctx = prepareContext(request);
+
+        // CAG: 构建上下文（仅在 CAG 启用时）
+        RequestContext cagCtx = buildCagContext(ctx, request);
+
+        ChatClient.ChatClientRequestSpec requestSpec = requestSpecFactory.createSpec(
+                ctx.chatClient, ctx.route, request, ctx.conversationId, ctx.modeStrategy,
+                cagCtx);  // ← 传入 CAG 上下文
+
+        // ... 后续逻辑不变
     }
 
-    ChatOptions options = resolveChatOptions(route);
-    if (options != null) {
-        spec = spec.options(options);
+    private Flux<String> doStream(String modelId, ChatRequest request) {
+        ChatContext ctx = prepareContext(request);
+
+        // CAG: 构建上下文（仅在 CAG 启用时）
+        RequestContext cagCtx = buildCagContext(ctx, request);
+
+        ChatClient.ChatClientRequestSpec requestSpec = requestSpecFactory.createSpec(
+                ctx.chatClient, ctx.route, request, ctx.conversationId, ctx.modeStrategy,
+                cagCtx);  // ← 传入 CAG 上下文
+
+        // ... 后续逻辑不变
     }
 
-    return spec;
+    /**
+     * 构建 CAG 上下文
+     * 
+     * @return RequestContext，CAG 未启用时返回 null
+     */
+    private RequestContext buildCagContext(ChatContext ctx, ChatRequest request) {
+        if (!cagProperties.isEnabled()) {
+            return null;
+        }
+        int msgCount = chatMemory.get(ctx.conversationId).size();
+        return cagContextManager.buildContext(
+                ctx.userId, ctx.conversationId, request.isRagEnabled(), msgCount);
+    }
+
+    /**
+     * 请求上下文 — 扩展以包含 userId（原实现中 userId 在 prepareContext 内局部使用）
+     */
+    private static class ChatContext {
+        final ChatClient chatClient;
+        final ModelRouter.Route route;
+        final String conversationId;
+        final ChatModeStrategy modeStrategy;
+        final Long userId;            // 新增：供 CAG 使用
+        final long startTimeMs;
+
+        ChatContext(ChatClient chatClient, ModelRouter.Route route,
+                    String conversationId, ChatModeStrategy modeStrategy, Long userId) {
+            this.chatClient = chatClient;
+            this.route = route;
+            this.conversationId = conversationId;
+            this.modeStrategy = modeStrategy;
+            this.userId = userId;
+            this.startTimeMs = System.currentTimeMillis();
+        }
+
+        long elapsed() {
+            return System.currentTimeMillis() - startTimeMs;
+        }
+    }
 }
 ```
 
-### 5.2 RagAdvisorFactory（预留扩展点）
+### 5.2 ChatRequestSpecFactory（修改点 2：接收 CAG 上下文）
+
+```java
+@Component
+public class ChatRequestSpecFactory {
+
+    private final ChatAdvisorChainFactory advisorChainFactory;
+    private final SystemPromptService systemPromptService;
+    private final ModelParamsService modelParamsService;
+    private final ProviderRegistry providerRegistry;
+    private final ContextPromptInjector contextPromptInjector;  // 新增注入
+
+    public ChatClient.ChatClientRequestSpec createSpec(
+            ChatClient chatClient, ModelRouter.Route route,
+            ChatRequest request, String conversationId, ChatModeStrategy modeStrategy,
+            RequestContext cagContext) {  // ← 新增参数
+
+        List<Advisor> advisors = advisorChainFactory.buildChain(conversationId, request, modeStrategy);
+
+        ChatClient.ChatClientRequestSpec spec = chatClient.prompt()
+                .user(request.message())
+                .advisors(advisors);
+
+        if (advisorChainFactory.hasTools()) {
+            spec = spec.tools((Object) advisorChainFactory.getToolCallbacks());
+        }
+
+        // CAG: 注入 system prompt
+        String systemPrompt = resolveSystemPrompt(route);
+        systemPrompt = contextPromptInjector.inject(systemPrompt, cagContext);
+        if (systemPrompt != null && !systemPrompt.isBlank()) {
+            spec = spec.system(systemPrompt);
+        }
+
+        ChatOptions options = resolveChatOptions(route);
+        if (options != null) {
+            spec = spec.options(options);
+        }
+
+        return spec;
+    }
+}
+```
+
+### 5.3 RagAdvisorFactory（预留扩展点）
 
 ```java
 // 未来版本：create 方法可接收 RequestContext
@@ -441,44 +654,21 @@ public RetrievalAugmentationAdvisor create(Long userId, RequestContext context) 
 }
 ```
 
-### 5.3 配置开关
-
-```yaml
-# application.yml
-app:
-  cag:
-    enabled: true                    # CAG 总开关
-    inject-prompt: true              # 是否注入到 system prompt
-    log-context: true                # 是否记录上下文日志（可观测性）
-```
-
-对应配置类：
-
-```java
-@Component
-@ConfigurationProperties(prefix = "app.cag")
-public class CagProperties {
-    private boolean enabled = true;
-    private boolean injectPrompt = true;
-    private boolean logContext = true;
-    // getter/setter
-}
-```
-
 ---
 
 ## 六、设计原则对照
 
 | 原则 | 体现 |
 |------|------|
-| **OCP（开闭原则）** | 新增 `context` 包 10 个类，不修改检索器/后处理器。扩展约束规则时加新 Resolver 实现，不改 DefaultPolicyConstraintResolver |
+| **OCP（开闭原则）** | 新增 `context` 包 11 个类；仅修改 2 个旧类的签名/注入。检索器、后处理器、Advisor 工厂不变 |
 | **策略模式** | 三个 Resolver 接口，每个有默认实现，可独立替换 |
 | **关注点分离** | ContextManager 只编排，不决策；检索器只检索；LLM 只生成 |
 | **封装彻底** | LLM 和检索器不知道上下文从哪来，只消费 `RequestContext` record |
-| **渐进式引入** | 第一步只注入 system prompt，不改 RAG 组件。后续可扩展到检索过滤 |
+| **渐进式引入** | `CagProperties.enabled` 总开关，关闭后 `RequestContext` 为 null，零风险上线 |
 | **降级容错** | `resolveSafe()` 包裹每个 Resolver，失败返回 null 不阻断主流程 |
 | **可测试** | 每个 Resolver 独立单测；`RequestContext` 是纯 record，无需 mock |
-| **可观测** | 每次请求记录上下文摘要日志；CAG 开关可关闭 |
+| **可观测** | `CagProperties.logContext` 控制日志；MDC 字段可扩展（v2） |
+| **安全纵深** | `toPromptSegment()` 中 `sanitize()` 清理控制字符；permissions 不注入 LLM |
 
 ---
 
@@ -491,7 +681,7 @@ public class CagProperties {
 3. 在 `DefaultRequestContextManager` 中注入新的 Resolver
 4. 在 `PolicyConstraintResolver` 实现中引用部门信息
 
-**不需要修改的类**：`HybridDocumentRetriever`、`BailianRerankPostProcessor`、`MmrDocumentPostProcessor`、`ParentDocumentPostProcessor`、`QueryNormalizer`
+**不需要修改的类**：`HybridDocumentRetriever`、`BailianRerankPostProcessor`、`MmrDocumentPostProcessor`、`ParentDocumentPostProcessor`、`QueryNormalizer`、`ChatAdvisorChainFactory`
 
 ---
 
@@ -499,73 +689,51 @@ public class CagProperties {
 
 | 步骤 | 内容 | 依赖 |
 |------|------|------|
-| P0 | 创建 `context` 包、`RequestContext` 及子 record | 无 |
-| P1 | 实现 `UserProfileResolver` + 默认实现 | SysUser/SysRole Mapper |
-| P2 | 实现 `SessionContextResolver` + 默认实现 | ChatMemory |
-| P3 | 实现 `PolicyConstraintResolver` + 默认实现 | 无 |
-| P4 | 实现 `DefaultRequestContextManager` | P1-P3 |
-| P5 | 实现 `ContextPromptInjector` | P0 |
-| P6 | 修改 `ChatRequestSpecFactory` 集成 CAG | P4, P5 |
-| P7 | 新增 `CagProperties` 配置类 + yml 配置 | 无 |
-| P8 | 单元测试（每个 Resolver + ContextManager + Injector） | P0-P6 |
+| P0 | 创建 `context` 包、`RequestContext` 及子 record、`CagProperties` | 无 |
+| P1 | `SysRoleMapper` 新增 `selectByIds()` 批量方法 | 现有 Mapper |
+| P2 | 实现 `UserProfileResolver` + 默认实现 | P1 |
+| P3 | 实现 `SessionContextResolver` + 默认实现 | 无 |
+| P4 | 实现 `PolicyConstraintResolver` + 默认实现 | 无 |
+| P5 | 实现 `DefaultRequestContextManager` + `ContextPromptInjector` | P2-P4, P0 |
+| P6 | 修改 `ChatServiceImpl` + `ChatRequestSpecFactory` 集成 CAG | P5 |
+| P7 | yml 配置 + Bean 注册验证 | P0 |
+| P8 | 单元测试（每个 Resolver + Manager + Injector + 降级逻辑） | P0-P6 |
 | P9 | 集成测试（端到端验证 prompt 注入效果） | P8 |
 
 ---
 
-## 九、设计评审修正（Self-Critique 2026-05-12）
+## 九、设计评审修正记录
 
-以下问题在设计评审中发现并修正：
+### 9.1 自审修正（Self-Critique）
 
-### 9.1 `createSpec()` 消除重复 userId 查询
+| # | 问题 | 修正 |
+|---|------|------|
+| 1 | `createSpec()` 内重复调 `SecurityUtils.getCurrentUserId()` | `createSpec()` 改为接收 `RequestContext` 参数，由 `ChatServiceImpl` 统一构建 |
+| 2 | conversationId 传入 CAG 的版本不明确 | 明确传隔离后的 conversationId |
+| 3 | SessionContextResolver 与 ConversationContextAdvisor 重复查 ChatMemory | `SessionContextResolver.resolve()` 接收 messageCount 参数 |
+| 4 | RequestContext record 扩展性 | 内部容器，非公共契约，影响面可控 |
+| 5 | CagProperties 的开关未在代码中使用 | `ChatServiceImpl` 检查 `enabled`；`ContextPromptInjector` 检查 `injectPrompt`；Manager 检查 `logContext` |
 
-**问题**：`ChatServiceImpl.prepareContext()` 已调用 `SecurityUtils.getCurrentUserId()`，`ChatRequestSpecFactory.createSpec()` 内部又调用一次。
+### 9.2 DeepSeek V4 Pro 评审修正
 
-**修正**：`createSpec()` 新增 `RequestContext` 参数，由调用方（`ChatServiceImpl`）统一构建并传入。
+| # | 问题 | 修正 |
+|---|------|------|
+| 1 | `ChatServiceImpl` 集成代码缺失 | 新增 5.1 节，完整展示 `doChat()`/`doStream()`/`buildCagContext()`/`ChatContext` 扩展 |
+| 2 | 未明确列出会修改的旧类 | 新增 3.2 节，分别列出"会修改"和"不会修改"的旧类 |
+| 3 | `SessionContextResolver` 只是透传，设计不足 | 增加对话阶段推断逻辑（`inferStage()`），从 messageCount 推断"首次对话/对话初期/深入交流/长对话" |
+| 4 | `CagProperties` 开关形同虚设 | 在 `ChatServiceImpl.buildCagContext()`、`ContextPromptInjector.inject()`、`DefaultRequestContextManager.buildContext()` 中使用开关 |
+| 5 | `toPromptSegment()` 缺少 sanitize | 新增 `sanitize()` 方法，移除控制字符和换行，防御间接 prompt injection |
+| 6 | 角色名查询缺少批量方法 | 新增 P1 步骤：`SysRoleMapper.selectByIds()` 批量方法 |
+| 7 | 安全边界未标注 | `toPromptSegment()` 注释明确：只输出昵称和角色名，不输出 permissions |
 
-```java
-// 修改前
-ChatClient.ChatClientRequestSpec createSpec(ChatClient chatClient, ModelRouter.Route route,
-    ChatRequest request, String conversationId, ChatModeStrategy modeStrategy);
-
-// 修改后
-ChatClient.ChatClientRequestSpec createSpec(ChatClient chatClient, ModelRouter.Route route,
-    ChatRequest request, String conversationId, ChatModeStrategy modeStrategy,
-    RequestContext cagContext);  // 新增参数
-```
-
-### 9.2 conversationId 约定
-
-**问题**：传给 `RequestContextManager` 的 conversationId 是原始值还是隔离后的值不明确。
-
-**修正**：**必须传隔离后的 conversationId**（`ConversationIdUtil.buildIsolatedId(userId, rawId)` 的结果），因为 `SessionContextResolver` 内部用它与 `ChatMemory` 交互，ChatMemory 存储的是隔离后的 ID。
-
-### 9.3 SessionContextResolver 避免重复查 ChatMemory
-
-**问题**：`ConversationContextAdvisor` 在 Advisor 链中会访问 ChatMemory，`SessionContextResolver` 又查一次，重复。
-
-**修正**：`SessionContextResolver.resolve()` 改为接收消息数量参数，由上游传入（上游可从 Advisor 链构建阶段已知的上下文中获取）。
-
-```java
-// 修改前
-SessionContext resolve(String conversationId);
-
-// 修改后
-SessionContext resolve(String conversationId, int messageCount);
-```
-
-### 9.4 RequestContext record 扩展性
-
-**问题**：record 加字段 = 改构造函数，似乎违反 OCP。
-
-**结论**：`RequestContext` 是内部组装容器，不是对外契约。下游（检索器、LLM）完全不依赖这个类的具体字段，只消费 `toPromptSegment()` 的输出。加字段只影响 Manager 的组装逻辑和 `toPromptSegment()` 方法，影响面可控。这是可接受的 trade-off。
-
-### 9.5 已知技术债务（v2 优化）
+### 9.3 已知技术债务（v2 优化）
 
 | 债务 | 当前做法 | v2 目标 |
 |------|----------|--------|
 | PolicyConstraintResolver 硬编码角色映射 | Java if-else | 配置驱动（yml 或数据库） |
 | ContextPromptInjector 模板硬编码 | Java 文本块 | 模板外置到 SystemPromptService 或配置 |
-| 用户画像无缓存 | 每次查 DB | `@Cacheable` + Caffeine 本地缓存 |
+| 用户画像无缓存 | 每次查 DB（3 次） | `@Cacheable` + Caffeine 本地缓存，TTL 5-10 min |
+| MDC 日志字段缺失 | 普通日志 | 添加 `cag.userId`、`cag.roles` MDC 字段便于 ELK 检索 |
 
 ---
 
@@ -573,8 +741,10 @@ SessionContext resolve(String conversationId, int messageCount);
 
 | 风险 | 缓解 |
 |------|------|
-| Prompt 注入增加 token 消耗 | 上下文段控制在 200 token 以内，可通过 `CagProperties` 关闭 |
-| 用户信息泄露到 LLM | `ContextPromptInjector` 只注入昵称和角色，不注入敏感字段 |
-| Resolver 查询增加延迟 | 用户画像可通过缓存优化；Session 查询已有 ChatMemory |
+| Prompt 注入增加 token 消耗 | 上下文段控制在 200 token 以内，可通过 `CagProperties.injectPrompt` 关闭 |
+| 用户信息泄露到 LLM | `ContextPromptInjector` 只注入昵称和角色名，不注入 permissions / userId / email |
+| Resolver 查询增加延迟 | 每次请求约 3 次 DB 查询（< 5ms），v2 加缓存后接近零 |
+| 间接 Prompt Injection | `sanitize()` 清理控制字符和换行；角色名由管理员设置，非用户输入 |
 | 上下文段影响 LLM 输出质量 | 可通过 A/B 测试对比有无 CAG 的回答质量 |
-| record 扩展性 | 内部容器，非公共 API，影响面可控（见 9.4） |
+| record 扩展性 | 内部容器，非公共 API，影响面可控（见 9.1 #4） |
+| CAG 关闭时行为一致 | `enabled=false` → `buildCagContext()` 返回 null → `inject()` 直接返回原 prompt |

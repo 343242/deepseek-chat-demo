@@ -15,12 +15,16 @@ public class EtlExecutorProperties {
 
     private PoolConfig io = new PoolConfig();
     private PoolConfig cpu = new PoolConfig();
+    private PoolConfig merge = new PoolConfig();
 
     public PoolConfig getIo() { return io; }
     public void setIo(PoolConfig io) { this.io = io; }
 
     public PoolConfig getCpu() { return cpu; }
     public void setCpu(PoolConfig cpu) { this.cpu = cpu; }
+
+    public PoolConfig getMerge() { return merge; }
+    public void setMerge(PoolConfig merge) { this.merge = merge; }
 
     /**
      * 单个线程池配置

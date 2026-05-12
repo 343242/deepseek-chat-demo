@@ -1,5 +1,7 @@
 package com.demo.chat.chat.service;
 
+import com.demo.chat.chat.context.ContextPromptInjector;
+import com.demo.chat.chat.context.RequestContext;
 import com.demo.chat.chat.dto.ChatRequest;
 import com.demo.chat.chat.entity.ModelParams;
 import com.demo.chat.chat.mode.ChatModeStrategy;
@@ -33,15 +35,18 @@ public class ChatRequestSpecFactory {
     private final SystemPromptService systemPromptService;
     private final ModelParamsService modelParamsService;
     private final ProviderRegistry providerRegistry;
+    private final ContextPromptInjector contextPromptInjector;
 
     public ChatRequestSpecFactory(ChatAdvisorChainFactory advisorChainFactory,
                                   SystemPromptService systemPromptService,
                                   ModelParamsService modelParamsService,
-                                  ProviderRegistry providerRegistry) {
+                                  ProviderRegistry providerRegistry,
+                                  ContextPromptInjector contextPromptInjector) {
         this.advisorChainFactory = advisorChainFactory;
         this.systemPromptService = systemPromptService;
         this.modelParamsService = modelParamsService;
         this.providerRegistry = providerRegistry;
+        this.contextPromptInjector = contextPromptInjector;
     }
 
     /**
@@ -52,13 +57,15 @@ public class ChatRequestSpecFactory {
      * @param request         聊天请求
      * @param conversationId  隔离后的对话 ID
      * @param modeStrategy    对话模式策略
+     * @param cagContext      CAG 请求上下文（可能为 null，表示 CAG 未启用）
      * @return 已配置好的请求规格
      */
     public ChatClient.ChatClientRequestSpec createSpec(ChatClient chatClient,
                                                        ModelRouter.Route route,
                                                        ChatRequest request,
                                                        String conversationId,
-                                                       ChatModeStrategy modeStrategy) {
+                                                       ChatModeStrategy modeStrategy,
+                                                       RequestContext cagContext) {
         List<org.springframework.ai.chat.client.advisor.api.Advisor> advisors =
                 advisorChainFactory.buildChain(conversationId, request, modeStrategy);
 
@@ -71,8 +78,9 @@ public class ChatRequestSpecFactory {
             spec = spec.tools((Object) advisorChainFactory.getToolCallbacks());
         }
 
-        // System Prompt
+        // System Prompt（CAG 增强）
         String systemPrompt = resolveSystemPrompt(route);
+        systemPrompt = contextPromptInjector.inject(systemPrompt, cagContext);
         if (systemPrompt != null && !systemPrompt.isBlank()) {
             spec = spec.system(systemPrompt);
         }

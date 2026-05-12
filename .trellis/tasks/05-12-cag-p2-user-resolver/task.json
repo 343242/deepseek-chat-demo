@@ -1,0 +1,9 @@
+{
+  "id": "05-12-cag-p2-user-resolver",
+  "name": "p2-user-resolver",
+  "title": "P2: UserProfileResolver 接口 + DefaultUserProfileResolver",
+  "description": "用户画像解析策略：接口定义 + 默认实现（从 DB 查询用户角色和权限）",
+  "status": "pending",
+  "parent": "05-12-cag-context-manager",
+  "createdAt": "2026-05-12"
+}

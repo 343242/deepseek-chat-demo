@@ -1,6 +1,9 @@
 package com.demo.chat.chat.service.impl;
 
 import com.demo.chat.chat.client.ChatClientRegistry;
+import com.demo.chat.chat.context.CagProperties;
+import com.demo.chat.chat.context.RequestContext;
+import com.demo.chat.chat.context.RequestContextManager;
 import com.demo.chat.chat.dto.ChatRequest;
 import com.demo.chat.chat.dto.ChatResponse;
 import com.demo.chat.chat.dto.FallbackMeta;
@@ -57,6 +60,8 @@ public class ChatServiceImpl implements ChatService {
     private final FallbackChainProvider fallbackChainProvider;
     private final FallbackEligibility fallbackEligibility;
     private final StreamRetryHandler streamRetryHandler;
+    private final RequestContextManager cagContextManager;
+    private final CagProperties cagProperties;
 
     public ChatServiceImpl(ChatClientRegistry registry,
                            ModelRouter modelRouter,
@@ -67,7 +72,9 @@ public class ChatServiceImpl implements ChatService {
                            ChatFallbackProperties fallbackProperties,
                            FallbackChainProvider fallbackChainProvider,
                            FallbackEligibility fallbackEligibility,
-                           StreamRetryHandler streamRetryHandler) {
+                           StreamRetryHandler streamRetryHandler,
+                           RequestContextManager cagContextManager,
+                           CagProperties cagProperties) {
         this.registry = registry;
         this.modelRouter = modelRouter;
         this.modeRouter = modeRouter;
@@ -78,6 +85,8 @@ public class ChatServiceImpl implements ChatService {
         this.fallbackChainProvider = fallbackChainProvider;
         this.fallbackEligibility = fallbackEligibility;
         this.streamRetryHandler = streamRetryHandler;
+        this.cagContextManager = cagContextManager;
+        this.cagProperties = cagProperties;
     }
 
     // ==================== 阻塞式聊天 ====================
@@ -164,9 +173,10 @@ public class ChatServiceImpl implements ChatService {
      */
     private ChatResponse doChat(ChatRequest request, FallbackMeta fallback) {
         ChatContext ctx = prepareContext(request);
+        RequestContext cagCtx = buildCagContext(ctx, request);
 
         ChatClient.ChatClientRequestSpec requestSpec = requestSpecFactory.createSpec(
-                ctx.chatClient, ctx.route, request, ctx.conversationId, ctx.modeStrategy);
+                ctx.chatClient, ctx.route, request, ctx.conversationId, ctx.modeStrategy, cagCtx);
 
         org.springframework.ai.chat.model.ChatResponse aiResponse = requestSpec.call().chatResponse();
 
@@ -188,9 +198,10 @@ public class ChatServiceImpl implements ChatService {
      */
     private Flux<String> doStream(String modelId, ChatRequest request) {
         ChatContext ctx = prepareContext(request);
+        RequestContext cagCtx = buildCagContext(ctx, request);
 
         ChatClient.ChatClientRequestSpec requestSpec = requestSpecFactory.createSpec(
-                ctx.chatClient, ctx.route, request, ctx.conversationId, ctx.modeStrategy);
+                ctx.chatClient, ctx.route, request, ctx.conversationId, ctx.modeStrategy, cagCtx);
 
         StringBuilder collectedContent = new StringBuilder();
         AtomicBoolean usageRecorded = new AtomicBoolean(false);
@@ -249,7 +260,26 @@ public class ChatServiceImpl implements ChatService {
         log.debug("Chat request: userId={}, rawModel={}, route={}, mode={}, conversationId={}",
                 userId, request.model(), route.toCompositeId(), modeStrategy.getMode(), conversationId);
 
-        return new ChatContext(chatClient, route, conversationId, modeStrategy);
+        return new ChatContext(chatClient, route, conversationId, modeStrategy, userId);
+    }
+
+    /**
+     * 构建 CAG 上下文（上下文增强生成）
+     * <p>
+     * CAG 关闭时返回 null，下游（ChatRequestSpecFactory / ContextPromptInjector）
+     * 收到 null 后不做任何增强，保持原有行为。
+     *
+     * @param ctx     请求上下文（含 userId 和隔离后的 conversationId）
+     * @param request 聊天请求
+     * @return RequestContext，CAG 未启用时返回 null
+     */
+    private RequestContext buildCagContext(ChatContext ctx, ChatRequest request) {
+        if (!cagProperties.isEnabled()) {
+            return null;
+        }
+        int msgCount = chatMemory.get(ctx.conversationId).size();
+        return cagContextManager.buildContext(
+                ctx.userId, ctx.conversationId, request.isRagEnabled(), msgCount);
     }
 
     /**
@@ -303,14 +333,16 @@ public class ChatServiceImpl implements ChatService {
         final ModelRouter.Route route;
         final String conversationId;
         final ChatModeStrategy modeStrategy;
+        final Long userId;
         final long startTimeMs;
 
         ChatContext(ChatClient chatClient, ModelRouter.Route route,
-                    String conversationId, ChatModeStrategy modeStrategy) {
+                    String conversationId, ChatModeStrategy modeStrategy, Long userId) {
             this.chatClient = chatClient;
             this.route = route;
             this.conversationId = conversationId;
             this.modeStrategy = modeStrategy;
+            this.userId = userId;
             this.startTimeMs = System.currentTimeMillis();
         }
 

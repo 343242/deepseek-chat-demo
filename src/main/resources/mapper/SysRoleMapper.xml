@@ -11,4 +11,11 @@
         SELECT * FROM sys_role WHERE role_name = #{roleName} AND deleted = 0
     </select>
 
+    <select id="selectByIds" resultType="com.demo.chat.user.entity.SysRole">
+        SELECT * FROM sys_role WHERE deleted = 0 AND id IN
+        <foreach item="id" collection="ids" open="(" separator="," close=")">
+            #{id}
+        </foreach>
+    </select>
+
 </mapper>

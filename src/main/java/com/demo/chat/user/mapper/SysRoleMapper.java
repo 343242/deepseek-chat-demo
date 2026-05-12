@@ -20,4 +20,12 @@ public interface SysRoleMapper extends BaseMapper<SysRole> {
      * 根据角色名查询未删除的角色
      */
     Optional<SysRole> selectByRoleName(@Param("roleName") String roleName);
+
+    /**
+     * 根据 ID 列表批量查询未删除的角色
+     *
+     * @param ids 角色 ID 列表
+     * @return 角色列表
+     */
+    List<SysRole> selectByIds(@Param("ids") List<Long> ids);
 }

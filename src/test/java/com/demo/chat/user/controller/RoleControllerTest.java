@@ -88,6 +88,6 @@ class RoleControllerTest {
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(req)))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.message").value("权限已更新"));
+                .andExpect(jsonPath("$.data.message").value("权限已更新"));
     }
 }

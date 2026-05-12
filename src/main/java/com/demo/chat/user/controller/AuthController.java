@@ -1,5 +1,7 @@
 package com.demo.chat.user.controller;
 
+import com.demo.chat.common.errorcode.ErrorCode;
+import com.demo.chat.common.response.GlobalResponse;
 import com.demo.chat.exception.BusinessException;
 import com.demo.chat.security.dto.CaptchaResult;
 import com.demo.chat.security.service.CaptchaService;
@@ -12,13 +14,11 @@ import jakarta.servlet.http.HttpServletResponse;
 import jakarta.validation.Valid;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.Map;
-
 /**
  * 认证控制器 — 仅负责 HTTP 请求/响应的转发
- *
- * <p>职责：参数接收 → 调用 Service → 返回结果。</p>
- * <p>Cookie 管理委托给 {@link CookieTokenManager}，不持有任何 Cookie 逻辑。</p>
+ * <p>
+ * 职责：参数接收 → 调用 Service → 返回 GlobalResponse。
+ * Cookie 管理委托给 {@link CookieTokenManager}。
  */
 @RestController
 @RequestMapping("/api/auth")
@@ -37,80 +37,77 @@ public class AuthController {
     }
 
     @GetMapping("/captcha")
-    public CaptchaResult getCaptcha(HttpServletRequest request) {
+    public GlobalResponse<CaptchaResult> getCaptcha(HttpServletRequest request) {
         String ip = request.getRemoteAddr();
         captchaService.checkRateLimit(ip);
-        return captchaService.generate();
+        return GlobalResponse.ok(captchaService.generate());
     }
 
     @PostMapping("/register")
-    public LoginResponse.UserInfo register(@Valid @RequestBody RegisterRequest request) {
-        return authService.register(
+    public GlobalResponse<LoginResponse.UserInfo> register(@Valid @RequestBody RegisterRequest request) {
+        return GlobalResponse.ok(authService.register(
                 request.username(), request.password(), request.email(),
                 request.nickname(), request.captchaId(), request.captchaCode()
-        );
+        ));
     }
 
     @PostMapping("/login")
-    public LoginResponse login(@Valid @RequestBody LoginRequest request,
-                               HttpServletRequest httpRequest,
-                               HttpServletResponse httpResponse) {
+    public GlobalResponse<LoginResponse> login(@Valid @RequestBody LoginRequest request,
+                                                HttpServletRequest httpRequest,
+                                                HttpServletResponse httpResponse) {
         String ip = httpRequest.getRemoteAddr();
         AuthService.LoginResult result = authService.login(
                 request.username(), request.password(), ip,
                 request.captchaId(), request.captchaCode()
         );
         cookieTokenManager.setTokenCookies(httpResponse, result.tokens().accessToken(), result.tokens().refreshToken());
-        return result.response();
+        return GlobalResponse.ok(result.response());
     }
 
     @PostMapping("/refresh")
-    public LoginResponse refresh(@RequestBody(required = false) @Valid RefreshRequest request,
-                                 HttpServletRequest httpRequest,
-                                 HttpServletResponse httpResponse) {
+    public GlobalResponse<LoginResponse> refresh(@RequestBody(required = false) @Valid RefreshRequest request,
+                                                  HttpServletRequest httpRequest,
+                                                  HttpServletResponse httpResponse) {
         String refreshToken = resolveRefreshToken(request, httpRequest);
         if (refreshToken == null || refreshToken.isBlank()) {
-            throw new BusinessException("缺少刷新令牌");
+            throw new BusinessException(ErrorCode.REFRESH_TOKEN_MISSING);
         }
         AuthService.LoginResult result = authService.refreshToken(refreshToken);
         cookieTokenManager.setTokenCookies(httpResponse, result.tokens().accessToken(), result.tokens().refreshToken());
-        return result.response();
+        return GlobalResponse.ok(result.response());
     }
 
     @PostMapping("/logout")
-    public Map<String, String> logout(HttpServletRequest request,
-                                      HttpServletResponse httpResponse) {
+    public GlobalResponse<Void> logout(HttpServletRequest request,
+                                       HttpServletResponse httpResponse) {
         Long userId = SecurityUtils.getCurrentUserId();
         String token = SecurityUtils.extractToken(request);
         authService.logout(userId, token);
         cookieTokenManager.clearTokenCookies(httpResponse);
-        return Map.of("message", "已登出");
+        return GlobalResponse.ok("已登出");
     }
 
     @GetMapping("/me")
-    public LoginResponse.UserInfo getCurrentUser() {
+    public GlobalResponse<LoginResponse.UserInfo> getCurrentUser() {
         Long userId = SecurityUtils.getCurrentUserId();
-        return authService.getCurrentUser(userId);
+        return GlobalResponse.ok(authService.getCurrentUser(userId));
     }
 
     @PatchMapping("/me/password")
-    public Map<String, String> changePassword(@Valid @RequestBody ChangePasswordRequest request) {
+    public GlobalResponse<Void> changePassword(@Valid @RequestBody ChangePasswordRequest request) {
         Long userId = SecurityUtils.getCurrentUserId();
         authService.changePassword(userId, request.oldPassword(), request.newPassword());
-        return Map.of("message", "密码已修改");
+        return GlobalResponse.ok("密码已修改");
     }
 
     @PatchMapping("/me/profile")
-    public LoginResponse.UserInfo updateProfile(@Valid @RequestBody UserUpdateRequest request) {
+    public GlobalResponse<LoginResponse.UserInfo> updateProfile(@Valid @RequestBody UserUpdateRequest request) {
         Long userId = SecurityUtils.getCurrentUserId();
-        return authService.updateProfile(userId, request);
+        return GlobalResponse.ok(authService.updateProfile(userId, request));
     }
 
     // ==================== Private ====================
 
-    /**
-     * 从请求体或 Cookie 中解析 refresh_token（策略：body 优先，cookie 回退）
-     */
     private String resolveRefreshToken(RefreshRequest request, HttpServletRequest httpRequest) {
         if (request != null && request.refreshToken() != null) {
             return request.refreshToken();

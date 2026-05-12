@@ -1,5 +1,6 @@
 package com.demo.chat.rag.service.impl;
 
+import com.demo.chat.common.errorcode.ErrorCode;
 import com.demo.chat.exception.BusinessException;
 import com.demo.chat.rag.etl.EtlStatus;
 import com.demo.chat.rag.etl.EtlStatusManager;
@@ -61,7 +62,7 @@ public class EtlPipelineServiceImpl implements EtlPipelineService {
 
         RagDocument doc = ragDocumentMapper.selectById(documentId);
         if (doc == null) {
-            throw new BusinessException("文档不存在: " + documentId);
+            throw new BusinessException(ErrorCode.DOCUMENT_NOT_FOUND, "文档不存在: " + documentId);
         }
 
         try {
@@ -92,7 +93,7 @@ public class EtlPipelineServiceImpl implements EtlPipelineService {
 
         } catch (Exception e) {
             statusManager.failDocument(documentId, e);
-            throw new BusinessException("文档处理失败: " + fileName, e);
+            throw new BusinessException(ErrorCode.ETL_FAILED, "文档处理失败: " + fileName);
         }
     }
 }

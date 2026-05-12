@@ -1,5 +1,6 @@
 package com.demo.chat.user.service.impl;
 
+import com.demo.chat.common.errorcode.ErrorCode;
 import com.demo.chat.exception.BusinessException;
 import com.demo.chat.user.enums.UserStatus;
 
@@ -87,11 +88,11 @@ public class SysUserServiceImpl implements SysUserService {
     @Override
     public Map<String, Object> updateUserStatus(Long id, Integer status) {
         if (!UserStatus.isValid(status)) {
-            throw new BusinessException("无效的用户状态，仅支持 0(禁用) 和 1(启用)");
+            throw new BusinessException(ErrorCode.USER_STATUS_INVALID);
         }
         SysUser user = userMapper.selectById(id);
         if (user == null) {
-            throw new BusinessException("用户不存在");
+            throw new BusinessException(ErrorCode.USER_NOT_FOUND);
         }
         user.setStatus(status);
         userMapper.updateById(user);
@@ -109,7 +110,7 @@ public class SysUserServiceImpl implements SysUserService {
     public Map<String, Object> assignRoles(Long id, AssignRolesRequest request) {
         SysUser user = userMapper.selectById(id);
         if (user == null) {
-            throw new BusinessException("用户不存在");
+            throw new BusinessException(ErrorCode.USER_NOT_FOUND);
         }
 
         List<Long> uniqueRoleIds = request.roleIds().stream().distinct().toList();
@@ -118,7 +119,7 @@ public class SysUserServiceImpl implements SysUserService {
         if (existingRoles.size() != uniqueRoleIds.size()) {
             Set<Long> found = existingRoles.stream().map(SysRole::getId).collect(Collectors.toSet());
             List<Long> missing = uniqueRoleIds.stream().filter(rid -> !found.contains(rid)).toList();
-            throw new BusinessException("角色不存在: " + missing);
+            throw new BusinessException(ErrorCode.ROLE_NOT_FOUND, "角色不存在: " + missing);
         }
 
         transactionTemplate.executeWithoutResult(status -> {
@@ -146,7 +147,7 @@ public class SysUserServiceImpl implements SysUserService {
     public Map<String, Object> deleteUser(Long id) {
         SysUser user = userMapper.selectById(id);
         if (user == null) {
-            throw new BusinessException("用户不存在");
+            throw new BusinessException(ErrorCode.USER_NOT_FOUND);
         }
 
         userMapper.deleteById(id);

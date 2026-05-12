@@ -996,6 +996,7 @@ model:
 | **DTO 隔离** | Entity 不暴露给前端，全部通过 record DTO 转换 |
 | **数据访问下沉** | `LambdaQueryWrapper` 全部在 Mapper 层，Service 层不含 SQL 构建逻辑 |
 | **编程式事务** | `TransactionTemplate` 精确控制事务边界 |
+| **统一响应** | 所有接口返回 `GlobalResponse<T>`（code/message/data），结构化错误码（`ErrorCode` 枚举），前端精确识别错误类型 |
 | **安全纵深** | JWT + Redis 吊销 + 用户状态 + IP 限流 + 滑块验证码 + Cookie SameSite + 资源级 owner 校验 |
 | **自研核心** | 雪花 ID 生成器、UUIDv7 (RFC 9562) 生成器、滑块验证码均为纯 Java 实现，无外部依赖 |
 | **模板方法 + 接口分离** | ETL Pipeline 拆分为 Extractor/Transformer/Loader 独立接口，Pipeline 只做编排 |

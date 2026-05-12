@@ -20,6 +20,7 @@ import com.demo.chat.chat.service.UsageService;
 import com.demo.chat.conversation.service.ConversationMessageService;
 import com.demo.chat.conversation.entity.Message;
 import com.demo.chat.conversation.util.ConversationIdUtil;
+import com.demo.chat.common.errorcode.ErrorCode;
 import com.demo.chat.exception.BusinessException;
 import com.demo.chat.security.util.SecurityUtils;
 import org.slf4j.Logger;
@@ -147,7 +148,7 @@ public class ChatServiceImpl implements ChatService {
 
         log.error("All fallback attempts exhausted for model '{}', tried: {}",
                 requestedModel, chain, lastException);
-        throw new BusinessException(
+        throw new BusinessException(ErrorCode.PROVIDER_NOT_FOUND,
                 "所有模型均不可用，请稍后重试（已尝试 " + chain.size() + " 个模型）");
     }
 

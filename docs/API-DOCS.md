@@ -4,6 +4,47 @@
 >
 > 认证方式：Token 写入 HttpOnly Cookie (`access_token`)，也可通过 `Authorization: Bearer <token>` 传递
 
+## 统一响应格式
+
+所有非流式接口统一返回 `GlobalResponse` 格式：
+
+**成功响应：**
+```json
+{"code": 0, "message": "ok", "data": {...}}
+```
+
+**失败响应：**
+```json
+{"code": 40005, "message": "用户名已存在", "data": null}
+```
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| code | int | 状态码，0=成功，非0=错误码 |
+| message | string | 友好提示 |
+| data | any | 业务数据（成功时有值，失败时为 null） |
+
+> SSE 流式接口（`/api/chat/stream`）保持 `text/event-stream` 格式不变，不走 GlobalResponse 包装。
+>
+> 以下文档中 Response 示例仅展示 `data` 字段内容（外层 `code`/`message` 省略）。
+
+### 错误码分段
+
+| 范围 | 模块 |
+|------|------|
+| 0 | 成功 |
+| 40000-40099 | 通用（参数/校验/权限） |
+| 40100 | 未认证 |
+| 40300 | 权限不足 |
+| 40400 | 资源不存在 |
+| 42900 | 限流 |
+| 50000 | 内部错误 |
+| 10xxx | 认证（登录/注册/验证码/Token） |
+| 20xxx | 用户管理（用户/角色/权限） |
+| 30xxx | 会话管理 |
+| 40xxx | 聊天（模型/内容过滤） |
+| 50xxx | RAG（文档/ETL） |
+
 ---
 
 ## 目录

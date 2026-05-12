@@ -1,5 +1,6 @@
 package com.demo.chat.rag.service.impl;
 
+import com.demo.chat.common.errorcode.ErrorCode;
 import com.demo.chat.exception.BusinessException;
 import com.demo.chat.rag.etl.EtlCandidate;
 import com.demo.chat.rag.etl.EtlResult;
@@ -48,12 +49,12 @@ public class EtlDispatchServiceImpl implements EtlDispatchService {
         List<EtlResult> results = dispatch(List.of(candidate));
 
         if (results.isEmpty()) {
-            throw new BusinessException("ETL 处理无结果: " + fileName);
+            throw new BusinessException(ErrorCode.ETL_NO_RESULT, "ETL 处理无结果: " + fileName);
         }
 
         EtlResult result = results.getFirst();
         if (EtlStatus.FAILED.equals(result.status())) {
-            throw new BusinessException("文档处理失败: " + fileName + " - " + result.errorMessage());
+            throw new BusinessException(ErrorCode.ETL_FAILED, "文档处理失败: " + fileName + " - " + result.errorMessage());
         }
 
         return result.chunkCount();

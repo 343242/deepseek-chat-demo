@@ -65,7 +65,7 @@ class AuthControllerTest {
                             .content(objectMapper.writeValueAsString(
                                     new RegisterRequest("testuser", "Password1!", "t@e.com", "nick", "cap-id", "100"))))
                     .andExpect(status().isOk())
-                    .andExpect(jsonPath("$.username").value("testuser"));
+                    .andExpect(jsonPath("$.data.username").value("testuser"));
         }
 
         @Test
@@ -126,7 +126,7 @@ class AuthControllerTest {
 
             mockMvc.perform(get("/api/auth/captcha"))
                     .andExpect(status().isOk())
-                    .andExpect(jsonPath("$.captchaId").value("id"));
+                    .andExpect(jsonPath("$.data.captchaId").value("id"));
         }
     }
 }

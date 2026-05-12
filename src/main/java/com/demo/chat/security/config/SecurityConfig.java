@@ -1,6 +1,7 @@
 package com.demo.chat.security.config;
 
-import com.demo.chat.chat.dto.ErrorResponse;
+import com.demo.chat.common.errorcode.ErrorCode;
+import com.demo.chat.common.response.GlobalResponse;
 import com.demo.chat.security.filter.JwtAuthenticationFilter;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Value;
@@ -61,13 +62,13 @@ public class SecurityConfig {
                 .authenticationEntryPoint((req, res, authEx) -> {
                     res.setStatus(401);
                     res.setContentType("application/json;charset=UTF-8");
-                    ErrorResponse body = new ErrorResponse("unauthorized", "请先登录", 401);
+                    GlobalResponse<Void> body = GlobalResponse.error(ErrorCode.UNAUTHORIZED, "请先登录");
                     res.getWriter().write(objectMapper.writeValueAsString(body));
                 })
                 .accessDeniedHandler((req, res, accessEx) -> {
                     res.setStatus(403);
                     res.setContentType("application/json;charset=UTF-8");
-                    ErrorResponse body = new ErrorResponse("forbidden", "您没有执行此操作的权限", 403);
+                    GlobalResponse<Void> body = GlobalResponse.error(ErrorCode.FORBIDDEN, "您没有执行此操作的权限");
                     res.getWriter().write(objectMapper.writeValueAsString(body));
                 })
             )

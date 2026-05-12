@@ -1,5 +1,6 @@
 package com.demo.chat.rag.service.impl;
 
+import com.demo.chat.common.errorcode.ErrorCode;
 import com.demo.chat.exception.BusinessException;
 import com.demo.chat.rag.config.MinioProperties;
 import com.demo.chat.rag.dto.DocumentDTO;
@@ -78,7 +79,7 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
     @Override
     public List<DocumentUploadResponse> uploadBatch(List<MultipartFile> files) {
         if (files == null || files.isEmpty()) {
-            throw new BusinessException("上传文件列表不能为空");
+            throw new BusinessException(ErrorCode.UPLOAD_LIST_EMPTY);
         }
 
         Long currentUserId = SecurityUtils.getCurrentUserId();

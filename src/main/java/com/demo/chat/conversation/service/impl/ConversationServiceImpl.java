@@ -15,6 +15,7 @@ import com.demo.chat.conversation.mapper.ConversationMapper;
 import com.demo.chat.conversation.service.ConversationMessageService;
 import com.demo.chat.conversation.service.ConversationService;
 import com.demo.chat.conversation.util.ConversationIdUtil;
+import com.demo.chat.common.errorcode.ErrorCode;
 import com.demo.chat.exception.BusinessException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -207,10 +208,10 @@ public class ConversationServiceImpl implements ConversationService {
     private Conversation findAndVerify(Long userId, String conversationId) {
         Conversation conv = findByConversationId(conversationId);
         if (conv == null || conv.getStatus() == ConversationStatus.DELETED) {
-            throw new BusinessException("会话不存在");
+            throw new BusinessException(ErrorCode.CONVERSATION_NOT_FOUND);
         }
         if (!conv.getUserId().equals(userId)) {
-            throw new BusinessException("无权访问该会话");
+            throw new BusinessException(ErrorCode.CONVERSATION_ACCESS_DENIED);
         }
         return conv;
     }

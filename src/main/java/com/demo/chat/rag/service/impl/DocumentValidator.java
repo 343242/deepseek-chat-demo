@@ -1,5 +1,6 @@
 package com.demo.chat.rag.service.impl;
 
+import com.demo.chat.common.errorcode.ErrorCode;
 import com.demo.chat.exception.BusinessException;
 import com.demo.chat.rag.config.DocumentProperties;
 import org.slf4j.Logger;
@@ -52,12 +53,12 @@ public class DocumentValidator {
      */
     public void validate(MultipartFile file) {
         if (file.isEmpty()) {
-            throw new BusinessException("上传文件不能为空");
+            throw new BusinessException(ErrorCode.UPLOAD_FILE_EMPTY);
         }
 
         long maxBytes = DataSize.parse(documentProperties.getMaxFileSize()).toBytes();
         if (file.getSize() > maxBytes) {
-            throw new BusinessException(
+            throw new BusinessException(ErrorCode.UPLOAD_FILE_TOO_LARGE,
                     String.format("文件大小超出限制: %s > %s",
                             DataSize.ofBytes(file.getSize()).toMegabytes() + "MB",
                             documentProperties.getMaxFileSize()));
@@ -66,13 +67,13 @@ public class DocumentValidator {
         String declaredMimeType = file.getContentType();
         Set<String> allowed = getAllowedMimeTypes();
         if (declaredMimeType == null || !allowed.contains(declaredMimeType)) {
-            throw new BusinessException("不支持的文件类型: " + declaredMimeType);
+            throw new BusinessException(ErrorCode.UPLOAD_MIME_UNSUPPORTED, "不支持的文件类型: " + declaredMimeType);
         }
 
         String detectedMimeType = detectMimeType(file);
         if (detectedMimeType != null && !allowed.contains(detectedMimeType)
                 && !isZipBasedOfficeDocument(declaredMimeType, detectedMimeType)) {
-            throw new BusinessException(
+            throw new BusinessException(ErrorCode.UPLOAD_MIME_UNSUPPORTED,
                     String.format("文件实际类型(%s)与声明类型(%s)不匹配", detectedMimeType, declaredMimeType));
         }
     }

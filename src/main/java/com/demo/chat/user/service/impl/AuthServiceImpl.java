@@ -1,6 +1,7 @@
 package com.demo.chat.user.service.impl;
 
 import com.demo.chat.common.snowflake.SnowflakeIdGenerator;
+import com.demo.chat.common.errorcode.ErrorCode;
 import com.demo.chat.exception.BusinessException;
 import com.demo.chat.exception.RateLimitExceededException;
 import com.demo.chat.security.config.JwtProperties;
@@ -86,22 +87,22 @@ public class AuthServiceImpl implements AuthService {
 
         // 3. Query user
         SysUser user = sysUserMapper.selectByUsername(username)
-                .orElseThrow(() -> new BusinessException("用户名或密码错误"));
+                .orElseThrow(() -> new BusinessException(ErrorCode.LOGIN_FAILED));
 
         // 4. Verify password
         if (!passwordEncoder.matches(password, user.getPassword())) {
-            throw new BusinessException("用户名或密码错误");
+            throw new BusinessException(ErrorCode.LOGIN_FAILED);
         }
 
         // 5. Check user status
         if (user.getStatus() != null && user.getStatus() != 1) {
-            throw new BusinessException("用户名或密码错误");
+            throw new BusinessException(ErrorCode.LOGIN_FAILED);
         }
 
         // 6. Check Redis status
         String redisStatus = tokenCacheService.getUserStatus(user.getId());
         if ("disabled".equals(redisStatus) || "deleted".equals(redisStatus)) {
-            throw new BusinessException("用户名或密码错误");
+            throw new BusinessException(ErrorCode.LOGIN_FAILED);
         }
 
         // 7. Query roles & generate tokens
@@ -136,7 +137,7 @@ public class AuthServiceImpl implements AuthService {
         String normalizedEmail = email.trim().toLowerCase(Locale.ROOT);
 
         if (!isPasswordComplexEnough(password)) {
-            throw new BusinessException(PASSWORD_RULE_MSG);
+            throw new BusinessException(ErrorCode.PASSWORD_RULE_ERROR);
         }
 
         String encodedPassword = passwordEncoder.encode(password);
@@ -163,7 +164,7 @@ public class AuthServiceImpl implements AuthService {
                 return user;
             });
         } catch (DuplicateKeyException e) {
-            throw new BusinessException("用户名或邮箱已存在");
+            throw new BusinessException(ErrorCode.USERNAME_EXISTS, "用户名或邮箱已存在");
         }
 
         if (newUser == null) {
@@ -179,27 +180,27 @@ public class AuthServiceImpl implements AuthService {
     @Override
     public LoginResult refreshToken(String refreshToken) {
         if (!jwtTokenProvider.validateToken(refreshToken)) {
-            throw new BusinessException("无效的刷新令牌");
+            throw new BusinessException(ErrorCode.TOKEN_REFRESH_INVALID);
         }
 
         if (!"refresh".equals(jwtTokenProvider.getTokenType(refreshToken))) {
-            throw new BusinessException("不是刷新令牌");
+            throw new BusinessException(ErrorCode.TOKEN_NOT_REFRESH);
         }
 
         Long userId = tokenCacheService.rotateRefreshToken(refreshToken);
         if (userId == null) {
-            throw new BusinessException("刷新令牌已过期或已吊销");
+            throw new BusinessException(ErrorCode.TOKEN_REFRESH_EXPIRED);
         }
 
         SysUser user = sysUserMapper.selectActiveById(userId)
-                .orElseThrow(() -> new BusinessException("用户状态异常"));
+                .orElseThrow(() -> new BusinessException(ErrorCode.USER_STATUS_ABNORMAL));
         if (user.getStatus() != null && user.getStatus() != 1) {
-            throw new BusinessException("用户状态异常");
+            throw new BusinessException(ErrorCode.USER_STATUS_ABNORMAL);
         }
 
         String redisStatus = tokenCacheService.getUserStatus(userId);
         if ("disabled".equals(redisStatus) || "deleted".equals(redisStatus)) {
-            throw new BusinessException("账号已被禁用");
+            throw new BusinessException(ErrorCode.USER_DISABLED);
         }
 
         List<Long> roleIds = sysUserRoleMapper.selectRoleIdsByUserId(userId);
@@ -231,7 +232,7 @@ public class AuthServiceImpl implements AuthService {
     @Override
     public LoginResponse.UserInfo getCurrentUser(Long userId) {
         SysUser user = sysUserMapper.selectActiveById(userId)
-                .orElseThrow(() -> new BusinessException("用户不存在"));
+                .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
 
         List<Long> roleIds = sysUserRoleMapper.selectRoleIdsByUserId(userId);
         List<String> roleNames = getRoleNames(roleIds);
@@ -251,15 +252,15 @@ public class AuthServiceImpl implements AuthService {
     public void changePassword(Long userId, String oldPassword, String newPassword) {
         SysUser user = sysUserMapper.selectById(userId);
         if (user == null) {
-            throw new BusinessException("用户不存在");
+            throw new BusinessException(ErrorCode.USER_NOT_FOUND);
         }
 
         if (!passwordEncoder.matches(oldPassword, user.getPassword())) {
-            throw new BusinessException("旧密码错误");
+            throw new BusinessException(ErrorCode.OLD_PASSWORD_ERROR);
         }
 
         if (!isPasswordComplexEnough(newPassword)) {
-            throw new BusinessException(PASSWORD_RULE_MSG);
+            throw new BusinessException(ErrorCode.PASSWORD_RULE_ERROR);
         }
 
         user.setPassword(passwordEncoder.encode(newPassword));
@@ -299,14 +300,14 @@ public class AuthServiceImpl implements AuthService {
     @Override
     public LoginResponse.UserInfo updateProfile(Long userId, UserUpdateRequest request) {
         SysUser user = sysUserMapper.selectActiveById(userId)
-                .orElseThrow(() -> new BusinessException("用户不存在"));
+                .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
 
         if (request.nickname() != null) user.setNickname(request.nickname().trim());
         if (request.email() != null) {
             String normalizedEmail = request.email().trim().toLowerCase(Locale.ROOT);
             if (!normalizedEmail.equals(user.getEmail())) {
                 sysUserMapper.selectByEmailExcludingId(normalizedEmail, userId)
-                        .ifPresent(existing -> { throw new BusinessException("邮箱已被使用"); });
+                        .ifPresent(existing -> { throw new BusinessException(ErrorCode.EMAIL_USED); });
             }
             user.setEmail(normalizedEmail);
         }
@@ -332,16 +333,16 @@ public class AuthServiceImpl implements AuthService {
 
     private void validateCaptcha(String captchaId, String captchaCode) {
         if (captchaId == null || captchaCode == null) {
-            throw new BusinessException("验证码参数缺失");
+            throw new BusinessException(ErrorCode.CAPTCHA_PARAM_MISSING);
         }
         int submittedX;
         try {
             submittedX = Integer.parseInt(captchaCode);
         } catch (NumberFormatException e) {
-            throw new BusinessException("验证码格式错误");
+            throw new BusinessException(ErrorCode.CAPTCHA_FORMAT_ERROR);
         }
         if (!captchaService.validate(captchaId, submittedX)) {
-            throw new BusinessException("验证码错误或已过期");
+            throw new BusinessException(ErrorCode.CAPTCHA_INVALID);
         }
     }
 

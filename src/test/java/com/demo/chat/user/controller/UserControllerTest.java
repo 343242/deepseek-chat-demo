@@ -57,7 +57,7 @@ class UserControllerTest {
 
         mockMvc.perform(get("/api/users?page=1&size=20"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.page").value(1));
+                .andExpect(jsonPath("$.data.page").value(1));
     }
 
     @Test
@@ -67,7 +67,7 @@ class UserControllerTest {
 
         mockMvc.perform(get("/api/users/1"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.username").value("testuser"));
+                .andExpect(jsonPath("$.data.username").value("testuser"));
     }
 
     @Test
@@ -99,7 +99,7 @@ class UserControllerTest {
 
         mockMvc.perform(patch("/api/users/1/status?status=0"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.message").value("已禁用"));
+                .andExpect(jsonPath("$.data.message").value("已禁用"));
     }
 
     @Test
@@ -120,6 +120,6 @@ class UserControllerTest {
 
         mockMvc.perform(delete("/api/users/1"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.message").value("用户已删除"));
+                .andExpect(jsonPath("$.data.message").value("用户已删除"));
     }
 }

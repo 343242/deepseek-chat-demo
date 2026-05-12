@@ -5,26 +5,19 @@ import com.demo.chat.chat.dto.ChatResponse;
 import com.demo.chat.chat.dto.ProviderModelInfo;
 import com.demo.chat.chat.service.ChatService;
 import com.demo.chat.chat.service.ModelService;
+import com.demo.chat.common.response.GlobalResponse;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import org.springframework.http.MediaType;
-import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 import reactor.core.publisher.Flux;
 
 import java.util.List;
-import java.util.Map;
 
 /**
  * 聊天 API 控制器
- * <p>
- * GET  /api/models        - 获取可用模型列表
- * POST /api/chat           - 阻塞式聊天
- * GET  /api/chat/stream    - SSE 流式聊天（query params）
- * POST /api/chat/stream    - SSE 流式聊天（JSON body）
- * POST /api/models/refresh - 刷新模型列表
  */
 @RestController
 @RequestMapping("/api")
@@ -40,33 +33,18 @@ public class ChatController {
         this.chatService = chatService;
     }
 
-    /**
-     * 获取可用模型列表
-     */
     @GetMapping("/models")
-    public List<ProviderModelInfo> listModels() {
-        return modelService.listModels();
+    public GlobalResponse<List<ProviderModelInfo>> listModels() {
+        return GlobalResponse.ok(modelService.listModels());
     }
 
-    /**
-     * 阻塞式聊天
-     * <p>
-     * ChatRequest 已通过注解定义校验规则，@Valid 触发校验，
-     * GlobalExceptionHandler 统一处理 MethodArgumentNotValidException。
-     */
     @PostMapping("/chat")
-    public ChatResponse chat(@Valid @RequestBody ChatRequest request) {
-        return chatService.chat(request);
+    public GlobalResponse<ChatResponse> chat(@Valid @RequestBody ChatRequest request) {
+        return GlobalResponse.ok(chatService.chat(request));
     }
 
     /**
-     * SSE 流式聊天（GET 方式，方便 SSE 客户端测试）
-     *
-     * @param model          模型 ID
-     * @param message        用户消息
-     * @param conversationId 对话 ID（默认 "default"）
-     * @param mode           对话模式（SIMPLE / MULTI_TURN，默认 SIMPLE）
-     * @param ragEnabled     是否启用 RAG（默认 false）
+     * SSE 流式聊天 — 不走 GlobalResponse 包装，保持 text/event-stream 原样
      */
     @GetMapping(value = "/chat/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<String> chatStreamGet(
@@ -80,24 +58,17 @@ public class ChatController {
         return chatService.chatStream(request);
     }
 
-    /**
-     * SSE 流式聊天（POST 方式）
-     */
     @PostMapping(value = "/chat/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public Flux<String> chatStreamPost(@Valid @RequestBody ChatRequest request) {
         return chatService.chatStream(request);
     }
 
-    /**
-     * 刷新模型列表
-     */
     @PostMapping("/models/refresh")
-    public ResponseEntity<Map<String, Object>> refreshModels() {
+    public GlobalResponse<Void> refreshModels() {
         boolean success = modelService.refreshModels();
         if (success) {
-            return ResponseEntity.ok(Map.of("message", "Models refreshed successfully"));
+            return GlobalResponse.ok("Models refreshed successfully");
         }
-        return ResponseEntity.internalServerError().body(Map.of(
-                "message", "Failed to refresh models, existing models remain available"));
+        return GlobalResponse.ok("Failed to refresh models, existing models remain available");
     }
 }

@@ -1,5 +1,6 @@
 package com.demo.chat.chat.provider;
 
+import com.demo.chat.common.errorcode.ErrorCode;
 import com.demo.chat.exception.BusinessException;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -57,7 +58,7 @@ public class ModelRouter {
      */
     public Route resolve(String rawModelId) {
         if (rawModelId == null || rawModelId.isBlank()) {
-            throw new BusinessException("模型不能为空");
+            throw new BusinessException(ErrorCode.MODEL_EMPTY);
         }
 
         int slashIndex = rawModelId.indexOf(SEPARATOR);

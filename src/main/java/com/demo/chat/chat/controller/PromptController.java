@@ -3,21 +3,15 @@ package com.demo.chat.chat.controller;
 import com.demo.chat.chat.dto.SystemPromptDTO;
 import com.demo.chat.chat.dto.SystemPromptUpdateRequest;
 import com.demo.chat.chat.service.SystemPromptService;
+import com.demo.chat.common.response.GlobalResponse;
 import jakarta.validation.Valid;
-import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
-import java.util.Map;
 
 /**
  * System Prompt 管理 API
- * <p>
- * GET    /api/prompts              - 获取所有 system prompt 配置
- * GET    /api/prompts/{modelId}    - 获取指定模型的 system prompt
- * PUT    /api/prompts/{modelId}    - 创建或更新 system prompt
- * DELETE /api/prompts/{modelId}    - 删除指定模型的 system prompt
  */
 @RestController
 @RequestMapping("/api/prompts")
@@ -31,29 +25,27 @@ public class PromptController {
     }
 
     @GetMapping
-    public List<SystemPromptDTO> listAll() {
-        return promptService.listAll();
+    public GlobalResponse<List<SystemPromptDTO>> listAll() {
+        return GlobalResponse.ok(promptService.listAll());
     }
 
     @GetMapping("/{modelId}")
-    public ResponseEntity<SystemPromptDTO> get(@PathVariable String modelId) {
-        return promptService.getPromptDTO(modelId)
-                .map(ResponseEntity::ok)
-                .orElse(ResponseEntity.noContent().build());
+    public GlobalResponse<SystemPromptDTO> get(@PathVariable String modelId) {
+        return GlobalResponse.ok(promptService.getPromptDTO(modelId).orElse(null));
     }
 
     @PutMapping("/{modelId}")
-    public SystemPromptDTO saveOrUpdate(@PathVariable String modelId,
-                                        @Valid @RequestBody SystemPromptUpdateRequest request) {
-        return promptService.saveOrUpdate(modelId, request.promptText());
+    public GlobalResponse<SystemPromptDTO> saveOrUpdate(@PathVariable String modelId,
+                                                         @Valid @RequestBody SystemPromptUpdateRequest request) {
+        return GlobalResponse.ok(promptService.saveOrUpdate(modelId, request.promptText()));
     }
 
     @DeleteMapping("/{modelId}")
-    public ResponseEntity<Map<String, Object>> delete(@PathVariable String modelId) {
+    public GlobalResponse<Void> delete(@PathVariable String modelId) {
         boolean deleted = promptService.delete(modelId);
         if (deleted) {
-            return ResponseEntity.ok(Map.of("modelId", modelId, "message", "已删除"));
+            return GlobalResponse.ok("已删除");
         }
-        return ResponseEntity.notFound().build();
+        return GlobalResponse.ok();
     }
 }

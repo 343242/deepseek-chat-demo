@@ -1,5 +1,6 @@
 package com.demo.chat.user.controller;
 
+import com.demo.chat.common.response.GlobalResponse;
 import com.demo.chat.user.dto.AssignPermissionsRequest;
 import com.demo.chat.user.dto.CreateRoleRequest;
 import com.demo.chat.user.dto.UpdateRoleRequest;
@@ -16,8 +17,6 @@ import java.util.Map;
 
 /**
  * 角色管理控制器 — 仅负责 HTTP 请求/响应的转发
- *
- * <p>所有请求参数使用专用 DTO 承载，确保验证完整。</p>
  */
 @RestController
 @RequestMapping("/api/roles")
@@ -33,45 +32,49 @@ public class RoleController {
     }
 
     @GetMapping
-    public List<SysRole> listRoles() {
-        return roleService.listRoles();
+    public GlobalResponse<List<SysRole>> listRoles() {
+        return GlobalResponse.ok(roleService.listRoles());
     }
 
     @GetMapping("/{id}")
-    public Map<String, Object> getRole(@PathVariable Long id) {
-        return roleService.getRoleDetail(id);
+    public GlobalResponse<Map<String, Object>> getRole(@PathVariable Long id) {
+        return GlobalResponse.ok(roleService.getRoleDetail(id));
     }
 
     @PostMapping
-    public SysRole createRole(@Valid @RequestBody CreateRoleRequest request) {
-        return roleService.createRole(request.roleName(), request.roleDesc());
+    public GlobalResponse<SysRole> createRole(@Valid @RequestBody CreateRoleRequest request) {
+        return GlobalResponse.ok(roleService.createRole(request.roleName(), request.roleDesc()));
     }
 
     @PutMapping("/{id}")
-    public SysRole updateRole(@PathVariable Long id, @Valid @RequestBody UpdateRoleRequest request) {
-        return roleService.updateRole(id, request.roleDesc());
+    public GlobalResponse<SysRole> updateRole(@PathVariable Long id, @Valid @RequestBody UpdateRoleRequest request) {
+        return GlobalResponse.ok(roleService.updateRole(id, request.roleDesc()));
     }
 
     @DeleteMapping("/{id}")
-    public Map<String, String> deleteRole(@PathVariable Long id) {
+    public GlobalResponse<Void> deleteRole(@PathVariable Long id) {
         roleService.deleteRole(id);
-        return Map.of("roleId", String.valueOf(id), "message", "角色已删除");
+        return GlobalResponse.ok("角色已删除");
     }
 
     @GetMapping("/{id}/permissions")
-    public List<SysPermission> getRolePermissions(@PathVariable Long id) {
-        return roleService.getRolePermissions(id);
+    public GlobalResponse<List<SysPermission>> getRolePermissions(@PathVariable Long id) {
+        return GlobalResponse.ok(roleService.getRolePermissions(id));
     }
 
     @PatchMapping("/{id}/permissions")
-    public Map<String, Object> assignPermissions(@PathVariable Long id,
-                                                  @Valid @RequestBody AssignPermissionsRequest request) {
+    public GlobalResponse<Map<String, Object>> assignPermissions(@PathVariable Long id,
+                                                                   @Valid @RequestBody AssignPermissionsRequest request) {
         roleService.assignPermissions(id, request.permissionIds());
-        return Map.of("roleId", id, "permissionIds", request.permissionIds(), "message", "权限已更新");
+        return GlobalResponse.ok(Map.of(
+                "roleId", id,
+                "permissionIds", request.permissionIds(),
+                "message", "权限已更新"
+        ));
     }
 
     @GetMapping("/permissions")
-    public List<SysPermission> listAllPermissions() {
-        return permissionService.listPermissions();
+    public GlobalResponse<List<SysPermission>> listAllPermissions() {
+        return GlobalResponse.ok(permissionService.listPermissions());
     }
 }

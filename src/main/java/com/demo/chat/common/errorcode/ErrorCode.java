@@ -74,6 +74,13 @@ public enum ErrorCode {
     DOCUMENT_OWNERSHIP_DENIED(50006, "无权操作该文档"),
     ETL_NO_RESULT(50007, "ETL 处理无结果"),
     ETL_FAILED(50008, "文档处理失败"),
+
+    // ---- 分片上传 ----
+    UPLOAD_FAILED(50009, "上传失败"),
+    UPLOAD_CHUNK_MD5_MISMATCH(50010, "分片校验失败，请重传"),
+    UPLOAD_SESSION_NOT_FOUND(50011, "上传会话不存在或已过期"),
+    UPLOAD_FILE_MD5_MISMATCH(50012, "文件校验失败"),
+    UPLOAD_INCOMPLETE(50013, "文件未上传完整"),
     ;
 
     private final int code;

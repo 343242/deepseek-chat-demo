@@ -39,6 +39,9 @@ public class RagDocument {
     /** 错误信息（失败时记录） */
     private String errorMessage;
 
+    /** 文件 MD5（服务端合并时计算），用于秒传校验 */
+    private String fileMd5;
+
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createTime;
 
@@ -86,4 +89,7 @@ public class RagDocument {
 
     public Integer getDeleted() { return deleted; }
     public void setDeleted(Integer deleted) { this.deleted = deleted; }
+
+    public String getFileMd5() { return fileMd5; }
+    public void setFileMd5(String fileMd5) { this.fileMd5 = fileMd5; }
 }

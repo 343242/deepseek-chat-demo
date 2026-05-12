@@ -1,18 +1,15 @@
 package com.demo.chat.user.controller;
 
 import com.demo.chat.common.response.GlobalResponse;
-import com.demo.chat.user.dto.AssignRolesRequest;
-import com.demo.chat.user.dto.LoginResponse;
-import com.demo.chat.user.dto.UserUpdateRequest;
+import com.demo.chat.common.response.PagedResult;
+import com.demo.chat.user.dto.*;
 import com.demo.chat.user.service.SysUserService;
 import jakarta.validation.Valid;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.Map;
-
 /**
- * 用户管理控制器 — 仅负责 HTTP 请求/响应的转发
+ * 用户管理控制器
  */
 @RestController
 @RequestMapping("/api/users")
@@ -26,7 +23,7 @@ public class UserController {
     }
 
     @GetMapping
-    public GlobalResponse<Map<String, Object>> listUsers(
+    public GlobalResponse<PagedResult<UserVO>> listUsers(
             @RequestParam(defaultValue = "1") int page,
             @RequestParam(defaultValue = "20") int size,
             @RequestParam(required = false) String keyword) {
@@ -44,17 +41,17 @@ public class UserController {
     }
 
     @PatchMapping("/{id}/status")
-    public GlobalResponse<Map<String, Object>> updateUserStatus(@PathVariable Long id, @RequestParam Integer status) {
+    public GlobalResponse<UserStatusUpdateResult> updateUserStatus(@PathVariable Long id, @RequestParam Integer status) {
         return GlobalResponse.ok(sysUserService.updateUserStatus(id, status));
     }
 
     @PatchMapping("/{id}/roles")
-    public GlobalResponse<Map<String, Object>> assignRoles(@PathVariable Long id, @Valid @RequestBody AssignRolesRequest request) {
+    public GlobalResponse<RoleAssignResult> assignRoles(@PathVariable Long id, @Valid @RequestBody AssignRolesRequest request) {
         return GlobalResponse.ok(sysUserService.assignRoles(id, request));
     }
 
     @DeleteMapping("/{id}")
-    public GlobalResponse<Map<String, Object>> deleteUser(@PathVariable Long id) {
+    public GlobalResponse<UserDeleteResult> deleteUser(@PathVariable Long id) {
         return GlobalResponse.ok(sysUserService.deleteUser(id));
     }
 }

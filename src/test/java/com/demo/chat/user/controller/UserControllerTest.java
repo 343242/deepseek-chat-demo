@@ -1,10 +1,9 @@
 package com.demo.chat.user.controller;
 
+import com.demo.chat.common.response.PagedResult;
 import com.demo.chat.exception.BusinessException;
 import com.demo.chat.exception.GlobalExceptionHandler;
-import com.demo.chat.user.dto.AssignRolesRequest;
-import com.demo.chat.user.dto.LoginResponse;
-import com.demo.chat.user.dto.UserUpdateRequest;
+import com.demo.chat.user.dto.*;
 import com.demo.chat.user.service.SysUserService;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.junit.jupiter.api.BeforeEach;
@@ -19,7 +18,6 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 import java.util.List;
-import java.util.Map;
 
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.when;
@@ -52,8 +50,8 @@ class UserControllerTest {
     @Test
     @DisplayName("获取用户列表 → 200")
     void listUsers_success() throws Exception {
-        when(sysUserService.listUsers(1, 20, null)).thenReturn(Map.of(
-                "content", List.of(), "page", 1, "size", 20, "total", 0, "totalPages", 0));
+        PagedResult<UserVO> result = new PagedResult<>(List.of(), 1, 20, 0, 0);
+        when(sysUserService.listUsers(1, 20, null)).thenReturn(result);
 
         mockMvc.perform(get("/api/users?page=1&size=20"))
                 .andExpect(status().isOk())
@@ -82,7 +80,7 @@ class UserControllerTest {
     }
 
     @Test
-    @DisplayName("更新用户状态 - 无效状态 → 400 (BusinessException from Service)")
+    @DisplayName("更新用户状态 - 无效状态 → 400")
     void updateUserStatus_invalidStatus() throws Exception {
         when(sysUserService.updateUserStatus(1L, 2)).thenThrow(
                 new BusinessException("无效的用户状态，仅支持 0(禁用) 和 1(启用)"));
@@ -95,7 +93,7 @@ class UserControllerTest {
     @DisplayName("更新用户状态 - 禁用 → 200")
     void updateUserStatus_validDisabled() throws Exception {
         when(sysUserService.updateUserStatus(1L, 0)).thenReturn(
-                Map.of("userId", 1L, "status", 0, "message", "已禁用"));
+                new UserStatusUpdateResult(1L, 0, "已禁用"));
 
         mockMvc.perform(patch("/api/users/1/status?status=0"))
                 .andExpect(status().isOk())
@@ -103,7 +101,7 @@ class UserControllerTest {
     }
 
     @Test
-    @DisplayName("分配角色 - 空列表 → 400 (NotEmpty violation)")
+    @DisplayName("分配角色 - 空列表 → 400")
     void assignRoles_emptyList() throws Exception {
         AssignRolesRequest req = new AssignRolesRequest(List.of());
 
@@ -116,7 +114,7 @@ class UserControllerTest {
     @Test
     @DisplayName("删除用户 → 200")
     void deleteUser_success() throws Exception {
-        when(sysUserService.deleteUser(1L)).thenReturn(Map.of("userId", 1L, "message", "用户已删除"));
+        when(sysUserService.deleteUser(1L)).thenReturn(new UserDeleteResult(1L, "用户已删除"));
 
         mockMvc.perform(delete("/api/users/1"))
                 .andExpect(status().isOk())

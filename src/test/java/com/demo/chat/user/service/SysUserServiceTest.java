@@ -1,11 +1,12 @@
 package com.demo.chat.user.service;
 
+import com.demo.chat.common.response.PagedResult;
 import com.demo.chat.user.service.impl.SysUserServiceImpl;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.demo.chat.exception.BusinessException;
 import com.demo.chat.security.service.TokenCacheService;
-import com.demo.chat.user.dto.AssignRolesRequest;
+import com.demo.chat.user.dto.*;
 import com.demo.chat.user.entity.SysRole;
 import com.demo.chat.user.entity.SysUser;
 import com.demo.chat.user.entity.SysUserRole;
@@ -22,7 +23,6 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.List;
-import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -53,8 +53,6 @@ class SysUserServiceTest {
         return user;
     }
 
-    // ==================== Update Status ====================
-
     @Nested
     @DisplayName("修改用户状态")
     class UpdateStatusTests {
@@ -66,9 +64,9 @@ class SysUserServiceTest {
             when(userMapper.selectById(1L)).thenReturn(user);
             when(userMapper.updateById(any(SysUser.class))).thenReturn(1);
 
-            Map<String, Object> result = sysUserService.updateUserStatus(1L, 0);
+            UserStatusUpdateResult result = sysUserService.updateUserStatus(1L, 0);
 
-            assertEquals(1L, result.get("userId"));
+            assertEquals(1L, result.userId());
             verify(authService).revokeAllUserTokens(1L);
             verify(tokenCacheService, never()).clearUserStatus(anyLong());
         }
@@ -80,9 +78,9 @@ class SysUserServiceTest {
             when(userMapper.selectById(1L)).thenReturn(user);
             when(userMapper.updateById(any(SysUser.class))).thenReturn(1);
 
-            Map<String, Object> result = sysUserService.updateUserStatus(1L, 1);
+            UserStatusUpdateResult result = sysUserService.updateUserStatus(1L, 1);
 
-            assertEquals(1L, result.get("userId"));
+            assertEquals(1L, result.userId());
             verify(tokenCacheService).clearUserStatus(1L);
             verify(authService, never()).revokeAllUserTokens(anyLong());
         }
@@ -91,13 +89,9 @@ class SysUserServiceTest {
         @DisplayName("updateUserStatus_userNotFound: 抛 BusinessException")
         void updateUserStatus_userNotFound() {
             when(userMapper.selectById(999L)).thenReturn(null);
-
-            assertThrows(BusinessException.class,
-                    () -> sysUserService.updateUserStatus(999L, 1));
+            assertThrows(BusinessException.class, () -> sysUserService.updateUserStatus(999L, 1));
         }
     }
-
-    // ==================== Assign Roles ====================
 
     @Nested
     @DisplayName("分配角色")
@@ -122,9 +116,9 @@ class SysUserServiceTest {
 
             when(userRoleMapper.batchInsert(anyList())).thenReturn(1);
 
-            Map<String, Object> result = sysUserService.assignRoles(1L, new AssignRolesRequest(List.of(10L)));
+            RoleAssignResult result = sysUserService.assignRoles(1L, new AssignRolesRequest(List.of(10L)));
 
-            assertEquals(1L, result.get("userId"));
+            assertEquals(1L, result.userId());
             verify(tokenCacheService).evictUserPermissions(1L);
         }
 
@@ -146,19 +140,16 @@ class SysUserServiceTest {
 
             when(userRoleMapper.batchInsert(anyList())).thenReturn(1);
 
-            Map<String, Object> result = sysUserService.assignRoles(1L, new AssignRolesRequest(List.of(10L, 10L)));
+            RoleAssignResult result = sysUserService.assignRoles(1L, new AssignRolesRequest(List.of(10L, 10L)));
 
-            @SuppressWarnings("unchecked")
-            List<Long> assignedRoles = (List<Long>) result.get("roles");
-            assertEquals(1, assignedRoles.size());
-            assertEquals(10L, assignedRoles.get(0));
+            assertEquals(1, result.roleIds().size());
+            assertEquals(10L, result.roleIds().get(0));
         }
 
         @Test
         @DisplayName("assignRoles_userNotFound: 抛 BusinessException")
         void assignRoles_userNotFound() {
             when(userMapper.selectById(999L)).thenReturn(null);
-
             assertThrows(BusinessException.class,
                     () -> sysUserService.assignRoles(999L, new AssignRolesRequest(List.of(10L))));
         }
@@ -175,8 +166,6 @@ class SysUserServiceTest {
         }
     }
 
-    // ==================== Delete User ====================
-
     @Nested
     @DisplayName("删除用户")
     class DeleteUserTests {
@@ -188,14 +177,12 @@ class SysUserServiceTest {
             when(userMapper.selectById(1L)).thenReturn(user);
             when(userMapper.deleteById(1L)).thenReturn(1);
 
-            Map<String, Object> result = sysUserService.deleteUser(1L);
+            UserDeleteResult result = sysUserService.deleteUser(1L);
 
-            assertEquals(1L, result.get("userId"));
+            assertEquals(1L, result.userId());
             verify(authService).revokeAllUserTokens(1L);
         }
     }
-
-    // ==================== List Users ====================
 
     @Nested
     @DisplayName("分页查询用户")
@@ -203,7 +190,6 @@ class SysUserServiceTest {
 
         @Test
         @DisplayName("listUsers_success: 分页查询")
-        @SuppressWarnings("unchecked")
         void listUsers_success() {
             Page<SysUser> page = new Page<>(1, 10);
             page.setRecords(List.of(buildUser()));
@@ -211,10 +197,12 @@ class SysUserServiceTest {
             page.setPages(1);
             when(userMapper.selectPage(any(Page.class), any(LambdaQueryWrapper.class))).thenReturn(page);
 
-            Map<String, Object> result = sysUserService.listUsers(1, 10, null);
+            PagedResult<UserVO> result = sysUserService.listUsers(1, 10, null);
 
-            assertEquals(1L, result.get("total"));
-            assertNotNull(result.get("content"));
+            assertEquals(1L, result.total());
+            assertNotNull(result.content());
+            assertEquals(1, result.content().size());
+            assertEquals("testuser", result.content().get(0).username());
         }
     }
 }

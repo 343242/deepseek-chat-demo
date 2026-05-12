@@ -1,7 +1,9 @@
 package com.demo.chat.conversation.controller;
 
 import com.demo.chat.common.response.GlobalResponse;
+import com.demo.chat.common.response.PagedResult;
 import com.demo.chat.conversation.dto.ConversationCreateRequest;
+import java.util.List;
 import com.demo.chat.conversation.dto.ConversationDetail;
 import com.demo.chat.conversation.dto.ConversationSummary;
 import com.demo.chat.conversation.dto.ConversationUpdateRequest;
@@ -16,7 +18,6 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.List;
 import java.util.Map;
 
 /**
@@ -43,7 +44,7 @@ public class ConversationController {
     }
 
     @GetMapping
-    public GlobalResponse<List<ConversationSummary>> list(
+    public GlobalResponse<PagedResult<ConversationSummary>> list(
             @RequestParam(defaultValue = "1") @Min(1) int page,
             @RequestParam(defaultValue = "50") @Min(1) @Max(500) int size,
             @RequestParam(required = false) String status) {

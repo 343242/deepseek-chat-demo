@@ -476,20 +476,30 @@ SSE 流式聊天（JSON body）。
 **Response：**
 
 ```json
-[
-  {
-    "id": 1,
-    "conversationId": "01913a5c8b3a4f2ea1b0c3d4e5f60789",
-    "title": "你好…",
-    "titleSource": "SYSTEM",
-    "modelId": "deepseek/deepseek-v4-flash",
-    "pinned": true,
-    "status": "ACTIVE",
-    "messageCount": 12,
-    "lastMessageAt": "2026-05-12T16:00:00",
-    "createdAt": "2026-05-12T15:30:00"
+{
+  "code": 0,
+  "message": "ok",
+  "data": {
+    "content": [
+      {
+        "id": 1,
+        "conversationId": "01913a5c8b3a4f2ea1b0c3d4e5f60789",
+        "title": "你好…",
+        "titleSource": "SYSTEM",
+        "modelId": "deepseek/deepseek-v4-flash",
+        "pinned": true,
+        "status": "ACTIVE",
+        "messageCount": 12,
+        "lastMessageAt": "2026-05-12T16:00:00",
+        "createdAt": "2026-05-12T15:30:00"
+      }
+    ],
+    "page": 1,
+    "size": 50,
+    "total": 1,
+    "totalPages": 1
   }
-]
+}
 ```
 
 ---
@@ -973,6 +983,24 @@ Token 用量明细（必须指定 `model` 或 `conversation` 参数）。
 | page | | 页码，默认 1 |
 | size | | 每页条数，默认 20 |
 | keyword | | 搜索关键词（模糊匹配用户名/昵称/邮箱） |
+
+**Response：**
+
+```json
+{
+  "code": 0,
+  "message": "ok",
+  "data": {
+    "content": [
+      {"id": 1, "username": "admin", "nickname": "管理员", "status": 1}
+    ],
+    "page": 1,
+    "size": 20,
+    "total": 1,
+    "totalPages": 1
+  }
+}
+```
 
 ---
 

@@ -3,6 +3,8 @@ package com.demo.chat.conversation.service.impl;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.demo.chat.common.uuid.UuidV7;
+import com.demo.chat.common.request.PageRequest;
+import com.demo.chat.common.response.PagedResult;
 import com.demo.chat.conversation.dto.ConversationCreateRequest;
 import com.demo.chat.conversation.dto.ConversationDetail;
 import com.demo.chat.conversation.dto.ConversationSummary;
@@ -105,7 +107,9 @@ public class ConversationServiceImpl implements ConversationService {
     }
 
     @Override
-    public List<ConversationSummary> list(Long userId, String status, int page, int size) {
+    public PagedResult<ConversationSummary> list(Long userId, String status, int page, int size) {
+        PageRequest req = PageRequest.of(page, size);
+
         LambdaQueryWrapper<Conversation> wrapper = new LambdaQueryWrapper<Conversation>()
                 .eq(Conversation::getUserId, userId)
                 .ne(Conversation::getStatus, ConversationStatus.DELETED);
@@ -114,14 +118,12 @@ public class ConversationServiceImpl implements ConversationService {
             wrapper.eq(Conversation::getStatus, ConversationStatus.valueOf(status));
         }
 
-        // 置顶优先，然后按最后消息时间降序
         wrapper.orderByDesc(Conversation::getPinned)
                .orderByDesc(Conversation::getLastMessageAt);
 
-        Page<Conversation> pageResult = conversationMapper.selectPage(
-                new Page<>(page, size), wrapper);
+        Page<Conversation> pageResult = conversationMapper.selectPage(req.toPage(), wrapper);
 
-        return pageResult.getRecords().stream().map(this::toSummary).toList();
+        return PagedResult.of(pageResult, this::toSummary);
     }
 
     @Override

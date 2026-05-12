@@ -3,6 +3,7 @@ package com.demo.chat.user.controller;
 import com.demo.chat.common.response.GlobalResponse;
 import com.demo.chat.user.dto.AssignPermissionsRequest;
 import com.demo.chat.user.dto.CreateRoleRequest;
+import com.demo.chat.user.dto.RoleDetailVO;
 import com.demo.chat.user.dto.UpdateRoleRequest;
 import com.demo.chat.user.entity.SysPermission;
 import com.demo.chat.user.entity.SysRole;
@@ -37,7 +38,7 @@ public class RoleController {
     }
 
     @GetMapping("/{id}")
-    public GlobalResponse<Map<String, Object>> getRole(@PathVariable Long id) {
+    public GlobalResponse<RoleDetailVO> getRole(@PathVariable Long id) {
         return GlobalResponse.ok(roleService.getRoleDetail(id));
     }
 

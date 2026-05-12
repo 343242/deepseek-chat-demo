@@ -1,5 +1,6 @@
 package com.demo.chat.conversation.service;
 
+import com.demo.chat.common.response.PagedResult;
 import com.demo.chat.conversation.dto.ConversationCreateRequest;
 import com.demo.chat.conversation.dto.ConversationDetail;
 import com.demo.chat.conversation.dto.ConversationSummary;
@@ -26,9 +27,13 @@ public interface ConversationService {
     ConversationSummary getOrCreate(Long userId, String conversationId, String modelId);
 
     /**
-     * 查询用户会话列表（置顶优先，然后按 last_message_at 降序）
+     * 查询用户会话列表（分页，支持状态过滤）
+     *
+     * @param page   页码（从 1 开始）
+     * @param size   每页大小
+     * @param status 状态过滤（可选：ACTIVE / ARCHIVED）
      */
-    List<ConversationSummary> list(Long userId, String status, int page, int size);
+    PagedResult<ConversationSummary> list(Long userId, String status, int page, int size);
 
     /** 获取会话详情（含消息树） */
     ConversationDetail getDetail(Long userId, String conversationId);

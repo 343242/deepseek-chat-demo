@@ -6,6 +6,7 @@ import com.demo.chat.security.service.TokenCacheService;
 import com.demo.chat.user.entity.SysPermission;
 import com.demo.chat.user.entity.SysRole;
 import com.demo.chat.user.entity.SysRolePermission;
+import com.demo.chat.user.dto.RoleDetailVO;
 import com.demo.chat.user.mapper.SysPermissionMapper;
 import com.demo.chat.user.mapper.SysRoleMapper;
 import com.demo.chat.user.mapper.SysRolePermissionMapper;
@@ -47,13 +48,13 @@ public class SysRoleServiceImpl implements SysRoleService {
     }
 
     @Override
-    public Map<String, Object> getRoleDetail(Long roleId) {
+    public RoleDetailVO getRoleDetail(Long roleId) {
         SysRole role = roleMapper.selectById(roleId);
         if (role == null) {
             throw new BusinessException(ErrorCode.ROLE_NOT_FOUND);
         }
         List<SysPermission> permissions = rolePermissionMapper.selectPermissionsByRoleId(roleId);
-        return Map.of("role", role, "permissions", permissions);
+        return new RoleDetailVO(role, permissions);
     }
 
     @Override

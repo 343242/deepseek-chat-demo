@@ -150,6 +150,13 @@ src/main/java/com/demo/chat/
 ├── ChatDemoApplication.java                  # @MapperScan 启动类
 │
 ├── common/                                   # 公共模块
+│   ├── errorcode/                            #   结构化错误码
+│   │   └── ErrorCode.java                    #     46 个错误码枚举（6 大模块分段 10xxx~50xxx）
+│   ├── request/                              #   通用请求封装
+│   │   └── PageRequest.java                  #     分页参数（page/size 校验 + toPage()）
+│   ├── response/                             #   通用响应封装
+│   │   ├── GlobalResponse.java               #     统一响应包装（code/message/data）
+│   │   └── PagedResult.java                  #     分页结果（content/page/size/total/totalPages）
 │   ├── snowflake/                            #   自研雪花 ID 生成器
 │   │   ├── SnowflakeProperties.java          #     配置：epoch / datacenterId / workerId
 │   │   ├── SnowflakeIdGenerator.java         #     核心：64 位雪花算法（线程安全 + 时钟回拨容忍）
@@ -219,6 +226,11 @@ src/main/java/com/demo/chat/
 │   │   ├── RefreshRequest.java               #     刷新 Token 请求
 │   │   ├── ChangePasswordRequest.java        #     修改密码请求
 │   │   ├── UserUpdateRequest.java            #     用户信息更新
+│   │   ├── UserVO.java                       #     用户视图对象（替代 Map）
+│   │   ├── UserStatusUpdateResult.java       #     状态更新结果
+│   │   ├── RoleAssignResult.java             #     角色分配结果
+│   │   ├── UserDeleteResult.java             #     用户删除结果
+│   │   ├── RoleDetailVO.java                 #     角色详情（含权限列表）
 │   │   ├── CreateRoleRequest.java            #     创建角色请求
 │   │   ├── UpdateRoleRequest.java            #     更新角色请求
 │   │   ├── AssignRolesRequest.java           #     分配角色请求
@@ -341,8 +353,7 @@ src/main/java/com/demo/chat/
 │       ├── SystemPromptUpdateRequest.java
 │       ├── PromptTemplate.java
 │       ├── TokenUsageDTO.java
-│       ├── UsageStats.java
-│       └── ErrorResponse.java
+│       └── UsageStats.java
 │
 ├── rag/                                      # ★ RAG 检索增强生成模块
 │   ├── config/                               #   RAG 配置
@@ -996,7 +1007,7 @@ model:
 | **DTO 隔离** | Entity 不暴露给前端，全部通过 record DTO 转换 |
 | **数据访问下沉** | `LambdaQueryWrapper` 全部在 Mapper 层，Service 层不含 SQL 构建逻辑 |
 | **编程式事务** | `TransactionTemplate` 精确控制事务边界 |
-| **统一响应** | 所有接口返回 `GlobalResponse<T>`（code/message/data），结构化错误码（`ErrorCode` 枚举），前端精确识别错误类型 |
+| **统一响应** | 所有接口返回 `GlobalResponse<T>`（code/message/data），结构化错误码（`ErrorCode` 枚举 46 个），分页统一 `PagedResult<T>`（Service 层强类型，零 Map<String, Object>），前端精确识别错误类型 |
 | **安全纵深** | JWT + Redis 吊销 + 用户状态 + IP 限流 + 滑块验证码 + Cookie SameSite + 资源级 owner 校验 |
 | **自研核心** | 雪花 ID 生成器、UUIDv7 (RFC 9562) 生成器、滑块验证码均为纯 Java 实现，无外部依赖 |
 | **模板方法 + 接口分离** | ETL Pipeline 拆分为 Extractor/Transformer/Loader 独立接口，Pipeline 只做编排 |

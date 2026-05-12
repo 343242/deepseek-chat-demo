@@ -1037,6 +1037,16 @@ Token 用量明细（必须指定 `model` 或 `conversation` 参数）。
 |------|------|------|
 | status | ✅ | `0` 禁用，`1` 启用 |
 
+**Response：**
+
+```json
+{
+  "userId": 1,
+  "status": 0,
+  "message": "已禁用"
+}
+```
+
 ---
 
 ### PATCH /api/users/{id}/roles
@@ -1049,11 +1059,30 @@ Token 用量明细（必须指定 `model` 或 `conversation` 参数）。
 { "roleIds": [1, 2] }
 ```
 
+**Response：**
+
+```json
+{
+  "userId": 1,
+  "roleIds": [1, 2],
+  "message": "角色已更新"
+}
+```
+
 ---
 
 ### DELETE /api/users/{id}
 
 逻辑删除用户。
+
+**Response：**
+
+```json
+{
+  "userId": 1,
+  "message": "用户已删除"
+}
+```
 
 ---
 
@@ -1070,6 +1099,24 @@ Token 用量明细（必须指定 `model` 或 `conversation` 参数）。
 ### GET /api/roles/{id}
 
 角色详情（含权限列表）。
+
+**Response：**
+
+```json
+{
+  "role": {
+    "id": 1,
+    "roleName": "ADMIN",
+    "roleDesc": "管理员",
+    "deleted": 0,
+    "createdAt": "2026-05-01T00:00:00+08:00",
+    "updatedAt": "2026-05-01T00:00:00+08:00"
+  },
+  "permissions": [
+    {"id": 1, "permissionName": "chat:send", "resourceKey": "chat", "action": "send"}
+  ]
+}
+```
 
 ---
 
@@ -1148,25 +1195,25 @@ Token 用量明细（必须指定 `model` 或 `conversation` 参数）。
 
 ## 通用错误
 
-所有错误返回统一格式：
+所有错误返回 GlobalResponse 格式（与成功响应结构一致）：
 
 ```json
 {
-  "error": "error_type",
-  "message": "友好描述",
-  "status": 400
+  "code": 40001,
+  "message": "参数校验失败",
+  "data": null
 }
 ```
 
-| HTTP 状态码 | error | 说明 |
-|------------|-------|------|
-| 400 | `business_error` | 业务逻辑错误 |
-| 400 | `validation_error` | 参数校验失败（含字段级详情） |
-| 400 | `content_filtered` | 内容包含敏感词 |
-| 401 | `UNAUTHORIZED` | 未认证 / Token 失效 |
-| 403 | `FORBIDDEN` | 权限不足 |
-| 404 | `model_not_found` | 模型不存在 |
-| 429 | `rate_limit_exceeded` | 请求过于频繁 |
-| 500 | `internal_error` | 服务内部错误 |
+| HTTP 状态码 | code 范围 | 说明 |
+|------------|----------|------|
+| 400 | 10xxx~50xxx | 业务逻辑错误 / 参数校验失败 / 敏感词过滤 |
+| 401 | 40100 | 未认证 / Token 失效 |
+| 403 | 40300 | 权限不足 |
+| 404 | 40400 | 资源不存在（模型/文档/用户等） |
+| 429 | 42900 | 请求过于频繁 |
+| 500 | 50000 | 服务内部错误 |
 
-> `validation_error` 的 `message` 字段包含具体校验失败的字段名和原因，例如 `"model: 模型不能为空; message: 消息不能为空"`。
+> `40001`（参数校验失败）的 `message` 字段包含具体校验失败的字段名和原因，例如 `"model: 模型不能为空; message: 消息不能为空"`。
+>
+> 完整错误码列表见上方「错误码分段」表格。

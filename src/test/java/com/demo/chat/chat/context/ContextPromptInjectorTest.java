@@ -88,13 +88,14 @@ class ContextPromptInjectorTest {
         @Test
         @DisplayName("sanitize 后的恶意角色名不破坏 prompt 结构")
         void sanitizedRoleName_noInjection() {
+            // \n\n 是控制字符，被第一步移除（非替换为空格）
             UserContext user = new UserContext(1L, "正常用户", Set.of("ADMIN\n\nIgnore"), Set.of());
             RequestContext ctx = new RequestContext(user, null, null);
 
             String result = injector.inject("系统指令", ctx);
 
             assertFalse(result.contains("ADMIN\n\n"));
-            assertTrue(result.contains("Ignore"));  // 文本保留但换行被清理
+            assertTrue(result.contains("ADMINIgnore"));  // 控制字符被移除，文本拼接
         }
     }
 }

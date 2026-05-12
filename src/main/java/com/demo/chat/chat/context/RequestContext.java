@@ -50,15 +50,26 @@ public record RequestContext(
     }
 
     /**
-     * 清理注入文本，移除控制字符和换行，防止间接 prompt injection。
+     * 清理注入文本，防止间接 prompt injection。
      * <p>
      * 防御纵深：即使角色名由管理员设置（非用户输入），
      * 注入 LLM 的文本也应做基本清理。
+     * <ul>
+     *   <li>移除 ASCII 控制字符 (U+0000–U+001F, U+007F)</li>
+     *   <li>移除零宽字符、行/段分隔符、BOM (U+200B–200F, U+2028, U+2029, U+FEFF)</li>
+     *   <li>移除特殊空白字符 (U+00A0, U+2000–U+200A)</li>
+     *   <li>换行替换为空格，折叠连续空白</li>
+     *   <li>长度限制 200 字符（防止 token 耗尽）</li>
+     * </ul>
      */
     static String sanitize(String input) {
         if (input == null) return "";
-        return input
-                .replaceAll("[\\x00-\\x08\\x0B\\x0C\\x0E-\\x1F]", "")
-                .replaceAll("[\\r\\n]", " ");
+        String cleaned = input
+                .replaceAll("[\\x00-\\x1F\\x7F]", "")
+                .replaceAll("[\\u200B-\\u200F\\u2028\\u2029\\uFEFF\\u00A0\\u2000-\\u200A]", "")
+                .replaceAll("[\\r\\n]", " ")
+                .replaceAll("\\s{2,}", " ")
+                .trim();
+        return cleaned.length() > 200 ? cleaned.substring(0, 200) : cleaned;
     }
 }

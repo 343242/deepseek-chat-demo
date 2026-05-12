@@ -113,9 +113,48 @@ class RequestContextTest {
         }
 
         @Test
-        @DisplayName("换行替换为空格")
+        @DisplayName("移除 DEL 字符 (U+007F)")
+        void removesDelChar() {
+            assertEquals("hello", RequestContext.sanitize("hel\u007Flo"));
+        }
+
+        @Test
+        @DisplayName("移除零宽字符")
+        void removesZeroWidthChars() {
+            assertEquals("hello", RequestContext.sanitize("hel\u200Blo"));
+        }
+
+        @Test
+        @DisplayName("移除行分隔符 U+2028")
+        void removesLineSeparator() {
+            assertEquals("ab", RequestContext.sanitize("a\u2028b"));
+        }
+
+        @Test
+        @DisplayName("移除 BOM U+FEFF")
+        void removesBom() {
+            assertEquals("hello", RequestContext.sanitize("\uFEFFhello"));
+        }
+
+        @Test
+        @DisplayName("折叠连续空白")
+        void collapsesWhitespace() {
+            assertEquals("a b c", RequestContext.sanitize("a  b   c"));
+        }
+
+        @Test
+        @DisplayName("长度超过 200 截断")
+        void truncatesAt200() {
+            String longInput = "a".repeat(300);
+            String result = RequestContext.sanitize(longInput);
+            assertEquals(200, result.length());
+        }
+
+        @Test
+        @DisplayName("换行和控制字符被移除")
         void newlinesReplaced() {
-            assertEquals("a b c", RequestContext.sanitize("a\nb\rc"));
+            // \n (0x0A) 和 \r (0x0D) 在 \x00-\x1F 范围内，已被第一步移除
+            assertEquals("abc", RequestContext.sanitize("a\nb\rc"));
         }
 
         @Test

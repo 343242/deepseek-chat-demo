@@ -59,14 +59,17 @@ public class DefaultRequestContextManager implements RequestContextManager {
     }
 
     /**
-     * 安全解析：任何策略失败不阻断主流程，记录警告并返回 null
+     * 安全解析：任何策略失败不阻断主流程，记录警告并返回 null。
+     * <p>
+     * 日志策略：WARN 级别只输出类型和提示（不暴露 SQL 细节），
+     * DEBUG 级别输出完整异常堆栈。
      */
     private <T> T resolveSafe(Supplier<T> resolver, Class<T> type, Object hint) {
         try {
             return resolver.get();
         } catch (Exception e) {
-            log.warn("CAG resolver failed for {} (hint={}): {}",
-                    type.getSimpleName(), hint, e.getMessage());
+            log.warn("CAG resolver failed for {} (hint={})", type.getSimpleName(), hint);
+            log.debug("CAG resolver failure detail", e);
             return null;
         }
     }

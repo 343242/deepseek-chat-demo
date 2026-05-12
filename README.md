@@ -138,6 +138,7 @@ curl -X DELETE http://localhost:8080/api/documents/1 -b cookies.txt
 | [API 接口文档](docs/API-DOCS.md) | 所有接口的完整说明 |
 | [数据库设计文档](docs/DATABASE.md) | 表结构、索引、关系、Redis 使用 |
 | [RBAC 用户模块设计](docs/RBAC-USER-MODULE-DESIGN.md) | 权限模型与用户管理 |
+| [分片上传设计](docs/design/chunk-upload.md) | 分片上传架构、流程、安全措施 |
 
 **外部参考：** [Spring AI 1.1.6](https://docs.spring.io/spring-ai/docs/1.1.6/api/) · [DeepSeek API](https://api-docs.deepseek.com/) · [智谱 AI API](https://docs.bigmodel.cn/cn/api/introduction) · [MiniMax API](https://platform.minimaxi.com/docs/api-reference/api-overview)
 
@@ -422,6 +423,19 @@ src/main/java/com/demo/chat/
 │   │
 │   ├── controller/
 │   │   └── DocumentController.java           #     /api/documents/* (上传/列表/详情/删除/状态)
+│   │
+│   ├── upload/                              #   ★ 分片上传（秒传 + 断点续传 + 异步合并）
+│   │   ├── ChunkUploadController.java        #     /api/documents/multipart/* (5 个端点)
+│   │   ├── ChunkUploadService.java           #     分片上传接口
+│   │   ├── ChunkUploadServiceImpl.java       #     实现（session/分片/合并/秒传/速率限制）
+│   │   ├── OrphanChunkCleaner.java           #     孤儿分片定时清理（6h 间隔，48h 阈值）
+│   │   ├── UploadRedisConstants.java         #     Redis key 前缀 + TTL 常量
+│   │   ├── ChunkSizeStrategy.java            #     分片大小策略接口
+│   │   ├── DefaultChunkSizeStrategy.java     #     默认 5MB
+│   │   ├── ChunkUploadInitRequest.java       #     init 请求 DTO (record + @Valid)
+│   │   ├── ChunkUploadCompleteRequest.java   #     complete 请求 DTO
+│   │   ├── ChunkUploadCompleteResult.java    #     complete 结果 DTO
+│   │   └── ChunkUploadStatusResponse.java    #     status 响应 DTO
 │   │
 │   ├── entity/
 │   │   └── RagDocument.java                  #     文档记录（含 userId + 状态机: UPLOADED→...→COMPLETED/FAILED）
@@ -828,6 +842,28 @@ ChatService → RetrievalAugmentationAdvisor
 - **ETL 解耦**：`Extractor`/`Transformer`/`Loader` 独立接口，Pipeline 只做编排，零业务逻辑
 - **DashScope Embedding**：通过 WebClient 调用阿里千问 OpenAI 兼容 API，实现 `EmbeddingModel` 接口
 
+### 12.5. 分片上传
+
+支持大文件（≤50MB）分片上传，提供秒传、断点续传、异步合并能力。详见 [分片上传设计文档](docs/design/chunk-upload.md)。
+
+```
+客户端                           服务端
+  │ POST /multipart (init) ───→ 创建 session / 秒传命中返回 200
+  │ PUT /chunks/{index} ×N  ──→ Lua 原子写入 + 幂等检查
+  │ POST /complete          ──→ composeObject 合并 + MD5 校验 + ETL
+  │ GET  /multipart/{id}    ──→ 断点续传：返回已上传分片列表
+  └ DELETE /multipart/{id}  ──→ 取消上传，清理资源
+```
+
+**关键设计：**
+
+- **秒传**：init 时检查 `fileMd5`，相同文件直接复用已有文档
+- **断点续传**：status 接口返回已上传分片列表，客户端跳过已传分片
+- **异步合并**：最后一个分片或 complete 触发 composeObject 合并，失败可重试
+- **安全**：multipart 大小限制 + uploadId UUID 校验 + init 速率限制 + 服务端 MD5 校验
+- **Redis 原子操作**：Lua 脚本保证分片记录 + 完成判定 + 合并锁原子性
+- **孤儿清理**：每 6h 扫描，48h 阈值，removeObjects 批量删除
+
 ### 13. RAG 多租户隔离
 
 所有 RAG 操作均按 `userId` 严格隔离，防止跨用户数据泄露：
@@ -948,12 +984,19 @@ app:
   # ETL 并发配置
   etl:
     executor:
-      io-pool-core-size: 4
-      io-pool-max-size: 8
-      io-queue-capacity: 50
-      cpu-pool-core-size: 2
-      cpu-pool-max-size: 4
-      cpu-queue-capacity: 20
+      io:
+        core-pool-size: 4
+        max-pool-size: 8
+        queue-capacity: 50
+      cpu:
+        core-pool-size: 2
+        max-pool-size: 4
+        queue-capacity: 20
+      merge:
+        core-pool-size: 2
+        max-pool-size: 4
+        queue-capacity: 20
+        keep-alive-seconds: 120
     fast-track:
       enabled: true
       max-doc-count: 10

@@ -55,6 +55,7 @@
 - [系统提示词](#系统提示词)
 - [模型参数](#模型参数)
 - [RAG 文档管理](#rag-文档管理)
+  - [分片上传](#分片上传)
 - [用量统计](#用量统计)
 - [用户管理](#用户管理)
 - [角色权限](#角色权限)
@@ -881,6 +882,143 @@ UPLOADED → PARSING → CHUNKING → VECTORIZING → COMPLETED
 | VECTORIZING | 正在生成向量嵌入 |
 | COMPLETED | 处理完成，可用于 RAG 检索 |
 | FAILED | 处理失败，查看 errorMessage 了解原因 |
+
+---
+
+### 分片上传
+
+> 支持大文件（≤50MB）分片上传，提供秒传、断点续传、异步合并。详细设计见 [分片上传设计文档](design/chunk-upload.md)。
+
+#### POST /api/documents/multipart
+
+创建分片上传会话。根据 `fileMd5` 自动判断秒传、新建或续传。
+
+**权限：** 需要登录
+
+**Request：**
+
+```json
+{
+  "fileMd5": "d41d8cd98f00b204e9800998ecf8427e",
+  "fileName": "report.pdf",
+  "fileSize": 52428800,
+  "mimeType": "application/pdf",
+  "totalChunks": 10
+}
+```
+
+**Response（秒传 — 200）：**
+
+```json
+{
+  "uploaded": true,
+  "documentId": 42
+}
+```
+
+**Response（新建 — 201）：**
+
+```json
+{
+  "uploaded": false,
+  "uploadId": "550e8400-e29b-41d4-a716-446655440000",
+  "chunkSize": 5242880
+}
+```
+
+**Response（续传 — 201）：**
+
+```json
+{
+  "uploaded": false,
+  "uploadId": "550e8400-e29b-41d4-a716-446655440000",
+  "chunkSize": 5242880,
+  "uploadedChunks": [0, 1, 2, 5]
+}
+```
+
+---
+
+#### PUT /api/documents/multipart/{uploadId}/chunks/{chunkIndex}
+
+上传单个分片。最后一个分片上传完成后自动触发合并。
+
+**权限：** 需要登录
+
+**Headers：**
+
+| Header | 必填 | 说明 |
+|--------|------|------|
+| `X-Chunk-MD5` | ✅ | 分片 MD5（32 位 hex） |
+
+**Request Body：** `application/octet-stream`（分片二进制数据）
+
+**Response（200）：**
+
+```json
+{
+  "uploaded": true,
+  "chunkIndex": 3,
+  "autoMerged": false
+}
+```
+
+> `autoMerged=true` 表示最后一个分片已自动触发合并，客户端无需再调用 complete。
+
+---
+
+#### GET /api/documents/multipart/{uploadId}
+
+查询上传状态。用于断点续传时获取已上传分片列表。
+
+**权限：** 需要登录
+
+**Response（200）：**
+
+```json
+{
+  "uploadId": "550e8400-e29b-41d4-a716-446655440000",
+  "fileName": "report.pdf",
+  "totalChunks": 10,
+  "uploadedChunks": [0, 1, 2, 5, 6, 7],
+  "chunkSize": 5242880
+}
+```
+
+---
+
+#### POST /api/documents/multipart/{uploadId}/complete
+
+显式触发合并。通常在 auto-merge 失败后调用重试。
+
+**权限：** 需要登录
+
+**Request（可选）：**
+
+```json
+{
+  "fileMd5": "d41d8cd98f00b204e9800998ecf8427e"
+}
+```
+
+**Response（202 Accepted）：**
+
+```json
+{
+  "documentId": 42,
+  "status": "MERGING"
+}
+```
+
+---
+
+#### DELETE /api/documents/multipart/{uploadId}
+
+取消上传，清理 Redis session 和 MinIO 临时分片。
+
+**权限：** 需要登录
+
+**Response：** 204 No Content
 
 ---
 

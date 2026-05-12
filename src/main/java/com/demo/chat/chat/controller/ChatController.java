@@ -50,7 +50,7 @@ public class ChatController {
     public Flux<String> chatStreamGet(
             @RequestParam @NotBlank(message = "model 不能为空") String model,
             @RequestParam @NotBlank(message = "message 不能为空") String message,
-            @RequestParam(defaultValue = "default") String conversationId,
+            @RequestParam(required = false) String conversationId,
             @RequestParam(defaultValue = "SIMPLE") String mode,
             @RequestParam(defaultValue = "false") boolean ragEnabled,
             @RequestParam(defaultValue = "false") boolean enableThinking) {

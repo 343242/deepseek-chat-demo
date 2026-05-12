@@ -19,6 +19,7 @@ import com.demo.chat.chat.service.ChatService;
 import com.demo.chat.chat.service.UsageService;
 import com.demo.chat.conversation.service.ConversationMessageService;
 import com.demo.chat.conversation.entity.Message;
+import com.demo.chat.common.uuid.UuidV7;
 import com.demo.chat.conversation.util.ConversationIdUtil;
 import com.demo.chat.common.errorcode.ErrorCode;
 import com.demo.chat.exception.BusinessException;
@@ -210,7 +211,7 @@ public class ChatServiceImpl implements ChatService {
         saveMessagesAndNotify(ctx, request.message(), content, ctx.route.toCompositeId(),
                 aiResponse, ctx.elapsed());
 
-        return new ChatResponse(ctx.route.toCompositeId(), content, request.conversationId(), fallback);
+        return new ChatResponse(ctx.route.toCompositeId(), content, ctx.rawConversationId, fallback);
     }
 
     /**
@@ -284,14 +285,20 @@ public class ChatServiceImpl implements ChatService {
     private ChatContext prepareContext(ChatRequest request) {
         Long userId = SecurityUtils.getCurrentUserId();
         ChatModeStrategy modeStrategy = modeRouter.route(request.mode());
-        String conversationId = ConversationIdUtil.buildIsolatedId(userId, request.conversationId());
+
+        // 前端未传 conversationId 时，后端自动生成 UUIDv7
+        String rawConversationId = request.conversationId();
+        if (rawConversationId == null) {
+            rawConversationId = UuidV7.generateCompact();
+        }
+        String conversationId = ConversationIdUtil.buildIsolatedId(userId, rawConversationId);
         ModelRouter.Route route = modelRouter.resolve(request.model());
         ChatClient chatClient = registry.get(route.toCompositeId());
 
         log.debug("Chat request: userId={}, rawModel={}, route={}, mode={}, conversationId={}",
                 userId, request.model(), route.toCompositeId(), modeStrategy.getMode(), conversationId);
 
-        return new ChatContext(chatClient, route, conversationId, modeStrategy, userId);
+        return new ChatContext(chatClient, route, conversationId, rawConversationId, modeStrategy, userId);
     }
 
     /**
@@ -418,15 +425,18 @@ public class ChatServiceImpl implements ChatService {
         final ChatClient chatClient;
         final ModelRouter.Route route;
         final String conversationId;
+        final String rawConversationId;
         final ChatModeStrategy modeStrategy;
         final Long userId;
         final long startTimeMs;
 
         ChatContext(ChatClient chatClient, ModelRouter.Route route,
-                    String conversationId, ChatModeStrategy modeStrategy, Long userId) {
+                    String conversationId, String rawConversationId,
+                    ChatModeStrategy modeStrategy, Long userId) {
             this.chatClient = chatClient;
             this.route = route;
             this.conversationId = conversationId;
+            this.rawConversationId = rawConversationId;
             this.modeStrategy = modeStrategy;
             this.userId = userId;
             this.startTimeMs = System.currentTimeMillis();

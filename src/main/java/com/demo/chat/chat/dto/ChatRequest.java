@@ -10,7 +10,7 @@ import jakarta.validation.constraints.Size;
  *
  * @param model          模型 ID（如 deepseek-chat, deepseek/deepseek-chat）
  * @param message        用户消息内容
- * @param conversationId 对话 ID（可选，用于多轮对话，默认 "default"）
+ * @param conversationId 对话 ID（可选，不传则后端自动生成 UUIDv7）
  * @param ragEnabled     是否启用 RAG 检索增强（可选，默认 false）
  * @param mode           对话模式（可选，默认 SIMPLE）。
  *                       SIMPLE: 单轮直接调用，无上下文记忆
@@ -37,8 +37,11 @@ public record ChatRequest(
 
     Boolean enableThinking
 ) {
+    /**
+     * 获取 conversationId，不传时返回 null（由 ChatServiceImpl 自动生成 UUIDv7）
+     */
     public String conversationId() {
-        return conversationId != null && !conversationId.isBlank() ? conversationId : "default";
+        return (conversationId != null && !conversationId.isBlank()) ? conversationId : null;
     }
 
     /** 是否启用 RAG，默认 false */

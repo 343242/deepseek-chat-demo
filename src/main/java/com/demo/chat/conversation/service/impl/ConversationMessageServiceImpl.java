@@ -71,7 +71,7 @@ public class ConversationMessageServiceImpl implements ConversationMessageServic
     private MessageVO toTreeVO(Message msg, Map<Long, List<Message>> childrenMap) {
         List<Message> children = childrenMap.getOrDefault(msg.getId(), Collections.emptyList());
         List<MessageVO> childVOs = children.stream()
-                .map(child -> toMessageVO(child))
+                .map(this::toMessageVO)
                 .toList();
 
         return new MessageVO(

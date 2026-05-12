@@ -369,13 +369,58 @@ SSE 流式聊天（JSON body）。
 
 ---
 
-## 对话管理
+## 会话管理
 
-> 所有对话接口自动绑定当前登录用户，用户只能查看和管理自己的对话。
+> 所有会话接口自动绑定当前登录用户，用户只能查看和管理自己的会话。
+>
+> **conversationId 格式：** 前端传入原始 ID（如 `01913a5c8b3a4f2ea1b0c3d4e5f60789`），后端自动拼接用户隔离前缀 `u_{userId}_{rawId}`。
+>
+> 新创建的会话使用 **UUIDv7**（RFC 9562）作为原始 ID——基于 Unix 毫秒时间戳，天然有序，全局唯一。
+
+### POST /api/conversations
+
+创建新会话。
+
+**权限：** `conversation:manage`
+
+**Request：**
+
+```json
+{
+  "title": "我的新会话",
+  "modelId": "deepseek/deepseek-v4-flash"
+}
+```
+
+| 字段 | 必填 | 规则 |
+|------|------|------|
+| title | | 最多 200 字符。不传则系统从首条消息自动截取前 20 字 |
+| modelId | | 最多 100 字符，字母/数字/点/划线/斜杠 |
+
+**Response：**
+
+```json
+{
+  "id": 1,
+  "conversationId": "01913a5c8b3a4f2ea1b0c3d4e5f60789",
+  "title": "我的新会话",
+  "titleSource": "USER",
+  "modelId": "deepseek/deepseek-v4-flash",
+  "pinned": false,
+  "status": "ACTIVE",
+  "messageCount": 0,
+  "lastMessageAt": null,
+  "createdAt": "2026-05-12T15:30:00"
+}
+```
+
+> `titleSource` 取值：`SYSTEM`（系统自动生成）| `USER`（用户手动设置）
+
+---
 
 ### GET /api/conversations
 
-对话列表（分页）。
+会话列表（分页，置顶优先，按最后消息时间降序）。
 
 **权限：** `conversation:manage`
 
@@ -383,18 +428,25 @@ SSE 流式聊天（JSON body）。
 
 | 参数 | 必填 | 说明 |
 |------|------|------|
-| page | | 页码，默认 1 |
-| size | | 每页条数，默认 50 |
+| page | | 页码，默认 1，最小 1 |
+| size | | 每页条数，默认 50，最大 500 |
+| status | | 状态过滤：`ACTIVE` / `ARCHIVED`。不传则返回所有非删除会话 |
 
 **Response：**
 
 ```json
 [
   {
-    "conversationId": "my-chat-001",
-    "messageCount": 5,
-    "firstMessageAt": "2026-05-08T10:00:00",
-    "lastMessageAt": "2026-05-08T10:05:00"
+    "id": 1,
+    "conversationId": "01913a5c8b3a4f2ea1b0c3d4e5f60789",
+    "title": "你好…",
+    "titleSource": "SYSTEM",
+    "modelId": "deepseek/deepseek-v4-flash",
+    "pinned": true,
+    "status": "ACTIVE",
+    "messageCount": 12,
+    "lastMessageAt": "2026-05-12T16:00:00",
+    "createdAt": "2026-05-12T15:30:00"
   }
 ]
 ```
@@ -403,54 +455,115 @@ SSE 流式聊天（JSON body）。
 
 ### GET /api/conversations/{conversationId}
 
-对话消息明细。
+获取会话详情（含消息树）。
 
 **权限：** `conversation:manage`
 
 **Response：**
 
 ```json
-[
-  { "role": "user", "content": "你好", "createdAt": "2026-05-08T10:00:00" },
-  { "role": "assistant", "content": "你好！有什么可以帮你的？", "createdAt": "2026-05-08T10:00:01" }
-]
+{
+  "id": 1,
+  "conversationId": "01913a5c8b3a4f2ea1b0c3d4e5f60789",
+  "title": "你好…",
+  "titleSource": "SYSTEM",
+  "modelId": "deepseek/deepseek-v4-flash",
+  "pinned": false,
+  "status": "ACTIVE",
+  "messageCount": 4,
+  "lastMessageAt": "2026-05-12T16:00:00",
+  "createdAt": "2026-05-12T15:30:00",
+  "messages": [
+    {
+      "id": 1,
+      "parentId": null,
+      "role": "USER",
+      "content": "你好",
+      "status": "FINISHED",
+      "createdAt": "2026-05-12T15:30:00",
+      "children": []
+    },
+    {
+      "id": 2,
+      "parentId": 1,
+      "role": "ASSISTANT",
+      "content": "你好！有什么可以帮你的？",
+      "status": "FINISHED",
+      "modelId": "deepseek-v4-flash",
+      "tokenUsage": 200,
+      "durationMs": 1500,
+      "createdAt": "2026-05-12T15:30:01",
+      "children": []
+    }
+  ]
+}
+```
+
+> 消息通过 `parentId` 构成树形结构，支持分支对话和重新生成。当前仅加载一层子节点（直接回复）。
+
+---
+
+### GET /api/conversations/{conversationId}/messages
+
+获取会话的消息列表（树形结构）。
+
+**权限：** `conversation:manage`
+
+**Response：** 同 `GET /api/conversations/{id}` 的 `messages` 字段，返回消息树数组。
+
+**Response（会话无消息）：** 404 Not Found
+
+---
+
+### PUT /api/conversations/{conversationId}
+
+更新会话（标题/置顶/归档）。
+
+**权限：** `conversation:manage`
+
+**Request：**
+
+```json
+{
+  "title": "新标题",
+  "pinned": true,
+  "status": "ARCHIVED"
+}
+```
+
+| 字段 | 必填 | 规则 |
+|------|------|------|
+| title | | 最多 200 字符。设置后 `titleSource` 自动变为 `USER` |
+| pinned | | `true` 置顶，`false` 取消置顶 |
+| status | | 仅允许 `ACTIVE` 或 `ARCHIVED` |
+
+> 所有字段均可选，不传则不更新。
+
+**Response：**
+
+```json
+{
+  "conversationId": "01913a5c8b3a4f2ea1b0c3d4e5f60789",
+  "message": "会话已更新"
+}
 ```
 
 ---
 
 ### DELETE /api/conversations/{conversationId}
 
-清空指定对话的所有消息。
+删除会话（软删除 + 清空消息）。
 
 **权限：** `conversation:manage`
+
+> 删除操作在事务中执行：会话标记为 `DELETED` + message 表记录物理删除。事务外清空 Spring AI chat memory。
 
 **Response：**
 
 ```json
 {
-  "conversationId": "my-chat-001",
-  "message": "对话已清空"
-}
-```
-
----
-
-### GET /api/conversations/{conversationId}/export
-
-导出对话记录。
-
-**权限：** `conversation:manage`
-
-**Response：**
-
-```json
-{
-  "conversationId": "my-chat-001",
-  "messageCount": 5,
-  "messages": [
-    { "role": "user", "content": "你好", "createdAt": "2026-05-08T10:00:00" },
-    { "role": "assistant", "content": "你好！", "createdAt": "2026-05-08T10:00:01" }
-  ]
+  "conversationId": "01913a5c8b3a4f2ea1b0c3d4e5f60789",
+  "message": "会话已删除"
 }
 ```
 

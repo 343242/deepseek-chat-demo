@@ -1,6 +1,6 @@
 # Chat Demo
 
-基于 **Spring Boot 3.5 + Spring AI 1.1 + MyBatis-Plus 3.5** 的多厂商 AI 聊天助手后端。支持 **DeepSeek、智谱 AI (Zhipu)、MiniMax** 三家模型厂商，通过 Provider 抽象层实现统一路由。提供动态模型加载、SSE 流式响应、JDBC 对话记忆、**Tool Calling 工具调用**、RBAC 权限系统、滑块验证码、自研雪花 ID，并通过 Advisor 链实现限流与内容安全过滤。
+基于 **Spring Boot 3.5 + Spring AI 1.1 + MyBatis-Plus 3.5** 的多厂商 AI 聊天助手后端。支持 **DeepSeek、智谱 AI (Zhipu)、MiniMax** 三家模型厂商，通过 Provider 抽象层实现统一路由。提供动态模型加载、SSE 流式响应、JDBC 对话记忆、**Tool Calling 工具调用**、RBAC 权限系统、滑块验证码、自研雪花 ID 与 UUIDv7，并通过 Advisor 链实现限流与内容安全过滤。
 
 支持 **RAG（检索增强生成）**，通过 Apache Tika 多格式文档解析、Parent-Child 分块策略、PGvector 向量存储、阿里千问 text-embedding-v4 向量化，实现文档上传→解析→分块→向量化→检索增强的完整链路。检索管道支持**查询改写、混合检索（向量+BM25）+RRF融合、百炼Rerank精排、MMR多样性重排**四阶段优化。ETL 支持双线程池并发处理，小文档走**快速通道 BM25 即搜即用**（异步向量化补齐）。
 
@@ -30,6 +30,7 @@
 | spring-ai-starter-model-deepseek | 1.1.6 | DeepSeek 模型接入 |
 | spring-ai-starter-model-minimax | 1.1.6 | MiniMax 模型接入 |
 | spring-ai-starter-model-zhipuai | 1.1.6 | 智谱 AI 模型接入 |
+| UUIDv7 (RFC 9562) | 自实现 | 会话 ID 生成（时间有序 + 全局唯一） |
 
 ## 快速开始
 
@@ -41,8 +42,10 @@ cp .env.example .env   # 编辑 POSTGRES_PASSWORD 等配置
 docker compose up -d
 
 # Flyway 自动执行数据库迁移：
-#   V1__init_schema.sql    — 完整表结构（用户/权限/RBAC/聊天/RAG）
-#   V2__vector_store_bm25.sql — BM25 全文检索支持
+#   V1__init_schema.sql                — 完整表结构（用户/权限/RBAC/聊天/RAG）
+#   V2__vector_store_bm25.sql         — BM25 全文检索支持
+#   V5__conversation_and_message.sql   — 会话 + 消息表（Session→Message 树形结构）
+#   V6__backfill_conversation_and_message.sql — 历史对话数据回填
 # 初始管理员：admin / admin123（生产环境请立即修改）
 ```
 
@@ -147,10 +150,12 @@ src/main/java/com/demo/chat/
 ├── ChatDemoApplication.java                  # @MapperScan 启动类
 │
 ├── common/                                   # 公共模块
-│   └── snowflake/                            #   自研雪花 ID 生成器
-│       ├── SnowflakeProperties.java          #     配置：epoch / datacenterId / workerId
-│       ├── SnowflakeIdGenerator.java         #     核心：64 位雪花算法（线程安全 + 时钟回拨容忍）
-│       └── SnowflakeConfiguration.java       #     Spring Bean 注册
+│   ├── snowflake/                            #   自研雪花 ID 生成器
+│   │   ├── SnowflakeProperties.java          #     配置：epoch / datacenterId / workerId
+│   │   ├── SnowflakeIdGenerator.java         #     核心：64 位雪花算法（线程安全 + 时钟回拨容忍）
+│   │   └── SnowflakeConfiguration.java       #     Spring Bean 注册
+│   └── uuid/                                 #   UUIDv7 生成器
+│       └── UuidV7.java                       #     RFC 9562 — 基于 Unix 毫秒时间戳的有序 UUID
 │
 ├── config/                                   # 基础配置
 │   ├── ModelProviderAutoConfiguration.java   #   多厂商自动配置
@@ -223,6 +228,35 @@ src/main/java/com/demo/chat/
 │       ├── UserController.java               #     /api/users/* (ADMIN)
 │       └── RoleController.java               #     /api/roles/* (ADMIN)
 │
+├── conversation/                             # ★ 会话管理模块（独立于 chat）
+│   ├── controller/
+│   │   └── ConversationController.java       #     /api/conversations（CRUD + 消息列表）
+│   ├── dto/                                  #   数据传输对象
+│   │   ├── ConversationCreateRequest.java    #     创建会话请求
+│   │   ├── ConversationUpdateRequest.java    #     更新会话请求（标题/置顶/归档）
+│   │   ├── ConversationSummary.java          #     会话摘要（列表展示）
+│   │   ├── ConversationDetail.java           #     会话详情（含消息树）
+│   │   └── MessageVO.java                    #     消息视图对象（含子节点树）
+│   ├── entity/                               #   数据实体
+│   │   ├── Conversation.java                 #     会话表（UUIDv7 ID + 用户隔离 + 标题/置顶/状态）
+│   │   └── Message.java                      #     消息表（树形结构 parent_id + 角色/Token/耗时）
+│   ├── enums/                                #   业务枚举（@EnumValue + @JsonValue）
+│   │   ├── ConversationStatus.java           #     ACTIVE / ARCHIVED / DELETED
+│   │   ├── MessageStatus.java                #     IN_PROGRESS / FINISHED / ERROR
+│   │   └── TitleSource.java                  #     SYSTEM / USER
+│   ├── mapper/
+│   │   ├── ConversationMapper.java           #     原子更新：计数递增/CAS 标题/状态/置顶
+│   │   └── MessageMapper.java                #     全量查询 + 物理删除
+│   ├── service/                              #   接口层
+│   │   ├── ConversationService.java          #     会话 CRUD（面向前端 API）
+│   │   └── ConversationMessageService.java   #     消息管理（树构建/保存/删除）
+│   ├── service/impl/
+│   │   ├── ConversationServiceImpl.java      #     会话管理（UUIDv7 + 并发安全 + 编程式事务）
+│   │   └── ConversationMessageServiceImpl.java # 消息树（单次全量查 + 内存分组）
+│   └── util/
+│       └── ConversationIdUtil.java           #     conversationId 用户隔离工具（u_{userId}_{rawId}）
+│
+│   │
 ├── chat/                                     # 聊天核心模块
 │   ├── provider/                             #   ★ 多厂商 Provider 抽象层
 │   │   ├── ModelProvider.java                #     Provider 接口（策略模式）
@@ -264,22 +298,17 @@ src/main/java/com/demo/chat/
 │   │       ├── SandboxResult.java            #       执行结果 DTO
 │   │       └── Language.java                 #       语言枚举
 │   │
-│   ├── util/
-│   │   └── ConversationIdUtil.java           #     对话 ID 用户隔离工具（构建/解析/前缀）
-│   │
 │   ├── service/                              #   业务服务（接口层）
-│   │   ├── ChatService.java                  #     聊天服务接口（阻塞 + 流式 + 记忆 + doFinally）
+│   │   ├── ChatService.java                  #     聊天服务接口（阻塞 + 流式 + 记忆 + 会话集成）
 │   │   ├── ModelService.java                 #     模型管理接口（按厂商分组）
-│   │   ├── ConversationService.java          #     对话管理接口（用户隔离）
 │   │   ├── SystemPromptService.java          #     System Prompt 管理接口（Caffeine 缓存）
 │   │   ├── PromptLoaderService.java          #     XML 模板加载器接口
 │   │   ├── ModelParamsService.java           #     模型参数管理接口（Caffeine 缓存）
 │   │   ├── UsageService.java                 #     用量统计接口
-│   │   ├── ModelRegistryRefresher.java       #     模型注册刷新器（@Component，无接口）
+│   │   └── ModelRegistryRefresher.java       #     模型注册刷新器（@Component，无接口）
 │   │   └── impl/                             #     实现层（业务编排，不含 SQL）
-│   │       ├── ChatServiceImpl.java
+│   │       ├── ChatServiceImpl.java          #     ★ 核心编排（双写事务 + 流式处理 + 回退链）
 │   │       ├── ModelServiceImpl.java
-│   │       ├── ConversationServiceImpl.java
 │   │       ├── SystemPromptServiceImpl.java
 │   │       ├── PromptLoaderServiceImpl.java
 │   │       ├── ModelParamsServiceImpl.java
@@ -287,7 +316,6 @@ src/main/java/com/demo/chat/
 │   │
 │   ├── controller/                           #   REST 接口
 │   │   ├── ChatController.java               #     /api/chat, /api/models
-│   │   ├── ConversationController.java       #     /api/conversations
 │   │   ├── PromptController.java             #     /api/prompts
 │   │   ├── ModelParamsController.java        #     /api/params
 │   │   └── UsageController.java              #     /api/usage
@@ -300,14 +328,11 @@ src/main/java/com/demo/chat/
 │   ├── mapper/                               #   MyBatis-Plus Mapper（语义化接口 + XML）
 │   │   ├── SystemPromptMapper.java           #     selectByModelId / selectAllOrdered / deleteByModelId
 │   │   ├── ModelParamsMapper.java            #     selectByModelId / selectAllOrdered / deleteByModelId
-│   │   ├── TokenUsageMapper.java             #     selectByConversationId / aggregateByModel / ...
-│   │   └── ConversationMapper.java           #     selectConversationsByPrefix / selectMessagesByConversationId
+│   │   └── TokenUsageMapper.java             #     selectByConversationId / aggregateByModel / ...
 │   │
 │   └── dto/                                  #   数据传输对象（全部 record）
 │       ├── ChatRequest.java
 │       ├── ChatResponse.java
-│       ├── ConversationMessage.java
-│       ├── ConversationSummary.java
 │       ├── ModelInfo.java
 │       ├── ProviderModelInfo.java
 │       ├── ModelsResponse.java
@@ -409,7 +434,9 @@ resources/
 ├── application.yml / application-{profile}.yml
 ├── db/migration/                             #   Flyway 数据库迁移
 │   ├── V1__init_schema.sql                   #     完整表结构（幂等）
-│   └── V2__vector_store_bm25.sql             #     BM25 全文检索（tsvector + GIN 索引）
+│   ├── V2__vector_store_bm25.sql             #     BM25 全文检索（tsvector + GIN 索引）
+│   ├── V5__conversation_and_message.sql      #     会话 + 消息表
+│   └── V6__backfill_conversation_and_message.sql # 历史对话数据回填
 ├── static/prompt/                            # XML System Prompt 模板
 │   ├── default.xml
 │   ├── deepseek-chat.xml
@@ -421,7 +448,8 @@ resources/
     ├── SysUserRoleMapper.xml
     ├── SysRolePermissionMapper.xml
     ├── TokenUsageMapper.xml
-    ├── ConversationMapper.xml
+    ├── ConversationMapper.xml               #     会话查询
+    ├── MessageMapper.xml                     #     消息全量查询/物理删除
     ├── ModelParamsMapper.xml
     ├── SystemPromptMapper.xml
     └── rag/RagDocumentMapper.xml
@@ -532,6 +560,66 @@ GET /api/auth/captcha → {captchaId, backgroundImage, puzzleImage, answer(dev o
 | 时钟回拨容忍 | ≤5ms 等待恢复 |
 | 线程安全 | ReentrantLock |
 | 吞吐量 | 每秒 409.6 万 |
+
+### 6.5. Conversation 模块（独立于 chat）
+
+```
+┌─────────────────── chat 模块 ───────────────────┐
+│                                                 │
+│  ChatServiceImpl                                │
+│    │                                            │
+│    ├─ ensureConversationExists() ──────────────┐│
+│    │   (getOrCreate, 并发安全)                  ││
+│    │                                           ││
+│    ├─ saveMessagesAndNotify() ────────────────┐││
+│    │   TransactionTemplate:                    │││
+│    │     1. saveMessage(USER)                  │││
+│    │     2. saveMessage(ASSISTANT)             │││
+│    │     3. onNewMessages(count+title)         │││
+│    │                                           ▼▼▼
+│    │                              ┌── conversation 模块 ──┐
+│    │                              │ ConversationService   │
+│    │                              │   ├─ create (UUIDv7)  │
+│    │                              │   ├─ getOrCreate      │
+│    │                              │   ├─ update/delete    │
+│    │                              │   └─ onNewMessages    │
+│    │                              │                      │
+│    │                              │ ConversationMsgSvc   │
+│    │                              │   ├─ buildMsgTree    │
+│    │                              │   │  (全量查+内存分组) │
+│    │                              │   ├─ saveMessage      │
+│    │                              │   └─ deleteByConvId   │
+│    │                              └──────────────────────┘
+│    │
+│    └─ Spring AI ChatMemory ──→ spring_ai_chat_memory 表
+│                               (独立于 message 表)
+└─────────────────────────────────────────────────────────┘
+```
+
+**双写架构：**
+
+| 层 | 存储 | 用途 |
+|----|------|------|
+| Spring AI | `spring_ai_chat_memory` | 多轮对话历史，框架自动管理 |
+| 业务层 | `message` 表 | 消息树（分支/重新生成）+ Token 用量 + 耗时 |
+| 业务层 | `conversation` 表 | 会话元数据（标题/置顶/状态/计数） |
+
+**关键设计：**
+
+- **conversationId = `u_{userId}_{uuidv7}`**：用户隔离 + 时间有序
+- **UUIDv7 (RFC 9562)**：48 位毫秒时间戳 + 74 位随机数，自实现零依赖
+- **消息树**：`parent_id` 构建树形，一次全量查 + 内存 `groupingBy(parentId)` 分组（禁止 N+1）
+- **并发安全**：`getOrCreate` 依赖唯一约束 + catch `DuplicateKeyException` 重查
+- **编程式事务**：`TransactionTemplate` 保证 USER+ASSISTANT 消息原子写入
+- **CAS 标题**：首次消息时原子设置标题（`WHERE message_count = 0 AND title_source = 'SYSTEM'`）
+- **枚举映射**：`@EnumValue` + `@JsonValue`，实体用枚举不用 String
+
+**依赖方向：**
+
+```
+chat → conversation → (security, common)
+  ↑ 独立       ↑ 独立于 rag、user
+```
 
 ### 7. RBAC 权限模型
 
@@ -909,7 +997,7 @@ model:
 | **数据访问下沉** | `LambdaQueryWrapper` 全部在 Mapper 层，Service 层不含 SQL 构建逻辑 |
 | **编程式事务** | `TransactionTemplate` 精确控制事务边界 |
 | **安全纵深** | JWT + Redis 吊销 + 用户状态 + IP 限流 + 滑块验证码 + Cookie SameSite + 资源级 owner 校验 |
-| **自研核心** | 雪花 ID 生成器、滑块验证码均为纯 Java 实现，无外部依赖 |
+| **自研核心** | 雪花 ID 生成器、UUIDv7 (RFC 9562) 生成器、滑块验证码均为纯 Java 实现，无外部依赖 |
 | **模板方法 + 接口分离** | ETL Pipeline 拆分为 Extractor/Transformer/Loader 独立接口，Pipeline 只做编排 |
 | **四阶段检索管道** | 查询改写→混合检索+RRF→Rerank→MMR，各阶段独立可配，管道通过 `RagConfig` 统一装配 |
 | **双层检索（Parent-Child）** | 子切分保证检索精度，父文档保证 LLM 上下文完整性 |

@@ -193,7 +193,7 @@ public class TeamServiceImpl implements TeamService {
 
         txTemplate.executeWithoutResult(status -> {
             // SELECT FOR UPDATE 防并发
-            Team team = teamMapper.selectById(teamId);
+            Team team = teamMapper.selectByIdForUpdate(teamId);
             if (team == null || team.getDeleted() != 0) {
                 throw new BusinessException(ErrorCode.TEAM_NOT_FOUND);
             }
@@ -225,7 +225,13 @@ public class TeamServiceImpl implements TeamService {
 
     @Override
     public void setCreatorQuota(Long teamId, long maxUploadMb) {
+        Long userId = SecurityUtils.getCurrentUserId();
         Team team = getActiveTeam(teamId);
+
+        // Service 层权限校验：仅创建者可设置
+        if (!userId.equals(team.getCreatorId())) {
+            throw new BusinessException(ErrorCode.NOT_TEAM_CREATOR);
+        }
 
         txTemplate.executeWithoutResult(status -> {
             team.setCreatorUploadLimitMb(maxUploadMb);

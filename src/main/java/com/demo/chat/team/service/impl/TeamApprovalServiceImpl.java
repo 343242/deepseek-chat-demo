@@ -113,17 +113,18 @@ public class TeamApprovalServiceImpl implements TeamApprovalService {
             throw new BusinessException(ErrorCode.NOT_TEAM_ADMIN);
         }
 
-        TeamUploadApproval approval = approvalMapper.selectById(approvalId);
-        if (approval == null || !approval.getTeamId().equals(teamId)) {
-            throw new BusinessException(ErrorCode.APPROVAL_NOT_FOUND);
-        }
-        if (approval.getStatus() != ApprovalStatus.PENDING) {
-            throw new BusinessException(ErrorCode.APPROVAL_ALREADY_PROCESSED);
-        }
-
         boolean isApprove = "APPROVE".equals(request.action());
 
         txTemplate.executeWithoutResult(status -> {
+            // 事务内查询 + 状态检查 + 更新，防并发
+            TeamUploadApproval approval = approvalMapper.selectById(approvalId);
+            if (approval == null || !approval.getTeamId().equals(teamId)) {
+                throw new BusinessException(ErrorCode.APPROVAL_NOT_FOUND);
+            }
+            if (approval.getStatus() != ApprovalStatus.PENDING) {
+                throw new BusinessException(ErrorCode.APPROVAL_ALREADY_PROCESSED);
+            }
+
             // 更新审批记录
             approval.setStatus(isApprove ? ApprovalStatus.APPROVED : ApprovalStatus.REJECTED);
             approval.setReviewerId(reviewerId);

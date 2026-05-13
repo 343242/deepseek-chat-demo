@@ -8,6 +8,7 @@ import com.demo.chat.team.config.TeamProperties;
 import com.demo.chat.team.dto.MemberRoleUpdateRequest;
 import com.demo.chat.team.dto.MemberUploadLimitRequest;
 import com.demo.chat.team.dto.TeamMemberVO;
+import org.springframework.dao.DuplicateKeyException;
 import com.demo.chat.team.entity.Team;
 import com.demo.chat.team.entity.TeamMember;
 import com.demo.chat.team.enums.TeamMemberRole;
@@ -70,60 +71,64 @@ public class TeamMemberServiceImpl implements TeamMemberService {
         SysUser targetUser = sysUserMapper.selectActiveById(targetUserId)
                 .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
 
-        // 校验团队人数上限
-        long memberCount = teamMemberMapper.selectCount(
-                new LambdaQueryWrapper<TeamMember>()
-                        .eq(TeamMember::getTeamId, teamId)
-                        .eq(TeamMember::getStatus, 1));
-        if (memberCount >= teamProperties.getMaxMembersPerTeam()) {
-            throw new BusinessException(ErrorCode.TEAM_MEMBER_LIMIT_EXCEEDED);
-        }
+        return txTemplate.execute(status -> {
+            // 校验团队人数上限（事务内防 TOCTOU）
+            long memberCount = teamMemberMapper.selectCount(
+                    new LambdaQueryWrapper<TeamMember>()
+                            .eq(TeamMember::getTeamId, teamId)
+                            .eq(TeamMember::getStatus, 1));
+            if (memberCount >= teamProperties.getMaxMembersPerTeam()) {
+                throw new BusinessException(ErrorCode.TEAM_MEMBER_LIMIT_EXCEEDED);
+            }
 
-        // 校验目标用户加入团队数上限
-        long joinedCount = teamMemberMapper.selectCount(
-                new LambdaQueryWrapper<TeamMember>()
-                        .eq(TeamMember::getUserId, targetUserId)
-                        .eq(TeamMember::getStatus, 1));
-        if (joinedCount >= teamProperties.getMaxTeamsPerUser()) {
-            throw new BusinessException(ErrorCode.TEAM_LIMIT_EXCEEDED);
-        }
+            // 校验目标用户加入团队数上限
+            long joinedCount = teamMemberMapper.selectCount(
+                    new LambdaQueryWrapper<TeamMember>()
+                            .eq(TeamMember::getUserId, targetUserId)
+                            .eq(TeamMember::getStatus, 1));
+            if (joinedCount >= teamProperties.getMaxTeamsPerUser()) {
+                throw new BusinessException(ErrorCode.TEAM_LIMIT_EXCEEDED);
+            }
 
-        // 查找是否有历史记录（曾经加入过又退出的）
-        TeamMember existing = teamMemberMapper.selectOne(
-                new LambdaQueryWrapper<TeamMember>()
-                        .eq(TeamMember::getTeamId, teamId)
-                        .eq(TeamMember::getUserId, targetUserId)
-                        .last("LIMIT 1"));
+            // 查找是否有历史记录（曾经加入过又退出的）
+            TeamMember existing = teamMemberMapper.selectOne(
+                    new LambdaQueryWrapper<TeamMember>()
+                            .eq(TeamMember::getTeamId, teamId)
+                            .eq(TeamMember::getUserId, targetUserId)
+                            .last("LIMIT 1"));
 
-        if (existing != null && existing.getStatus() == 1) {
-            throw new BusinessException(ErrorCode.ALREADY_TEAM_MEMBER);
-        }
+            if (existing != null && existing.getStatus() == 1) {
+                throw new BusinessException(ErrorCode.ALREADY_TEAM_MEMBER);
+            }
 
-        TeamMember member;
-        if (existing != null) {
-            // 重新激活
-            existing.setStatus(1);
-            existing.setRole(TeamMemberRole.MEMBER);
-            existing.setUploadLimitMb(team.getDefaultUploadLimitMb());
-            existing.setJoinedAt(OffsetDateTime.now());
-            existing.setUpdatedAt(OffsetDateTime.now());
-            teamMemberMapper.updateById(existing);
-            member = existing;
-        } else {
-            // 新建
-            member = new TeamMember();
-            member.setTeamId(teamId);
-            member.setUserId(targetUserId);
-            member.setRole(TeamMemberRole.MEMBER);
-            member.setUploadLimitMb(team.getDefaultUploadLimitMb());
-            member.setStatus(1);
-            member.setJoinedAt(OffsetDateTime.now());
-            member.setUpdatedAt(OffsetDateTime.now());
-            teamMemberMapper.insert(member);
-        }
+            TeamMember member;
+            if (existing != null) {
+                existing.setStatus(1);
+                existing.setRole(TeamMemberRole.MEMBER);
+                existing.setUploadLimitMb(team.getDefaultUploadLimitMb());
+                existing.setJoinedAt(OffsetDateTime.now());
+                existing.setUpdatedAt(OffsetDateTime.now());
+                teamMemberMapper.updateById(existing);
+                member = existing;
+            } else {
+                member = new TeamMember();
+                member.setTeamId(teamId);
+                member.setUserId(targetUserId);
+                member.setRole(TeamMemberRole.MEMBER);
+                member.setUploadLimitMb(team.getDefaultUploadLimitMb());
+                member.setStatus(1);
+                member.setJoinedAt(OffsetDateTime.now());
+                member.setUpdatedAt(OffsetDateTime.now());
+                try {
+                    teamMemberMapper.insert(member);
+                } catch (DuplicateKeyException e) {
+                    throw new BusinessException(ErrorCode.ALREADY_TEAM_MEMBER);
+                }
+            }
 
-        log.info("Member added: teamId={}, userId={}, operatorId={}", teamId, targetUserId, operatorId);
-        return toMemberVO(member, targetUser);
+            log.info("Member added: teamId={}, userId={}, operatorId={}", teamId, targetUserId, operatorId);
+            return toMemberVO(member, targetUser);
+        });
     }
 
     @Override

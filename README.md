@@ -138,29 +138,7 @@ curl http://localhost:8080/api/documents -b cookies.txt
 # 9. 删除文档（仅文档所有者可操作）
 curl -X DELETE http://localhost:8080/api/documents/1 -b cookies.txt
 
-# 10. 创建团队
-curl -X POST http://localhost:8080/api/teams \
-  -H "Content-Type: application/json" \
-  -b cookies.txt \
-  -d '{"name":"我的团队","description":"团队描述"}'
 
-# 11. 邀请成员加入团队
-curl -X POST http://localhost:8080/api/teams/1/members/invite \
-  -H "Content-Type: application/json" \
-  -b cookies.txt \
-  -d '{"userId":2,"role":"MEMBER"}'
-
-# 12. 上传文档到团队空间
-curl -X POST http://localhost:8080/api/documents/upload \
-  -b cookies.txt \
-  -F "file=@document.pdf" \
-  -F "teamId=1"
-
-# 13. 审批团队文档上传
-curl -X POST http://localhost:8080/api/teams/approvals/1/approve \
-  -H "Content-Type: application/json" \
-  -b cookies.txt \
-  -d '{"approved":true}'
 ```
 
 ## 项目结构概览
@@ -180,31 +158,7 @@ src/main/java/com/demo/chat/
 
 > 完整的文件级目录结构见 [项目结构文档](docs/PROJECT-STRUCTURE.md)。
 
-### team 模块目录
 
-```
-team/                     # 团队协作模块
-├── config/               #   TeamProperties 配置
-├── controller/           #   TeamController / TeamMemberController / TeamApprovalController
-├── dto/                  #   团队相关 DTO
-├── entity/               #   Team / TeamMember / TeamUploadApproval
-├── enums/                #   TeamStatus / TeamMemberRole / ApprovalStatus
-├── job/                  #   ApprovalTimeoutJob（审批超时自动拒绝）
-├── mapper/               #   TeamMapper / TeamMemberMapper / TeamUploadApprovalMapper
-├── security/             #   DocumentOwnershipChecker（文档权限校验）
-├── service/              #   团队/成员/审批服务接口
-└── upload/               #   TeamUploadStrategy / UploadStrategyFactory
-```
-
-### common / rag 模块新增
-
-```
-common/
-└── upload/               #   UploadStrategy 接口（OCP，策略模式）
-
-rag/
-└── upload/               #   PersonalUploadStrategy（个人上传）
-```
 
 ## 文档
 
@@ -220,8 +174,8 @@ rag/
 | [数据库设计文档](docs/DATABASE.md) | 表结构、索引、关系、Redis 使用 |
 | [RBAC 用户模块设计](docs/RBAC-USER-MODULE-DESIGN.md) | 权限模型与用户管理 |
 | [分片上传设计](docs/design/chunk-upload.md) | 分片上传架构、流程、安全措施 |
-| [团队协作功能 PRD](docs/design/team-collaboration-prd.md) | 团队创建/成员管理/审批流/额度控制/权限隔离 |
-| [代码审查报告](docs/design/code-review-report.md) | 团队模块 + Log4j 2 迁移代码审查 |
+| [团队协作功能 PRD](docs/TEAM-FEATURE-PRD.md) | 团队创建/成员管理/审批流/额度控制/权限隔离 |
+| [代码审查报告](docs/TEAM-CODE-REVIEW.md) | 团队模块代码审查（3B/7H/8M/4L） |
 
 **外部参考：** [Spring AI 1.1.6](https://docs.spring.io/spring-ai/docs/1.1.6/api/) · [DeepSeek API](https://api-docs.deepseek.com/) · [智谱 AI API](https://docs.bigmodel.cn/cn/api/introduction) · [MiniMax API](https://platform.minimaxi.com/docs/api-reference/api-overview)
 

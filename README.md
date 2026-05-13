@@ -4,6 +4,10 @@
 
 支持 **RAG（检索增强生成）**，通过 Apache Tika 多格式文档解析、Parent-Child 分块策略、PGvector 向量存储、阿里千问 text-embedding-v4 向量化，实现文档上传→解析→分块→向量化→检索增强的完整链路。检索管道支持**查询改写、混合检索（向量+BM25）+RRF融合、百炼Rerank精排、MMR多样性重排**四阶段优化。ETL 支持双线程池并发处理，小文档走**快速通道 BM25 即搜即用**（异步向量化补齐）。
 
+支持 **团队协作**，包括团队创建与解散、成员管理（邀请/移除/角色变更）、上传审批流、额度控制、文档权限隔离等完整功能。
+
+使用 **Log4j 2** 替代 Logback 作为日志框架，基于 LMAX Disruptor 实现全异步日志，按级别（error/warn/info/debug）独立输出到不同目录。
+
 ## 技术栈
 
 | 依赖 | 版本 | 用途 |
@@ -11,10 +15,12 @@
 | Apache Tika | 随 Spring AI | 多格式文档解析（PDF/DOCX/PPTX/HTML 等） |
 | exp4j | 0.4.8 | 安全数学表达式求值（替代 ScriptEngine） |
 | Caffeine | 3.x | 本地缓存（SystemPrompt / ModelParams / 验证码） |
+| LMAX Disruptor | 4.0.0 | 异步日志环形缓冲区（Log4j 2 内部引擎） |
 | DashScope text-embedding-v4 | - | 阿里千问 Embedding 模型（1024 维） |
 | Flyway | 随 Boot | 数据库版本化迁移（schema.sql 初始化） |
 | Java | 21 | 运行时 |
 | JJWT | 0.13.0 | JWT 双 Token（Access 15min + Refresh 24h） |
+| Log4j 2 | 随 Boot | 日志框架（替代 Logback），按级别分目录 |
 | MinIO | 9.0.0 | 对象存储（RAG 文件管理） |
 | MyBatis-Plus | 3.5.16 | ORM 框架 |
 | PGvector | 随 PostgreSQL | 向量数据库（pgvector 扩展） |
@@ -46,6 +52,8 @@ docker compose up -d
 #   V2__vector_store_bm25.sql         — BM25 全文检索支持
 #   V5__conversation_and_message.sql   — 会话 + 消息表（Session→Message 树形结构）
 #   V6__backfill_conversation_and_message.sql — 历史对话数据回填
+#   V9__team.sql                       — 团队协作表（team + team_member + team_upload_approval）
+#   V10__rag_document_timestamptz.sql  — rag_document 时区类型 + DDL COMMENT
 # 初始管理员：admin / admin123（生产环境请立即修改）
 ```
 
@@ -129,23 +137,74 @@ curl http://localhost:8080/api/documents -b cookies.txt
 
 # 9. 删除文档（仅文档所有者可操作）
 curl -X DELETE http://localhost:8080/api/documents/1 -b cookies.txt
+
+# 10. 创建团队
+curl -X POST http://localhost:8080/api/teams \
+  -H "Content-Type: application/json" \
+  -b cookies.txt \
+  -d '{"name":"我的团队","description":"团队描述"}'
+
+# 11. 邀请成员加入团队
+curl -X POST http://localhost:8080/api/teams/1/members/invite \
+  -H "Content-Type: application/json" \
+  -b cookies.txt \
+  -d '{"userId":2,"role":"MEMBER"}'
+
+# 12. 上传文档到团队空间
+curl -X POST http://localhost:8080/api/documents/upload \
+  -b cookies.txt \
+  -F "file=@document.pdf" \
+  -F "teamId=1"
+
+# 13. 审批团队文档上传
+curl -X POST http://localhost:8080/api/teams/approvals/1/approve \
+  -H "Content-Type: application/json" \
+  -b cookies.txt \
+  -d '{"approved":true}'
 ```
 
 ## 项目结构概览
 
 ```
 src/main/java/com/demo/chat/
-├── common/              # 公共模块（错误码、分页、雪花ID、UUIDv7）
+├── common/              # 公共模块（错误码、分页、雪花ID、UUIDv7、上传策略接口）
 ├── config/              # 基础配置（多厂商、Advisor、MyBatis-Plus、Redis）
 ├── security/            # 安全模块（JWT、验证码、Token缓存）
 ├── user/                # RBAC 用户模块（用户/角色/权限 CRUD）
 ├── conversation/        # 会话管理（独立于 chat，双写架构）
 ├── chat/                # 聊天核心（Provider 抽象、Advisor 链、Tool Calling）
-├── rag/                 # RAG 检索增强（ETL Pipeline、文档解析、向量检索）
+├── rag/                 # RAG 检索增强（ETL Pipeline、文档解析、向量检索、个人上传策略）
+├── team/                # 团队协作模块（团队/成员/审批/文档权限）
 └── exception/           # 统一异常处理
 ```
 
 > 完整的文件级目录结构见 [项目结构文档](docs/PROJECT-STRUCTURE.md)。
+
+### team 模块目录
+
+```
+team/                     # 团队协作模块
+├── config/               #   TeamProperties 配置
+├── controller/           #   TeamController / TeamMemberController / TeamApprovalController
+├── dto/                  #   团队相关 DTO
+├── entity/               #   Team / TeamMember / TeamUploadApproval
+├── enums/                #   TeamStatus / TeamMemberRole / ApprovalStatus
+├── job/                  #   ApprovalTimeoutJob（审批超时自动拒绝）
+├── mapper/               #   TeamMapper / TeamMemberMapper / TeamUploadApprovalMapper
+├── security/             #   DocumentOwnershipChecker（文档权限校验）
+├── service/              #   团队/成员/审批服务接口
+└── upload/               #   TeamUploadStrategy / UploadStrategyFactory
+```
+
+### common / rag 模块新增
+
+```
+common/
+└── upload/               #   UploadStrategy 接口（OCP，策略模式）
+
+rag/
+└── upload/               #   PersonalUploadStrategy（个人上传）
+```
 
 ## 文档
 
@@ -161,6 +220,8 @@ src/main/java/com/demo/chat/
 | [数据库设计文档](docs/DATABASE.md) | 表结构、索引、关系、Redis 使用 |
 | [RBAC 用户模块设计](docs/RBAC-USER-MODULE-DESIGN.md) | 权限模型与用户管理 |
 | [分片上传设计](docs/design/chunk-upload.md) | 分片上传架构、流程、安全措施 |
+| [团队协作功能 PRD](docs/design/team-collaboration-prd.md) | 团队创建/成员管理/审批流/额度控制/权限隔离 |
+| [代码审查报告](docs/design/code-review-report.md) | 团队模块 + Log4j 2 迁移代码审查 |
 
 **外部参考：** [Spring AI 1.1.6](https://docs.spring.io/spring-ai/docs/1.1.6/api/) · [DeepSeek API](https://api-docs.deepseek.com/) · [智谱 AI API](https://docs.bigmodel.cn/cn/api/introduction) · [MiniMax API](https://platform.minimaxi.com/docs/api-reference/api-overview)
 

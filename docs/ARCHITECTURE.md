@@ -205,3 +205,194 @@ Database
 | **并发 ETL + 策略路由** | IO/CPU 双线程池分离，FastTrack/Standard 策略路由，OCP 零改旧代码 |
 | **ETL 状态集中管理** | EtlStatus 常量类 + EtlStatusManager 独立事务，消除重复代码 |
 | **EmbeddingModel 接口适配** | 自建 DashScopeEmbeddingModel 实现标准接口，PgVectorStore 自动注入，零耦合 |
+| **启动优化** | MapperScan 精确化（显式列出 5 个包替代通配符）、scanBasePackages 精确到业务包、ConfigurationPropertiesScan 覆盖全包；启动时间 8s → 5.6s |
+| **团队上传策略** | UploadStrategy 接口 + PersonalUploadStrategy/TeamUploadStrategy，工厂根据 teamId 路由，OCP 零改旧代码 |
+| **审批状态机** | PENDING → APPROVED/REJECTED + 超时自动拒绝，定时任务 fixedDelay 1h 扫描 |
+| **角色枚举设计** | CREATOR(30) > ADMIN(20) > MEMBER(10) 数值比较，@EnumValue 存 int、@JsonValue 返回 name()，DB 与 API 分离 |
+| **统一权限门面** | DocumentOwnershipChecker 跨 team/rag 模块，个人文档 owner 检查、团队文档成员资格 + 角色检查 |
+
+## 团队协作架构
+
+### 数据模型
+
+```sql
+-- 团队基本信息
+CREATE TABLE team (
+    id          BIGINT PRIMARY KEY,
+    name        VARCHAR(100) NOT NULL,
+    creator_id  BIGINT NOT NULL,
+    status      VARCHAR(20) NOT NULL DEFAULT 'ACTIVE',   -- ACTIVE / DISSOLVED
+    upload_limits JSONB,                                  -- 上传配额配置
+    created_at  TIMESTAMP NOT NULL DEFAULT NOW(),
+    updated_at  TIMESTAMP NOT NULL DEFAULT NOW()
+);
+
+-- 成员关系
+CREATE TABLE team_member (
+    id              BIGINT PRIMARY KEY,
+    team_id         BIGINT NOT NULL,
+    user_id         BIGINT NOT NULL,
+    role            INT NOT NULL,                         -- 30/20/10，对应枚举数值
+    upload_limit_mb INT DEFAULT 0,                        -- 个人上传限额（MB）
+    status          VARCHAR(20) NOT NULL DEFAULT 'ACTIVE',
+    joined_at       TIMESTAMP NOT NULL DEFAULT NOW(),
+    UNIQUE(team_id, user_id)
+);
+
+-- 上传审批
+CREATE TABLE team_upload_approval (
+    id          BIGINT PRIMARY KEY,
+    document_id VARCHAR(64) NOT NULL,
+    uploader_id BIGINT NOT NULL,
+    reviewer_id BIGINT,
+    status      VARCHAR(20) NOT NULL DEFAULT 'PENDING',  -- PENDING / APPROVED / REJECTED / TIMEOUT
+    created_at  TIMESTAMP NOT NULL DEFAULT NOW(),
+    reviewed_at TIMESTAMP
+);
+```
+
+### 角色模型
+
+```
+CREATOR(30) > ADMIN(20) > MEMBER(10)
+```
+
+- 数值越大权限越高，可直接通过 `role > ADMIN` 比较判断权限
+- `@EnumValue` 注解标记 int 值存入数据库，`@JsonValue` 注解标记 name() 用于 API 序列化
+- DB 存数字保证查询效率，API 暴露字符串保证可读性，两者解耦
+
+### 上传策略模式（OCP）
+
+```
+                   ┌─── UploadStrategy 接口 ───┐
+                   │  (common.upload 包)        │
+                   └────────┬──────────────────┘
+                            │
+            ┌───────────────┴───────────────┐
+            ▼                               ▼
+  PersonalUploadStrategy           TeamUploadStrategy
+    (rag.upload 包)                  (team.upload 包)
+    teamId = null                   teamId ≠ null
+         │                               │
+         ▼                               ▼
+    直接上传 + ETL              额度校验 + 审批路由
+                                      │
+                        ┌─────────────┴─────────────┐
+                        ▼                           ▼
+                  管理员/创建者                   普通成员
+                  → PROCESSING                → PENDING_APPROVAL
+                  → 直接触发 ETL               → 创建审批记录
+                                                 → 等待审批
+
+UploadStrategyFactory
+    → 根据 teamId == null 路由到个人/团队策略
+    → 新增策略零改工厂代码
+```
+
+- **PersonalUploadStrategy**：个人上传，`teamId == null`，直接写入文档并触发 ETL
+- **TeamUploadStrategy**：团队上传，`teamId != null`，先校验额度，再根据角色分流
+  - 管理员/创建者 → 文档状态 `PROCESSING`，直接触发 ETL
+  - 普通成员 → 文档状态 `PENDING_APPROVAL`，创建 `team_upload_approval` 记录，等待管理员审批
+- **UploadStrategyFactory** 通过 `teamId == null` 作为路由键，简洁且符合 OCP
+
+### 审批流
+
+```
+上传 → 策略路由
+         │
+         ├── 管理员/创建者 → PROCESSING → ETL → 完成
+         │
+         └── 普通成员 → PENDING_APPROVAL
+                            │
+                            ├── 管理员审批 → APPROVED → 触发 ETL
+                            │
+                            ├── 管理员拒绝 → REJECTED → 通知上传者
+                            │
+                            └── 超时未审批 → TIMEOUT（定时任务自动拒绝）
+```
+
+定时任务通过 `@Scheduled(fixedDelay = 3600000)` 每小时扫描超时审批记录并自动标记为 `TIMEOUT`。
+
+### 权限模型
+
+```
+DocumentOwnershipChecker（统一权限校验门面）
+         │
+         ├── 个人文档 → owner 检查（document.ownerId == currentUserId）
+         │
+         └── 团队文档 → 成员资格检查（team_member 表）
+                        → 角色权限检查（role >= 所需最低角色）
+```
+
+- `DocumentOwnershipChecker` 作为跨 `team`/`rag` 模块的统一入口
+- 调用方无需关心文档归属域，门面内部根据 `teamId` 自动路由校验逻辑
+- 新增权限规则只需扩展门面，不影响调用方
+
+### 并发安全
+
+| 场景 | 策略 |
+|------|------|
+| **解散团队** | `SELECT ... FOR UPDATE` 行锁锁定 team 记录，阻止并发操作 |
+| **添加成员** | 事务内插入 + `DuplicateKey` 异常兜底，防止重复成员 |
+| **审批 review** | 事务内先查状态，仅 `PENDING` 状态允许变更，防止并发重复审批 |
+
+### 分页
+
+- `listMembers` / `listPending` / `listMyApprovals` 统一接入 `PageRequest` + `PagedResult<T>`
+- 批量查询替代 N+1：`selectBatchIds` 收集所有 ID 后一次性查询，`Collectors.toMap` 建立映射
+- 分页参数通过 Controller 层 `PageRequest` 注入，Service/Mapper 层透传，与项目分页规范一致
+
+## 日志架构
+
+### Log4j 2 异步架构
+
+```
+业务线程 → AsyncLogger（Disruptor 无锁环形队列）→ 后台线程批量写文件
+```
+
+- **AsyncLogger**：基于 LMAX Disruptor 的无锁队列，业务线程将日志事件放入队列即返回，不阻塞
+- **全局异步**：`log4j2.contextSelector=org.apache.logging.log4j.core.async.AsyncLoggerContextSelector`
+- 后台 I/O 线程从队列消费事件并写入磁盘，实现日志与业务线程完全解耦
+
+### 日志目录结构
+
+```
+logs/
+├── error/   error.log    ← ERROR + FATAL，保留 30 天，100MB 滚动
+├── warn/    warn.log     ← WARN，保留 30 天，200MB 滚动
+├── info/    info.log     ← INFO，保留 30 天，500MB 滚动
+├── debug/   debug.log    ← DEBUG，保留 7 天，500MB 滚动
+└── 控制台（彩色输出）
+```
+
+### 关键配置
+
+- **LevelRangeFilter**：每个 Appender 通过 `LevelRangeFilter` 严格限定日志级别范围，确保 error.log 只含 ERROR/FATAL、warn.log 只含 WARN，各级别文件互不混杂
+- **RollingRandomAccessFile**：使用内存映射文件（Memory-Mapped I/O）写入，比传统 `FileOutputStream` 性能大幅提升
+- **滚动策略**：基于文件大小触发滚动（`SizeBasedTriggeringPolicy`），滚动时自动压缩旧文件
+
+### 日志降噪
+
+```xml
+<!-- 第三方框架默认 WARN，减少噪音 -->
+<Logger name="org.springframework" level="WARN"/>
+<Logger name="org.apache" level="WARN"/>
+<Logger name="io.netty" level="WARN"/>
+<Logger name="com.zaxxer.hikari" level="WARN"/>
+```
+
+- Spring、Netty、HikariCP 等框架日志默认设为 WARN，避免 DEBUG/INFO 级别的框架内部日志淹没业务日志
+- 需要排查框架问题时，可通过环境变量动态调低特定 Logger 级别
+
+### 环境变量动态调级
+
+```bash
+# 调整根日志级别
+-DLOG_ROOT_LEVEL=DEBUG
+
+# 调整应用日志级别（不影响第三方框架）
+-DLOG_APP_LEVEL=TRACE
+```
+
+- 生产环境默认 `LOG_ROOT_LEVEL=INFO`、`LOG_APP_LEVEL=INFO`
+- 排查问题时无需改配置重启，通过 JVM 参数覆盖即可

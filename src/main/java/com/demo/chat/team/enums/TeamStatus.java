@@ -5,6 +5,8 @@ import com.fasterxml.jackson.annotation.JsonValue;
 
 /**
  * 团队状态枚举
+ * <p>
+ * DB 存 int（@EnumValue），API 返回字符串（@JsonValue → name()）
  */
 public enum TeamStatus {
 
@@ -18,8 +20,12 @@ public enum TeamStatus {
         this.code = code;
     }
 
-    @JsonValue
     public int getCode() {
         return code;
+    }
+
+    @JsonValue
+    public String getName() {
+        return name();
     }
 }

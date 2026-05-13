@@ -102,6 +102,7 @@ public enum ErrorCode {
     CANNOT_REMOVE_CREATOR(55017, "不能移除团队创建者"),
     CANNOT_ASSIGN_CREATOR(55018, "不能指定为创建者角色"),
     CANNOT_CHANGE_OWN_ROLE(55019, "不能修改自己的角色"),
+    ADMIN_CANNOT_REMOVE_ADMIN(55020, "管理员不能移除其他管理员"),
     ;
 
     private final int code;

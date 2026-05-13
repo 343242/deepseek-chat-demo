@@ -250,10 +250,20 @@ public class TeamApprovalServiceImpl implements TeamApprovalService {
     @Override
     public void approveAndTriggerEtl(Long approvalId) {
         TeamUploadApproval approval = approvalMapper.selectById(approvalId);
-        if (approval == null) return;
+        if (approval == null) {
+            log.warn("approveAndTriggerEtl: approval not found, id={}", approvalId);
+            return;
+        }
 
         RagDocument doc = ragDocumentMapper.selectById(approval.getDocumentId());
-        if (doc == null || doc.getStatus() != EtlStatus.PROCESSING) return;
+        if (doc == null) {
+            log.warn("approveAndTriggerEtl: document not found, docId={}", approval.getDocumentId());
+            return;
+        }
+        if (doc.getStatus() != EtlStatus.PROCESSING) {
+            log.warn("approveAndTriggerEtl: document not in PROCESSING state, docId={}, status={}", doc.getId(), doc.getStatus());
+            return;
+        }
 
         etlDispatchService.dispatchAsync(doc.getId(), doc.getBucket(), doc.getStorageKey(),
                 doc.getFileName(), doc.getMimeType(), doc.getFileSize(), doc.getUserId(), doc.getTeamId());

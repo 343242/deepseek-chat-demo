@@ -8,6 +8,7 @@ import com.fasterxml.jackson.annotation.JsonValue;
  * <p>
  * CREATOR(30) > ADMIN(20) > MEMBER(10)
  * 数值越大权限越高，便于比较。
+ * DB 存 int（@EnumValue），API 返回字符串（@JsonValue → name()）
  */
 public enum TeamMemberRole {
 
@@ -22,8 +23,12 @@ public enum TeamMemberRole {
         this.code = code;
     }
 
-    @JsonValue
     public int getCode() {
         return code;
+    }
+
+    @JsonValue
+    public String getName() {
+        return name();
     }
 }

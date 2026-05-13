@@ -165,7 +165,7 @@ public class TeamMemberServiceImpl implements TeamMemberService {
 
         // 管理员不能移除管理员（只有创建者可以）
         if (operator.getRole() == TeamMemberRole.ADMIN && target.getRole() == TeamMemberRole.ADMIN) {
-            throw new BusinessException(ErrorCode.NOT_TEAM_CREATOR);
+            throw new BusinessException(ErrorCode.ADMIN_CANNOT_REMOVE_ADMIN);
         }
 
         target.setStatus(0);
@@ -221,6 +221,11 @@ public class TeamMemberServiceImpl implements TeamMemberService {
         // 不能改为 CREATOR（创建者只能通过转让团队变更）
         if (request.targetRole() == TeamMemberRole.CREATOR) {
             throw new BusinessException(ErrorCode.CANNOT_ASSIGN_CREATOR);
+        }
+
+        // 不能修改创建者的角色
+        if (target.getRole() == TeamMemberRole.CREATOR) {
+            throw new BusinessException(ErrorCode.CANNOT_CHANGE_CREATOR_ROLE);
         }
 
         target.setRole(request.targetRole());

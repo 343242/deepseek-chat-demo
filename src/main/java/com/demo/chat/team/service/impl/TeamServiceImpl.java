@@ -1,6 +1,7 @@
 package com.demo.chat.team.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.demo.chat.common.errorcode.ErrorCode;
 import com.demo.chat.exception.BusinessException;
 import com.demo.chat.security.util.SecurityUtils;
@@ -232,19 +233,16 @@ public class TeamServiceImpl implements TeamService {
             teamMapper.updateById(team);
 
             // 批量移除所有成员
-            List<TeamMember> members = teamMemberMapper.selectList(
-                    new LambdaQueryWrapper<TeamMember>()
-                            .eq(TeamMember::getTeamId, teamId)
-                            .eq(TeamMember::getStatus, 1));
-            for (TeamMember m : members) {
-                m.setStatus(0);
-                m.setUpdatedAt(OffsetDateTime.now());
-                teamMemberMapper.updateById(m);
-            }
+            // 批量移除所有成员
+            teamMemberMapper.update(null, new LambdaUpdateWrapper<TeamMember>()
+                    .eq(TeamMember::getTeamId, teamId)
+                    .eq(TeamMember::getStatus, 1)
+                    .set(TeamMember::getStatus, 0)
+                    .set(TeamMember::getUpdatedAt, OffsetDateTime.now()));
 
             // TODO: Phase 4 — REJECT 所有 PENDING 审批 + 清理向量数据
 
-            log.info("Team dissolved: id={}, creatorId={}, membersRemoved={}", teamId, userId, members.size());
+            log.info("Team dissolved: id={}, creatorId={}", teamId, userId);
         });
     }
 

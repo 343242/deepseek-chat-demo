@@ -21,6 +21,8 @@ src/main/java/com/demo/chat/
 │   │   ├── SnowflakeProperties.java          #     配置：epoch / datacenterId / workerId
 │   │   ├── SnowflakeIdGenerator.java         #     核心：64 位雪花算法（线程安全 + 时钟回拨容忍）
 │   │   └── SnowflakeConfiguration.java       #     Spring Bean 注册
+│   ├── upload/                                #   文档上传策略接口（OCP）
+│   │   └── UploadStrategy.java                #     upload/uploadBatch 方法定义
 │   └── uuid/                                 #   UUIDv7 生成器
 │       └── UuidV7.java                       #     RFC 9562 — 基于 Unix 毫秒时间戳的有序 UUID
 │
@@ -294,7 +296,8 @@ src/main/java/com/demo/chat/
 │   │   ├── ChunkUploadInitRequest.java       #     init 请求 DTO (record + @Valid)
 │   │   ├── ChunkUploadCompleteRequest.java   #     complete 请求 DTO
 │   │   ├── ChunkUploadCompleteResult.java    #     complete 结果 DTO
-│   │   └── ChunkUploadStatusResponse.java    #     status 响应 DTO
+│   │   ├── ChunkUploadStatusResponse.java    #     status 响应 DTO
+│   │   └── PersonalUploadStrategy.java        #     个人上传策略实现（teamId=null 路由）
 │   │
 │   ├── entity/
 │   │   └── RagDocument.java                  #     文档记录（含 userId + 状态机: UPLOADED→...→COMPLETED/FAILED）
@@ -305,6 +308,55 @@ src/main/java/com/demo/chat/
 │   │
 │   └── mapper/
 │       └── RagDocumentMapper.java            #     MyBatis-Plus Mapper
+│
+├── team/                                     # ★ 团队模块（权限 + 审批 + 上传策略）
+│   ├── config/
+│   │   └── TeamProperties.java               #     app.team.* 配置（审批超时/成员上限/上传限制）
+│   ├── controller/
+│   │   ├── TeamController.java                #     /api/teams（CRUD + 解散 + 创建者额度）
+│   │   ├── TeamMemberController.java          #     /api/teams/{teamId}/members（邀请/移除/退团/角色/额度）
+│   │   └── TeamApprovalController.java        #     /api/teams/{teamId}/approvals（待审批/审批/我的审批）
+│   ├── dto/
+│   │   ├── TeamCreateRequest.java             #     创建团队请求
+│   │   ├── TeamUpdateRequest.java             #     更新团队请求
+│   │   ├── TeamVO.java                        #     团队列表视图
+│   │   ├── TeamDetailVO.java                  #     团队详情视图
+│   │   ├── TeamSearchResultVO.java            #     我的团队搜索结果
+│   │   ├── TeamMemberVO.java                  #     成员视图
+│   │   ├── MemberRoleUpdateRequest.java       #     角色变更请求
+│   │   ├── MemberUploadLimitRequest.java      #     额度设置请求
+│   │   ├── CreatorQuotaRequest.java           #     创建者额度请求
+│   │   ├── ApprovalVO.java                    #     审批详情视图
+│   │   ├── MyApprovalVO.java                  #     我的审批视图
+│   │   └── ApprovalReviewRequest.java         #     审批操作请求
+│   ├── entity/
+│   │   ├── Team.java                          #     团队实体（status 枚举 + 逻辑删除）
+│   │   ├── TeamMember.java                    #     成员实体（role 枚举，手动 status）
+│   │   └── TeamUploadApproval.java            #     审批记录实体
+│   ├── enums/
+│   │   ├── TeamStatus.java                    #     INACTIVE(0) / ACTIVE(1)
+│   │   ├── TeamMemberRole.java                #     MEMBER(10) / ADMIN(20) / CREATOR(30)
+│   │   └── ApprovalStatus.java                #     PENDING(0) / APPROVED(1) / REJECTED(2)
+│   ├── job/
+│   │   └── ApprovalTimeoutJob.java            #     审批超时自动拒绝（fixedDelay 1h）
+│   ├── mapper/
+│   │   ├── TeamMapper.java                    #     selectForUpdate（行锁）
+│   │   ├── TeamMemberMapper.java              #     selectByTeamAndUser（唯一约束）
+│   │   └── TeamUploadApprovalMapper.java      #     审批查询
+│   ├── security/
+│   │   └── DocumentOwnershipChecker.java      #     统一文档权限校验门面（个人 owner / 团队成员+角色）
+│   ├── service/
+│   │   ├── TeamService.java                   #     团队服务接口
+│   │   ├── TeamMemberService.java             #     成员服务接口
+│   │   ├── TeamApprovalService.java           #     审批服务接口
+│   │   └── TeamMembershipVerifier.java        #     成员资格验证（被 rag 模块调用）
+│   ├── service/impl/
+│   │   ├── TeamServiceImpl.java               #     团队服务实现（编程式事务 + 行锁 + 批量更新）
+│   │   ├── TeamMemberServiceImpl.java         #     成员服务实现（DuplicateKey 兜底 + 权限校验）
+│   │   └── TeamApprovalServiceImpl.java       #     审批服务实现（事务内状态检查 + 批量查询 + 分页）
+│   └── upload/
+│       ├── TeamUploadStrategy.java            #     团队上传策略（额度校验 + 审批路由 + ETL 触发）
+│       └── UploadStrategyFactory.java         #     策略工厂（teamId==null 路由）
 │
 └── exception/                                # 异常处理
     ├── GlobalExceptionHandler.java           #   统一错误响应 (400/401/403/404/429/500)

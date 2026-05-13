@@ -44,6 +44,7 @@
 | 30xxx | 会话管理 |
 | 40xxx | 聊天（模型/内容过滤） |
 | 50xxx | RAG（文档/ETL） |
+| 60xxx | 团队（创建/成员/审批） |
 
 ---
 
@@ -59,6 +60,7 @@
 - [用量统计](#用量统计)
 - [用户管理](#用户管理)
 - [角色权限](#角色权限)
+- [团队](#团队)
 - [通用错误](#通用错误)
 
 ---
@@ -1355,3 +1357,439 @@ Token 用量明细（必须指定 `model` 或 `conversation` 参数）。
 > `40001`（参数校验失败）的 `message` 字段包含具体校验失败的字段名和原因，例如 `"model: 模型不能为空; message: 消息不能为空"`。
 >
 > 完整错误码列表见上方「错误码分段」表格。
+
+---
+
+## 团队
+
+> 所有团队接口需要认证（Cookie `access_token`）。
+>
+> 权限要求：团队操作需是团队成员，管理操作需 `ADMIN` 或 `CREATOR` 角色。
+
+### POST /api/teams
+
+创建团队。需要登录。
+
+**Request：**
+
+```json
+{
+  "name": "我的团队",
+  "description": "这是一个协作团队"
+}
+```
+
+| 字段 | 必填 | 规则 |
+|------|------|------|
+| name | ✅ | 团队名称，非空 |
+| description | | 团队描述 |
+
+**Response（TeamVO）：**
+
+```json
+{
+  "id": 1,
+  "name": "我的团队",
+  "description": "这是一个协作团队",
+  "creatorId": 1,
+  "createdAt": "2026-05-14T10:00:00"
+}
+```
+
+> 创建者自动获得 `CREATOR` 角色，无需额外加入操作。
+
+---
+
+### GET /api/teams
+
+查看我的团队列表。需要登录。
+
+**Response（List\<TeamSearchResultVO\>）：**
+
+```json
+[
+  {
+    "id": 1,
+    "name": "我的团队",
+    "description": "这是一个协作团队",
+    "memberCount": 5,
+    "myRole": "CREATOR",
+    "createdAt": "2026-05-14T10:00:00"
+  }
+]
+```
+
+| 字段 | 说明 |
+|------|------|
+| memberCount | 团队成员数量 |
+| myRole | 当前用户在团队中的角色：`CREATOR` / `ADMIN` / `MEMBER` |
+
+---
+
+### GET /api/teams/{teamId}
+
+查看团队详情。需是团队成员。
+
+**Response（TeamDetailVO）：**
+
+```json
+{
+  "id": 1,
+  "name": "我的团队",
+  "description": "这是一个协作团队",
+  "creatorId": 1,
+  "creatorName": "admin",
+  "memberCount": 5,
+  "myRole": "CREATOR",
+  "createdAt": "2026-05-14T10:00:00",
+  "updatedAt": "2026-05-14T10:00:00",
+  "members": [
+    {
+      "userId": 1,
+      "username": "admin",
+      "nickname": "管理员",
+      "avatar": null,
+      "role": "CREATOR",
+      "uploadLimitMb": 100,
+      "joinedAt": "2026-05-14T10:00:00"
+    }
+  ]
+}
+```
+
+---
+
+### PUT /api/teams/{teamId}
+
+更新团队信息。需是团队成员（`ADMIN` 或 `CREATOR` 角色）。
+
+**Request（TeamUpdateRequest）：**
+
+```json
+{
+  "teamName": "新团队名称",
+  "teamDesc": "更新后的描述"
+}
+```
+
+| 字段 | 必填 | 规则 |
+|------|------|------|
+| teamName | | 新的团队名称 |
+| teamDesc | | 新的团队描述 |
+
+> 所有字段均可选，不传则不更新。
+
+**Response：** 返回更新后的 TeamDetailVO（同上）。
+
+---
+
+### DELETE /api/teams/{teamId}
+
+解散团队。仅创建者（`CREATOR`）可操作。
+
+**Response：**
+
+```json
+{
+  "message": "团队已解散"
+}
+```
+
+> 解散团队将移除所有成员及团队相关数据。
+
+---
+
+### PUT /api/teams/{teamId}/creator-quota
+
+设置创建者存储额度。仅创建者（`CREATOR`）可操作。
+
+**Request（CreatorQuotaRequest）：**
+
+```json
+{
+  "maxUploadMb": 500
+}
+```
+
+| 字段 | 必填 | 规则 |
+|------|------|------|
+| maxUploadMb | ✅ | 最大上传额度（MB） |
+
+**Response：**
+
+```json
+{
+  "teamId": 1,
+  "maxUploadMb": 500,
+  "message": "额度已更新"
+}
+```
+
+---
+
+## 团队成员
+
+> 以下接口前缀均为 `/api/teams/{teamId}/members`，所有接口需要登录且是团队成员。
+
+### POST /api/teams/{teamId}/members/{userId}
+
+邀请成员加入团队。需是创建者或管理员（`CREATOR` / `ADMIN`）。
+
+**Path 参数：**
+
+| 参数 | 说明 |
+|------|------|
+| teamId | 团队 ID |
+| userId | 被邀请的用户 ID |
+
+**Response（TeamMemberVO）：**
+
+```json
+{
+  "userId": 2,
+  "username": "alice",
+  "nickname": "Alice",
+  "avatar": null,
+  "role": "MEMBER",
+  "uploadLimitMb": 100,
+  "joinedAt": "2026-05-14T10:30:00"
+}
+```
+
+> 新成员默认角色为 `MEMBER`，额度继承团队创建者设定的默认值。
+
+---
+
+### DELETE /api/teams/{teamId}/members/{userId}
+
+移除成员。需是创建者或管理员（`CREATOR` / `ADMIN`）。不能移除自己。
+
+**Response：**
+
+```json
+{
+  "message": "成员已移除"
+}
+```
+
+---
+
+### POST /api/teams/{teamId}/members/leave
+
+退出团队。任何成员均可操作。创建者不能退出（需先转让或解散）。
+
+**Response：**
+
+```json
+{
+  "message": "已退出团队"
+}
+```
+
+---
+
+### PUT /api/teams/{teamId}/members/{userId}/role
+
+修改成员角色。仅创建者（`CREATOR`）可操作。
+
+**Request（MemberRoleUpdateRequest）：**
+
+```json
+{
+  "targetRole": "ADMIN"
+}
+```
+
+| 字段 | 必填 | 规则 |
+|------|------|------|
+| targetRole | ✅ | 目标角色：`ADMIN` / `MEMBER` |
+
+> `CREATOR` 角色不可转让，不可将自己降级。
+
+**Response：** 返回更新后的 TeamMemberVO。
+
+---
+
+### PUT /api/teams/{teamId}/members/{userId}/upload-limit
+
+设置成员上传额度。需是创建者或管理员（`CREATOR` / `ADMIN`）。
+
+**Request（MemberUploadLimitRequest）：**
+
+```json
+{
+  "uploadLimitMb": 200
+}
+```
+
+| 字段 | 必填 | 规则 |
+|------|------|------|
+| uploadLimitMb | ✅ | 上传额度（MB） |
+
+**Response：**
+
+```json
+{
+  "userId": 2,
+  "uploadLimitMb": 200,
+  "message": "额度已更新"
+}
+```
+
+---
+
+### GET /api/teams/{teamId}/members
+
+成员列表（分页）。需是团队成员。
+
+**Params：**
+
+| 参数 | 必填 | 说明 |
+|------|------|------|
+| page | | 页码，默认 1 |
+| size | | 每页条数，默认 20 |
+
+**Response（PagedResult\<TeamMemberVO\>）：**
+
+```json
+{
+  "content": [
+    {
+      "userId": 1,
+      "username": "admin",
+      "nickname": "管理员",
+      "avatar": null,
+      "role": "CREATOR",
+      "uploadLimitMb": 500,
+      "joinedAt": "2026-05-14T10:00:00"
+    },
+    {
+      "userId": 2,
+      "username": "alice",
+      "nickname": "Alice",
+      "avatar": null,
+      "role": "MEMBER",
+      "uploadLimitMb": 200,
+      "joinedAt": "2026-05-14T10:30:00"
+    }
+  ],
+  "page": 1,
+  "size": 20,
+  "total": 2,
+  "totalPages": 1
+}
+```
+
+---
+
+## 加入审批
+
+> 以下接口前缀均为 `/api/teams/{teamId}/approvals`，所有接口需要登录且是团队成员（管理接口需 `ADMIN` / `CREATOR` 角色）。
+
+### GET /api/teams/{teamId}/approvals/pending
+
+待审批列表（分页）。需是管理员或创建者（`ADMIN` / `CREATOR`）。
+
+**Params：**
+
+| 参数 | 必填 | 说明 |
+|------|------|------|
+| page | | 页码，默认 1 |
+| size | | 每页条数，默认 20 |
+
+**Response（PagedResult\<ApprovalVO\>）：**
+
+```json
+{
+  "content": [
+    {
+      "id": 1,
+      "userId": 3,
+      "username": "bob",
+      "status": "PENDING",
+      "createdAt": "2026-05-14T11:00:00"
+    }
+  ],
+  "page": 1,
+  "size": 20,
+  "total": 1,
+  "totalPages": 1
+}
+```
+
+| 字段 | 说明 |
+|------|------|
+| id | 审批记录 ID（用于审批操作） |
+| status | `PENDING`（待审批）/ `APPROVED`（已通过）/ `REJECTED`（已拒绝） |
+
+---
+
+### POST /api/teams/{teamId}/approvals/{approvalId}/review
+
+审批操作（通过/拒绝）。需是管理员或创建者（`ADMIN` / `CREATOR`）。
+
+**Request（ApprovalReviewRequest）：**
+
+```json
+{
+  "approved": true,
+  "comment": "欢迎加入"
+}
+```
+
+| 字段 | 必填 | 规则 |
+|------|------|------|
+| approved | ✅ | `true` 通过，`false` 拒绝 |
+| comment | | 审批备注 |
+
+**Response：**
+
+```json
+{
+  "approvalId": 1,
+  "status": "APPROVED",
+  "message": "已通过"
+}
+```
+
+> 通过后用户自动成为团队成员，角色为 `MEMBER`。
+
+---
+
+### GET /api/teams/{teamId}/approvals/mine
+
+我的审批状态（分页）。任何团队成员可查看自己的加入审批记录。
+
+**Params：**
+
+| 参数 | 必填 | 说明 |
+|------|------|------|
+| page | | 页码，默认 1 |
+| size | | 每页条数，默认 20 |
+
+**Response（PagedResult\<MyApprovalVO\>）：**
+
+```json
+{
+  "content": [
+    {
+      "id": 1,
+      "teamId": 1,
+      "teamName": "我的团队",
+      "status": "APPROVED",
+      "comment": "欢迎加入",
+      "createdAt": "2026-05-14T11:00:00",
+      "reviewedAt": "2026-05-14T11:05:00"
+    }
+  ],
+  "page": 1,
+  "size": 20,
+  "total": 1,
+  "totalPages": 1
+}
+```
+
+| 字段 | 说明 |
+|------|------|
+| status | `PENDING` / `APPROVED` / `REJECTED` |
+| reviewedAt | 审批时间（未审批时为 null） |

@@ -66,7 +66,8 @@ sys_user ─< sys_user_role >─ sys_role ─< sys_role_permission >─ sys_perm
 
 ### 角色迁移约束
 
-- 转让（transfer）：仅 CREATOR 可发起，将自身降为 ADMIN 并提升目标成员为 CREATOR
+- 仅 CREATOR 可变更其他成员角色（提升/降低）
+- CREATOR 角色不可被变更（暂不支持转让）
 - 成员降级后其待审批文档仍保留，不影响已有审批流程
 
 ## 文档权限校验
@@ -99,8 +100,8 @@ UploadStrategy（接口）
         └── MEMBER → 状态 PENDING_APPROVAL → 等待管理员审批
 ```
 
-- 策略选择在 Controller 层完成，根据请求中 `teamId` 是否为空路由到对应实现
-- 上传即触发恶意文件扫描（ClamAV 集成），扫描失败的直接拒绝
+- 策略选择通过 `UploadStrategyFactory` 完成，根据请求中 `teamId` 是否为 null 路由到对应实现
+- 团队上传前校验成员个人额度（按 team + user 汇总已用 MB）
 
 ## 审批流权限
 
@@ -128,12 +129,8 @@ UploadStrategy（接口）
 
 ```java
 @PreAuthorize("hasAuthority('team:manage')")
-@PostMapping("/{teamId}/members")
-public Result<Void> addMember(...) { ... }
-
-@PreAuthorize("hasAuthority('team:view')")
-@GetMapping("/{teamId}")
-public Result<TeamVO> getTeam(...) { ... }
+@PostMapping("/{userId}")
+public GlobalResponse<TeamMemberVO> addMember(...) { ... }
 ```
 
 Service 层通过 `SecurityUtils.getCurrentUserId()` 获取当前用户 ID，避免从 Controller 参数手动传递，防止越权：
@@ -149,8 +146,8 @@ TeamMember member = teamMemberMapper.selectByTeamAndUser(teamId, currentUserId);
 
 | 权限码 | 说明 | 默认绑定角色 |
 |--------|------|-------------|
-| `team:view` | 查看团队信息 | ADMIN, MEMBER |
+| `team:view` | 查看团队信息 | ADMIN |
 | `team:manage` | 管理团队（邀请/移除成员、审批文档） | ADMIN |
 
-- `team:manage` 默认不包含解散和转让权限——这两个操作在业务层单独校验 CREATOR 身份
+- `team:manage` 默认不包含解散权限——解散操作在业务层单独校验 CREATOR 身份
 - 未来扩展 `team:delete` 等权限码时，按最小权限原则逐项拆分

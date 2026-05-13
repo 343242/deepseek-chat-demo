@@ -1374,25 +1374,27 @@ Token 用量明细（必须指定 `model` 或 `conversation` 参数）。
 
 ```json
 {
-  "name": "我的团队",
-  "description": "这是一个协作团队"
+  "teamName": "我的团队",
+  "teamDesc": "这是一个协作团队"
 }
 ```
 
 | 字段 | 必填 | 规则 |
 |------|------|------|
-| name | ✅ | 团队名称，非空 |
-| description | | 团队描述 |
+| teamName | ✅ | 团队名称，非空，≤128 字符 |
+| teamDesc | | 团队描述，≤512 字符 |
 
 **Response（TeamVO）：**
 
 ```json
 {
   "id": 1,
-  "name": "我的团队",
-  "description": "这是一个协作团队",
+  "teamName": "我的团队",
+  "teamDesc": "这是一个协作团队",
   "creatorId": 1,
-  "createdAt": "2026-05-14T10:00:00"
+  "memberCount": 1,
+  "myRole": "CREATOR",
+  "createdAt": "2026-05-14T10:00:00+08:00"
 }
 ```
 
@@ -1404,17 +1406,16 @@ Token 用量明细（必须指定 `model` 或 `conversation` 参数）。
 
 查看我的团队列表。需要登录。
 
-**Response（List\<TeamSearchResultVO\>）：**
+**Response（List<TeamSearchResultVO>）：**
 
 ```json
 [
   {
     "id": 1,
-    "name": "我的团队",
-    "description": "这是一个协作团队",
+    "teamName": "我的团队",
+    "teamDesc": "这是一个协作团队",
     "memberCount": 5,
-    "myRole": "CREATOR",
-    "createdAt": "2026-05-14T10:00:00"
+    "creatorName": "admin"
   }
 ]
 ```
@@ -1422,7 +1423,7 @@ Token 用量明细（必须指定 `model` 或 `conversation` 参数）。
 | 字段 | 说明 |
 |------|------|
 | memberCount | 团队成员数量 |
-| myRole | 当前用户在团队中的角色：`CREATOR` / `ADMIN` / `MEMBER` |
+| creatorName | 创建者昵称 |
 
 ---
 
@@ -1435,26 +1436,18 @@ Token 用量明细（必须指定 `model` 或 `conversation` 参数）。
 ```json
 {
   "id": 1,
-  "name": "我的团队",
-  "description": "这是一个协作团队",
+  "teamName": "我的团队",
+  "teamDesc": "这是一个协作团队",
   "creatorId": 1,
   "creatorName": "admin",
   "memberCount": 5,
+  "documentCount": 12,
+  "defaultUploadLimitMb": 50,
+  "creatorUploadLimitMb": 200,
   "myRole": "CREATOR",
-  "createdAt": "2026-05-14T10:00:00",
-  "updatedAt": "2026-05-14T10:00:00",
-  "members": [
-    {
-      "userId": 1,
-      "username": "admin",
-      "nickname": "管理员",
-      "avatar": null,
-      "role": "CREATOR",
-      "uploadLimitMb": 100,
-      "joinedAt": "2026-05-14T10:00:00"
-    }
-  ]
+  "createdAt": "2026-05-14T10:00:00+08:00"
 }
+```
 ```
 
 ---
@@ -1487,13 +1480,7 @@ Token 用量明细（必须指定 `model` 或 `conversation` 参数）。
 
 解散团队。仅创建者（`CREATOR`）可操作。
 
-**Response：**
-
-```json
-{
-  "message": "团队已解散"
-}
-```
+**Response：** `200 OK`（无返回体）
 
 > 解散团队将移除所有成员及团队相关数据。
 
@@ -1513,17 +1500,9 @@ Token 用量明细（必须指定 `model` 或 `conversation` 参数）。
 
 | 字段 | 必填 | 规则 |
 |------|------|------|
-| maxUploadMb | ✅ | 最大上传额度（MB） |
+| maxUploadMb | ✅ | 最大上传额度（MB），最小 1 |
 
-**Response：**
-
-```json
-{
-  "teamId": 1,
-  "maxUploadMb": 500,
-  "message": "额度已更新"
-}
-```
+**Response：** `200 OK`（无返回体）
 
 ---
 
@@ -1549,14 +1528,13 @@ Token 用量明细（必须指定 `model` 或 `conversation` 参数）。
   "userId": 2,
   "username": "alice",
   "nickname": "Alice",
-  "avatar": null,
   "role": "MEMBER",
-  "uploadLimitMb": 100,
-  "joinedAt": "2026-05-14T10:30:00"
+  "uploadLimitMb": 50,
+  "joinedAt": "2026-05-14T10:30:00+08:00"
 }
 ```
 
-> 新成员默认角色为 `MEMBER`，额度继承团队创建者设定的默认值。
+> 新成员默认角色为 `MEMBER`，额度继承团队默认值 50MB。
 
 ---
 
@@ -1564,13 +1542,7 @@ Token 用量明细（必须指定 `model` 或 `conversation` 参数）。
 
 移除成员。需是创建者或管理员（`CREATOR` / `ADMIN`）。不能移除自己。
 
-**Response：**
-
-```json
-{
-  "message": "成员已移除"
-}
-```
+**Response：** `200 OK`（无返回体）
 
 ---
 
@@ -1578,13 +1550,7 @@ Token 用量明细（必须指定 `model` 或 `conversation` 参数）。
 
 退出团队。任何成员均可操作。创建者不能退出（需先转让或解散）。
 
-**Response：**
-
-```json
-{
-  "message": "已退出团队"
-}
-```
+**Response：** `200 OK`（无返回体）
 
 ---
 
@@ -1606,7 +1572,7 @@ Token 用量明细（必须指定 `model` 或 `conversation` 参数）。
 
 > `CREATOR` 角色不可转让，不可将自己降级。
 
-**Response：** 返回更新后的 TeamMemberVO。
+**Response：** `200 OK`（无返回体）
 
 ---
 
@@ -1624,17 +1590,9 @@ Token 用量明细（必须指定 `model` 或 `conversation` 参数）。
 
 | 字段 | 必填 | 规则 |
 |------|------|------|
-| uploadLimitMb | ✅ | 上传额度（MB） |
+| uploadLimitMb | ✅ | 上传额度（MB），1~10240 |
 
-**Response：**
-
-```json
-{
-  "userId": 2,
-  "uploadLimitMb": 200,
-  "message": "额度已更新"
-}
-```
+**Response：** `200 OK`（无返回体）
 
 ---
 
@@ -1658,19 +1616,17 @@ Token 用量明细（必须指定 `model` 或 `conversation` 参数）。
       "userId": 1,
       "username": "admin",
       "nickname": "管理员",
-      "avatar": null,
       "role": "CREATOR",
-      "uploadLimitMb": 500,
-      "joinedAt": "2026-05-14T10:00:00"
+      "uploadLimitMb": 200,
+      "joinedAt": "2026-05-14T10:00:00+08:00"
     },
     {
       "userId": 2,
       "username": "alice",
       "nickname": "Alice",
-      "avatar": null,
       "role": "MEMBER",
-      "uploadLimitMb": 200,
-      "joinedAt": "2026-05-14T10:30:00"
+      "uploadLimitMb": 50,
+      "joinedAt": "2026-05-14T10:30:00+08:00"
     }
   ],
   "page": 1,
@@ -1682,13 +1638,13 @@ Token 用量明细（必须指定 `model` 或 `conversation` 参数）。
 
 ---
 
-## 加入审批
+## 团队审批
 
 > 以下接口前缀均为 `/api/teams/{teamId}/approvals`，所有接口需要登录且是团队成员（管理接口需 `ADMIN` / `CREATOR` 角色）。
 
 ### GET /api/teams/{teamId}/approvals/pending
 
-待审批列表（分页）。需是管理员或创建者（`ADMIN` / `CREATOR`）。
+待审批文档列表（分页）。需是管理员或创建者（`ADMIN` / `CREATOR`）。
 
 **Params：**
 
@@ -1704,10 +1660,16 @@ Token 用量明细（必须指定 `model` 或 `conversation` 参数）。
   "content": [
     {
       "id": 1,
-      "userId": 3,
-      "username": "bob",
+      "documentId": 42,
+      "fileName": "report.pdf",
+      "fileSize": 1048576,
+      "uploaderId": 3,
+      "uploaderName": "bob",
       "status": "PENDING",
-      "createdAt": "2026-05-14T11:00:00"
+      "reviewerId": null,
+      "reviewComment": null,
+      "createdAt": "2026-05-14T11:00:00+08:00",
+      "reviewedAt": null
     }
   ],
   "page": 1,
@@ -1719,8 +1681,10 @@ Token 用量明细（必须指定 `model` 或 `conversation` 参数）。
 
 | 字段 | 说明 |
 |------|------|
-| id | 审批记录 ID（用于审批操作） |
-| status | `PENDING`（待审批）/ `APPROVED`（已通过）/ `REJECTED`（已拒绝） |
+| documentId | 上传的文档 ID |
+| fileName | 文档文件名 |
+| uploaderId / uploaderName | 上传者信息 |
+| status | `PENDING` / `APPROVED` / `REJECTED` |
 
 ---
 
@@ -1733,7 +1697,7 @@ Token 用量明细（必须指定 `model` 或 `conversation` 参数）。
 ```json
 {
   "approved": true,
-  "comment": "欢迎加入"
+  "comment": "文档内容合规"
 }
 ```
 
@@ -1742,23 +1706,15 @@ Token 用量明细（必须指定 `model` 或 `conversation` 参数）。
 | approved | ✅ | `true` 通过，`false` 拒绝 |
 | comment | | 审批备注 |
 
-**Response：**
+**Response：** `200 OK`
 
-```json
-{
-  "approvalId": 1,
-  "status": "APPROVED",
-  "message": "已通过"
-}
-```
-
-> 通过后用户自动成为团队成员，角色为 `MEMBER`。
+> 通过后系统自动将文档状态从 `PENDING_APPROVAL` 改为 `PROCESSING`，并触发 ETL 处理。
 
 ---
 
 ### GET /api/teams/{teamId}/approvals/mine
 
-我的审批状态（分页）。任何团队成员可查看自己的加入审批记录。
+我的上传审批状态（分页）。任何团队成员可查看自己上传文档的审批记录。
 
 **Params：**
 
@@ -1774,12 +1730,13 @@ Token 用量明细（必须指定 `model` 或 `conversation` 参数）。
   "content": [
     {
       "id": 1,
-      "teamId": 1,
-      "teamName": "我的团队",
+      "documentId": 42,
+      "fileName": "report.pdf",
       "status": "APPROVED",
-      "comment": "欢迎加入",
-      "createdAt": "2026-05-14T11:00:00",
-      "reviewedAt": "2026-05-14T11:05:00"
+      "reviewerId": 1,
+      "reviewComment": "文档内容合规",
+      "createdAt": "2026-05-14T11:00:00+08:00",
+      "reviewedAt": "2026-05-14T11:05:00+08:00"
     }
   ],
   "page": 1,
@@ -1791,5 +1748,7 @@ Token 用量明细（必须指定 `model` 或 `conversation` 参数）。
 
 | 字段 | 说明 |
 |------|------|
+| documentId | 上传的文档 ID |
+| fileName | 文档文件名 |
 | status | `PENDING` / `APPROVED` / `REJECTED` |
 | reviewedAt | 审批时间（未审批时为 null） |

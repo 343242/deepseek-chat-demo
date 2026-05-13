@@ -204,11 +204,11 @@ java -jar chat-demo.jar -DLOG_ROOT_LEVEL=DEBUG -DLOG_APP_LEVEL=DEBUG
 @SpringBootApplication(scanBasePackages = "com.demo.chat")
 @ConfigurationPropertiesScan("com.demo.chat")
 @MapperScan({
-    "com.demo.chat.mapper",
     "com.demo.chat.user.mapper",
-    "com.demo.chat.message.mapper",
-    "com.demo.chat.team.mapper",
-    "com.demo.chat.document.mapper"
+    "com.demo.chat.chat.mapper",
+    "com.demo.chat.conversation.mapper",
+    "com.demo.chat.rag.mapper",
+    "com.demo.chat.team.mapper"
 })
 public class ChatDemoApplication {
     public static void main(String[] args) {

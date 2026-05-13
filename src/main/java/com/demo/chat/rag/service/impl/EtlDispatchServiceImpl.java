@@ -9,6 +9,7 @@ import com.demo.chat.rag.etl.EtlRouteStrategy;
 import com.demo.chat.rag.etl.EtlRouteStrategyFactory;
 import com.demo.chat.rag.etl.EtlStatus;
 import com.demo.chat.rag.service.EtlDispatchService;
+import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -54,8 +55,8 @@ public class EtlDispatchServiceImpl implements EtlDispatchService {
     }
 
     @Override
-    public int executeSingle(Long documentId, String bucket, String objectKey, String fileName, String mimeType, long fileSize, Long userId) {
-        EtlCandidate candidate = new EtlCandidate(documentId, bucket, objectKey, fileName, mimeType, fileSize, userId);
+    public int executeSingle(Long documentId, String bucket, String objectKey, String fileName, String mimeType, long fileSize, Long userId, @Nullable Long teamId) {
+        EtlCandidate candidate = new EtlCandidate(documentId, bucket, objectKey, fileName, mimeType, fileSize, userId, teamId);
         List<EtlResult> results = dispatch(List.of(candidate));
 
         if (results.isEmpty()) {
@@ -71,9 +72,9 @@ public class EtlDispatchServiceImpl implements EtlDispatchService {
     }
 
     @Override
-    public void dispatchAsync(Long documentId, String bucket, String objectKey, String fileName, String mimeType, long fileSize, Long userId) {
-        EtlCandidate candidate = new EtlCandidate(documentId, bucket, objectKey, fileName, mimeType, fileSize, userId);
-        log.info("ETL dispatchAsync: documentId={}, file={}, userId={}", documentId, fileName, userId);
+    public void dispatchAsync(Long documentId, String bucket, String objectKey, String fileName, String mimeType, long fileSize, Long userId, @Nullable Long teamId) {
+        EtlCandidate candidate = new EtlCandidate(documentId, bucket, objectKey, fileName, mimeType, fileSize, userId, teamId);
+        log.info("ETL dispatchAsync: documentId={}, file={}, userId={}, teamId={}", documentId, fileName, userId, teamId);
 
         etlIoExecutor.execute(() -> {
             try {

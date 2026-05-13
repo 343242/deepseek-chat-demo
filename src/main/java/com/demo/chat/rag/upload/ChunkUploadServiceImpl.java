@@ -336,10 +336,12 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         // 7. 清理 Redis
         cleanupRedis(uploadId, session.get("userId"), declaredMd5);
 
-        // 8. 触发 ETL
+        // 8. 触发 ETL（teamId 从 rag_document 读取，分片上传当前只有个人上传）
+        String teamIdStr = session.get("teamId");
+        Long teamId = teamIdStr != null ? Long.parseLong(teamIdStr) : null;
         etlDispatchService.dispatchAsync(
                 docId, bucket, targetObjectKey, session.get("fileName"),
-                session.get("mimeType"), Long.parseLong(session.get("fileSize")), userId
+                session.get("mimeType"), Long.parseLong(session.get("fileSize")), userId, teamId
         );
     }
 

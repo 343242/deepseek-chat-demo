@@ -81,6 +81,23 @@ public enum ErrorCode {
     UPLOAD_SESSION_NOT_FOUND(50011, "上传会话不存在或已过期"),
     UPLOAD_FILE_MD5_MISMATCH(50012, "文件校验失败"),
     UPLOAD_INCOMPLETE(50013, "文件未上传完整"),
+
+    // ==================== 团队 55xxx ====================
+    TEAM_NOT_FOUND(55001, "团队不存在"),
+    TEAM_NAME_DUPLICATE(55002, "团队名称已存在"),
+    NOT_TEAM_MEMBER(55003, "不是团队成员"),
+    NOT_TEAM_ADMIN(55004, "不是团队管理员/创建者"),
+    NOT_TEAM_CREATOR(55005, "不是团队创建者"),
+    ALREADY_TEAM_MEMBER(55006, "已经是团队成员"),
+    CREATOR_CANNOT_LEAVE(55007, "创建者不能退出团队"),
+    CANNOT_CHANGE_CREATOR_ROLE(55008, "不能修改创建者角色"),
+    UPLOAD_QUOTA_EXCEEDED(55009, "上传文件超出团队额度"),
+    UPLOAD_LIMIT_OUT_OF_RANGE(55010, "上传额度设置超出范围"),
+    APPROVAL_NOT_FOUND(55011, "审批记录不存在"),
+    APPROVAL_ALREADY_PROCESSED(55012, "审批已处理"),
+    NO_PERMISSION_DELETE_TEAM_DOC(55013, "无权删除团队文档"),
+    TEAM_LIMIT_EXCEEDED(55014, "用户团队数超限"),
+    TEAM_MEMBER_LIMIT_EXCEEDED(55015, "团队成员数超限"),
     ;
 
     private final int code;

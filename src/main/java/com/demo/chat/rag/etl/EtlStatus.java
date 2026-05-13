@@ -17,7 +17,11 @@ public enum EtlStatus {
     COMPLETED("COMPLETED"),
     FAILED("FAILED"),
     VECTOR_FAILED("VECTOR_FAILED"),
-    PROCESSING("PROCESSING");
+    PROCESSING("PROCESSING"),
+
+    /** ETL 前状态 — 不参与 ETL 状态机流转 */
+    PENDING_APPROVAL("PENDING_APPROVAL"),
+    REJECTED("REJECTED");
 
     @EnumValue
     private final String code;

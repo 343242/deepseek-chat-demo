@@ -1,5 +1,7 @@
 package com.demo.chat.rag.etl;
 
+import org.jspecify.annotations.Nullable;
+
 /**
  * ETL 候选文档 — 路由策略的输入参数
  *
@@ -10,6 +12,7 @@ package com.demo.chat.rag.etl;
  * @param mimeType   MIME 类型
  * @param fileSize   文件大小（字节）
  * @param userId     文档所有者 ID，用于向量库检索隔离
+ * @param teamId     所属团队 ID（null=个人文档），用于团队空间向量库检索隔离
  */
 public record EtlCandidate(
         Long documentId,
@@ -18,5 +21,6 @@ public record EtlCandidate(
         String fileName,
         String mimeType,
         long fileSize,
-        Long userId
+        Long userId,
+        @Nullable Long teamId
 ) {}

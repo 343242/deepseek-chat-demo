@@ -2,6 +2,7 @@ package com.demo.chat.rag.service;
 
 import com.demo.chat.rag.etl.EtlCandidate;
 import com.demo.chat.rag.etl.EtlResult;
+import org.jspecify.annotations.Nullable;
 
 import java.util.List;
 
@@ -36,7 +37,7 @@ public interface EtlDispatchService {
      * @param userId     文档所有者 ID，用于向量库检索隔离
      * @return 分块数量
      */
-    int executeSingle(Long documentId, String bucket, String objectKey, String fileName, String mimeType, long fileSize, Long userId);
+    int executeSingle(Long documentId, String bucket, String objectKey, String fileName, String mimeType, long fileSize, Long userId, @Nullable Long teamId);
 
     /**
      * 单文档异步调度 — 上传后立即返回，ETL 在 IO/CPU 线程池中执行。
@@ -51,7 +52,7 @@ public interface EtlDispatchService {
      * @param fileSize   文件大小
      * @param userId     文档所有者 ID
      */
-    void dispatchAsync(Long documentId, String bucket, String objectKey, String fileName, String mimeType, long fileSize, Long userId);
+    void dispatchAsync(Long documentId, String bucket, String objectKey, String fileName, String mimeType, long fileSize, Long userId, @Nullable Long teamId);
 
     /**
      * 清理指定文档的向量数据（重试前调用）

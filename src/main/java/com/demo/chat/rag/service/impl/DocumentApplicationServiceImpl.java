@@ -71,7 +71,7 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
         RagDocument ragDoc = persistDocument(originalFilename, file.getSize(), mimeType, storageKey, bucket, currentUserId);
         log.info("Document uploaded: id={}, file={}, size={}, userId={}", ragDoc.getId(), originalFilename, file.getSize(), currentUserId);
 
-        etlDispatchService.dispatchAsync(ragDoc.getId(), bucket, storageKey, originalFilename, mimeType, file.getSize(), currentUserId);
+        etlDispatchService.dispatchAsync(ragDoc.getId(), bucket, storageKey, originalFilename, mimeType, file.getSize(), currentUserId, ragDoc.getTeamId());
 
         return new DocumentUploadResponse(ragDoc.getId(), originalFilename, EtlStatus.PROCESSING);
     }
@@ -103,7 +103,7 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
             RagDocument ragDoc = persistDocument(originalFilename, file.getSize(), mimeType, storageKey, bucket, currentUserId);
             log.info("Document uploaded (batch): id={}, file={}, size={}, userId={}", ragDoc.getId(), originalFilename, file.getSize(), currentUserId);
 
-            candidates.add(new EtlCandidate(ragDoc.getId(), bucket, storageKey, originalFilename, mimeType, file.getSize(), currentUserId));
+            candidates.add(new EtlCandidate(ragDoc.getId(), bucket, storageKey, originalFilename, mimeType, file.getSize(), currentUserId, ragDoc.getTeamId()));
             responses.add(new DocumentUploadResponse(ragDoc.getId(), originalFilename, EtlStatus.PROCESSING));
         }
 
@@ -158,7 +158,7 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
 
         // 重置状态并异步重新执行 ETL
         etlDispatchService.dispatchAsync(id, doc.getBucket(), doc.getStorageKey(),
-                doc.getFileName(), doc.getMimeType(), doc.getFileSize(), doc.getUserId());
+                doc.getFileName(), doc.getMimeType(), doc.getFileSize(), doc.getUserId(), doc.getTeamId());
 
         return new DocumentUploadResponse(id, doc.getFileName(), EtlStatus.PROCESSING);
     }

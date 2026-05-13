@@ -42,6 +42,9 @@ public class RagDocument {
     /** 文件 MD5（服务端合并时计算），用于秒传校验 */
     private String fileMd5;
 
+    /** 所属团队 ID（null=个人文档） */
+    private Long teamId;
+
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createTime;
 
@@ -92,4 +95,7 @@ public class RagDocument {
 
     public String getFileMd5() { return fileMd5; }
     public void setFileMd5(String fileMd5) { this.fileMd5 = fileMd5; }
+
+    public Long getTeamId() { return teamId; }
+    public void setTeamId(Long teamId) { this.teamId = teamId; }
 }

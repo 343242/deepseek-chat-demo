@@ -1,0 +1,163 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Configuration status="WARN" shutdownHook="disable">
+
+    <Properties>
+        <!-- 日志根目录 -->
+        <Property name="LOG_HOME">${sys:LOG_PATH:-./logs}</Property>
+        <!-- 日志格式：时间 | 级别 | 线程 | Logger | 消息 | 异常 -->
+        <Property name="PATTERN">%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%t] %logger{36} - %msg%n</Property>
+        <!-- 滚动文件名日期格式 -->
+        <Property name="DATE_FORMAT">%d{yyyy-MM-dd}</Property>
+    </Properties>
+
+    <Appenders>
+
+        <!-- ==================== 控制台 ==================== -->
+        <Console name="Console" target="SYSTEM_OUT">
+            <PatternLayout pattern="%d{HH:mm:ss.SSS} %highlight{%-5level} [%t] %style{%logger{36}}{cyan} - %msg%n"/>
+        </Console>
+
+        <!-- ==================== ERROR 级别 ==================== -->
+        <!-- 异步 → 仅接收 ERROR 及以上 -->
+        <RollingRandomAccessFile name="ErrorFile"
+                                 fileName="${LOG_HOME}/error/error.log"
+                                 filePattern="${LOG_HOME}/error/error.%d{yyyy-MM-dd}.%i.log.gz">
+            <PatternLayout pattern="${PATTERN}"/>
+            <LevelRangeFilter minLevel="ERROR" maxLevel="FATAL" onMatch="ACCEPT" onMismatch="DENY"/>
+            <Policies>
+                <TimeBasedTriggeringPolicy interval="1"/>
+                <SizeBasedTriggeringPolicy size="100MB"/>
+            </Policies>
+            <DefaultRolloverStrategy max="30">
+                <Delete basePath="${LOG_HOME}/error" maxDepth="1">
+                    <IfFileName glob="error.*.log.gz"/>
+                    <IfLastModified age="30d"/>
+                </Delete>
+            </DefaultRolloverStrategy>
+        </RollingRandomAccessFile>
+
+        <!-- ==================== WARN 级别 ==================== -->
+        <RollingRandomAccessFile name="WarnFile"
+                                 fileName="${LOG_HOME}/warn/warn.log"
+                                 filePattern="${LOG_HOME}/warn/warn.%d{yyyy-MM-dd}.%i.log.gz">
+            <PatternLayout pattern="${PATTERN}"/>
+            <LevelRangeFilter minLevel="WARN" maxLevel="WARN" onMatch="ACCEPT" onMismatch="DENY"/>
+            <Policies>
+                <TimeBasedTriggeringPolicy interval="1"/>
+                <SizeBasedTriggeringPolicy size="200MB"/>
+            </Policies>
+            <DefaultRolloverStrategy max="30">
+                <Delete basePath="${LOG_HOME}/warn" maxDepth="1">
+                    <IfFileName glob="warn.*.log.gz"/>
+                    <IfLastModified age="30d"/>
+                </Delete>
+            </DefaultRolloverStrategy>
+        </RollingRandomAccessFile>
+
+        <!-- ==================== INFO 级别 ==================== -->
+        <RollingRandomAccessFile name="InfoFile"
+                                 fileName="${LOG_HOME}/info/info.log"
+                                 filePattern="${LOG_HOME}/info/info.%d{yyyy-MM-dd}.%i.log.gz">
+            <PatternLayout pattern="${PATTERN}"/>
+            <LevelRangeFilter minLevel="INFO" maxLevel="INFO" onMatch="ACCEPT" onMismatch="DENY"/>
+            <Policies>
+                <TimeBasedTriggeringPolicy interval="1"/>
+                <SizeBasedTriggeringPolicy size="500MB"/>
+            </Policies>
+            <DefaultRolloverStrategy max="30">
+                <Delete basePath="${LOG_HOME}/info" maxDepth="1">
+                    <IfFileName glob="info.*.log.gz"/>
+                    <IfLastModified age="30d"/>
+                </Delete>
+            </DefaultRolloverStrategy>
+        </RollingRandomAccessFile>
+
+        <!-- ==================== DEBUG 级别 ==================== -->
+        <RollingRandomAccessFile name="DebugFile"
+                                 fileName="${LOG_HOME}/debug/debug.log"
+                                 filePattern="${LOG_HOME}/debug/debug.%d{yyyy-MM-dd}.%i.log.gz">
+            <PatternLayout pattern="${PATTERN}"/>
+            <LevelRangeFilter minLevel="DEBUG" maxLevel="DEBUG" onMatch="ACCEPT" onMismatch="DENY"/>
+            <Policies>
+                <TimeBasedTriggeringPolicy interval="1"/>
+                <SizeBasedTriggeringPolicy size="500MB"/>
+            </Policies>
+            <DefaultRolloverStrategy max="7">
+                <Delete basePath="${LOG_HOME}/debug" maxDepth="1">
+                    <IfFileName glob="debug.*.log.gz"/>
+                    <IfLastModified age="7d"/>
+                </Delete>
+            </DefaultRolloverStrategy>
+        </RollingRandomAccessFile>
+
+    </Appenders>
+
+    <Loggers>
+
+        <!-- ===== 异步 Root Logger（Disruptor 驱动，不阻塞业务线程） ===== -->
+        <AsyncRoot level="${sys:LOG_ROOT_LEVEL:-INFO}" includeLocation="true">
+            <AppenderRef ref="Console"/>
+            <AppenderRef ref="ErrorFile"/>
+            <AppenderRef ref="WarnFile"/>
+            <AppenderRef ref="InfoFile"/>
+            <AppenderRef ref="DebugFile"/>
+        </AsyncRoot>
+
+        <!-- ===== 第三方框架日志降噪 ===== -->
+        <AsyncLogger name="org.springframework" level="WARN" additivity="false">
+            <AppenderRef ref="Console"/>
+            <AppenderRef ref="InfoFile"/>
+            <AppenderRef ref="WarnFile"/>
+            <AppenderRef ref="ErrorFile"/>
+        </AsyncLogger>
+
+        <AsyncLogger name="org.springframework.security" level="WARN" additivity="false">
+            <AppenderRef ref="Console"/>
+            <AppenderRef ref="InfoFile"/>
+            <AppenderRef ref="WarnFile"/>
+            <AppenderRef ref="ErrorFile"/>
+        </AsyncLogger>
+
+        <AsyncLogger name="org.springframework.ai" level="ERROR" additivity="false">
+            <AppenderRef ref="Console"/>
+            <AppenderRef ref="ErrorFile"/>
+        </AsyncLogger>
+
+        <AsyncLogger name="com.baomidou.mybatisplus" level="WARN" additivity="false">
+            <AppenderRef ref="Console"/>
+            <AppenderRef ref="InfoFile"/>
+            <AppenderRef ref="WarnFile"/>
+            <AppenderRef ref="ErrorFile"/>
+        </AsyncLogger>
+
+        <AsyncLogger name="org.apache.ibatis" level="WARN" additivity="false">
+            <AppenderRef ref="Console"/>
+            <AppenderRef ref="WarnFile"/>
+            <AppenderRef ref="ErrorFile"/>
+        </AsyncLogger>
+
+        <AsyncLogger name="io.minio" level="WARN" additivity="false">
+            <AppenderRef ref="Console"/>
+            <AppenderRef ref="WarnFile"/>
+            <AppenderRef ref="ErrorFile"/>
+        </AsyncLogger>
+
+        <AsyncLogger name="org.flywaydb" level="WARN" additivity="false">
+            <AppenderRef ref="Console"/>
+            <AppenderRef ref="InfoFile"/>
+            <AppenderRef ref="WarnFile"/>
+            <AppenderRef ref="ErrorFile"/>
+        </AsyncLogger>
+
+        <!-- ===== 业务模块日志（开发时可单独调为 DEBUG） ===== -->
+        <AsyncLogger name="com.demo.chat" level="${sys:LOG_APP_LEVEL:-INFO}" additivity="false">
+            <AppenderRef ref="Console"/>
+            <AppenderRef ref="ErrorFile"/>
+            <AppenderRef ref="WarnFile"/>
+            <AppenderRef ref="InfoFile"/>
+            <AppenderRef ref="DebugFile"/>
+        </AsyncLogger>
+
+    </Loggers>
+
+</Configuration>

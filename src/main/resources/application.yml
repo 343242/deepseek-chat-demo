@@ -46,7 +46,4 @@ app:
       TYPESCRIPT: sandbox-node:bookworm
       JAVA: sandbox-java:bookworm
 
-logging:
-  level:
-    org.springframework.ai.chat.memory.repository.jdbc.JdbcChatMemoryRepositoryDialect: ERROR
-    org.springframework.ai.chat.memory.repository.jdbc.JdbcChatMemoryRepository$Builder: ERROR
+# Log4j 2 配置见 log4j2.xml，此处不再配置 logging.level

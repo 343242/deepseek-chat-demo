@@ -22,7 +22,7 @@ public class ApprovalTimeoutJob {
         this.approvalService = approvalService;
     }
 
-    @Scheduled(fixedRate = 3600_000, initialDelay = 600_000)
+    @Scheduled(fixedDelay = 3600_000, initialDelay = 600_000)
     public void rejectTimedOutApprovals() {
         try {
             int count = approvalService.rejectTimedOut();

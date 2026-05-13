@@ -23,6 +23,9 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.OffsetDateTime;
 import java.util.List;
+import java.util.Map;
+import java.util.ArrayList;
+import java.util.stream.Collectors;
 
 /**
  * 团队服务实现
@@ -140,22 +143,44 @@ public class TeamServiceImpl implements TeamService {
     public List<TeamVO> listMyTeams() {
         Long userId = SecurityUtils.getCurrentUserId();
 
+        // 1. 查询用户所有活跃成员关系
         List<TeamMember> memberships = teamMemberMapper.selectList(
                 new LambdaQueryWrapper<TeamMember>()
                         .eq(TeamMember::getUserId, userId)
                         .eq(TeamMember::getStatus, 1));
+        if (memberships.isEmpty()) {
+            return List.of();
+        }
 
-        return memberships.stream().map(m -> {
-            Team team = teamMapper.selectById(m.getTeamId());
-            if (team == null || team.getDeleted() != 0) return null;
+        // 2. 批量查询团队
+        List<Long> teamIds = memberships.stream().map(TeamMember::getTeamId).toList();
+        Map<Long, Team> teamMap = teamMapper.selectBatchIds(teamIds).stream()
+                .filter(t -> t.getDeleted() == 0)
+                .collect(Collectors.toMap(Team::getId, t -> t));
 
-            long memberCount = teamMemberMapper.selectCount(
-                    new LambdaQueryWrapper<TeamMember>()
-                            .eq(TeamMember::getTeamId, team.getId())
-                            .eq(TeamMember::getStatus, 1));
+        // 3. 批量查询成员数
+        List<Long> activeTeamIds = new ArrayList<>(teamMap.keySet());
+        Map<Long, Long> memberCountMap = Map.of();
+        if (!activeTeamIds.isEmpty()) {
+            memberCountMap = teamMemberMapper.selectMemberCountByTeamIds(activeTeamIds).stream()
+                    .collect(Collectors.toMap(
+                            m -> ((Number) m.get("team_id")).longValue(),
+                            m -> ((Number) m.get("cnt")).longValue()));
+        }
 
-            return toTeamVO(team, (int) memberCount, m.getRole().name());
-        }).filter(java.util.Objects::nonNull).toList();
+        // 4. 组装结果
+        Map<Long, Long> finalMemberCountMap = memberCountMap;
+        Map<Long, TeamMemberRole> roleMap = memberships.stream()
+                .collect(Collectors.toMap(TeamMember::getTeamId, TeamMember::getRole));
+
+        return memberships.stream()
+                .filter(m -> teamMap.containsKey(m.getTeamId()))
+                .map(m -> {
+                    Team team = teamMap.get(m.getTeamId());
+                    int count = finalMemberCountMap.getOrDefault(m.getTeamId(), 0L).intValue();
+                    return toTeamVO(team, count, roleMap.get(m.getTeamId()).name());
+                })
+                .toList();
     }
 
     @Override

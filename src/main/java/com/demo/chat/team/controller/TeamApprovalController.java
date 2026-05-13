@@ -1,6 +1,8 @@
 package com.demo.chat.team.controller;
 
+import com.demo.chat.common.request.PageRequest;
 import com.demo.chat.common.response.GlobalResponse;
+import com.demo.chat.common.response.PagedResult;
 import com.demo.chat.team.dto.ApprovalReviewRequest;
 import com.demo.chat.team.dto.ApprovalVO;
 import com.demo.chat.team.dto.MyApprovalVO;
@@ -8,8 +10,6 @@ import com.demo.chat.team.service.TeamApprovalService;
 import jakarta.validation.Valid;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
-
-import java.util.List;
 
 /**
  * 团队审批 REST 控制器
@@ -26,8 +26,12 @@ public class TeamApprovalController {
     }
 
     @GetMapping("/pending")
-    public GlobalResponse<List<ApprovalVO>> listPending(@PathVariable Long teamId) {
-        return GlobalResponse.ok(approvalService.listPending(teamId));
+    public GlobalResponse<PagedResult<ApprovalVO>> listPending(
+            @PathVariable Long teamId,
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        PageRequest req = PageRequest.of(page, size);
+        return GlobalResponse.ok(approvalService.listPending(teamId, req));
     }
 
     @PostMapping("/{approvalId}/review")
@@ -39,7 +43,11 @@ public class TeamApprovalController {
     }
 
     @GetMapping("/mine")
-    public GlobalResponse<List<MyApprovalVO>> listMyApprovals(@PathVariable Long teamId) {
-        return GlobalResponse.ok(approvalService.listMyApprovals(teamId));
+    public GlobalResponse<PagedResult<MyApprovalVO>> listMyApprovals(
+            @PathVariable Long teamId,
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        PageRequest req = PageRequest.of(page, size);
+        return GlobalResponse.ok(approvalService.listMyApprovals(teamId, req));
     }
 }

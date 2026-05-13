@@ -1,10 +1,10 @@
 package com.demo.chat.team.service;
 
+import com.demo.chat.common.request.PageRequest;
+import com.demo.chat.common.response.PagedResult;
 import com.demo.chat.team.dto.MemberRoleUpdateRequest;
 import com.demo.chat.team.dto.MemberUploadLimitRequest;
 import com.demo.chat.team.dto.TeamMemberVO;
-
-import java.util.List;
 
 /**
  * 团队成员服务接口
@@ -39,5 +39,5 @@ public interface TeamMemberService {
     /**
      * 获取团队成员列表
      */
-    List<TeamMemberVO> listMembers(Long teamId);
+    PagedResult<TeamMemberVO> listMembers(Long teamId, PageRequest req);
 }

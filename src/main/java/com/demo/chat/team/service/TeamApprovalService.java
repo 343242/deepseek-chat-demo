@@ -1,10 +1,10 @@
 package com.demo.chat.team.service;
 
+import com.demo.chat.common.request.PageRequest;
+import com.demo.chat.common.response.PagedResult;
 import com.demo.chat.team.dto.ApprovalReviewRequest;
 import com.demo.chat.team.dto.ApprovalVO;
 import com.demo.chat.team.dto.MyApprovalVO;
-
-import java.util.List;
 
 /**
  * 团队上传审批服务接口
@@ -14,7 +14,7 @@ public interface TeamApprovalService {
     /**
      * 获取待审批列表（管理员/创建者）
      */
-    List<ApprovalVO> listPending(Long teamId);
+    PagedResult<ApprovalVO> listPending(Long teamId, PageRequest req);
 
     /**
      * 审批操作（管理员/创建者）
@@ -24,7 +24,7 @@ public interface TeamApprovalService {
     /**
      * 获取我的审批状态（上传者查看）
      */
-    List<MyApprovalVO> listMyApprovals(Long teamId);
+    PagedResult<MyApprovalVO> listMyApprovals(Long teamId, PageRequest req);
 
     /**
      * 超时自动拒绝（定时任务调用）

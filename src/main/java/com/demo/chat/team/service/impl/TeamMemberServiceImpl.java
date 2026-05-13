@@ -2,6 +2,8 @@ package com.demo.chat.team.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.demo.chat.common.errorcode.ErrorCode;
+import com.demo.chat.common.request.PageRequest;
+import com.demo.chat.common.response.PagedResult;
 import com.demo.chat.exception.BusinessException;
 import com.demo.chat.security.util.SecurityUtils;
 import com.demo.chat.team.config.TeamProperties;
@@ -9,6 +11,8 @@ import com.demo.chat.team.dto.MemberRoleUpdateRequest;
 import com.demo.chat.team.dto.MemberUploadLimitRequest;
 import com.demo.chat.team.dto.TeamMemberVO;
 import org.springframework.dao.DuplicateKeyException;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import java.util.Map;
 import com.demo.chat.team.entity.Team;
 import com.demo.chat.team.entity.TeamMember;
 import com.demo.chat.team.enums.TeamMemberRole;
@@ -251,7 +255,7 @@ public class TeamMemberServiceImpl implements TeamMemberService {
     }
 
     @Override
-    public List<TeamMemberVO> listMembers(Long teamId) {
+    public PagedResult<TeamMemberVO> listMembers(Long teamId, PageRequest req) {
         Long userId = SecurityUtils.getCurrentUserId();
         getActiveTeam(teamId);
 
@@ -261,14 +265,24 @@ public class TeamMemberServiceImpl implements TeamMemberService {
             throw new BusinessException(ErrorCode.NOT_TEAM_MEMBER);
         }
 
-        List<TeamMember> members = teamMemberMapper.selectList(
+        // 分页查询成员
+        Page<TeamMember> page = teamMemberMapper.selectPage(req.toPage(),
                 new LambdaQueryWrapper<TeamMember>()
                         .eq(TeamMember::getTeamId, teamId)
                         .eq(TeamMember::getStatus, 1)
                         .orderByDesc(TeamMember::getRole));
 
-        return members.stream().map(m -> {
-            SysUser user = sysUserMapper.selectActiveById(m.getUserId()).orElse(null);
+        if (page.getRecords().isEmpty()) {
+            return new PagedResult<>(List.of(), req.page(), req.size(), page.getTotal(), (int) page.getPages());
+        }
+
+        // 批量查询用户信息
+        List<Long> userIds = page.getRecords().stream().map(TeamMember::getUserId).toList();
+        Map<Long, SysUser> userMap = sysUserMapper.selectBatchIds(userIds).stream()
+                .collect(java.util.stream.Collectors.toMap(SysUser::getId, u -> u));
+
+        return PagedResult.<TeamMember, TeamMemberVO>of(page, m -> {
+            SysUser user = userMap.get(m.getUserId());
             return new TeamMemberVO(
                     m.getUserId(),
                     user != null ? user.getUsername() : "未知",
@@ -277,7 +291,7 @@ public class TeamMemberServiceImpl implements TeamMemberService {
                     m.getUploadLimitMb(),
                     m.getJoinedAt()
             );
-        }).toList();
+        });
     }
 
     // === 私有方法 ===

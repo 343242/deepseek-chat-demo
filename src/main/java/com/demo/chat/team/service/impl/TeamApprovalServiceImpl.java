@@ -1,7 +1,10 @@
 package com.demo.chat.team.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.demo.chat.common.errorcode.ErrorCode;
+import com.demo.chat.common.request.PageRequest;
+import com.demo.chat.common.response.PagedResult;
 import com.demo.chat.exception.BusinessException;
 import com.demo.chat.rag.entity.RagDocument;
 import com.demo.chat.rag.etl.EtlStatus;
@@ -29,6 +32,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.OffsetDateTime;
+import java.util.Map;
 import java.util.List;
 
 /**
@@ -67,7 +71,7 @@ public class TeamApprovalServiceImpl implements TeamApprovalService {
     }
 
     @Override
-    public List<ApprovalVO> listPending(Long teamId) {
+    public PagedResult<ApprovalVO> listPending(Long teamId, PageRequest req) {
         Long userId = SecurityUtils.getCurrentUserId();
         getActiveTeam(teamId);
 
@@ -77,15 +81,27 @@ public class TeamApprovalServiceImpl implements TeamApprovalService {
             throw new BusinessException(ErrorCode.NOT_TEAM_ADMIN);
         }
 
-        List<TeamUploadApproval> approvals = approvalMapper.selectList(
+        // 分页查询
+        Page<TeamUploadApproval> page = approvalMapper.selectPage(req.toPage(),
                 new LambdaQueryWrapper<TeamUploadApproval>()
                         .eq(TeamUploadApproval::getTeamId, teamId)
                         .eq(TeamUploadApproval::getStatus, ApprovalStatus.PENDING)
                         .orderByAsc(TeamUploadApproval::getCreatedAt));
 
-        return approvals.stream().map(a -> {
-            RagDocument doc = ragDocumentMapper.selectById(a.getDocumentId());
-            SysUser uploader = sysUserMapper.selectActiveById(a.getUploaderId()).orElse(null);
+        if (page.getRecords().isEmpty()) return new PagedResult<>(List.of(), req.page(), req.size(), 0, 0);
+
+        // 批量查询文档和用户
+        List<Long> docIds = page.getRecords().stream().map(TeamUploadApproval::getDocumentId).distinct().toList();
+        List<Long> uploaderIds = page.getRecords().stream().map(TeamUploadApproval::getUploaderId).distinct().toList();
+
+        Map<Long, RagDocument> docMap = ragDocumentMapper.selectBatchIds(docIds).stream()
+                .collect(java.util.stream.Collectors.toMap(RagDocument::getId, d -> d));
+        Map<Long, SysUser> userMap = sysUserMapper.selectBatchIds(uploaderIds).stream()
+                .collect(java.util.stream.Collectors.toMap(SysUser::getId, u -> u));
+
+        return PagedResult.<TeamUploadApproval, ApprovalVO>of(page, a -> {
+            RagDocument doc = docMap.get(a.getDocumentId());
+            SysUser uploader = userMap.get(a.getUploaderId());
             return new ApprovalVO(
                     a.getId(),
                     a.getDocumentId(),
@@ -99,7 +115,7 @@ public class TeamApprovalServiceImpl implements TeamApprovalService {
                     a.getCreatedAt(),
                     a.getReviewedAt()
             );
-        }).toList();
+        });
     }
 
     @Override
@@ -149,7 +165,7 @@ public class TeamApprovalServiceImpl implements TeamApprovalService {
     }
 
     @Override
-    public List<MyApprovalVO> listMyApprovals(Long teamId) {
+    public PagedResult<MyApprovalVO> listMyApprovals(Long teamId, PageRequest req) {
         Long userId = SecurityUtils.getCurrentUserId();
         getActiveTeam(teamId);
 
@@ -159,14 +175,22 @@ public class TeamApprovalServiceImpl implements TeamApprovalService {
             throw new BusinessException(ErrorCode.NOT_TEAM_MEMBER);
         }
 
-        List<TeamUploadApproval> approvals = approvalMapper.selectList(
+        // 分页查询
+        Page<TeamUploadApproval> page = approvalMapper.selectPage(req.toPage(),
                 new LambdaQueryWrapper<TeamUploadApproval>()
                         .eq(TeamUploadApproval::getTeamId, teamId)
                         .eq(TeamUploadApproval::getUploaderId, userId)
                         .orderByDesc(TeamUploadApproval::getCreatedAt));
 
-        return approvals.stream().map(a -> {
-            RagDocument doc = ragDocumentMapper.selectById(a.getDocumentId());
+        if (page.getRecords().isEmpty()) return new PagedResult<>(List.of(), req.page(), req.size(), 0, 0);
+
+        // 批量查询文档
+        List<Long> docIds = page.getRecords().stream().map(TeamUploadApproval::getDocumentId).distinct().toList();
+        Map<Long, RagDocument> docMap = ragDocumentMapper.selectBatchIds(docIds).stream()
+                .collect(java.util.stream.Collectors.toMap(RagDocument::getId, d -> d));
+
+        return PagedResult.<TeamUploadApproval, MyApprovalVO>of(page, a -> {
+            RagDocument doc = docMap.get(a.getDocumentId());
             return new MyApprovalVO(
                     a.getId(),
                     a.getDocumentId(),
@@ -177,32 +201,45 @@ public class TeamApprovalServiceImpl implements TeamApprovalService {
                     a.getCreatedAt(),
                     a.getReviewedAt()
             );
-        }).toList();
+        });
     }
 
     @Override
     public int rejectTimedOut() {
         OffsetDateTime deadline = OffsetDateTime.now().minusDays(teamProperties.getApprovalTimeoutDays());
+        OffsetDateTime now = OffsetDateTime.now();
 
+        // 查询超时的审批 ID 和文档 ID
         List<TeamUploadApproval> timedOut = approvalMapper.selectList(
                 new LambdaQueryWrapper<TeamUploadApproval>()
                         .eq(TeamUploadApproval::getStatus, ApprovalStatus.PENDING)
-                        .lt(TeamUploadApproval::getCreatedAt, deadline));
+                        .lt(TeamUploadApproval::getCreatedAt, deadline)
+                        .select(TeamUploadApproval::getId, TeamUploadApproval::getDocumentId));
 
-        for (TeamUploadApproval approval : timedOut) {
-            txTemplate.executeWithoutResult(status -> {
-                approval.setStatus(ApprovalStatus.REJECTED);
-                approval.setReviewComment("审批超时，系统自动拒绝");
-                approval.setReviewedAt(OffsetDateTime.now());
-                approvalMapper.updateById(approval);
+        if (timedOut.isEmpty()) return 0;
 
-                RagDocument doc = ragDocumentMapper.selectById(approval.getDocumentId());
-                if (doc != null) {
-                    doc.setStatus(EtlStatus.REJECTED);
-                    ragDocumentMapper.updateById(doc);
-                }
-            });
-        }
+        List<Long> approvalIds = timedOut.stream().map(TeamUploadApproval::getId).toList();
+        List<Long> docIds = timedOut.stream().map(TeamUploadApproval::getDocumentId).distinct().toList();
+
+        txTemplate.executeWithoutResult(status -> {
+            // 批量更新审批记录
+            for (Long id : approvalIds) {
+                TeamUploadApproval a = new TeamUploadApproval();
+                a.setId(id);
+                a.setStatus(ApprovalStatus.REJECTED);
+                a.setReviewComment("审批超时，系统自动拒绝");
+                a.setReviewedAt(now);
+                approvalMapper.updateById(a);
+            }
+
+            // 批量更新文档状态
+            for (Long docId : docIds) {
+                RagDocument doc = new RagDocument();
+                doc.setId(docId);
+                doc.setStatus(EtlStatus.REJECTED);
+                ragDocumentMapper.updateById(doc);
+            }
+        });
 
         if (!timedOut.isEmpty()) {
             log.info("Rejected {} timed-out approvals", timedOut.size());

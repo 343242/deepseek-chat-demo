@@ -1,13 +1,13 @@
 package com.demo.chat.team.controller;
 
+import com.demo.chat.common.request.PageRequest;
 import com.demo.chat.common.response.GlobalResponse;
+import com.demo.chat.common.response.PagedResult;
 import com.demo.chat.team.dto.*;
 import com.demo.chat.team.service.TeamMemberService;
 import jakarta.validation.Valid;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
-
-import java.util.List;
 
 /**
  * 团队成员管理 REST 控制器
@@ -59,7 +59,11 @@ public class TeamMemberController {
     }
 
     @GetMapping
-    public GlobalResponse<List<TeamMemberVO>> listMembers(@PathVariable Long teamId) {
-        return GlobalResponse.ok(teamMemberService.listMembers(teamId));
+    public GlobalResponse<PagedResult<TeamMemberVO>> listMembers(
+            @PathVariable Long teamId,
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "20") int size) {
+        PageRequest req = PageRequest.of(page, size);
+        return GlobalResponse.ok(teamMemberService.listMembers(teamId, req));
     }
 }

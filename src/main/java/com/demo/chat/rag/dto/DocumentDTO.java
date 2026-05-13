@@ -15,6 +15,7 @@ import java.time.LocalDateTime;
  * @param status       处理状态
  * @param errorMessage 错误信息
  * @param userId       文档所有者
+ * @param teamId       所属团队 ID（null=个人文档）
  * @param createTime   创建时间
  */
 public record DocumentDTO(
@@ -26,5 +27,6 @@ public record DocumentDTO(
     EtlStatus status,
     String errorMessage,
     Long userId,
+    Long teamId,
     LocalDateTime createTime
 ) {}

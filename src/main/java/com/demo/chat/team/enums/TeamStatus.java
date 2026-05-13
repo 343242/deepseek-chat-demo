@@ -8,8 +8,8 @@ import com.fasterxml.jackson.annotation.JsonValue;
  */
 public enum TeamStatus {
 
-    DISABLED(0),
-    ENABLED(1);
+    INACTIVE(0),
+    ACTIVE(1);
 
     @EnumValue
     private final int code;

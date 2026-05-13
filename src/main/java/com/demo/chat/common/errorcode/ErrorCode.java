@@ -98,6 +98,10 @@ public enum ErrorCode {
     NO_PERMISSION_DELETE_TEAM_DOC(55013, "无权删除团队文档"),
     TEAM_LIMIT_EXCEEDED(55014, "用户团队数超限"),
     TEAM_MEMBER_LIMIT_EXCEEDED(55015, "团队成员数超限"),
+    CANNOT_REMOVE_SELF(55016, "不能移除自己，请使用退出功能"),
+    CANNOT_REMOVE_CREATOR(55017, "不能移除团队创建者"),
+    CANNOT_ASSIGN_CREATOR(55018, "不能指定为创建者角色"),
+    CANNOT_CHANGE_OWN_ROLE(55019, "不能修改自己的角色"),
     ;
 
     private final int code;

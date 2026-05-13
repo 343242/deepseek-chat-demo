@@ -11,18 +11,19 @@ import org.springframework.stereotype.Component;
  * 路由规则：
  * <ul>
  *   <li>teamId = null → {@link PersonalUploadStrategy}（个人上传）</li>
- *   <li>teamId ≠ null → {@link TeamUploadStrategy}（团队上传，Phase 3 实现）</li>
+ *   <li>teamId ≠ null → {@link TeamUploadStrategy}（团队上传）</li>
  * </ul>
- * <p>
- * Phase 2 阶段 teamId ≠ null 时抛出占位异常，Phase 3 注入 TeamUploadStrategy 后启用。
  */
 @Component
 public class UploadStrategyFactory {
 
     private final PersonalUploadStrategy personalUploadStrategy;
+    private final TeamUploadStrategy teamUploadStrategy;
 
-    public UploadStrategyFactory(PersonalUploadStrategy personalUploadStrategy) {
+    public UploadStrategyFactory(PersonalUploadStrategy personalUploadStrategy,
+                                  TeamUploadStrategy teamUploadStrategy) {
         this.personalUploadStrategy = personalUploadStrategy;
+        this.teamUploadStrategy = teamUploadStrategy;
     }
 
     /**
@@ -30,12 +31,11 @@ public class UploadStrategyFactory {
      *
      * @param teamId 团队 ID（null = 个人上传）
      * @return 上传策略
-     * @throws BusinessException NOT_TEAM_MEMBER（Phase 2 阶段团队功能尚未实现）
      */
     public UploadStrategy route(@Nullable Long teamId) {
-        if (teamId != null) {
-            throw new BusinessException(ErrorCode.NOT_TEAM_MEMBER, "团队功能尚未实现");
+        if (teamId == null) {
+            return personalUploadStrategy;
         }
-        return personalUploadStrategy;
+        return teamUploadStrategy;
     }
 }

@@ -78,9 +78,13 @@ public class EtlPipelineServiceImpl implements EtlPipelineService {
 
             String docIdStr = String.valueOf(documentId);
             String userIdStr = String.valueOf(userId);
+            String teamIdStr = doc.getTeamId() != null ? String.valueOf(doc.getTeamId()) : null;
             for (Document chunk : chunks) {
                 chunk.getMetadata().put("documentId", docIdStr);
                 chunk.getMetadata().put("userId", userIdStr);
+                if (teamIdStr != null) {
+                    chunk.getMetadata().put("teamId", teamIdStr);
+                }
             }
 
             // === Load ===

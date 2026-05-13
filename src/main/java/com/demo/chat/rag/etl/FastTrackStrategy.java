@@ -1,6 +1,7 @@
 package com.demo.chat.rag.etl;
 
 import com.demo.chat.rag.config.EtlFastTrackProperties;
+import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.document.Document;
@@ -106,7 +107,7 @@ public class FastTrackStrategy implements EtlRouteStrategy {
                         .map(Document::getText)
                         .collect(Collectors.joining("\n\n"));
 
-                writeBm25Row(c.documentId(), fullContent, c.userId());
+                writeBm25Row(c.documentId(), fullContent, c.userId(), c.teamId());
                 statusManager.completeDocument(c.documentId(), 0);
 
                 results.add(EtlResult.success(c.documentId(), 0));
@@ -141,12 +142,14 @@ public class FastTrackStrategy implements EtlRouteStrategy {
      * 将原文直接写入 vector_store 表，content_tsv 由触发器自动填充。
      * embedding 设为 NULL（无向量），BM25 检索仍可通过 content_tsv 命中。
      */
-    private void writeBm25Row(Long documentId, String content, Long userId) {
-        Map<String, Object> metadata = Map.of(
-                "documentId", String.valueOf(documentId),
-                "userId", String.valueOf(userId),
-                "fastTrack", true
-        );
+    private void writeBm25Row(Long documentId, String content, Long userId, @Nullable Long teamId) {
+        Map<String, Object> metadata = new java.util.HashMap<>();
+        metadata.put("documentId", String.valueOf(documentId));
+        metadata.put("userId", String.valueOf(userId));
+        metadata.put("fastTrack", true);
+        if (teamId != null) {
+            metadata.put("teamId", String.valueOf(teamId));
+        }
         String metadataJson;
         try {
             metadataJson = objectMapper.writeValueAsString(metadata);
@@ -176,9 +179,13 @@ public class FastTrackStrategy implements EtlRouteStrategy {
                     List<Document> chunks = transformer.transform(docs, c.fileName());
                     String docIdStr = String.valueOf(c.documentId());
                     String userIdStr = String.valueOf(c.userId());
+                    String teamIdStr = c.teamId() != null ? String.valueOf(c.teamId()) : null;
                     for (Document chunk : chunks) {
                         chunk.getMetadata().put("documentId", docIdStr);
                         chunk.getMetadata().put("userId", userIdStr);
+                        if (teamIdStr != null) {
+                            chunk.getMetadata().put("teamId", teamIdStr);
+                        }
                     }
                     return chunks;
                 }, cpuExecutor)

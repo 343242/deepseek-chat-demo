@@ -110,9 +110,13 @@ public class StandardStrategy implements EtlRouteStrategy {
                         List<Document> chunks = transformer.transform(extractedMap.get(c.documentId()), c.fileName());
                         String docIdStr = String.valueOf(c.documentId());
                         String userIdStr = String.valueOf(c.userId());
+                        String teamIdStr = c.teamId() != null ? String.valueOf(c.teamId()) : null;
                         for (Document chunk : chunks) {
                             chunk.getMetadata().put("documentId", docIdStr);
                             chunk.getMetadata().put("userId", userIdStr);
+                            if (teamIdStr != null) {
+                                chunk.getMetadata().put("teamId", teamIdStr);
+                            }
                         }
                         return new TransformOutput(c.documentId(), chunks, null);
                     } catch (Exception e) {

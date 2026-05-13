@@ -54,7 +54,7 @@ public class ChatController {
             @RequestParam(defaultValue = "SIMPLE") String mode,
             @RequestParam(defaultValue = "false") boolean ragEnabled,
             @RequestParam(defaultValue = "false") boolean enableThinking) {
-        ChatRequest request = new ChatRequest(model, message, conversationId, ragEnabled, mode, enableThinking);
+        ChatRequest request = new ChatRequest(model, message, conversationId, ragEnabled, mode, enableThinking, null);
         return chatService.chatStream(request);
     }
 

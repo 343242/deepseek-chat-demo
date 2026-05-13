@@ -35,7 +35,10 @@ public record ChatRequest(
     @Pattern(regexp = "^(SIMPLE|MULTI_TURN)$", message = "对话模式仅支持 SIMPLE 或 MULTI_TURN")
     String mode,
 
-    Boolean enableThinking
+    Boolean enableThinking,
+
+    /** 团队 ID（可选，启用 RAG 时检索团队知识库） */
+    Long teamId
 ) {
     /**
      * 获取 conversationId，不传时返回 null（由 ChatServiceImpl 自动生成 UUIDv7）
@@ -66,6 +69,6 @@ public record ChatRequest(
      * @return 除 model 外其余字段不变的 ChatRequest
      */
     public ChatRequest withModel(String newModel) {
-        return new ChatRequest(newModel, message, conversationId, ragEnabled, mode, enableThinking);
+        return new ChatRequest(newModel, message, conversationId, ragEnabled, mode, enableThinking, teamId);
     }
 }

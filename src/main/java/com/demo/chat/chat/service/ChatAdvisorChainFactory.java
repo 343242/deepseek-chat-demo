@@ -115,7 +115,8 @@ public class ChatAdvisorChainFactory {
 
         if (request.isRagEnabled()) {
             Long userId = SecurityUtils.getCurrentUserId();
-            RetrievalAugmentationAdvisor ragAdvisor = ragAdvisorFactory.create(userId);
+            Long teamId = request.teamId();
+            RetrievalAugmentationAdvisor ragAdvisor = ragAdvisorFactory.create(userId, teamId);
             chain.add(ragAdvisor);
         }
 

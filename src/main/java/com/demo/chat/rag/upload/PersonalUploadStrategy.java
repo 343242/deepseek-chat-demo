@@ -1,6 +1,7 @@
-package com.demo.chat.team.upload;
+package com.demo.chat.rag.upload;
 
 import com.demo.chat.common.errorcode.ErrorCode;
+import com.demo.chat.common.upload.UploadStrategy;
 import com.demo.chat.exception.BusinessException;
 import com.demo.chat.rag.config.MinioProperties;
 import com.demo.chat.rag.dto.DocumentUploadResponse;
@@ -17,7 +18,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -103,7 +104,7 @@ public class PersonalUploadStrategy implements UploadStrategy {
             fileStorageService.upload(bucket, storageKey, file.getResource(), mimeType);
 
             RagDocument ragDoc = persistDocument(originalFilename, file.getSize(), mimeType, storageKey, bucket, userId);
-            log.info("Document uploaded (batch): id={}, file={}, size={}, userId={}", ragDoc.getId(), originalFilename, file.getSize(), userId);
+            log.debug("Document uploaded (batch): id={}, file={}, size={}, userId={}", ragDoc.getId(), originalFilename, file.getSize(), userId);
 
             candidates.add(new EtlCandidate(ragDoc.getId(), bucket, storageKey, originalFilename, mimeType, file.getSize(), userId, ragDoc.getTeamId()));
             responses.add(new DocumentUploadResponse(ragDoc.getId(), originalFilename, EtlStatus.PROCESSING));
@@ -111,6 +112,7 @@ public class PersonalUploadStrategy implements UploadStrategy {
 
         etlDispatchService.dispatch(candidates);
 
+        log.info("Batch upload completed: count={}, userId={}", responses.size(), userId);
         return responses;
     }
 
@@ -129,8 +131,8 @@ public class PersonalUploadStrategy implements UploadStrategy {
         ragDoc.setBucket(bucket);
         ragDoc.setUserId(userId);
         ragDoc.setStatus(EtlStatus.UPLOADED);
-        ragDoc.setCreateTime(LocalDateTime.now());
-        ragDoc.setUpdateTime(LocalDateTime.now());
+        ragDoc.setCreateTime(OffsetDateTime.now());
+        ragDoc.setUpdateTime(OffsetDateTime.now());
         ragDocumentMapper.insert(ragDoc);
         return ragDoc;
     }

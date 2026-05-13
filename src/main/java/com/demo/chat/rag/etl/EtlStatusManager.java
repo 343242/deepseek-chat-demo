@@ -7,7 +7,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionTemplate;
 
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 
 /**
  * ETL 文档状态管理器
@@ -38,7 +38,7 @@ public class EtlStatusManager {
             RagDocument update = new RagDocument();
             update.setId(documentId);
             update.setStatus(status);
-            update.setUpdateTime(LocalDateTime.now());
+            update.setUpdateTime(OffsetDateTime.now());
             ragDocumentMapper.updateById(update);
         });
     }
@@ -52,7 +52,7 @@ public class EtlStatusManager {
             doc.setId(documentId);
             doc.setStatus(EtlStatus.COMPLETED);
             doc.setChunkCount(chunkCount);
-            doc.setUpdateTime(LocalDateTime.now());
+            doc.setUpdateTime(OffsetDateTime.now());
             ragDocumentMapper.updateById(doc);
         });
     }
@@ -65,7 +65,7 @@ public class EtlStatusManager {
             RagDocument doc = new RagDocument();
             doc.setId(documentId);
             doc.setChunkCount(chunkCount);
-            doc.setUpdateTime(LocalDateTime.now());
+            doc.setUpdateTime(OffsetDateTime.now());
             ragDocumentMapper.updateById(doc);
         });
     }
@@ -81,7 +81,7 @@ public class EtlStatusManager {
                 if (doc != null) {
                     doc.setStatus(EtlStatus.FAILED);
                     doc.setErrorMessage(truncate(e.getMessage(), 2000));
-                    doc.setUpdateTime(LocalDateTime.now());
+                    doc.setUpdateTime(OffsetDateTime.now());
                     ragDocumentMapper.updateById(doc);
                 }
             });
@@ -101,7 +101,7 @@ public class EtlStatusManager {
                 if (doc != null) {
                     doc.setStatus(EtlStatus.VECTOR_FAILED);
                     doc.setErrorMessage(truncate("Async vectorize failed: " + ex.getMessage(), 2000));
-                    doc.setUpdateTime(LocalDateTime.now());
+                    doc.setUpdateTime(OffsetDateTime.now());
                     ragDocumentMapper.updateById(doc);
                 }
             });

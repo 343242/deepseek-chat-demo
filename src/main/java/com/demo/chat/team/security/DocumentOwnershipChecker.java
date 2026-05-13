@@ -14,6 +14,11 @@ import org.springframework.stereotype.Component;
 /**
  * 统一文档操作权限校验组件
  * <p>
+ * 设计意图：跨越 team 和 rag 模块的权限校验门面。
+ * 当前放在 team/security 包下，因为它依赖 TeamMembershipVerifier 和 TeamMemberRole，
+ * 核心职责是判断用户对文档的操作权限（个人文档 vs 团队文档）。
+ * 未来如果 rag 模块独立化，应考虑将此类提取为独立的权限模块。
+ * <p>
  * 替代 {@code findAndVerifyOwner()}，统一处理个人文档和团队文档的权限判断。
  * 适用于 getById / delete / retry 等所有需要文档权限校验的场景。
  * <p>

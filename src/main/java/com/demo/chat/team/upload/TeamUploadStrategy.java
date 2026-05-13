@@ -2,6 +2,7 @@ package com.demo.chat.team.upload;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.demo.chat.common.errorcode.ErrorCode;
+import com.demo.chat.common.upload.UploadStrategy;
 import com.demo.chat.exception.BusinessException;
 import com.demo.chat.rag.dto.DocumentUploadResponse;
 import com.demo.chat.rag.etl.EtlStatus;

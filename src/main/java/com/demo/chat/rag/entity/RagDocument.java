@@ -4,7 +4,7 @@ import com.baomidou.mybatisplus.annotation.*;
 import com.baomidou.mybatisplus.annotation.TableLogic;
 import com.demo.chat.rag.etl.EtlStatus;
 
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 
 @TableName("rag_document")
 public class RagDocument {
@@ -46,10 +46,10 @@ public class RagDocument {
     private Long teamId;
 
     @TableField(fill = FieldFill.INSERT)
-    private LocalDateTime createTime;
+    private OffsetDateTime createTime;
 
     @TableField(fill = FieldFill.INSERT_UPDATE)
-    private LocalDateTime updateTime;
+    private OffsetDateTime updateTime;
 
     @TableLogic
     private Integer deleted;
@@ -84,11 +84,11 @@ public class RagDocument {
     public String getErrorMessage() { return errorMessage; }
     public void setErrorMessage(String errorMessage) { this.errorMessage = errorMessage; }
 
-    public LocalDateTime getCreateTime() { return createTime; }
-    public void setCreateTime(LocalDateTime createTime) { this.createTime = createTime; }
+    public OffsetDateTime getCreateTime() { return createTime; }
+    public void setCreateTime(OffsetDateTime createTime) { this.createTime = createTime; }
 
-    public LocalDateTime getUpdateTime() { return updateTime; }
-    public void setUpdateTime(LocalDateTime updateTime) { this.updateTime = updateTime; }
+    public OffsetDateTime getUpdateTime() { return updateTime; }
+    public void setUpdateTime(OffsetDateTime updateTime) { this.updateTime = updateTime; }
 
     public Integer getDeleted() { return deleted; }
     public void setDeleted(Integer deleted) { this.deleted = deleted; }

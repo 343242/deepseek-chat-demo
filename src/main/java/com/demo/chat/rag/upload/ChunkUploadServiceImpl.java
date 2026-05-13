@@ -26,7 +26,7 @@ import org.springframework.util.unit.DataSize;
 import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.security.MessageDigest;
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -562,8 +562,8 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         doc.setFileMd5(actualMd5);
         doc.setStatus(EtlStatus.PROCESSING);
         doc.setDeleted(0);
-        doc.setCreateTime(LocalDateTime.now());
-        doc.setUpdateTime(LocalDateTime.now());
+        doc.setCreateTime(OffsetDateTime.now());
+        doc.setUpdateTime(OffsetDateTime.now());
         ragDocumentMapper.insert(doc);
         return doc.getId();
     }

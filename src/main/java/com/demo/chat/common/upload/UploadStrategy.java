@@ -1,4 +1,4 @@
-package com.demo.chat.team.upload;
+package com.demo.chat.common.upload;
 
 import com.demo.chat.rag.dto.DocumentUploadResponse;
 import org.jspecify.annotations.Nullable;

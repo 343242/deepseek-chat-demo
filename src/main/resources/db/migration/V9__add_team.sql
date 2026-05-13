@@ -75,6 +75,7 @@ CREATE INDEX IF NOT EXISTS idx_rag_document_team ON rag_document (team_id);
 
 -- ==================== 清空现有向量数据（开发阶段） ====================
 
+-- WARNING: 开发阶段专用，生产环境需删除此行
 TRUNCATE TABLE vector_store;
 
 -- ==================== 新增团队权限 ====================

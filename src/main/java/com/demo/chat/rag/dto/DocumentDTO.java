@@ -2,7 +2,7 @@ package com.demo.chat.rag.dto;
 
 import com.demo.chat.rag.etl.EtlStatus;
 
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 
 /**
  * 文档信息 DTO
@@ -28,5 +28,5 @@ public record DocumentDTO(
     String errorMessage,
     Long userId,
     Long teamId,
-    LocalDateTime createTime
+    OffsetDateTime createTime
 ) {}

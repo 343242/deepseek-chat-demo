@@ -1,12 +1,10 @@
 package com.demo.chat.team.config;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
-import org.springframework.stereotype.Component;
 
 /**
  * 团队功能配置
  */
-@Component
 @ConfigurationProperties(prefix = "app.team")
 public class TeamProperties {
 

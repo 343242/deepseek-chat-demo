@@ -1,5 +1,7 @@
 package com.demo.chat.security.util;
 
+import com.demo.chat.common.errorcode.ErrorCode;
+import com.demo.chat.exception.BusinessException;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -18,7 +20,7 @@ public final class SecurityUtils {
     public static Long getCurrentUserId() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         if (auth == null || auth.getPrincipal() == null) {
-            throw new IllegalStateException("未认证");
+            throw new BusinessException(ErrorCode.UNAUTHORIZED);
         }
         return (Long) auth.getPrincipal();
     }

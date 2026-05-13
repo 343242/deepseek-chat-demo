@@ -2,30 +2,29 @@ package com.demo.chat.rag.service.impl;
 
 import com.demo.chat.common.errorcode.ErrorCode;
 import com.demo.chat.exception.BusinessException;
-import com.demo.chat.rag.config.MinioProperties;
 import com.demo.chat.rag.dto.DocumentDTO;
 import com.demo.chat.rag.dto.DocumentUploadResponse;
-import com.demo.chat.rag.etl.EtlCandidate;
 import com.demo.chat.rag.etl.EtlStatus;
 import com.demo.chat.rag.entity.RagDocument;
 import com.demo.chat.rag.mapper.RagDocumentMapper;
 import com.demo.chat.rag.service.DocumentApplicationService;
 import com.demo.chat.rag.service.EtlDispatchService;
-import com.demo.chat.rag.service.FileStorageService;
 import com.demo.chat.security.util.SecurityUtils;
+import com.demo.chat.team.upload.UploadStrategyFactory;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
-import java.time.LocalDateTime;
-import java.util.*;
+import java.util.List;
 
 /**
  * 文档应用服务实现
  * <p>
- * 职责：编排上传 → 存储 → 元数据 → ETL 调度 → 查询 → 删除全流程。
+ * 职责：编排文档的前端操作（上传 → 查询 → 删除 → 重试）。
+ * <p>
+ * 上传链路委托给 {@link UploadStrategyFactory}（策略模式），
  * 校验逻辑委托给 {@link DocumentValidator}，
  * 删除的级联清理委托给 {@link DocumentLifecycleService}。
  */
@@ -34,82 +33,31 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
 
     private static final Logger log = LoggerFactory.getLogger(DocumentApplicationServiceImpl.class);
 
-    private final FileStorageService fileStorageService;
     private final EtlDispatchService etlDispatchService;
     private final RagDocumentMapper ragDocumentMapper;
-    private final MinioProperties minioProperties;
-    private final DocumentValidator documentValidator;
     private final DocumentLifecycleService documentLifecycleService;
+    private final UploadStrategyFactory uploadStrategyFactory;
 
-    public DocumentApplicationServiceImpl(FileStorageService fileStorageService,
-                                          EtlDispatchService etlDispatchService,
+    public DocumentApplicationServiceImpl(EtlDispatchService etlDispatchService,
                                           RagDocumentMapper ragDocumentMapper,
-                                          MinioProperties minioProperties,
-                                          DocumentValidator documentValidator,
-                                          DocumentLifecycleService documentLifecycleService) {
-        this.fileStorageService = fileStorageService;
+                                          DocumentLifecycleService documentLifecycleService,
+                                          UploadStrategyFactory uploadStrategyFactory) {
         this.etlDispatchService = etlDispatchService;
         this.ragDocumentMapper = ragDocumentMapper;
-        this.minioProperties = minioProperties;
-        this.documentValidator = documentValidator;
         this.documentLifecycleService = documentLifecycleService;
+        this.uploadStrategyFactory = uploadStrategyFactory;
     }
 
     @Override
     public DocumentUploadResponse upload(MultipartFile file) {
-        documentValidator.validate(file);
-
         Long currentUserId = SecurityUtils.getCurrentUserId();
-        String mimeType = file.getContentType();
-        String originalFilename = file.getOriginalFilename();
-        String bucket = minioProperties.getBucket();
-
-        fileStorageService.ensureBucketExists(bucket);
-        String storageKey = UUID.randomUUID().toString();
-        fileStorageService.upload(bucket, storageKey, file.getResource(), mimeType);
-
-        RagDocument ragDoc = persistDocument(originalFilename, file.getSize(), mimeType, storageKey, bucket, currentUserId);
-        log.info("Document uploaded: id={}, file={}, size={}, userId={}", ragDoc.getId(), originalFilename, file.getSize(), currentUserId);
-
-        etlDispatchService.dispatchAsync(ragDoc.getId(), bucket, storageKey, originalFilename, mimeType, file.getSize(), currentUserId, ragDoc.getTeamId());
-
-        return new DocumentUploadResponse(ragDoc.getId(), originalFilename, EtlStatus.PROCESSING);
+        return uploadStrategyFactory.route(null).upload(file, null, currentUserId);
     }
 
     @Override
     public List<DocumentUploadResponse> uploadBatch(List<MultipartFile> files) {
-        if (files == null || files.isEmpty()) {
-            throw new BusinessException(ErrorCode.UPLOAD_LIST_EMPTY);
-        }
-
         Long currentUserId = SecurityUtils.getCurrentUserId();
-        String bucket = minioProperties.getBucket();
-        fileStorageService.ensureBucketExists(bucket);
-
-        for (MultipartFile file : files) {
-            documentValidator.validate(file);
-        }
-
-        List<EtlCandidate> candidates = new ArrayList<>();
-        List<DocumentUploadResponse> responses = new ArrayList<>();
-
-        for (MultipartFile file : files) {
-            String mimeType = file.getContentType();
-            String originalFilename = file.getOriginalFilename();
-            String storageKey = UUID.randomUUID().toString();
-
-            fileStorageService.upload(bucket, storageKey, file.getResource(), mimeType);
-
-            RagDocument ragDoc = persistDocument(originalFilename, file.getSize(), mimeType, storageKey, bucket, currentUserId);
-            log.info("Document uploaded (batch): id={}, file={}, size={}, userId={}", ragDoc.getId(), originalFilename, file.getSize(), currentUserId);
-
-            candidates.add(new EtlCandidate(ragDoc.getId(), bucket, storageKey, originalFilename, mimeType, file.getSize(), currentUserId, ragDoc.getTeamId()));
-            responses.add(new DocumentUploadResponse(ragDoc.getId(), originalFilename, EtlStatus.PROCESSING));
-        }
-
-        etlDispatchService.dispatch(candidates);
-
-        return responses;
+        return uploadStrategyFactory.route(null).uploadBatch(files, null, currentUserId);
     }
 
     @Override
@@ -149,14 +97,12 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
 
         log.info("Retrying ETL for document: id={}, file={}, status={}", id, doc.getFileName(), doc.getStatus());
 
-        // 清理旧的向量数据（如果有的话）
         try {
             etlDispatchService.deleteVectors(id);
         } catch (Exception e) {
             log.warn("Failed to clean old vectors for retry doc={}: {}", id, e.getMessage());
         }
 
-        // 重置状态并异步重新执行 ETL
         etlDispatchService.dispatchAsync(id, doc.getBucket(), doc.getStorageKey(),
                 doc.getFileName(), doc.getMimeType(), doc.getFileSize(), doc.getUserId(), doc.getTeamId());
 
@@ -164,22 +110,6 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
     }
 
     // === 私有方法 ===
-
-    private RagDocument persistDocument(String fileName, long fileSize, String mimeType,
-                                        String storageKey, String bucket, Long userId) {
-        RagDocument ragDoc = new RagDocument();
-        ragDoc.setFileName(fileName);
-        ragDoc.setFileSize(fileSize);
-        ragDoc.setMimeType(mimeType);
-        ragDoc.setStorageKey(storageKey);
-        ragDoc.setBucket(bucket);
-        ragDoc.setUserId(userId);
-        ragDoc.setStatus(EtlStatus.UPLOADED);
-        ragDoc.setCreateTime(LocalDateTime.now());
-        ragDoc.setUpdateTime(LocalDateTime.now());
-        ragDocumentMapper.insert(ragDoc);
-        return ragDoc;
-    }
 
     private RagDocument findAndVerifyOwner(Long id) {
         RagDocument doc = ragDocumentMapper.selectById(id);

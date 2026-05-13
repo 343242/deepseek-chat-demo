@@ -17,6 +17,7 @@ import com.demo.chat.user.entity.SysUser;
 import com.demo.chat.user.mapper.SysUserMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -76,7 +77,11 @@ public class TeamServiceImpl implements TeamService {
             team.setDeleted(0);
             team.setCreatedAt(OffsetDateTime.now());
             team.setUpdatedAt(OffsetDateTime.now());
-            teamMapper.insert(team);
+            try {
+                teamMapper.insert(team);
+            } catch (DuplicateKeyException e) {
+                throw new BusinessException(ErrorCode.TEAM_NAME_DUPLICATE);
+            }
 
             // 2. 创建者自动成为 CREATOR 成员
             TeamMember creatorMember = new TeamMember();
@@ -221,17 +226,20 @@ public class TeamServiceImpl implements TeamService {
     @Override
     public void setCreatorQuota(Long teamId, long maxUploadMb) {
         Team team = getActiveTeam(teamId);
-        team.setCreatorUploadLimitMb(maxUploadMb);
-        team.setUpdatedAt(OffsetDateTime.now());
-        teamMapper.updateById(team);
 
-        // 同步更新创建者成员记录的额度
-        TeamMember creator = teamMemberMapper.selectByTeamAndUser(teamId, team.getCreatorId());
-        if (creator != null) {
-            creator.setUploadLimitMb(maxUploadMb);
-            creator.setUpdatedAt(OffsetDateTime.now());
-            teamMemberMapper.updateById(creator);
-        }
+        txTemplate.executeWithoutResult(status -> {
+            team.setCreatorUploadLimitMb(maxUploadMb);
+            team.setUpdatedAt(OffsetDateTime.now());
+            teamMapper.updateById(team);
+
+            // 同步更新创建者成员记录的额度
+            TeamMember creator = teamMemberMapper.selectByTeamAndUser(teamId, team.getCreatorId());
+            if (creator != null) {
+                creator.setUploadLimitMb(maxUploadMb);
+                creator.setUpdatedAt(OffsetDateTime.now());
+                teamMemberMapper.updateById(creator);
+            }
+        });
 
         log.info("Creator quota updated: teamId={}, newLimit={}MB", teamId, maxUploadMb);
     }

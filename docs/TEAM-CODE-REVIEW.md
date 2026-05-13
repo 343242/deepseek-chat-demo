@@ -260,13 +260,20 @@ ADMIN 移除 ADMIN 时返回 `NOT_TEAM_CREATOR`，但实际语义是"管理员�
 
 ---
 
-### M6. [spec·数据库] `PersonalUploadStrategy` 用 `LocalDateTime` 而 Team 实体用 `OffsetDateTime`
+### M6. [spec·数据库] `rag_document` 时间列为 `TIMESTAMP`（无时区），与 spec 不一致
 
 **Spec 依据：** `database-guidelines.md` — 列定义约定 "时间列：TIMESTAMPTZ（带时区），不用 TIMESTAMP"
 
-`PersonalUploadStrategy.persistDocument()` 使用 `LocalDateTime.now()`，违反 spec 要求所有时间列用 `OffsetDateTime`。如果 `RagDocument.createTime` 映射到 `TIMESTAMPTZ` 列则类型不匹配。
+**根因分析：** `rag_document` 表由 V1 迁移创建，`create_time`/`update_time` 用的是 `TIMESTAMP`（无时区），Java 端对应 `LocalDateTime`。而 V9 的 team 系列表统一用 `TIMESTAMPTZ` + `OffsetDateTime`。PostgreSQL 中 `LocalDateTime` 无法映射 `TIMESTAMPTZ`，两种风格并存导致混乱。
 
-**修复建议：** 统一 `OffsetDateTime.now()`。
+**决议：统一为 `TIMESTAMPTZ` + `OffsetDateTime`**
+
+修复步骤：
+1. 新增 Flyway V10：`ALTER TABLE rag_document ALTER COLUMN create_time TYPE TIMESTAMPTZ USING create_time AT TIME ZONE 'Asia/Shanghai'`，`update_time` 同理
+2. `RagDocument` 实体：`LocalDateTime` → `OffsetDateTime`
+3. `PersonalUploadStrategy`：`LocalDateTime.now()` → `OffsetDateTime.now()`
+4. 其他引用 `RagDocument.getCreateTime()` / `getUpdateTime()` 的地方同步修改
+5. 同步检查 V1 中其他仍用 `TIMESTAMP` 的表（如 `token_usage`、`sys_user`）是否需要一并迁移
 
 ---
 

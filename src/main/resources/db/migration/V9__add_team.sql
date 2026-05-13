@@ -82,17 +82,17 @@ TRUNCATE TABLE vector_store;
 
 INSERT INTO sys_permission (permission_name, permission_desc, resource_type, resource_key)
 SELECT '团队查看', '查看团队信息', 'MENU', 'team:view'
-WHERE NOT EXISTS (SELECT 1 FROM sys_permission WHERE permission_key = 'team:view');
+WHERE NOT EXISTS (SELECT 1 FROM sys_permission WHERE resource_key = 'team:view');
 
 INSERT INTO sys_permission (permission_name, permission_desc, resource_type, resource_key)
 SELECT '团队管理', '管理团队（设置额度等）', 'MENU', 'team:manage'
-WHERE NOT EXISTS (SELECT 1 FROM sys_permission WHERE permission_key = 'team:manage');
+WHERE NOT EXISTS (SELECT 1 FROM sys_permission WHERE resource_key = 'team:manage');
 
 -- 绑定 team:manage 到 ADMIN 角色
 INSERT INTO sys_role_permission (role_id, permission_id)
 SELECT r.id, p.id
 FROM sys_role r, sys_permission p
-WHERE r.role_name = 'ADMIN' AND p.permission_key = 'team:manage'
+WHERE r.role_name = 'ADMIN' AND p.resource_key = 'team:manage'
   AND NOT EXISTS (
     SELECT 1 FROM sys_role_permission rp
     WHERE rp.role_id = r.id AND rp.permission_id = p.id

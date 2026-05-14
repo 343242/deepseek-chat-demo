@@ -126,9 +126,9 @@ public class HybridDocumentRetriever implements DocumentRetriever {
             String sql = """
                 SELECT id, content, metadata
                 FROM vector_store
-                WHERE content_tsv @@ plainto_tsquery(?, ?)
+                WHERE content_tsv @@ plainto_tsquery(?::regconfig, ?)
                   AND metadata->> ? = ?
-                ORDER BY ts_rank_cd(content_tsv, plainto_tsquery(?, ?)) DESC
+                ORDER BY ts_rank_cd(content_tsv, plainto_tsquery(?::regconfig, ?)) DESC
                 LIMIT ?
                 """;
 

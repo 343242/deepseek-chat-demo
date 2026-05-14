@@ -10,7 +10,7 @@ public class DocumentProperties {
     /** 最大文件大小（Spring 格式，如 50MB） */
     private String maxFileSize = "50MB";
     /** 允许的 MIME 类型，逗号分隔 */
-    private String allowedMimeTypes = "application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.presentationml.presentation,text/plain,text/markdown,text/html";
+    private String allowedMimeTypes = "application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.presentationml.presentation,text/plain,text/markdown,text/x-markdown,text/html";
 
     // === 分块策略 ===
     /** 分块策略: token / paragraph / parent-child */

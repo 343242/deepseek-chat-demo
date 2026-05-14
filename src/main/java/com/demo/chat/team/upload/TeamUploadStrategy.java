@@ -24,6 +24,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.io.InputStream;
+import java.security.MessageDigest;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -82,8 +84,9 @@ public class TeamUploadStrategy implements UploadStrategy {
         fileStorageService.upload(bucket, storageKey, file.getResource(), file.getContentType());
 
         boolean autoApproved = isAutoApproved(teamId, userId);
+        String fileMd5 = computeMd5(file);
         RagDocument ragDoc = persistDocument(file.getOriginalFilename(), file.getSize(),
-                file.getContentType(), storageKey, bucket, userId, teamId, autoApproved);
+                file.getContentType(), storageKey, bucket, userId, teamId, autoApproved, fileMd5);
 
         if (!autoApproved) {
             createApprovalRecord(teamId, ragDoc.getId(), userId);
@@ -120,7 +123,7 @@ public class TeamUploadStrategy implements UploadStrategy {
             fileStorageService.upload(bucket, storageKey, file.getResource(), file.getContentType());
 
             RagDocument ragDoc = persistDocument(file.getOriginalFilename(), file.getSize(),
-                    file.getContentType(), storageKey, bucket, userId, teamId, autoApproved);
+                    file.getContentType(), storageKey, bucket, userId, teamId, autoApproved, computeMd5(file));
 
             if (!autoApproved) {
                 createApprovalRecord(teamId, ragDoc.getId(), userId);
@@ -206,7 +209,7 @@ public class TeamUploadStrategy implements UploadStrategy {
      */
     private RagDocument persistDocument(String fileName, long fileSize, String mimeType,
                                         String storageKey, String bucket, Long userId,
-                                        Long teamId, boolean autoApproved) {
+                                        Long teamId, boolean autoApproved, String fileMd5) {
         RagDocument doc = new RagDocument();
         doc.setFileName(fileName);
         doc.setFileSize(fileSize);
@@ -215,8 +218,32 @@ public class TeamUploadStrategy implements UploadStrategy {
         doc.setBucket(bucket);
         doc.setUserId(userId);
         doc.setTeamId(teamId);
+        doc.setFileMd5(fileMd5);
         doc.setStatus(autoApproved ? EtlStatus.PROCESSING : EtlStatus.PENDING_APPROVAL);
         ragDocumentMapper.insert(doc);
         return doc;
+    }
+
+    /**
+     * 计算 MultipartFile 的 MD5（hex 32 位）
+     */
+    private String computeMd5(MultipartFile file) {
+        try (InputStream is = file.getInputStream()) {
+            MessageDigest md = MessageDigest.getInstance("MD5");
+            byte[] buffer = new byte[8192];
+            int read;
+            while ((read = is.read(buffer)) != -1) {
+                md.update(buffer, 0, read);
+            }
+            byte[] digest = md.digest();
+            StringBuilder sb = new StringBuilder(32);
+            for (byte b : digest) {
+                sb.append(String.format("%02x", b));
+            }
+            return sb.toString();
+        } catch (Exception e) {
+            log.warn("Failed to compute file MD5: {}", e.getMessage());
+            return null;
+        }
     }
 }

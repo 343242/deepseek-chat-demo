@@ -18,6 +18,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.io.InputStream;
+import java.security.MessageDigest;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -72,7 +74,8 @@ public class PersonalUploadStrategy implements UploadStrategy {
         String storageKey = UUID.randomUUID().toString();
         fileStorageService.upload(bucket, storageKey, file.getResource(), mimeType);
 
-        RagDocument ragDoc = persistDocument(originalFilename, file.getSize(), mimeType, storageKey, bucket, userId);
+        String fileMd5 = computeMd5(file);
+        RagDocument ragDoc = persistDocument(originalFilename, file.getSize(), mimeType, storageKey, bucket, userId, fileMd5);
         log.info("Document uploaded: id={}, file={}, size={}, userId={}", ragDoc.getId(), originalFilename, file.getSize(), userId);
 
         etlDispatchService.dispatchAsync(ragDoc.getId(), bucket, storageKey, originalFilename, mimeType, file.getSize(), userId, ragDoc.getTeamId());
@@ -103,7 +106,8 @@ public class PersonalUploadStrategy implements UploadStrategy {
 
             fileStorageService.upload(bucket, storageKey, file.getResource(), mimeType);
 
-            RagDocument ragDoc = persistDocument(originalFilename, file.getSize(), mimeType, storageKey, bucket, userId);
+            String fileMd5 = computeMd5(file);
+            RagDocument ragDoc = persistDocument(originalFilename, file.getSize(), mimeType, storageKey, bucket, userId, fileMd5);
             log.debug("Document uploaded (batch): id={}, file={}, size={}, userId={}", ragDoc.getId(), originalFilename, file.getSize(), userId);
 
             candidates.add(new EtlCandidate(ragDoc.getId(), bucket, storageKey, originalFilename, mimeType, file.getSize(), userId, ragDoc.getTeamId()));
@@ -122,7 +126,7 @@ public class PersonalUploadStrategy implements UploadStrategy {
      * 持久化文档元数据到数据库
      */
     private RagDocument persistDocument(String fileName, long fileSize, String mimeType,
-                                        String storageKey, String bucket, Long userId) {
+                                        String storageKey, String bucket, Long userId, String fileMd5) {
         RagDocument ragDoc = new RagDocument();
         ragDoc.setFileName(fileName);
         ragDoc.setFileSize(fileSize);
@@ -130,10 +134,34 @@ public class PersonalUploadStrategy implements UploadStrategy {
         ragDoc.setStorageKey(storageKey);
         ragDoc.setBucket(bucket);
         ragDoc.setUserId(userId);
+        ragDoc.setFileMd5(fileMd5);
         ragDoc.setStatus(EtlStatus.UPLOADED);
         ragDoc.setCreateTime(OffsetDateTime.now());
         ragDoc.setUpdateTime(OffsetDateTime.now());
         ragDocumentMapper.insert(ragDoc);
         return ragDoc;
+    }
+
+    /**
+     * 计算 MultipartFile 的 MD5（hex 32 位）
+     */
+    private String computeMd5(MultipartFile file) {
+        try (InputStream is = file.getInputStream()) {
+            MessageDigest md = MessageDigest.getInstance("MD5");
+            byte[] buffer = new byte[8192];
+            int read;
+            while ((read = is.read(buffer)) != -1) {
+                md.update(buffer, 0, read);
+            }
+            byte[] digest = md.digest();
+            StringBuilder sb = new StringBuilder(32);
+            for (byte b : digest) {
+                sb.append(String.format("%02x", b));
+            }
+            return sb.toString();
+        } catch (Exception e) {
+            log.warn("Failed to compute file MD5: {}", e.getMessage());
+            return null;
+        }
     }
 }

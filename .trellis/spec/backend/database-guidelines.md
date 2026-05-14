@@ -101,6 +101,7 @@ transactionTemplate.executeWithoutResult(status -> {
 | `auth:status:{userId}` | 无过期 | 用户状态标记 |
 | `auth:perm:{userId}` | 300s | 权限缓存 |
 | `auth:login:{ip}` | 300s | IP 登录计数 |
+| `chat:memory:{conversationId}` | 可配置（默认不过期） | 会话消息（Sorted Set，score=时间戳） |
 
 ---
 

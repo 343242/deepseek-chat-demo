@@ -1,14 +1,15 @@
-package com.demo.chat.chat.memory;
+package com.demo.chat.config;
 
+import com.demo.chat.chat.memory.RedisChatMemoryRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.ai.chat.memory.ChatMemoryRepository;
-import org.springframework.context.annotation.Configuration;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
 import org.springframework.data.redis.core.StringRedisTemplate;
 
 /**
- * Auto-configuration for Redis-backed {@link ChatMemoryRepository}.
+ * Configuration for Redis-backed {@link ChatMemoryRepository}.
  * <p>
  * Uses Lettuce (via Spring Data Redis) + Jackson for serialization.
  * Replaces the previous JDBC-based implementation.

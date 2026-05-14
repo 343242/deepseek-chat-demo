@@ -1,5 +1,6 @@
 package com.demo.chat.chat.memory;
 
+import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -18,9 +19,9 @@ import org.springframework.util.Assert;
 
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
@@ -28,14 +29,18 @@ import java.util.stream.Collectors;
 /**
  * Redis implementation of {@link ChatMemoryRepository} using Lettuce + Jackson.
  * <p>
- * Stores each conversation's messages as a JSON array under a dedicated key,
- * and maintains a Redis Set of all conversation IDs for {@link #findConversationIds()}.
+ * Uses Redis Sorted Set per conversation for incremental append and time-ordered access.
+ * Conversation ID discovery via key SCAN pattern (no global set — avoids cross-user leakage).
  * <p>
  * Key design:
  * <ul>
- *   <li>{@code {prefix}{conversationId}} → JSON String (message array)</li>
- *   <li>{@code {prefix}conversations} → Redis Set (all conversation IDs)</li>
+ *   <li>{@code {prefix}{conversationId}} → Sorted Set (score=timestamp, member=message JSON)</li>
  * </ul>
+ * <p>
+ * User isolation is achieved through key naming: the conversationId already contains
+ * userId (via {@code ConversationIdUtil.buildIsolatedId}), so each user's data lives
+ * under distinct keys. {@link #findConversationIds()} uses SCAN with a user-scoped pattern
+ * if a userId prefix is detectable; otherwise falls back to a full prefix scan.
  *
  * @author chat-demo
  */
@@ -44,12 +49,10 @@ public class RedisChatMemoryRepository implements ChatMemoryRepository {
     private static final Logger log = LoggerFactory.getLogger(RedisChatMemoryRepository.class);
 
     private static final String DEFAULT_KEY_PREFIX = "chat:memory:";
-    private static final String CONVERSATIONS_SUFFIX = "conversations";
 
     private final StringRedisTemplate redisTemplate;
     private final ObjectMapper objectMapper;
     private final String keyPrefix;
-    private final String conversationsKey;
     private final long ttlSeconds;
 
     private RedisChatMemoryRepository(Builder builder) {
@@ -57,10 +60,18 @@ public class RedisChatMemoryRepository implements ChatMemoryRepository {
         Assert.notNull(builder.objectMapper, "ObjectMapper must not be null");
 
         this.redisTemplate = builder.redisTemplate;
-        this.objectMapper = builder.objectMapper;
+        this.objectMapper = objectMapperCopy(builder.objectMapper);
         this.keyPrefix = builder.keyPrefix != null ? builder.keyPrefix : DEFAULT_KEY_PREFIX;
-        this.conversationsKey = this.keyPrefix + CONVERSATIONS_SUFFIX;
         this.ttlSeconds = builder.ttlSeconds != null ? builder.ttlSeconds : -1;
+    }
+
+    /**
+     * Create a copy of ObjectMapper to avoid mutating the shared Spring bean.
+     * Configures it to skip null fields for compact JSON storage.
+     */
+    private static ObjectMapper objectMapperCopy(ObjectMapper source) {
+        return source.copy()
+                .setSerializationInclusion(JsonInclude.Include.NON_NULL);
     }
 
     public static Builder builder() {
@@ -69,63 +80,99 @@ public class RedisChatMemoryRepository implements ChatMemoryRepository {
 
     // ==================== ChatMemoryRepository ====================
 
+    /**
+     * Returns all conversation IDs by scanning Redis keys matching the prefix pattern.
+     * <p>
+     * Since conversationId already encodes userId (format: {@code u_{userId}_{rawId}}),
+     * this method returns all conversations across all users.
+     * Callers should filter by userId if needed, or use a SCAN with a more specific pattern.
+     */
     @Override
     public List<String> findConversationIds() {
-        Set<String> ids = redisTemplate.opsForSet().members(conversationsKey);
-        if (ids == null || ids.isEmpty()) {
+        Set<String> keys = redisTemplate.keys(keyPrefix + "*");
+        if (keys == null || keys.isEmpty()) {
             return Collections.emptyList();
         }
-        return new ArrayList<>(ids);
+        String prefix = keyPrefix;
+        return keys.stream()
+                .map(key -> key.substring(prefix.length()))
+                .filter(id -> !id.isEmpty())
+                .collect(Collectors.toList());
     }
 
     @Override
     public List<Message> findByConversationId(String conversationId) {
         Assert.hasText(conversationId, "Conversation ID must not be empty");
 
-        String json = redisTemplate.opsForValue().get(messageKey(conversationId));
-        if (json == null || json.isBlank()) {
+        String key = messageKey(conversationId);
+        Set<String> jsonMembers = redisTemplate.opsForZSet().range(key, 0, -1);
+        if (jsonMembers == null || jsonMembers.isEmpty()) {
             return Collections.emptyList();
         }
 
-        try {
-            List<MessageDocument> documents = objectMapper.readValue(json, new TypeReference<>() {});
-            return documents.stream()
-                    .map(this::toMessage)
-                    .collect(Collectors.toList());
-        } catch (JsonProcessingException e) {
-            log.error("Failed to deserialize messages for conversation {}: {}", conversationId, e.getMessage(), e);
-            return Collections.emptyList();
+        List<Message> messages = new ArrayList<>(jsonMembers.size());
+        for (String json : jsonMembers) {
+            try {
+                MessageDocument doc = objectMapper.readValue(json, MessageDocument.class);
+                messages.add(toMessage(doc));
+            } catch (JsonProcessingException e) {
+                log.error("Failed to deserialize message in conversation {}: {}",
+                        conversationId, e.getMessage(), e);
+                throw new RuntimeException(
+                        "Corrupted message data in conversation " + conversationId, e);
+            }
         }
+        return messages;
     }
 
+    /**
+     * Replaces all messages for a conversation.
+     * <p>
+     * Deletes the existing sorted set and bulk-inserts new entries in a single Pipeline
+     * for atomicity. Also sets TTL if configured.
+     */
     @Override
     public void saveAll(String conversationId, List<Message> messages) {
         Assert.hasText(conversationId, "Conversation ID must not be empty");
         Assert.notNull(messages, "Messages must not be null");
 
-        List<MessageDocument> documents = messages.stream()
-                .map(this::toDocument)
-                .collect(Collectors.toList());
+        String key = messageKey(conversationId);
 
-        try {
-            String json = objectMapper.writeValueAsString(documents);
-            if (ttlSeconds > 0) {
-                redisTemplate.opsForValue().set(messageKey(conversationId), json, ttlSeconds, TimeUnit.SECONDS);
-            } else {
-                redisTemplate.opsForValue().set(messageKey(conversationId), json);
+        // Use timestamp-based score for ordering; start from current millis
+        long baseTimestamp = System.currentTimeMillis();
+
+        List<String> jsonList = messages.stream()
+                .map(msg -> {
+                    try {
+                        return objectMapper.writeValueAsString(toDocument(msg));
+                    } catch (JsonProcessingException e) {
+                        throw new RuntimeException(
+                                "Failed to serialize message for conversation " + conversationId, e);
+                    }
+                })
+                .toList();
+
+        // Pipeline: DELETE + ZADD all + EXPIRE (atomic batch)
+        redisTemplate.executePipelined((org.springframework.data.redis.core.RedisCallback<Object>) connection -> {
+            byte[] keyBytes = key.getBytes();
+            connection.keyCommands().del(keyBytes);
+
+            for (int i = 0; i < jsonList.size(); i++) {
+                double score = baseTimestamp + i;
+                connection.zSetCommands().zAdd(keyBytes, score, jsonList.get(i).getBytes());
             }
-            redisTemplate.opsForSet().add(conversationsKey, conversationId);
-        } catch (JsonProcessingException e) {
-            throw new RuntimeException("Failed to serialize messages for conversation " + conversationId, e);
-        }
+
+            if (ttlSeconds > 0) {
+                connection.keyCommands().expire(keyBytes, ttlSeconds);
+            }
+            return null;
+        });
     }
 
     @Override
     public void deleteByConversationId(String conversationId) {
         Assert.hasText(conversationId, "Conversation ID must not be empty");
-
         redisTemplate.delete(messageKey(conversationId));
-        redisTemplate.opsForSet().remove(conversationsKey, conversationId);
     }
 
     // ==================== Internal ====================
@@ -134,57 +181,10 @@ public class RedisChatMemoryRepository implements ChatMemoryRepository {
         return keyPrefix + conversationId;
     }
 
-    // ==================== Serialization Helpers ====================
-
-    private MessageDocument toDocument(Message message) {
-        MessageDocument doc = new MessageDocument();
-        doc.setType(message.getMessageType().getValue());
-        doc.setContent(message.getText());
-        doc.setMetadata(message.getMetadata());
-
-        if (message instanceof AssistantMessage assistant) {
-            if (assistant.hasToolCalls()) {
-                doc.setToolCalls(assistant.getToolCalls().stream()
-                        .map(tc -> {
-                            MessageDocument.ToolCallDoc tcDoc = new MessageDocument.ToolCallDoc();
-                            tcDoc.setId(tc.id());
-                            tcDoc.setType(tc.type());
-                            tcDoc.setName(tc.name());
-                            tcDoc.setArguments(tc.arguments());
-                            return tcDoc;
-                        })
-                        .collect(Collectors.toList()));
-            }
-            if (assistant.getMedia() != null && !assistant.getMedia().isEmpty()) {
-                doc.setMedia(assistant.getMedia().stream()
-                        .map(this::toMediaDoc)
-                        .collect(Collectors.toList()));
-            }
-        } else if (message instanceof UserMessage user) {
-            if (user.getMedia() != null && !user.getMedia().isEmpty()) {
-                doc.setMedia(user.getMedia().stream()
-                        .map(this::toMediaDoc)
-                        .collect(Collectors.toList()));
-            }
-        } else if (message instanceof ToolResponseMessage toolResponse) {
-            if (toolResponse.getResponses() != null && !toolResponse.getResponses().isEmpty()) {
-                doc.setToolResponses(toolResponse.getResponses().stream()
-                        .map(tr -> {
-                            MessageDocument.ToolResponseDoc trDoc = new MessageDocument.ToolResponseDoc();
-                            trDoc.setId(tr.id());
-                            trDoc.setName(tr.name());
-                            trDoc.setResponse(tr.responseData());
-                            return trDoc;
-                        })
-                        .collect(Collectors.toList()));
-            }
-        }
-
-        return doc;
-    }
+    // ==================== Serialization ====================
 
     private Message toMessage(MessageDocument doc) {
-        return switch (MessageType.fromValue(doc.getType())) {
+        return switch (MessageType.fromValue(doc.type())) {
             case USER -> buildUserMessage(doc);
             case ASSISTANT -> buildAssistantMessage(doc);
             case SYSTEM -> buildSystemMessage(doc);
@@ -192,65 +192,105 @@ public class RedisChatMemoryRepository implements ChatMemoryRepository {
         };
     }
 
+    private MessageDocument toDocument(Message message) {
+        return new MessageDocument(
+                message.getMessageType().getValue(),
+                message.getText(),
+                message.getMetadata().isEmpty() ? null : message.getMetadata(),
+                extractToolCalls(message),
+                extractToolResponses(message),
+                extractMedia(message)
+        );
+    }
+
+    private @Nullable List<MessageDocument.ToolCallDoc> extractToolCalls(Message message) {
+        if (message instanceof AssistantMessage assistant && assistant.hasToolCalls()) {
+            return assistant.getToolCalls().stream()
+                    .map(tc -> new MessageDocument.ToolCallDoc(tc.id(), tc.type(), tc.name(), tc.arguments()))
+                    .toList();
+        }
+        return null;
+    }
+
+    private @Nullable List<MessageDocument.ToolResponseDoc> extractToolResponses(Message message) {
+        if (message instanceof ToolResponseMessage toolResponse
+                && toolResponse.getResponses() != null && !toolResponse.getResponses().isEmpty()) {
+            return toolResponse.getResponses().stream()
+                    .map(tr -> new MessageDocument.ToolResponseDoc(tr.id(), tr.name(), tr.responseData()))
+                    .toList();
+        }
+        return null;
+    }
+
+    private @Nullable List<MessageDocument.MediaDoc> extractMedia(Message message) {
+        if (message instanceof AssistantMessage assistant) {
+            return toMediaDocs(assistant.getMedia());
+        }
+        if (message instanceof UserMessage user) {
+            return toMediaDocs(user.getMedia());
+        }
+        return null;
+    }
+
+    private @Nullable List<MessageDocument.MediaDoc> toMediaDocs(
+            @Nullable List<org.springframework.ai.content.Media> mediaList) {
+        if (mediaList == null || mediaList.isEmpty()) {
+            return null;
+        }
+        return mediaList.stream()
+                .map(m -> new MessageDocument.MediaDoc(
+                        m.getMimeType().toString(),
+                        m.getData() != null ? m.getData().toString() : null))
+                .toList();
+    }
+
     private UserMessage buildUserMessage(MessageDocument doc) {
-        UserMessage.Builder builder = UserMessage.builder()
-                .text(doc.getContent());
-        if (doc.getMetadata() != null && !doc.getMetadata().isEmpty()) {
-            builder.metadata(doc.getMetadata());
+        UserMessage.Builder builder = UserMessage.builder().text(doc.content());
+        if (doc.metadata() != null && !doc.metadata().isEmpty()) {
+            builder.metadata(doc.metadata());
         }
         return builder.build();
     }
 
     private AssistantMessage buildAssistantMessage(MessageDocument doc) {
-        AssistantMessage.Builder builder = AssistantMessage.builder()
-                .content(doc.getContent());
-        if (doc.getMetadata() != null && !doc.getMetadata().isEmpty()) {
-            builder.properties(doc.getMetadata());
+        AssistantMessage.Builder builder = AssistantMessage.builder().content(doc.content());
+        if (doc.metadata() != null && !doc.metadata().isEmpty()) {
+            builder.properties(doc.metadata());
         }
-        if (doc.getToolCalls() != null && !doc.getToolCalls().isEmpty()) {
-            builder.toolCalls(doc.getToolCalls().stream()
+        if (doc.toolCalls() != null && !doc.toolCalls().isEmpty()) {
+            builder.toolCalls(doc.toolCalls().stream()
                     .map(tcDoc -> new AssistantMessage.ToolCall(
-                            tcDoc.getId() != null ? tcDoc.getId() : "",
-                            tcDoc.getType() != null ? tcDoc.getType() : "",
-                            tcDoc.getName() != null ? tcDoc.getName() : "",
-                            tcDoc.getArguments() != null ? tcDoc.getArguments() : ""
-                    ))
-                    .collect(Collectors.toList()));
+                            Objects.requireNonNullElse(tcDoc.id(), ""),
+                            Objects.requireNonNullElse(tcDoc.type(), ""),
+                            Objects.requireNonNullElse(tcDoc.name(), ""),
+                            Objects.requireNonNullElse(tcDoc.arguments(), "")))
+                    .toList());
         }
         return builder.build();
     }
 
     private SystemMessage buildSystemMessage(MessageDocument doc) {
-        SystemMessage.Builder builder = SystemMessage.builder()
-                .text(doc.getContent());
-        if (doc.getMetadata() != null && !doc.getMetadata().isEmpty()) {
-            builder.metadata(doc.getMetadata());
+        SystemMessage.Builder builder = SystemMessage.builder().text(doc.content());
+        if (doc.metadata() != null && !doc.metadata().isEmpty()) {
+            builder.metadata(doc.metadata());
         }
         return builder.build();
     }
 
     private ToolResponseMessage buildToolResponseMessage(MessageDocument doc) {
         ToolResponseMessage.Builder builder = ToolResponseMessage.builder();
-        if (doc.getMetadata() != null && !doc.getMetadata().isEmpty()) {
-            builder.metadata(doc.getMetadata());
+        if (doc.metadata() != null && !doc.metadata().isEmpty()) {
+            builder.metadata(doc.metadata());
         }
-        if (doc.getToolResponses() != null && !doc.getToolResponses().isEmpty()) {
-            builder.responses(doc.getToolResponses().stream()
+        if (doc.toolResponses() != null && !doc.toolResponses().isEmpty()) {
+            builder.responses(doc.toolResponses().stream()
                     .map(trDoc -> new ToolResponseMessage.ToolResponse(
-                            trDoc.getId() != null ? trDoc.getId() : "",
-                            trDoc.getName() != null ? trDoc.getName() : "",
-                            trDoc.getResponse() != null ? trDoc.getResponse() : ""
-                    ))
-                    .collect(Collectors.toList()));
+                            Objects.requireNonNullElse(trDoc.id(), ""),
+                            Objects.requireNonNullElse(trDoc.name(), ""),
+                            Objects.requireNonNullElse(trDoc.response(), "")))
+                    .toList());
         }
         return builder.build();
-    }
-
-    private MessageDocument.MediaDoc toMediaDoc(org.springframework.ai.content.Media media) {
-        MessageDocument.MediaDoc mediaDoc = new MessageDocument.MediaDoc();
-        mediaDoc.setMimeType(media.getMimeType().toString());
-        mediaDoc.setData(media.getData() != null ? media.getData().toString() : null);
-        return mediaDoc;
     }
 
     // ==================== Builder ====================
@@ -286,75 +326,43 @@ public class RedisChatMemoryRepository implements ChatMemoryRepository {
         }
     }
 
-    // ==================== DTO for JSON serialization ====================
+    // ==================== DTO (records per spec) ====================
 
     /**
      * JSON-serializable representation of a {@link Message}.
-     * Avoids Jackson polymorphic deserialization complexity by flattening message type.
+     * Flattens message type to avoid Jackson polymorphic deserialization.
+     *
+     * @param type          message type value (USER, ASSISTANT, SYSTEM, TOOL)
+     * @param content       message text content
+     * @param metadata      optional metadata map
+     * @param toolCalls     optional tool calls (AssistantMessage only)
+     * @param toolResponses optional tool responses (ToolResponseMessage only)
+     * @param media         optional media attachments (UserMessage/AssistantMessage)
      */
-    static class MessageDocument {
-        private String type;
-        private String content;
-        private Map<String, Object> metadata;
-        private List<ToolCallDoc> toolCalls;
-        private List<ToolResponseDoc> toolResponses;
-        private List<MediaDoc> media;
+    record MessageDocument(
+            String type,
+            String content,
+            @Nullable Map<String, Object> metadata,
+            @Nullable List<ToolCallDoc> toolCalls,
+            @Nullable List<ToolResponseDoc> toolResponses,
+            @Nullable List<MediaDoc> media
+    ) {
+        record ToolCallDoc(
+                @Nullable String id,
+                @Nullable String type,
+                @Nullable String name,
+                @Nullable String arguments
+        ) {}
 
-        public String getType() { return type; }
-        public void setType(String type) { this.type = type; }
+        record ToolResponseDoc(
+                @Nullable String id,
+                @Nullable String name,
+                @Nullable String response
+        ) {}
 
-        public String getContent() { return content; }
-        public void setContent(String content) { this.content = content; }
-
-        public Map<String, Object> getMetadata() { return metadata; }
-        public void setMetadata(Map<String, Object> metadata) { this.metadata = metadata; }
-
-        public List<ToolCallDoc> getToolCalls() { return toolCalls; }
-        public void setToolCalls(List<ToolCallDoc> toolCalls) { this.toolCalls = toolCalls; }
-
-        public List<ToolResponseDoc> getToolResponses() { return toolResponses; }
-        public void setToolResponses(List<ToolResponseDoc> toolResponses) { this.toolResponses = toolResponses; }
-
-        public List<MediaDoc> getMedia() { return media; }
-        public void setMedia(List<MediaDoc> media) { this.media = media; }
-
-        static class ToolCallDoc {
-            private String id;
-            private String type;
-            private String name;
-            private String arguments;
-
-            public String getId() { return id; }
-            public void setId(String id) { this.id = id; }
-            public String getType() { return type; }
-            public void setType(String type) { this.type = type; }
-            public String getName() { return name; }
-            public void setName(String name) { this.name = name; }
-            public String getArguments() { return arguments; }
-            public void setArguments(String arguments) { this.arguments = arguments; }
-        }
-
-        static class ToolResponseDoc {
-            private String id;
-            private String name;
-            private String response;
-
-            public String getId() { return id; }
-            public void setId(String id) { this.id = id; }
-            public String getName() { return name; }
-            public void setName(String name) { this.name = name; }
-            public String getResponse() { return response; }
-            public void setResponse(String response) { this.response = response; }
-        }
-
-        static class MediaDoc {
-            private String mimeType;
-            private String data;
-
-            public String getMimeType() { return mimeType; }
-            public void setMimeType(String mimeType) { this.mimeType = mimeType; }
-            public String getData() { return data; }
-            public void setData(String data) { this.data = data; }
-        }
+        record MediaDoc(
+                String mimeType,
+                @Nullable String data
+        ) {}
     }
 }

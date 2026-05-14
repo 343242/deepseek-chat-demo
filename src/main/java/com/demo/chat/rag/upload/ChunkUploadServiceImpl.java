@@ -4,6 +4,7 @@ import com.demo.chat.common.errorcode.ErrorCode;
 import com.demo.chat.exception.BusinessException;
 import com.demo.chat.rag.config.DocumentProperties;
 import com.demo.chat.rag.upload.BucketResolver;
+import com.demo.chat.common.team.TeamStatusService;
 import com.demo.chat.rag.entity.RagDocument;
 import com.demo.chat.rag.etl.EtlStatus;
 import com.demo.chat.rag.mapper.RagDocumentMapper;
@@ -12,8 +13,7 @@ import com.demo.chat.rag.service.EtlDispatchService;
 import com.demo.chat.rag.service.impl.DocumentValidator;
 import com.demo.chat.security.util.SecurityUtils;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.demo.chat.team.entity.Team;
-import com.demo.chat.team.mapper.TeamMapper;
+import com.demo.chat.common.team.TeamStatusService;
 import io.minio.*;
 import io.minio.SourceObject;
 import org.slf4j.Logger;
@@ -60,7 +60,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
     private final FileStorageService fileStorageService;
     private final RagDocumentMapper ragDocumentMapper;
     private final EtlDispatchService etlDispatchService;
-    private final TeamMapper teamMapper;
+    private final TeamStatusService teamStatusService;
     private final DefaultRedisScript<List> atomicChunkUploadScript;
     private final ThreadPoolTaskExecutor mergeExecutor;
 
@@ -74,7 +74,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
             FileStorageService fileStorageService,
             RagDocumentMapper ragDocumentMapper,
             EtlDispatchService etlDispatchService,
-            TeamMapper teamMapper,
+            TeamStatusService teamStatusService,
             ThreadPoolTaskExecutor mergeExecutor
     ) {
         this.redisTemplate = redisTemplate;
@@ -86,7 +86,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         this.fileStorageService = fileStorageService;
         this.ragDocumentMapper = ragDocumentMapper;
         this.etlDispatchService = etlDispatchService;
-        this.teamMapper = teamMapper;
+        this.teamStatusService = teamStatusService;
         this.mergeExecutor = mergeExecutor;
 
         this.atomicChunkUploadScript = new DefaultRedisScript<>();
@@ -184,10 +184,13 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
             mergeExecutor.execute(() -> {
                 try {
                     performMerge(uploadId);
+                } catch (BusinessException e) {
+                    // 业务异常（如团队解散）：清理 __merging 标记，前端可感知
+                    log.warn("Auto-merge rejected: uploadId={}, reason={}", uploadId, e.getMessage());
+                    redisTemplate.opsForHash().delete(UploadRedisConstants.partsKey(uploadId), UploadRedisConstants.MERGING_FIELD);
                 } catch (Exception e) {
                     log.error("Auto-merge failed: uploadId={}", uploadId, e);
                     // 不清除 __merging 标记，允许客户端通过 complete 接口手动重试
-                    // __merging 会在 session TTL 24h 后随 key 过期自动清除
                 }
             });
             return ChunkUploadResponse.merging(uploadId, chunkIndex);
@@ -301,10 +304,10 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
 
         // 团队状态校验：团队已解散则拒绝合并
         String teamIdStr = session.get("teamId");
+        Long teamId = null;
         if (teamIdStr != null) {
-            Long teamId = Long.parseLong(teamIdStr);
-            Team team = teamMapper.selectById(teamId);
-            if (team == null || team.getDeleted() != 0) {
+            teamId = Long.parseLong(teamIdStr);
+            if (!teamStatusService.isTeamActive(teamId)) {
                 log.warn("Merge rejected: team dissolved, teamId={}, uploadId={}", teamId, uploadId);
                 String bucket = session.get("bucket");
                 cleanupTempChunks(bucket, session.get("objectName"), Integer.parseInt(session.get("totalChunks")));
@@ -347,7 +350,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
 
         // 5. 持久化 rag_document
         Long userId = Long.parseLong(session.get("userId"));
-        Long docId = persistDocument(session, targetObjectKey, actualMd5, userId, teamIdStr != null ? Long.parseLong(teamIdStr) : null);
+        Long docId = persistDocument(session, targetObjectKey, actualMd5, userId, teamId);
         log.info("Chunk upload merged: uploadId={}, docId={}, md5={}", uploadId, docId, actualMd5);
 
         // 6. 清理临时分片
@@ -360,7 +363,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         etlDispatchService.dispatchAsync(
                 docId, bucket, targetObjectKey, session.get("fileName"),
                 session.get("mimeType"), Long.parseLong(session.get("fileSize")), userId,
-                teamIdStr != null ? Long.parseLong(teamIdStr) : null
+                teamId
         );
     }
 

@@ -1,5 +1,6 @@
 package com.demo.chat.rag.upload;
 
+import com.demo.chat.common.team.TeamStatusService;
 import io.minio.*;
 import io.minio.messages.DeleteRequest;
 import io.minio.messages.DeleteResult;
@@ -43,13 +44,16 @@ public class OrphanChunkCleaner {
     private final StringRedisTemplate redisTemplate;
     private final MinioClient minioClient;
     private final BucketResolver bucketResolver;
+    private final TeamStatusService teamStatusService;
 
     public OrphanChunkCleaner(StringRedisTemplate redisTemplate,
                               MinioClient minioClient,
-                              BucketResolver bucketResolver) {
+                              BucketResolver bucketResolver,
+                              TeamStatusService teamStatusService) {
         this.redisTemplate = redisTemplate;
         this.minioClient = minioClient;
         this.bucketResolver = bucketResolver;
+        this.teamStatusService = teamStatusService;
     }
 
     /**
@@ -174,15 +178,17 @@ public class OrphanChunkCleaner {
                     continue; // 非空桶，跳过
                 }
 
-                // 空桶 → 检查对应团队是否存在且未删除
+                // 空桶 → 校验团队是否已删除
                 Long teamId = bucketResolver.extractTeamId(bucket);
                 if (teamId == null) {
                     continue;
                 }
 
-                // 团队已删除 → 清理空桶
-                // 注意：此处不能注入 TeamMapper（循环依赖风险），只做简单清理
-                // 团队不存在时（Mapper 查不到）也是安全的 — 说明是孤儿
+                // 只删除团队已不活跃的空桶，活跃团队的空桶保留
+                if (teamStatusService.isTeamActive(teamId)) {
+                    continue;
+                }
+
                 minioClient.removeBucket(RemoveBucketArgs.builder().bucket(bucket).build());
                 log.info("Cleaned orphan empty bucket: {} (teamId={})", bucket, teamId);
                 cleaned++;

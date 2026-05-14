@@ -77,7 +77,7 @@ public class TeamServiceImpl implements TeamService {
             throw new BusinessException(ErrorCode.TEAM_LIMIT_EXCEEDED);
         }
 
-        return txTemplate.execute(status -> {
+        TeamVO result = txTemplate.execute(status -> {
             // 1. 创建团队
             Team team = new Team();
             team.setTeamName(request.teamName());
@@ -95,10 +95,6 @@ public class TeamServiceImpl implements TeamService {
                 throw new BusinessException(ErrorCode.TEAM_NAME_DUPLICATE);
             }
 
-            // 1.5 创建团队专属 MinIO bucket
-            String teamBucket = bucketResolver.resolve(team.getId());
-            fileStorageService.ensureBucketExists(teamBucket);
-
             // 2. 创建者自动成为 CREATOR 成员
             TeamMember creatorMember = new TeamMember();
             creatorMember.setTeamId(team.getId());
@@ -113,6 +109,12 @@ public class TeamServiceImpl implements TeamService {
             log.info("Team created: id={}, name={}, creatorId={}", team.getId(), team.getTeamName(), userId);
             return toTeamVO(team, 1, TeamMemberRole.CREATOR.name());
         });
+
+        // 3. 事务成功后创建 MinIO bucket（网络调用不放在事务内）
+        // bucket 为空无副作用，即使后续失败也会在首次上传时 ensureBucketExists 兜底
+        fileStorageService.ensureBucketExists(bucketResolver.resolve(result.id()));
+
+        return result;
     }
 
     @Override

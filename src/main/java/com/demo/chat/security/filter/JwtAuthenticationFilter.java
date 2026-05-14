@@ -26,6 +26,18 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private static final Logger log = LoggerFactory.getLogger(JwtAuthenticationFilter.class);
 
+    /**
+     * 允许在 ASYNC dispatch 时重新认证。
+     * <p>
+     * Flux SSE 响应完成后 Spring MVC 会发起 async dispatch，
+     * 此时 SecurityContext 已被 SecurityContextHolderFilter 清空。
+     * 必须重新从请求中提取 JWT 并设置认证信息，否则会触发 Access Denied。
+     */
+    @Override
+    protected boolean shouldNotFilterAsyncDispatch() {
+        return false;
+    }
+
     private final JwtTokenProvider jwtTokenProvider;
     private final TokenCacheService tokenCacheService;
     private final AuthService authService;

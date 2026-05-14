@@ -330,11 +330,9 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
                     .build());
         }
 
-        // 2. 合并目标路径（保留原始扩展名）
+        // 2. 合并目标路径：documents/{userId}/{shortId}_{原始文件名}
         String originalName = session.get("fileName");
-        String extension = extractExtension(originalName);
-        String targetObjectKey = "documents/" + session.get("userId") + "/" + UUID.randomUUID()
-                + (extension.isEmpty() ? "" : "." + extension);
+        String targetObjectKey = "documents/" + session.get("userId") + "/" + generateShortId(8) + "_" + sanitizeFilename(originalName);
 
         // 3. composeObject 合并（携带 Content-Type）
         String mimeType = session.get("mimeType");
@@ -541,11 +539,23 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         }
     }
 
-    private String extractExtension(String fileName) {
-        if (fileName == null || !fileName.contains(".")) {
-            return "";
+    private static final char[] NANOID_CHARS =
+            "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ".toCharArray();
+    private static final java.util.Random RANDOM = new java.security.SecureRandom();
+
+    private String generateShortId(int length) {
+        StringBuilder sb = new StringBuilder(length);
+        for (int i = 0; i < length; i++) {
+            sb.append(NANOID_CHARS[RANDOM.nextInt(NANOID_CHARS.length)]);
         }
-        return fileName.substring(fileName.lastIndexOf('.') + 1).toLowerCase();
+        return sb.toString();
+    }
+
+    private String sanitizeFilename(String fileName) {
+        if (fileName == null || fileName.isBlank()) {
+            return "unnamed";
+        }
+        return fileName.replace("/", "_").replace("\\", "_").replace("\0", "_");
     }
 
     private String computeFileMd5FromMinio(String bucket, String objectName) {

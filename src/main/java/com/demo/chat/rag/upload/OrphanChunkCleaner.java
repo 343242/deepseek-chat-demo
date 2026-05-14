@@ -1,6 +1,5 @@
 package com.demo.chat.rag.upload;
 
-import com.demo.chat.common.team.TeamStatusService;
 import io.minio.*;
 import io.minio.messages.DeleteRequest;
 import io.minio.messages.DeleteResult;
@@ -21,17 +20,16 @@ import java.util.concurrent.TimeUnit;
 /**
  * 孤儿分片清理定时任务。
  * <p>
- * 定期扫描 Redis 中过期的上传会话和 MinIO 中所有 bucket 的临时分片对象，
+ * 定期扫描 MinIO 中所有 bucket 的临时分片对象（{@code chunks/} 前缀），
  * 清理因客户端异常断开或合并失败而遗留的资源。
- * 同时清理团队已解散的孤儿空桶。
  * <p>
  * 清理规则：
  * <ol>
- *   <li>Redis session TTL 24h 自动过期，无需手动清理</li>
  *   <li>MinIO chunks/ 前缀下超过 48h 的临时对象视为孤儿</li>
- *   <li>正在合并的 session（含 __merging 标记）跳过</li>
- *   <li>团队已软删（deleted=1）的空桶自动清理</li>
+ *   <li>仍有活跃 Redis session 的分片跳过</li>
  * </ol>
+ * <p>
+ * 团队 Bucket 的生命周期管理由 {@link com.demo.chat.team.upload.TeamBucketCleaner} 负责。
  */
 @Component
 public class OrphanChunkCleaner {
@@ -44,16 +42,13 @@ public class OrphanChunkCleaner {
     private final StringRedisTemplate redisTemplate;
     private final MinioClient minioClient;
     private final BucketResolver bucketResolver;
-    private final TeamStatusService teamStatusService;
 
     public OrphanChunkCleaner(StringRedisTemplate redisTemplate,
                               MinioClient minioClient,
-                              BucketResolver bucketResolver,
-                              TeamStatusService teamStatusService) {
+                              BucketResolver bucketResolver) {
         this.redisTemplate = redisTemplate;
         this.minioClient = minioClient;
         this.bucketResolver = bucketResolver;
-        this.teamStatusService = teamStatusService;
     }
 
     /**
@@ -64,16 +59,12 @@ public class OrphanChunkCleaner {
     @Scheduled(fixedRate = 6 * 60 * 60 * 1000, initialDelay = 5 * 60 * 1000)
     public void cleanOrphanChunks() {
         log.info("Orphan chunk cleanup started");
-        int totalCleaned = 0;
-        int totalErrors = 0;
-        int totalOrphanBuckets = 0;
 
         try {
-            // 动态获取所有需要扫描的 bucket（默认 + 所有 rag-team-*）
-            List<String> allBuckets = minioClient.listBuckets().stream()
-                    .map(ListAllMyBucketsResult.Bucket::name)
-                    .filter(name -> name.equals(bucketResolver.defaultBucket()) || bucketResolver.isTeamBucket(name))
-                    .toList();
+            List<String> allBuckets = listManagedBuckets();
+
+            int totalCleaned = 0;
+            int totalErrors = 0;
 
             for (String bucket : allBuckets) {
                 int[] result = cleanOrphansInBucket(bucket);
@@ -81,19 +72,24 @@ public class OrphanChunkCleaner {
                 totalErrors += result[1];
             }
 
-            // 清理孤儿空桶（团队已软删）
-            totalOrphanBuckets = cleanOrphanEmptyBuckets(allBuckets);
-
+            if (totalCleaned > 0 || totalErrors > 0) {
+                log.info("Orphan chunk cleanup finished: chunks={}, errors={}", totalCleaned, totalErrors);
+            } else {
+                log.debug("Orphan chunk cleanup finished: no orphans found");
+            }
         } catch (Exception e) {
             log.error("Orphan chunk cleanup failed", e);
         }
+    }
 
-        if (totalCleaned > 0 || totalErrors > 0 || totalOrphanBuckets > 0) {
-            log.info("Orphan chunk cleanup finished: chunks={}, errors={}, orphanBuckets={}",
-                    totalCleaned, totalErrors, totalOrphanBuckets);
-        } else {
-            log.debug("Orphan chunk cleanup finished: no orphans found");
-        }
+    /**
+     * 获取所有需要扫描的 bucket（默认 + 所有 rag-team-*）。
+     */
+    private List<String> listManagedBuckets() throws Exception {
+        return minioClient.listBuckets().stream()
+                .map(ListAllMyBucketsResult.Bucket::name)
+                .filter(name -> name.equals(bucketResolver.defaultBucket()) || bucketResolver.isTeamBucket(name))
+                .toList();
     }
 
     /**
@@ -146,7 +142,7 @@ public class OrphanChunkCleaner {
                         log.warn("Failed to delete {} in bucket {}: {}", err.objectName(), bucket, err.message());
                         errors++;
                     } catch (Exception e) {
-                        // 忽略：成功删除不会产生 Error
+                        // 成功删除不会产生 Error，忽略
                     }
                 }
                 cleaned = orphans.size();
@@ -160,50 +156,9 @@ public class OrphanChunkCleaner {
     }
 
     /**
-     * 清理孤儿空桶：团队已软删且 bucket 内无对象。
-     *
-     * @return 清理的 bucket 数量
-     */
-    private int cleanOrphanEmptyBuckets(List<String> allBuckets) {
-        int cleaned = 0;
-        for (String bucket : allBuckets) {
-            if (!bucketResolver.isTeamBucket(bucket)) {
-                continue;
-            }
-            try {
-                // 检查 bucket 是否为空（最多查 1 个对象）
-                Iterable<io.minio.Result<Item>> objects = minioClient.listObjects(
-                        ListObjectsArgs.builder().bucket(bucket).maxKeys(1).build());
-                if (objects.iterator().hasNext()) {
-                    continue; // 非空桶，跳过
-                }
-
-                // 空桶 → 校验团队是否已删除
-                Long teamId = bucketResolver.extractTeamId(bucket);
-                if (teamId == null) {
-                    continue;
-                }
-
-                // 只删除团队已不活跃的空桶，活跃团队的空桶保留
-                if (teamStatusService.isTeamActive(teamId)) {
-                    continue;
-                }
-
-                minioClient.removeBucket(RemoveBucketArgs.builder().bucket(bucket).build());
-                log.info("Cleaned orphan empty bucket: {} (teamId={})", bucket, teamId);
-                cleaned++;
-            } catch (Exception e) {
-                log.warn("Failed to clean orphan bucket {}: {}", bucket, e.getMessage());
-            }
-        }
-        return cleaned;
-    }
-
-    /**
      * 检查分片对象是否仍有活跃的 Redis session。
      * <p>
      * 路径格式: chunks/{userId}/{uploadId}/part-{chunkIndex}
-     * 从路径提取 uploadId，检查 Redis session 是否存在。
      */
     private boolean hasActiveSession(String objectName) {
         String[] parts = objectName.split("/");

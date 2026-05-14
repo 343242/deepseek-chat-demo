@@ -120,12 +120,6 @@
             <scope>runtime</scope>
         </dependency>
 
-        <!-- Spring AI Chat Memory - JDBC Repository -->
-        <dependency>
-            <groupId>org.springframework.ai</groupId>
-            <artifactId>spring-ai-starter-model-chat-memory-repository-jdbc</artifactId>
-        </dependency>
-
         <!-- Flyway Database Migration -->
         <dependency>
             <groupId>org.flywaydb</groupId>
@@ -235,6 +229,8 @@
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-log4j2</artifactId>
+            <version>4.0.6</version>
+            <scope>compile</scope>
         </dependency>
 
         <!-- LMAX Disruptor（Log4j 2 异步日志高性能队列） -->
@@ -242,6 +238,14 @@
             <groupId>com.lmax</groupId>
             <artifactId>disruptor</artifactId>
             <version>4.0.0</version>
+        </dependency>
+
+        <!-- Source: https://mvnrepository.com/artifact/redis.clients/jedis -->
+        <dependency>
+            <groupId>redis.clients</groupId>
+            <artifactId>jedis</artifactId>
+            <version>7.5.0</version>
+            <scope>compile</scope>
         </dependency>
 
         <!-- Test -->

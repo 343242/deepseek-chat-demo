@@ -16,8 +16,7 @@ import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
         exclude = {
                 org.springframework.ai.model.zhipuai.autoconfigure.ZhiPuAiChatAutoConfiguration.class,
                 org.springframework.ai.model.minimax.autoconfigure.MiniMaxChatAutoConfiguration.class,
-                org.springframework.boot.autoconfigure.security.servlet.UserDetailsServiceAutoConfiguration.class,
-                org.springframework.ai.model.chat.memory.repository.jdbc.autoconfigure.JdbcChatMemoryRepositoryAutoConfiguration.class
+                org.springframework.boot.autoconfigure.security.servlet.UserDetailsServiceAutoConfiguration.class
         }
 )
 @ConfigurationPropertiesScan("com.demo.chat")

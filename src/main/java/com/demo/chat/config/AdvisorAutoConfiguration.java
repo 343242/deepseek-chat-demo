@@ -13,15 +13,12 @@ import com.demo.chat.chat.mode.MultiTurnModeStrategy;
 import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.chat.memory.ChatMemoryRepository;
 import org.springframework.ai.chat.memory.MessageWindowChatMemory;
-import org.springframework.ai.chat.memory.repository.jdbc.JdbcChatMemoryRepository;
-import org.springframework.ai.chat.memory.repository.jdbc.PostgresChatMemoryRepositoryDialect;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.scheduling.annotation.Scheduled;
-import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.context.annotation.Lazy;
 
 import java.time.Duration;
 import java.util.List;
@@ -51,10 +48,10 @@ public class AdvisorAutoConfiguration {
         return new RateLimitAdvisor(rateLimiter);
     }
 
-    @org.springframework.context.annotation.Lazy
+    @Lazy
     private final TokenBucketLimiter tokenBucketLimiter;
 
-    public AdvisorAutoConfiguration(@org.springframework.context.annotation.Lazy TokenBucketLimiter tokenBucketLimiter) {
+    public AdvisorAutoConfiguration(@Lazy TokenBucketLimiter tokenBucketLimiter) {
         this.tokenBucketLimiter = tokenBucketLimiter;
     }
 
@@ -85,21 +82,10 @@ public class AdvisorAutoConfiguration {
     // ==================== 对话记忆 ====================
 
     /**
-     * 手动创建 JdbcChatMemoryRepository，显式指定 PostgreSQL 方言。
+     * ChatMemoryRepository Bean 由 RedisChatMemoryAutoConfiguration 提供（Redis + Lettuce）。
      * <p>
-     * 排除了 Spring AI 的 JdbcChatMemoryRepositoryAutoConfiguration，
-     * 因为它的自动探测在 Bean 初始化阶段调用 JdbcChatMemoryRepositoryDialect.from(dataSource)，
-     * 此时 HikariPool 可能尚未就绪，导致 WARN 日志。
+     * 原先使用 JdbcChatMemoryRepository + PostgreSQL，已切换为 Redis 实现。
      */
-    @Bean
-    public ChatMemoryRepository chatMemoryRepository(JdbcTemplate jdbcTemplate,
-                                                      PlatformTransactionManager transactionManager) {
-        return JdbcChatMemoryRepository.builder()
-                .jdbcTemplate(jdbcTemplate)
-                .transactionManager(transactionManager)
-                .dialect(new PostgresChatMemoryRepositoryDialect())
-                .build();
-    }
 
     @Bean
     public ChatMemory chatMemory(ChatMemoryRepository chatMemoryRepository,

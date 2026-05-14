@@ -6,7 +6,7 @@ import com.demo.chat.common.upload.UploadStrategy;
 import com.demo.chat.exception.BusinessException;
 import com.demo.chat.rag.dto.DocumentUploadResponse;
 import com.demo.chat.rag.etl.EtlStatus;
-import com.demo.chat.rag.config.MinioProperties;
+import com.demo.chat.rag.upload.BucketResolver;
 import com.demo.chat.rag.entity.RagDocument;
 import com.demo.chat.rag.mapper.RagDocumentMapper;
 import com.demo.chat.rag.service.FileStorageService;
@@ -47,7 +47,7 @@ public class TeamUploadStrategy implements UploadStrategy {
 
     private final DocumentValidator documentValidator;
     private final FileStorageService fileStorageService;
-    private final MinioProperties minioProperties;
+    private final BucketResolver bucketResolver;
     private final RagDocumentMapper ragDocumentMapper;
     private final EtlDispatchService etlDispatchService;
     private final TeamMemberMapper teamMemberMapper;
@@ -55,14 +55,14 @@ public class TeamUploadStrategy implements UploadStrategy {
 
     public TeamUploadStrategy(DocumentValidator documentValidator,
                               FileStorageService fileStorageService,
-                              MinioProperties minioProperties,
+                              BucketResolver bucketResolver,
                               RagDocumentMapper ragDocumentMapper,
                               EtlDispatchService etlDispatchService,
                               TeamMemberMapper teamMemberMapper,
                               TeamUploadApprovalMapper approvalMapper) {
         this.documentValidator = documentValidator;
         this.fileStorageService = fileStorageService;
-        this.minioProperties = minioProperties;
+        this.bucketResolver = bucketResolver;
         this.ragDocumentMapper = ragDocumentMapper;
         this.etlDispatchService = etlDispatchService;
         this.teamMemberMapper = teamMemberMapper;
@@ -76,7 +76,7 @@ public class TeamUploadStrategy implements UploadStrategy {
         // 校验成员上传额度
         verifyUploadQuota(teamId, userId, file.getSize());
 
-        String bucket = minioProperties.getBucket();
+        String bucket = bucketResolver.resolve(teamId);
         fileStorageService.ensureBucketExists(bucket);
         String storageKey = UUID.randomUUID().toString();
         fileStorageService.upload(bucket, storageKey, file.getResource(), file.getContentType());
@@ -102,7 +102,7 @@ public class TeamUploadStrategy implements UploadStrategy {
 
     @Override
     public List<DocumentUploadResponse> uploadBatch(List<MultipartFile> files, @Nullable Long teamId, Long userId) {
-        String bucket = minioProperties.getBucket();
+        String bucket = bucketResolver.resolve(teamId);
         fileStorageService.ensureBucketExists(bucket);
 
         boolean autoApproved = isAutoApproved(teamId, userId);

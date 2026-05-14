@@ -14,6 +14,8 @@ import com.demo.chat.team.enums.TeamStatus;
 import com.demo.chat.team.mapper.TeamMapper;
 import com.demo.chat.team.mapper.TeamMemberMapper;
 import com.demo.chat.team.service.TeamService;
+import com.demo.chat.rag.service.FileStorageService;
+import com.demo.chat.rag.upload.BucketResolver;
 import com.demo.chat.user.entity.SysUser;
 import com.demo.chat.user.mapper.SysUserMapper;
 import org.slf4j.Logger;
@@ -43,17 +45,23 @@ public class TeamServiceImpl implements TeamService {
     private final SysUserMapper sysUserMapper;
     private final TeamProperties teamProperties;
     private final TransactionTemplate txTemplate;
+    private final FileStorageService fileStorageService;
+    private final BucketResolver bucketResolver;
 
     public TeamServiceImpl(TeamMapper teamMapper,
                            TeamMemberMapper teamMemberMapper,
                            SysUserMapper sysUserMapper,
                            TeamProperties teamProperties,
-                           TransactionTemplate txTemplate) {
+                           TransactionTemplate txTemplate,
+                           FileStorageService fileStorageService,
+                           BucketResolver bucketResolver) {
         this.teamMapper = teamMapper;
         this.teamMemberMapper = teamMemberMapper;
         this.sysUserMapper = sysUserMapper;
         this.teamProperties = teamProperties;
         this.txTemplate = txTemplate;
+        this.fileStorageService = fileStorageService;
+        this.bucketResolver = bucketResolver;
     }
 
     @Override
@@ -86,6 +94,10 @@ public class TeamServiceImpl implements TeamService {
             } catch (DuplicateKeyException e) {
                 throw new BusinessException(ErrorCode.TEAM_NAME_DUPLICATE);
             }
+
+            // 1.5 创建团队专属 MinIO bucket
+            String teamBucket = bucketResolver.resolve(team.getId());
+            fileStorageService.ensureBucketExists(teamBucket);
 
             // 2. 创建者自动成为 CREATOR 成员
             TeamMember creatorMember = new TeamMember();
@@ -241,7 +253,7 @@ public class TeamServiceImpl implements TeamService {
                     .set(TeamMember::getUpdatedAt, OffsetDateTime.now()));
 
             // TODO: Phase 4 — REJECT 所有 PENDING 审批 + 清理向量数据
-
+            // TODO: MinIO bucket 延迟清理 — OrphanChunkCleaner 会在 bucket 为空且团队 deleted=1 后自动删除
             log.info("Team dissolved: id={}, creatorId={}", teamId, userId);
         });
     }

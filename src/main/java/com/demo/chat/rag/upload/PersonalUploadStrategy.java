@@ -3,7 +3,7 @@ package com.demo.chat.rag.upload;
 import com.demo.chat.common.errorcode.ErrorCode;
 import com.demo.chat.common.upload.UploadStrategy;
 import com.demo.chat.exception.BusinessException;
-import com.demo.chat.rag.config.MinioProperties;
+import com.demo.chat.rag.upload.BucketResolver;
 import com.demo.chat.rag.dto.DocumentUploadResponse;
 import com.demo.chat.rag.etl.EtlCandidate;
 import com.demo.chat.rag.etl.EtlStatus;
@@ -45,18 +45,18 @@ public class PersonalUploadStrategy implements UploadStrategy {
     private final FileStorageService fileStorageService;
     private final EtlDispatchService etlDispatchService;
     private final RagDocumentMapper ragDocumentMapper;
-    private final MinioProperties minioProperties;
+    private final BucketResolver bucketResolver;
     private final DocumentValidator documentValidator;
 
     public PersonalUploadStrategy(FileStorageService fileStorageService,
                                    EtlDispatchService etlDispatchService,
                                    RagDocumentMapper ragDocumentMapper,
-                                   MinioProperties minioProperties,
+                                   BucketResolver bucketResolver,
                                    DocumentValidator documentValidator) {
         this.fileStorageService = fileStorageService;
         this.etlDispatchService = etlDispatchService;
         this.ragDocumentMapper = ragDocumentMapper;
-        this.minioProperties = minioProperties;
+        this.bucketResolver = bucketResolver;
         this.documentValidator = documentValidator;
     }
 
@@ -66,7 +66,7 @@ public class PersonalUploadStrategy implements UploadStrategy {
 
         String mimeType = file.getContentType();
         String originalFilename = file.getOriginalFilename();
-        String bucket = minioProperties.getBucket();
+        String bucket = bucketResolver.resolve(null);
 
         fileStorageService.ensureBucketExists(bucket);
         String storageKey = UUID.randomUUID().toString();
@@ -86,7 +86,7 @@ public class PersonalUploadStrategy implements UploadStrategy {
             throw new BusinessException(ErrorCode.UPLOAD_LIST_EMPTY);
         }
 
-        String bucket = minioProperties.getBucket();
+        String bucket = bucketResolver.resolve(null);
         fileStorageService.ensureBucketExists(bucket);
 
         for (MultipartFile file : files) {

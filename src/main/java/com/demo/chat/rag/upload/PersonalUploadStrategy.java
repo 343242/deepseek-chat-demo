@@ -148,7 +148,7 @@ public class PersonalUploadStrategy implements UploadStrategy {
             return "unnamed";
         }
         // 保留原始文件名（含扩展名），仅去除路径分隔符等危险字符
-        return fileName.replaceAll("[/\\\\\\0]", "_");
+        return fileName.replace("/", "_").replace("\\\\", "_").replace("\0", "_");
     }
 
     /**

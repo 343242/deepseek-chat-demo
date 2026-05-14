@@ -71,7 +71,7 @@ public class PersonalUploadStrategy implements UploadStrategy {
         String bucket = bucketResolver.resolve(null);
 
         fileStorageService.ensureBucketExists(bucket);
-        String storageKey = UUID.randomUUID().toString();
+        String storageKey = buildStorageKey(userId, originalFilename);
         fileStorageService.upload(bucket, storageKey, file.getResource(), mimeType);
 
         String fileMd5 = computeMd5(file);
@@ -102,7 +102,7 @@ public class PersonalUploadStrategy implements UploadStrategy {
         for (MultipartFile file : files) {
             String mimeType = file.getContentType();
             String originalFilename = file.getOriginalFilename();
-            String storageKey = UUID.randomUUID().toString();
+            String storageKey = buildStorageKey(userId, originalFilename);
 
             fileStorageService.upload(bucket, storageKey, file.getResource(), mimeType);
 
@@ -121,6 +121,23 @@ public class PersonalUploadStrategy implements UploadStrategy {
     }
 
     // === 私有方法 ===
+
+    /**
+     * 构建存储路径：documents/{userId}/{uuid}.{ext}
+     * 与 {@code ChunkUploadServiceImpl.performMerge()} 保持一致。
+     */
+    private String buildStorageKey(Long userId, String originalFilename) {
+        String extension = extractExtension(originalFilename);
+        return "documents/" + userId + "/" + UUID.randomUUID()
+                + (extension.isEmpty() ? "" : "." + extension);
+    }
+
+    private String extractExtension(String fileName) {
+        if (fileName == null || !fileName.contains(".")) {
+            return "";
+        }
+        return fileName.substring(fileName.lastIndexOf('.') + 1).toLowerCase();
+    }
 
     /**
      * 持久化文档元数据到数据库

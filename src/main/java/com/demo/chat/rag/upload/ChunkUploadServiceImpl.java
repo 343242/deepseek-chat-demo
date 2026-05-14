@@ -3,7 +3,7 @@ package com.demo.chat.rag.upload;
 import com.demo.chat.common.errorcode.ErrorCode;
 import com.demo.chat.exception.BusinessException;
 import com.demo.chat.rag.config.DocumentProperties;
-import com.demo.chat.rag.config.MinioProperties;
+import com.demo.chat.rag.upload.BucketResolver;
 import com.demo.chat.rag.entity.RagDocument;
 import com.demo.chat.rag.etl.EtlStatus;
 import com.demo.chat.rag.mapper.RagDocumentMapper;
@@ -12,11 +12,14 @@ import com.demo.chat.rag.service.EtlDispatchService;
 import com.demo.chat.rag.service.impl.DocumentValidator;
 import com.demo.chat.security.util.SecurityUtils;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.demo.chat.team.entity.Team;
+import com.demo.chat.team.mapper.TeamMapper;
 import io.minio.*;
 import io.minio.SourceObject;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.io.ClassPathResource;
+import org.jspecify.annotations.Nullable;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
@@ -50,37 +53,40 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
 
     private final StringRedisTemplate redisTemplate;
     private final MinioClient minioClient;
-    private final MinioProperties minioProperties;
+    private final BucketResolver bucketResolver;
     private final ChunkSizeStrategy chunkSizeStrategy;
     private final DocumentProperties documentProperties;
     private final DocumentValidator documentValidator;
     private final FileStorageService fileStorageService;
     private final RagDocumentMapper ragDocumentMapper;
     private final EtlDispatchService etlDispatchService;
+    private final TeamMapper teamMapper;
     private final DefaultRedisScript<List> atomicChunkUploadScript;
     private final ThreadPoolTaskExecutor mergeExecutor;
 
     public ChunkUploadServiceImpl(
             StringRedisTemplate redisTemplate,
             MinioClient minioClient,
-            MinioProperties minioProperties,
+            BucketResolver bucketResolver,
             ChunkSizeStrategy chunkSizeStrategy,
             DocumentProperties documentProperties,
             DocumentValidator documentValidator,
             FileStorageService fileStorageService,
             RagDocumentMapper ragDocumentMapper,
             EtlDispatchService etlDispatchService,
+            TeamMapper teamMapper,
             ThreadPoolTaskExecutor mergeExecutor
     ) {
         this.redisTemplate = redisTemplate;
         this.minioClient = minioClient;
-        this.minioProperties = minioProperties;
+        this.bucketResolver = bucketResolver;
         this.chunkSizeStrategy = chunkSizeStrategy;
         this.documentProperties = documentProperties;
         this.documentValidator = documentValidator;
         this.fileStorageService = fileStorageService;
         this.ragDocumentMapper = ragDocumentMapper;
         this.etlDispatchService = etlDispatchService;
+        this.teamMapper = teamMapper;
         this.mergeExecutor = mergeExecutor;
 
         this.atomicChunkUploadScript = new DefaultRedisScript<>();
@@ -293,6 +299,20 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
             return;
         }
 
+        // 团队状态校验：团队已解散则拒绝合并
+        String teamIdStr = session.get("teamId");
+        if (teamIdStr != null) {
+            Long teamId = Long.parseLong(teamIdStr);
+            Team team = teamMapper.selectById(teamId);
+            if (team == null || team.getDeleted() != 0) {
+                log.warn("Merge rejected: team dissolved, teamId={}, uploadId={}", teamId, uploadId);
+                String bucket = session.get("bucket");
+                cleanupTempChunks(bucket, session.get("objectName"), Integer.parseInt(session.get("totalChunks")));
+                cleanupRedis(uploadId, session.get("userId"), session.get("fileMd5"));
+                throw new BusinessException(ErrorCode.TEAM_NOT_FOUND, "团队已解散，上传已取消");
+            }
+        }
+
         String bucket = session.get("bucket");
         String basePath = session.get("objectName");
         int totalChunks = Integer.parseInt(session.get("totalChunks"));
@@ -327,7 +347,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
 
         // 5. 持久化 rag_document
         Long userId = Long.parseLong(session.get("userId"));
-        Long docId = persistDocument(session, targetObjectKey, actualMd5, userId);
+        Long docId = persistDocument(session, targetObjectKey, actualMd5, userId, teamIdStr != null ? Long.parseLong(teamIdStr) : null);
         log.info("Chunk upload merged: uploadId={}, docId={}, md5={}", uploadId, docId, actualMd5);
 
         // 6. 清理临时分片
@@ -336,12 +356,11 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         // 7. 清理 Redis
         cleanupRedis(uploadId, session.get("userId"), declaredMd5);
 
-        // 8. 触发 ETL（teamId 从 rag_document 读取，分片上传当前只有个人上传）
-        String teamIdStr = session.get("teamId");
-        Long teamId = teamIdStr != null ? Long.parseLong(teamIdStr) : null;
+        // 8. 触发 ETL
         etlDispatchService.dispatchAsync(
                 docId, bucket, targetObjectKey, session.get("fileName"),
-                session.get("mimeType"), Long.parseLong(session.get("fileSize")), userId, teamId
+                session.get("mimeType"), Long.parseLong(session.get("fileSize")), userId,
+                teamIdStr != null ? Long.parseLong(teamIdStr) : null
         );
     }
 
@@ -417,14 +436,14 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
             chunkSize = (int) (long) request.fileSize();
         }
 
-        String bucket = minioProperties.getBucket();
+        String bucket = bucketResolver.resolve(request.teamId());
         fileStorageService.ensureBucketExists(bucket);
         String objectBasePath = "chunks/" + userId + "/" + UUID.randomUUID();
         String uploadId = UUID.randomUUID().toString();
 
         // Redis 写入 session
         String sessionKey = UploadRedisConstants.sessionKey(uploadId);
-        Map<String, String> sessionFields = Map.ofEntries(
+        Map<String, String> sessionFields = new HashMap<>(Map.ofEntries(
                 Map.entry("fileMd5", request.fileMd5()),
                 Map.entry("fileName", request.fileName()),
                 Map.entry("fileSize", String.valueOf(request.fileSize())),
@@ -435,7 +454,10 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
                 Map.entry("bucket", bucket),
                 Map.entry("objectName", objectBasePath),
                 Map.entry("createdAt", String.valueOf(System.currentTimeMillis()))
-        );
+        ));
+        if (request.teamId() != null) {
+            sessionFields.put("teamId", String.valueOf(request.teamId()));
+        }
         redisTemplate.opsForHash().putAll(sessionKey, sessionFields);
         redisTemplate.expire(sessionKey, UploadRedisConstants.SESSION_TTL);
 
@@ -551,7 +573,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
 
     // ==================== DB 持久化 ====================
 
-    private Long persistDocument(Map<String, String> session, String targetObjectKey, String actualMd5, Long userId) {
+    private Long persistDocument(Map<String, String> session, String targetObjectKey, String actualMd5, Long userId, @Nullable Long teamId) {
         RagDocument doc = new RagDocument();
         doc.setFileName(session.get("fileName"));
         doc.setFileSize(Long.parseLong(session.get("fileSize")));
@@ -559,6 +581,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         doc.setStorageKey(targetObjectKey);
         doc.setBucket(session.get("bucket"));
         doc.setUserId(userId);
+        doc.setTeamId(teamId);
         doc.setFileMd5(actualMd5);
         doc.setStatus(EtlStatus.PROCESSING);
         doc.setDeleted(0);

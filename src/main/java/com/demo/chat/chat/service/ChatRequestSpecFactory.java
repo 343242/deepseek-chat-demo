@@ -71,7 +71,9 @@ public class ChatRequestSpecFactory {
 
         ChatClient.ChatClientRequestSpec spec = chatClient.prompt()
                 .user(request.message())
-                .advisors(advisors);
+                .advisors(a -> a.advisors(advisors)
+                        .param(org.springframework.ai.chat.memory.ChatMemory.CONVERSATION_ID,
+                                conversationId));
 
         // Tool Calling
         if (advisorChainFactory.hasTools()) {

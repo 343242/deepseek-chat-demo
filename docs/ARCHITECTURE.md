@@ -207,6 +207,7 @@ Database
 | **EmbeddingModel 接口适配** | 自建 DashScopeEmbeddingModel 实现标准接口，PgVectorStore 自动注入，零耦合 |
 | **启动优化** | MapperScan 精确化（显式列出 5 个包替代通配符）、scanBasePackages 精确到业务包、ConfigurationPropertiesScan 覆盖全包；启动时间 8s → 5.6s |
 | **团队上传策略** | UploadStrategy 接口 + PersonalUploadStrategy/TeamUploadStrategy，工厂根据 teamId 路由，OCP 零改旧代码 |
+| **Bucket 隔离** | BucketResolver 封装 bucket 命名规则（个人默认 bucket / 团队 `rag-team-{teamId}`），上传策略、定时任务、分片服务统一调用，避免硬编码 |
 | **审批状态机** | PENDING → APPROVED/REJECTED + 超时自动拒绝，定时任务 fixedDelay 1h 扫描 |
 | **角色枚举设计** | CREATOR(30) > ADMIN(20) > MEMBER(10) 数值比较，@EnumValue 存 int、@JsonValue 返回 name()，DB 与 API 分离 |
 | **统一权限门面** | DocumentOwnershipChecker 跨 team/rag 模块，个人文档 owner 检查、团队文档成员资格 + 角色检查 |

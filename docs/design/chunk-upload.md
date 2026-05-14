@@ -1,11 +1,11 @@
 # 分片上传设计文档
 
-> 模块：`com.demo.chat.rag.upload`
+> 模块：`com.demo.chat.rag.upload`（个人）、`com.demo.chat.team.controller`（团队）
 > 分支：`rag-dev`
 
 ## 概述
 
-为大文件（≤50MB）提供分片上传能力，支持秒传、断点续传、并发上传分片、异步合并。适用于网络不稳定或需要进度展示的场景。
+为大文件（≤50MB）提供分片上传能力，支持秒传、断点续传、并发上传分片、异步合并。适用于网络不稳定或需要进度展示的场景。同时支持**个人文档**和**团队文档**的分片上传，通过 `BucketResolver` 实现 bucket 隔离。
 
 ## 整体流程
 
@@ -31,9 +31,11 @@
 
 | 组件 | 职责 |
 |------|------|
-| `ChunkUploadController` | 5 个 RESTful 端点，参数校验，HTTP 语义 |
-| `ChunkUploadServiceImpl` | 核心业务：session 管理、分片上传、合并、秒传、速率限制 |
-| `OrphanChunkCleaner` | 定时任务：每 6h 清理 48h 以上孤儿分片 |
+| `BucketResolver` | Bucket 名称解析：个人文档使用默认 bucket，团队文档使用 `rag-team-{teamId}` |
+| `ChunkUploadController` | 个人分片上传 5 个 RESTful 端点（`/api/documents/multipart`） |
+| `TeamChunkUploadController` | 团队分片上传 5 个 RESTful 端点（`/api/teams/{teamId}/documents/multipart`） |
+| `ChunkUploadServiceImpl` | 核心业务：session 管理、分片上传、合并、秒传、速率限制（个人/团队共用） |
+| `OrphanChunkCleaner` | 定时任务：每 6h 清理个人 + 团队 bucket 的 48h 以上孤儿分片 |
 | `UploadRedisConstants` | Redis key 前缀 + TTL 单一数据源 |
 | `ChunkSizeStrategy` | 分片大小策略接口，默认 5MB |
 | `atomic_chunk_upload.lua` | Lua 原子脚本：记录 ETag + 幂等检查 + 完成判定 + 合并锁 |
@@ -41,20 +43,58 @@
 
 ## API 端点
 
+### 个人文档分片上传
+
 | 方法 | URL | 说明 | 成功状态码 |
-|------|-----|------|-----------|
+|------|-----|------|------------|
 | POST | `/api/documents/multipart` | 创建上传会话（秒传 / 新建 / 续传） | 200（秒传）/ 201（新建） |
 | PUT | `/api/documents/multipart/{id}/chunks/{index}` | 上传分片（携带 `X-Chunk-MD5`） | 200 |
 | GET | `/api/documents/multipart/{id}` | 查询上传状态（断点续传） | 200 |
 | POST | `/api/documents/multipart/{id}/complete` | 触发合并 | 202 |
 | DELETE | `/api/documents/multipart/{id}` | 取消上传 | 204 |
 
+### 团队文档分片上传
+
+| 方法 | URL | 说明 | 成功状态码 |
+|------|-----|------|------------|
+| POST | `/api/teams/{teamId}/documents/multipart` | 创建团队上传会话 | 200（秒传）/ 201（新建） |
+| PUT | `/api/teams/{teamId}/documents/multipart/{id}/chunks/{index}` | 上传团队文档分片 | 200 |
+| GET | `/api/teams/{teamId}/documents/multipart/{id}` | 查询团队上传状态 | 200 |
+| POST | `/api/teams/{teamId}/documents/multipart/{id}/complete` | 触发团队文档合并 | 202 |
+| DELETE | `/api/teams/{teamId}/documents/multipart/{id}` | 取消团队上传 | 204 |
+
+> 团队分片上传通过 `TeamChunkUploadController` 将 URL 中的 `teamId` 注入 `ChunkUploadInitRequest`，由 `ChunkUploadServiceImpl` 统一处理，通过 `BucketResolver` 路由到团队专属 bucket。
+
+## MinIO Bucket 隔离（BucketResolver）
+
+`BucketResolver` 封装 bucket 选择逻辑，避免各处硬编码命名规则：
+
+| 场景 | teamId | bucket 名称 |
+|------|--------|-------------|
+| 个人文档 | `null` | `MinioProperties.bucket`（默认 `rag-docs`） |
+| 团队文档 | 非 null | `rag-team-{teamId}` |
+
+```java
+@Component
+public class BucketResolver {
+    public String resolve(@Nullable Long teamId) {
+        return teamId == null
+            ? minioProperties.getBucket()
+            : TEAM_BUCKET_PREFIX + teamId;
+    }
+}
+```
+
+- 上传策略、定时任务、分片服务统一通过 `BucketResolver` 获取 bucket 名
+- 团队 bucket 按需创建（`minio.makeBucket()`），无需预配置
+
 ## MinIO 合并方案
 
 MinIO SDK 9.0.0 不暴露原生 Multipart Upload API，采用 `putObject` + `composeObject` 方案：
 
 ```
-分片上传：putObject → chunks/{userId}/{uploadId}/part-{index}
+个人分片：putObject → {personal-bucket}/chunks/{userId}/{uploadId}/part-{index}
+团队分片：putObject → rag-team-{teamId}/chunks/{userId}/{uploadId}/part-{index}
 合并：    composeObject(chunks/...) → 目标路径
 清理：    removeObjects 批量删除临时分片
 ```
@@ -100,6 +140,7 @@ MinIO SDK 9.0.0 不暴露原生 Multipart Upload API，采用 `putObject` + `com
 
 - 调度间隔：6 小时（初始延迟 5 分钟）
 - 孤儿判定：session 创建时间距今 > 48 小时
+- **双 bucket 清理**：扫描个人 bucket + 所有团队 bucket（`rag-team-*`）
 - 防误删：跳过仍有活跃 session 的用户目录
 - 批量删除：使用 `removeObjects` 批量清理 MinIO 临时对象
 

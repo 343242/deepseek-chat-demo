@@ -286,14 +286,15 @@ src/main/java/com/demo/chat/
 │   │   └── DocumentController.java           #     /api/documents/* (上传/列表/详情/删除/状态)
 │   │
 │   ├── upload/                              #   ★ 分片上传（秒传 + 断点续传 + 异步合并）
+│   │   ├── BucketResolver.java              #     Bucket 名称解析（个人/团队 bucket 路由）
 │   │   ├── ChunkUploadController.java        #     /api/documents/multipart/* (5 个端点)
 │   │   ├── ChunkUploadService.java           #     分片上传接口
-│   │   ├── ChunkUploadServiceImpl.java       #     实现（session/分片/合并/秒传/速率限制）
-│   │   ├── OrphanChunkCleaner.java           #     孤儿分片定时清理（6h 间隔，48h 阈值）
+│   │   ├── ChunkUploadServiceImpl.java       #     实现（session/分片/合并/秒传/速率限制，个人/团队共用）
+│   │   ├── OrphanChunkCleaner.java           #     孤儿分片定时清理（6h 间隔，48h 阈值，双 bucket）
 │   │   ├── UploadRedisConstants.java         #     Redis key 前缀 + TTL 常量
 │   │   ├── ChunkSizeStrategy.java            #     分片大小策略接口
 │   │   ├── DefaultChunkSizeStrategy.java     #     默认 5MB
-│   │   ├── ChunkUploadInitRequest.java       #     init 请求 DTO (record + @Valid)
+│   │   ├── ChunkUploadInitRequest.java       #     init 请求 DTO (record + @Valid + teamId)
 │   │   ├── ChunkUploadCompleteRequest.java   #     complete 请求 DTO
 │   │   ├── ChunkUploadCompleteResult.java    #     complete 结果 DTO
 │   │   ├── ChunkUploadStatusResponse.java    #     status 响应 DTO
@@ -315,7 +316,8 @@ src/main/java/com/demo/chat/
 │   ├── controller/
 │   │   ├── TeamController.java                #     /api/teams（CRUD + 解散 + 创建者额度）
 │   │   ├── TeamMemberController.java          #     /api/teams/{teamId}/members（邀请/移除/退团/角色/额度）
-│   │   └── TeamApprovalController.java        #     /api/teams/{teamId}/approvals（待审批/审批/我的审批）
+│   │   ├── TeamApprovalController.java        #     /api/teams/{teamId}/approvals（待审批/审批/我的审批）
+│   │   └── TeamChunkUploadController.java      #     /api/teams/{teamId}/documents/multipart（团队分片上传）
 │   ├── dto/
 │   │   ├── TeamCreateRequest.java             #     创建团队请求
 │   │   ├── TeamUpdateRequest.java             #     更新团队请求

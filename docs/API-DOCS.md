@@ -1752,3 +1752,119 @@ Token 用量明细（必须指定 `model` 或 `conversation` 参数）。
 | fileName | 文档文件名 |
 | status | `PENDING` / `APPROVED` / `REJECTED` |
 | reviewedAt | 审批时间（未审批时为 null） |
+
+## 团队分片上传
+
+> 团队文档支持大文件分片上传，API 与个人分片上传平行，所有端点前缀为 `/api/teams/{teamId}/documents/multipart`。
+> 需要登录。详细设计见 [分片上传设计文档](design/chunk-upload.md)。
+
+### POST /api/teams/{teamId}/documents/multipart
+
+创建团队文档分片上传会话。根据 `fileMd5` 自动判断秒传、新建或续传。
+
+**Request：**
+
+```json
+{
+  "fileMd5": "d41d8cd98f00b204e9800998ecf8427e",
+  "fileName": "report.pdf",
+  "fileSize": 52428800,
+  "mimeType": "application/pdf",
+  "totalChunks": 10
+}
+```
+
+**Response（秒传 — 200）：**
+
+```json
+{
+  "uploaded": true,
+  "documentId": 42
+}
+```
+
+**Response（新建 — 201）：**
+
+```json
+{
+  "uploaded": false,
+  "uploadId": "550e8400-e29b-41d4-a716-446655440000",
+  "chunkSize": 5242880
+}
+```
+
+**Response（续传 — 201）：**
+
+```json
+{
+  "uploaded": false,
+  "uploadId": "550e8400-e29b-41d4-a716-446655440000",
+  "chunkSize": 5242880,
+  "uploadedChunks": [0, 1, 2, 5]
+}
+```
+
+---
+
+### PUT /api/teams/{teamId}/documents/multipart/{uploadId}/chunks/{chunkIndex}
+
+上传单个分片。最后一个分片上传完成后自动触发合并。
+
+**Headers：**
+
+| Header | 必填 | 说明 |
+|--------|------|------|
+| `X-Chunk-MD5` | ✅ | 分片 MD5（32 位 hex） |
+
+**Request Body：** `application/octet-stream`
+
+**Response（200）：**
+
+```json
+{
+  "uploaded": true,
+  "chunkIndex": 3,
+  "autoMerged": false
+}
+```
+
+---
+
+### GET /api/teams/{teamId}/documents/multipart/{uploadId}
+
+查询上传状态（断点续传）。
+
+**Response（200）：**
+
+```json
+{
+  "uploadId": "550e8400-e29b-41d4-a716-446655440000",
+  "fileName": "report.pdf",
+  "totalChunks": 10,
+  "uploadedChunks": [0, 1, 2, 5, 6, 7],
+  "chunkSize": 5242880
+}
+```
+
+---
+
+### POST /api/teams/{teamId}/documents/multipart/{uploadId}/complete
+
+显式触发合并。
+
+**Response（202 Accepted）：**
+
+```json
+{
+  "documentId": 42,
+  "status": "MERGING"
+}
+```
+
+---
+
+### DELETE /api/teams/{teamId}/documents/multipart/{uploadId}
+
+取消上传，清理 Redis session 和 MinIO 临时分片。
+
+**Response：** 204 No Content

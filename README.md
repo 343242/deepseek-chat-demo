@@ -2,7 +2,7 @@
 
 基于 **Spring Boot 3.5 + Spring AI 1.1 + MyBatis-Plus 3.5** 的多厂商 AI 聊天助手后端。支持 **DeepSeek、智谱 AI (Zhipu)、MiniMax** 三家模型厂商，通过 Provider 抽象层实现统一路由。提供动态模型加载、SSE 流式响应、JDBC 对话记忆、**Tool Calling 工具调用**、RBAC 权限系统、滑块验证码、自研雪花 ID 与 UUIDv7，并通过 Advisor 链实现限流与内容安全过滤。
 
-支持 **RAG（检索增强生成）**，通过 Apache Tika 多格式文档解析、Parent-Child 分块策略、PGvector 向量存储、阿里千问 text-embedding-v4 向量化，实现文档上传→解析→分块→向量化→检索增强的完整链路。检索管道支持**查询改写、混合检索（向量+BM25）+RRF融合、百炼Rerank精排、MMR多样性重排**四阶段优化。ETL 支持双线程池并发处理，小文档走**快速通道 BM25 即搜即用**（异步向量化补齐）。
+支持 **RAG（检索增强生成）**，通过 Apache Tika 多格式文档解析、Parent-Child 分块策略、PGvector 向量存储、阿里千问 text-embedding-v4 向量化，实现文档上传→解析→分块→向量化→检索增强的完整链路。检索管道支持**查询改写、混合检索（向量+BM25）+RRF融合、百炼Rerank精排、MMR多样性重排**四阶段优化。ETL 支持双线程池并发处理，小文档走**快速通道 BM25 即搜即用**（异步向量化补齐）。MinIO 对象存储通过 **BucketResolver** 实现个人/团队文档 bucket 隔离。
 
 支持 **团队协作**，包括团队创建与解散、成员管理（邀请/移除/角色变更）、上传审批流、额度控制、文档权限隔离等完整功能。
 
@@ -138,6 +138,10 @@ curl http://localhost:8080/api/documents -b cookies.txt
 # 9. 删除文档（仅文档所有者可操作）
 curl -X DELETE http://localhost:8080/api/documents/1 -b cookies.txt
 
+# 10. 团队分片上传（大文件）
+curl -X POST http://localhost:8080/api/teams/1/documents/multipart \
+  -H "Content-Type: application/json" -b cookies.txt \
+  -d '{"fileMd5":"d41d8cd98f00b204e9800998ecf8427e","fileName":"report.pdf","fileSize":52428800,"mimeType":"application/pdf","totalChunks":10}'
 
 ```
 
@@ -151,8 +155,8 @@ src/main/java/com/demo/chat/
 ├── user/                # RBAC 用户模块（用户/角色/权限 CRUD）
 ├── conversation/        # 会话管理（独立于 chat，双写架构）
 ├── chat/                # 聊天核心（Provider 抽象、Advisor 链、Tool Calling）
-├── rag/                 # RAG 检索增强（ETL Pipeline、文档解析、向量检索、个人上传策略）
-├── team/                # 团队协作模块（团队/成员/审批/文档权限）
+├── rag/                 # RAG 检索增强（ETL Pipeline、文档解析、向量检索、个人上传策略、BucketResolver）
+├── team/                # 团队协作模块（团队/成员/审批/文档权限/团队分片上传）
 └── exception/           # 统一异常处理
 ```
 

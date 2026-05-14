@@ -330,11 +330,15 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
                     .build());
         }
 
-        // 2. 合并目标路径
-        String targetObjectKey = "documents/" + session.get("userId") + "/" + UUID.randomUUID();
+        // 2. 合并目标路径（保留原始扩展名）
+        String originalName = session.get("fileName");
+        String extension = extractExtension(originalName);
+        String targetObjectKey = "documents/" + session.get("userId") + "/" + UUID.randomUUID()
+                + (extension.isEmpty() ? "" : "." + extension);
 
-        // 3. composeObject 合并
-        composeObjects(bucket, targetObjectKey, sources);
+        // 3. composeObject 合并（携带 Content-Type）
+        String mimeType = session.get("mimeType");
+        composeObjects(bucket, targetObjectKey, sources, mimeType);
 
         // 4. 流式读取合并后文件，计算实际 MD5
         String actualMd5 = computeFileMd5FromMinio(bucket, targetObjectKey);
@@ -520,20 +524,28 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         }
     }
 
-    private void composeObjects(String bucket, String targetObjectKey, List<SourceObject> sources) {
+    private void composeObjects(String bucket, String targetObjectKey, List<SourceObject> sources, String contentType) {
         try {
             minioClient.composeObject(
                     ComposeObjectArgs.builder()
                             .bucket(bucket)
                             .object(targetObjectKey)
                             .sources(sources)
+                            .headers(Map.of("Content-Type", contentType))
                             .build()
             );
-            log.info("Composed object: {}/{} from {} parts", bucket, targetObjectKey, sources.size());
+            log.info("Composed object: {}/{} from {} parts, contentType={}", bucket, targetObjectKey, sources.size(), contentType);
         } catch (Exception e) {
             log.error("MinIO composeObject error: bucket={}, target={}", bucket, targetObjectKey, e);
             throw new BusinessException(ErrorCode.UPLOAD_FAILED, "合并分片失败");
         }
+    }
+
+    private String extractExtension(String fileName) {
+        if (fileName == null || !fileName.contains(".")) {
+            return "";
+        }
+        return fileName.substring(fileName.lastIndexOf('.') + 1).toLowerCase();
     }
 
     private String computeFileMd5FromMinio(String bucket, String objectName) {

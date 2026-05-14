@@ -23,7 +23,6 @@ import java.security.MessageDigest;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.UUID;
 
 /**
  * 个人文档上传策略 — 封装现有上传逻辑
@@ -122,21 +121,34 @@ public class PersonalUploadStrategy implements UploadStrategy {
 
     // === 私有方法 ===
 
+    private static final char[] NANOID_CHARS =
+            "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ".toCharArray();
+    private static final java.util.Random RANDOM = new java.security.SecureRandom();
+
     /**
-     * 构建存储路径：documents/{userId}/{uuid}.{ext}
-     * 与 {@code ChunkUploadServiceImpl.performMerge()} 保持一致。
+     * 构建存储路径：documents/{userId}/{shortId}_{originalFilename}
+     * shortId 为 8 位随机字母数字，用于避免同名文件冲突。
      */
     private String buildStorageKey(Long userId, String originalFilename) {
-        String extension = extractExtension(originalFilename);
-        return "documents/" + userId + "/" + UUID.randomUUID()
-                + (extension.isEmpty() ? "" : "." + extension);
+        String shortId = generateShortId(8);
+        String safeName = sanitizeFilename(originalFilename);
+        return "documents/" + userId + "/" + shortId + "_" + safeName;
     }
 
-    private String extractExtension(String fileName) {
-        if (fileName == null || !fileName.contains(".")) {
-            return "";
+    private String generateShortId(int length) {
+        StringBuilder sb = new StringBuilder(length);
+        for (int i = 0; i < length; i++) {
+            sb.append(NANOID_CHARS[RANDOM.nextInt(NANOID_CHARS.length)]);
         }
-        return fileName.substring(fileName.lastIndexOf('.') + 1).toLowerCase();
+        return sb.toString();
+    }
+
+    private String sanitizeFilename(String fileName) {
+        if (fileName == null || fileName.isBlank()) {
+            return "unnamed";
+        }
+        // 保留原始文件名（含扩展名），仅去除路径分隔符等危险字符
+        return fileName.replaceAll("[/\\\\\\0]", "_");
     }
 
     /**

@@ -1,0 +1,16 @@
+# RAG 评估系统专用配置
+# 仅在激活 evaluation profile 时加载: spring.profiles.active=dev,evaluation
+
+app:
+  evaluation:
+    enabled: true
+    judge-model: zai/glm-5.1
+    generation-model: deepseek/deepseek-v4-pro
+    test-user-id: 1
+    dataset:
+      sample-size: 50
+      questions-per-chunk: 2
+    runner:
+      default-k: 10
+      concurrency: 1
+      timeout-seconds: 300

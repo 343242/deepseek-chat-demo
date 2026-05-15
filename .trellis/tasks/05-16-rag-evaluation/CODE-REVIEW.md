@@ -1,9 +1,9 @@
 # RAG 评估系统代码审查报告
 
-**审查日期**: 2026-05-16
+**审查日期**: 2026-05-16（第二轮打磨：对照 README.md 技术栈）
 **分支**: eval-rag-dev
-**审查范围**: `src/main/java/com/demo/chat/rag/evaluation/` 全部 20 个文件
-**对照标准**: design.md spec + ECC java-coding-standards + springboot-patterns + springboot-verification
+**审查范围**: `src/main/java/com/demo/chat/rag/evaluation/` 全部 25 个文件 + SQL + yml
+**对照标准**: design.md spec + `.trellis/spec/backend/` 全量 + `spec/guides/` + README.md 技术栈
 
 ---
 
@@ -14,6 +14,8 @@
 | 🔴 P0 Blocker | 6 | 必须修复，影响正确性/安全性 |
 | 🟠 P1 Important | 9 | 应该修复，影响可维护性/健壮性 |
 | 🟡 P2 Minor | 7 | 建议改进 |
+
+> **技术栈基线**（来自 README.md）：Spring Boot 3.5.14 / Spring AI 1.1.6 / MyBatis-Plus 3.5.16 / PostgreSQL 18 (pgvector) / Redis 8.2 / Flyway / Spring Security (RBAC) / Log4j 2 / 三厂商 Provider（DeepSeek + 智谱 + MiniMax）
 
 ---
 
@@ -71,8 +73,9 @@ public ResponseEntity<Map<String, Object>> generateDataset(
 - `datasetId` 缺失时直接 NPE（`((Number) null).longValue()`）
 - 强制类型转换不安全
 
-**违反**: springboot-patterns > DTOs and Validation
-**正确做法**: 创建 DTO 类（如 `GenerateDatasetRequest`），加 `@Valid @RequestBody` + Bean Validation 注解
+**违反**: spec quality-guidelines > DTO Rules（`{动作}Request` + `@Valid`）
+**对比项目标准**: 项目既有 Controller（AuthController、UserController、RoleController）均使用强类型 DTO + `@Valid @RequestBody`
+**正确做法**: 创建 `GenerateDatasetRequest` / `StartRunRequest` DTO，加 `@Valid @RequestBody` + Bean Validation 注解
 
 ### P0-4: extractJson() 方法在 5 个类中重复实现
 
@@ -80,8 +83,9 @@ public ResponseEntity<Map<String, Object>> generateDataset(
 
 完全相同的 JSON 提取逻辑（三层容错：raw → ```json``` → 正则）复制粘贴了 5 次。部分版本还少了一层 `[...]` 提取逻辑（ContextRelevanceScorer 缺少 `[...]` 分支）。
 
-**违反**: java-coding-standards > Code Smells to Avoid > DRY
-**正确做法**: 抽取到 `JsonExtractor` 工具类，所有消费者引用同一个实现
+**违反**: spec guides/code-reuse-thinking-guide > Pattern 1: Copy-Paste Functions
+**对比项目标准**: 项目已有 `common/` 公共模块放工具类（雪花 ID 等），extractJson 应同样放 `common/`
+**正确做法**: 抽取到 `com.demo.chat.common.util.JsonExtractor`，所有消费者引用同一个实现
 
 ---
 
@@ -151,11 +155,15 @@ Jackson 反序列化 `Map<String, Object>` 时，Boolean 值是安全的，但�
 
 ## 🟡 P2 Minor（建议改进）
 
-### P2-1: EvaluationDataset 和 EvaluationDatasetItem 应使用 record 或 @Data
+### P2-1: 实体应使用 Lombok 或 MyBatis-Plus 注解对齐项目标准
 
-**文件**: `EvaluationDataset.java`, `EvaluationDatasetItem.java`
+**文件**: `EvaluationDataset.java`, `EvaluationDatasetItem.java`, `EvaluationRun.java`, `EvaluationResult.java`
 
-手写了大量 getter/setter（50+ 行样板代码），与项目其他实体风格不一致。Jackson ObjectMapper 的 record 支持已经成熟。
+手写了大量 getter/setter（100+ 行样板代码）。
+
+**对比项目标准**: README 确认使用 MyBatis-Plus 3.5.16。项目既有实体（SysUser、SysRole 等）使用 `@TableName` + `@TableId` + Lombok `@Data`。评估模块实体是纯 POJO。
+
+**注意**: 不推荐 record——MyBatis-Plus 需要 setter 进行结果映射。应使用 Lombok `@Data` + MyBatis-Plus 注解，或如果坚持 JdbcTemplate（见 P0-5），至少用 Lombok 消除样板代码。
 
 ### P2-2: V11 migration 缺少注释说明与设计文档关联
 
@@ -163,7 +171,7 @@ Jackson 反序列化 `Map<String, Object>` 时，Boolean 值是安全的，但�
 
 设计文档中定义了 `updated_at` 的自动更新触发器，但 migration 中只有 `DEFAULT NOW()` 没有 `ON UPDATE` 触发器。`updateDatasetItemCount` 手动调了 `NOW()`，但其他 UPDATE 操作可能遗忘。
 
-### P2-3: LlmJudgeImpl.judgeModel 字段赋值后未使用
+### P2-3 → 升级 P0: LlmJudgeImpl.judgeModel 未生效，Judge 用的不是配置模型
 
 **文件**: `LlmJudgeImpl.java:43-45`
 
@@ -172,9 +180,11 @@ this.judgeModel = props.getJudgeModel();
 this.judgeClient = builder.build();  // ← 未使用 judgeModel 设置 model
 ```
 
-`judgeModel` 赋值后从未在 ChatClient 调用中使用。ChatClient.Builder 会使用 Spring AI 默认模型，不会自动切换到 judgeModel。
+`judgeModel` 赋值后从未在 ChatClient 调用中使用。ChatClient.Builder 会使用 Spring AI 默认模型。
 
-**这是一个正确性 Bug**：Judge 实际用的不是配置中指定的 judge 模型！
+**这是一个正确性 Bug**：Judge 实际用的不是配置中指定的 judge 模型。
+
+**对比项目标准**: README 确认项目通过 Provider 抽象层（ChatClientFactory + ChatClientRegistry）管理多厂商模型路由。评估模块应复用此机制，通过 `ChatClientRegistry` 获取指定模型的 ChatClient。
 
 ### P2-4: DatasetGenerator.sampleChunks() 使用字符串拼接构建 JSON filter
 
@@ -184,7 +194,9 @@ this.judgeClient = builder.build();  // ← 未使用 judgeModel 设置 model
 String filterJson = "{\"userId\": \"" + userId + "\"}";
 ```
 
-如果 userId 包含特殊字符（如 `"`），JSON 注入风险。应使用 ObjectMapper 构建。
+如果 userId 包含特殊字符（如 `"`），JSON 注入风险。
+
+**对比项目标准**: 项目已注入 `ObjectMapper`（LlmJudgeImpl、DatasetExporter、EvaluationRunner 均使用）。应复用 ObjectMapper 构建 filter JSON，保持一致。
 
 ---
 
@@ -225,16 +237,19 @@ String filterJson = "{\"userId\": \"" + userId + "\"}";
 - 使用 `CompletableFuture` + `Semaphore` 控制并发
 - 或先批量生成再入库
 
-### P1-7: Controller 无权限控制
+### P1-7: Controller 无权限控制（可烧 Token，安全风险）
 
 **文件**: `DatasetController.java`, `EvaluationRunController.java`
 
 > 违反 spec quality-guidelines > Security Checklist：`@PreAuthorize` 注解保护接口
 
 评估模块 REST API 完全无权限校验。任何人可以：
-- 触发评估运行（消耗大量 LLM Token）
+- 触发评估运行（消耗大量 LLM Token——100 条 × Judge + Generation 双模型调用）
 - 导出数据集内容
 - 删除数据集
+
+**对比项目标准**: README 确认项目使用 Spring Security + RBAC 权限体系，其他模块（AuthController、UserController、RoleController）均使用 `@PreAuthorize` 保护。评估模块作为唯一无权限的 API 端点，是攻击面。
+**建议**: 至少 `@PreAuthorize("hasRole('ADMIN')")` 限制管理員操作
 
 ### P1-8: EvaluationProperties 用 `@Component` 注册
 
@@ -250,15 +265,24 @@ String filterJson = "{\"userId\": \"" + userId + "\"}";
 
 > 违反 spec quality-guidelines > Security Checklist > 状态枚举：用枚举类约束，不接受裸 Integer/String
 
-SQL 中 `status VARCHAR(20) DEFAULT 'pending'` 无 CHECK 约束，Java 侧也无对应枚举。可写入任意字符串。建议：
+SQL 中 `status VARCHAR(20) DEFAULT 'pending'` 无 CHECK 约束，Java 侧也无对应枚举。可写入任意字符串。
+
+**对比项目标准**: 项目既有实体（如 `UserStatus`）已使用枚举 + `@EnumValue` / `@JsonValue`。评估模块的 status 和 source 字段（`'hybrid'`/`'draft'` 等）均为裸 String。
+**建议**:
 - SQL 侧加 `CHECK (status IN ('pending','running','completed','failed'))`
-- Java 侧定义 `EvaluationRunStatus` 枚举 + `@EnumValue` / `@JsonValue`
+- Java 侧定义 `EvaluationRunStatus` / `EvaluationItemStatus` 枚举，沿用项目 `@EnumValue` + `@JsonValue` 模式
 
-### P1-10: P0-3 的 datasetId 缺失场景同样存在于 EvaluationRunController
+### P1-10: EvaluationRunController.buildEvalConfig() 未考虑三厂商 Provider 差异
 
-**文件**: `EvaluationRunController.java:45`
+**文件**: `EvaluationRunController.java:205-225`
 
-与 P1-3 同源问题，但 `startRun()` 的 `datasetId` 缺失时直接 NPE，且该接口会触发大量 LLM 调用和 Token 消耗，影响比 DatasetController 更严重。
+> 违反 spec guides/cross-layer-thinking-guide > Mistake 1: Implicit Format Assumptions
+
+README 确认项目使用三家模型厂商（DeepSeek + 智谱 + MiniMax）通过 Provider 抽象层路由。但评估模块的 `generationModel` / `judgeModel` 配置为硬编码字符串（`zai/glm-5.1`、`deepseek/deepseek-v4-pro`），未走项目的 Provider 路由机制。
+
+P2-3（judgeModel 未生效）的根因也在此——ChatClient.Builder 使用 Spring AI 默认模型，无法识别自定义 model ID。
+
+**建议**: 通过项目的 `ChatClientRegistry` 或 Provider 路由获取指定模型的 ChatClient，而非手动 Builder。
 
 ---
 
@@ -307,28 +331,42 @@ throw new RuntimeException("Failed to export dataset", e);
 | SQL 列命名 | ✅ | snake_case |
 | ISP/OCP | ✅ | LlmJudge 接口分离、Scorer 独立扩展 |
 
-## 修正优先级建议（更新）
+## 修正优先级建议（最终）
 
-1. **P2-3 → 升级为 P0**: judgeModel 未生效是正确性 Bug（已有）
-2. **P0-5 + P0-6**: Repository 模式决策——文档化或迁移 MyBatis-Plus
-3. **P0-2 + P0-3 + P0-4**: 一起修——资源管理 + DTO + 工具类抽取（已有）
-4. **P0-1 + P0-新无事务**: 抽取 Service 层 + 事务保护（已有）
-5. **P1-7**: 评估 API 权限控制（新增）
-6. **P1-6**: DatasetGenerator 并发优化（新增）
-7. **P1-9**: status 枚举约束（新增）
-8. **P1-1**: Runner 拆分可在后续迭代（已有）
+> 按对齐 README.md 技术栈的影响程度排序
+
+### 第一批：正确性 Bug（立即修）
+1. **P2-3 → P0**: judgeModel 未生效 — Judge 跑的是默认模型而非配置模型。应通过 ChatClientRegistry 获取指定模型（README: Provider 抽象层）
+2. **P0-2**: PreparedStatement/ResultSet 资源泄漏
+
+### 第二批：与项目既有模式对齐（本迭代修）
+3. **P0-5 + P0-6**: Repository 模式 — JdbcTemplate vs MyBatis-Plus 3.5.16 决策。建议：评估模块有意用 JdbcTemplate（零侵入+独立），但需文档化 + 至少用 Lombok 消除 POJO 样板
+4. **P0-3 + P1-10**: DTO 规范 — 创建 Request/Response DTO + `@Valid`（对标 AuthController 模式）；model 配置走 Provider 路由
+5. **P0-4**: extractJson 抽取到 `common/util/JsonExtractor`
+
+### 第三批：安全 + 健壮性（本迭代修）
+6. **P1-7**: 评估 API 加 `@PreAuthorize("hasRole('ADMIN')")` — 无权限 = 可烧 Token（对标 RBAC 体系）
+7. **P1-9**: status 枚举 — Java `EvaluationRunStatus` 枚举 + SQL CHECK（对标 UserStatus 模式）
+8. **P0-1**: 抽取 EvaluationExecutionService + 事务保护
+
+### 第四批：改进（后续迭代）
+9. **P1-6**: DatasetGenerator 并发优化
+10. **P1-1**: Runner 依赖拆分
+11. **P2-6**: 单元测试（RetrievalMetricsCalculator 优先）
+12. **P2-5/P2-7**: RuntimeException + StageSnapshot 异常处理
 
 | 检查项 | 结果 | 说明 |
 |--------|------|------|
 | 零侵入 | ✅ | 0 修改现有文件，完全符合 |
 | Profile 隔离 | ✅ | `@Profile("evaluation")` + `@ConditionalOnProperty` |
-| Spec 一致性 | ⚠️ | 大体符合，但缺少 JudgePrompt 模板类（spec 中定义了独立类） |
+| Spec 一致性 | ⚠️ | 大体符合，但缺少 JudgePrompt 模板类（spec 中定义了独立类）；Provider 路由未复用 |
 | Flyway 命名 | ✅ | V11 连续编号 |
 | REST API 路径 | ✅ | 与 spec 定义一致 |
 | 数据模型 | ✅ | 4 表结构与 spec 完全对应 |
 | 检索指标公式 | ✅ | 5 个指标公式与 spec 一致 |
 | 生成指标方法 | ✅ | 两步 Faithfulness、embedding Answer Relevance 等 |
-| LLM-as-Judge 分离 | ❌ | judgeModel 配置了但未实际使用（P2-3，实际是 P0 级别的正确性问题）|
+| LLM-as-Judge 分离 | ❌ | judgeModel 未生效 + 未走 Provider 抽象路由（P2-3→P0） |
+| Provider 路由复用 | ❌ | 评估模块未复用 ChatClientFactory/ChatClientRegistry（README: 三厂商路由） |
 
 ---
 

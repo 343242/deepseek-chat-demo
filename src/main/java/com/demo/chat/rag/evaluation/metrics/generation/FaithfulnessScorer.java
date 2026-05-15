@@ -1,5 +1,6 @@
 package com.demo.chat.rag.evaluation.metrics.generation;
 
+import com.demo.chat.common.util.JsonExtractor;
 import com.demo.chat.rag.evaluation.judge.LlmJudge;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -80,8 +81,8 @@ public class FaithfulnessScorer {
         }
 
         try {
-            String json = extractJson(verdict.rawJson());
-            return objectMapper.readValue(json, new TypeReference<>() {});
+            String json = JsonExtractor.extractJson(verdict.rawJson());
+            return objectMapper.readValue(json, new TypeReference<List<String>>() {});
         } catch (Exception e) {
             log.warn("Failed to parse extracted claims: {}", e.getMessage());
             return Collections.emptyList();
@@ -127,8 +128,8 @@ public class FaithfulnessScorer {
         }
 
         try {
-            String json = extractJson(verdict.rawJson());
-            Map<String, Object> result = objectMapper.readValue(json, new TypeReference<>() {});
+            String json = JsonExtractor.extractJson(verdict.rawJson());
+            Map<String, Object> result = objectMapper.readValue(json, new TypeReference<Map<String, Object>>() {});
 
             // 优先使用 judge 返回的分数
             if (result.containsKey("faithfulness_score")) {
@@ -150,17 +151,4 @@ public class FaithfulnessScorer {
         }
     }
 
-    private String extractJson(String raw) {
-        String trimmed = raw.trim();
-        if (trimmed.startsWith("{") || trimmed.startsWith("[")) return trimmed;
-        var matcher = java.util.regex.Pattern.compile("```json\\s*\\n([\\s\\S]*?)\\n\\s*```").matcher(raw);
-        if (matcher.find()) return matcher.group(1).trim();
-        int start = raw.indexOf('{');
-        int end = raw.lastIndexOf('}');
-        if (start >= 0 && end > start) return raw.substring(start, end + 1);
-        int startB = raw.indexOf('[');
-        int endB = raw.lastIndexOf(']');
-        if (startB >= 0 && endB > startB) return raw.substring(startB, endB + 1);
-        return trimmed;
-    }
 }

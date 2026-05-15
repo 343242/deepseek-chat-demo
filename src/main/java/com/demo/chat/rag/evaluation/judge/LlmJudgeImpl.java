@@ -7,9 +7,10 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 
+import com.demo.chat.common.util.JsonExtractor;
+
 import java.util.Collections;
 import java.util.List;
-import java.util.regex.Pattern;
 
 /**
  * LLM-as-Judge 实现
@@ -85,42 +86,11 @@ public class LlmJudgeImpl implements LlmJudge {
         }
 
         try {
-            String json = extractJson(verdict.rawJson());
+            String json = JsonExtractor.extractJson(verdict.rawJson());
             return objectMapper.readValue(json, new TypeReference<>() {});
         } catch (Exception e) {
             log.warn("Failed to parse generated questions: {}", e.getMessage());
             return Collections.emptyList();
         }
-    }
-
-    /**
-     * 多层 JSON 提取策略：
-     * 1. 直接解析 raw JSON
-     * 2. 提取 ```json ... ``` 代码块
-     * 3. 正则提取最外层 { ... } 或 [ ... ]
-     */
-    private String extractJson(String raw) {
-        String trimmed = raw.trim();
-        if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
-            return trimmed;
-        }
-        // 尝试提取 markdown 代码块
-        var matcher = Pattern.compile("```json\\s*\\n([\\s\\S]*?)\\n\\s*```").matcher(raw);
-        if (matcher.find()) {
-            return matcher.group(1).trim();
-        }
-        // 尝试提取 { ... }
-        int startBrace = raw.indexOf('{');
-        int endBrace = raw.lastIndexOf('}');
-        if (startBrace >= 0 && endBrace > startBrace) {
-            return raw.substring(startBrace, endBrace + 1);
-        }
-        // 尝试提取 [ ... ]
-        int startBracket = raw.indexOf('[');
-        int endBracket = raw.lastIndexOf(']');
-        if (startBracket >= 0 && endBracket > startBracket) {
-            return raw.substring(startBracket, endBracket + 1);
-        }
-        return trimmed;
     }
 }

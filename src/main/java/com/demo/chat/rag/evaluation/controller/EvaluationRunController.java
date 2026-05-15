@@ -17,11 +17,14 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import org.springframework.security.access.prepost.PreAuthorize;
+
 /**
  * 评估运行管理 REST API
  */
 @RestController
 @RequestMapping("/api/evaluation/runs")
+@PreAuthorize("hasAuthority('evaluation:manage')")
 public class EvaluationRunController {
 
     private static final Logger log = LoggerFactory.getLogger(EvaluationRunController.class);

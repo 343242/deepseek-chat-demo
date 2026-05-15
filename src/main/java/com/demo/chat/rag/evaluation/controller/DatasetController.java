@@ -14,6 +14,8 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 import java.util.Map;
 
+import org.springframework.security.access.prepost.PreAuthorize;
+
 /**
  * 评估数据集管理 REST API
  * <p>
@@ -22,6 +24,7 @@ import java.util.Map;
  */
 @RestController
 @RequestMapping("/api/evaluation/datasets")
+@PreAuthorize("hasAuthority('evaluation:manage')")
 public class DatasetController {
 
     private static final Logger log = LoggerFactory.getLogger(DatasetController.class);

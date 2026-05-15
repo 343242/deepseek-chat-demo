@@ -1,5 +1,6 @@
 package com.demo.chat.rag.evaluation.metrics.generation;
 
+import com.demo.chat.common.util.JsonExtractor;
 import com.demo.chat.rag.evaluation.judge.LlmJudge;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -89,8 +90,8 @@ public class ContextRelevanceScorer {
         }
 
         try {
-            String json = extractJson(verdict.rawJson());
-            Map<String, Object> result = objectMapper.readValue(json, new TypeReference<>() {});
+            String json = JsonExtractor.extractJson(verdict.rawJson());
+            Map<String, Object> result = objectMapper.readValue(json, new TypeReference<Map<String, Object>>() {});
 
             // 优先使用 judge 返回的 ratio
             if (result.containsKey("useful_chunk_ratio")) {
@@ -112,14 +113,4 @@ public class ContextRelevanceScorer {
         }
     }
 
-    private String extractJson(String raw) {
-        String trimmed = raw.trim();
-        if (trimmed.startsWith("{") || trimmed.startsWith("[")) return trimmed;
-        var matcher = java.util.regex.Pattern.compile("```json\\s*\\n([\\s\\S]*?)\\n\\s*```").matcher(raw);
-        if (matcher.find()) return matcher.group(1).trim();
-        int start = raw.indexOf('{');
-        int end = raw.lastIndexOf('}');
-        if (start >= 0 && end > start) return raw.substring(start, end + 1);
-        return trimmed;
-    }
 }

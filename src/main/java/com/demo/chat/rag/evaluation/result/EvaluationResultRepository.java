@@ -1,6 +1,7 @@
 package com.demo.chat.rag.evaluation.result;
 
 import com.demo.chat.rag.evaluation.runner.EvaluationRun;
+import com.demo.chat.rag.evaluation.runner.EvaluationRunStatus;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -32,7 +33,7 @@ public class EvaluationResultRepository {
             rs.getLong("dataset_id"),
             rs.getString("name"),
             rs.getString("config_snapshot"),
-            rs.getString("status"),
+            EvaluationRunStatus.fromValue(rs.getString("status")),
             rs.getString("generation_model"),
             rs.getString("judge_model"),
             rs.getString("summary"),
@@ -57,7 +58,7 @@ public class EvaluationResultRepository {
                 run.datasetId(),
                 run.name(),
                 run.configSnapshot(),
-                run.status(),
+                run.status().getValue(),
                 run.generationModel(),
                 run.judgeModel());
         return new EvaluationRun(
@@ -79,14 +80,15 @@ public class EvaluationResultRepository {
         jdbc.update("UPDATE evaluation_run SET status = 'running', started_at = NOW() WHERE id = ?", runId);
     }
 
-    public void updateRunStatus(long runId, String status, String summary) {
+    public void updateRunStatus(long runId, EvaluationRunStatus status, String summary) {
+        String statusValue = status.getValue();
         jdbc.update("""
                 UPDATE evaluation_run SET status = ?, summary = ?::jsonb,
                     started_at = COALESCE(started_at, CASE WHEN status = 'pending' THEN NOW() END),
                     completed_at = CASE WHEN ? = 'completed' OR ? = 'failed' THEN NOW() ELSE completed_at END
                 WHERE id = ?
                 """,
-                status, summary, status, status, runId);
+                statusValue, summary, statusValue, statusValue, runId);
     }
 
     public Optional<EvaluationRun> findRunById(long id) {
@@ -104,10 +106,10 @@ public class EvaluationResultRepository {
                 runRowMapper, datasetId);
     }
 
-    public List<EvaluationRun> listRunsByStatus(String status) {
+    public List<EvaluationRun> listRunsByStatus(EvaluationRunStatus status) {
         return jdbc.query(
                 "SELECT * FROM evaluation_run WHERE status = ? ORDER BY created_at DESC",
-                runRowMapper, status);
+                runRowMapper, status.getValue());
     }
 
     public int countRunsByDatasetId(long datasetId) {
@@ -116,9 +118,9 @@ public class EvaluationResultRepository {
         return count != null ? count : 0;
     }
 
-    public int countRunsByStatus(String status) {
+    public int countRunsByStatus(EvaluationRunStatus status) {
         Integer count = jdbc.queryForObject(
-                "SELECT COUNT(*) FROM evaluation_run WHERE status = ?", Integer.class, status);
+                "SELECT COUNT(*) FROM evaluation_run WHERE status = ?", Integer.class, status.getValue());
         return count != null ? count : 0;
     }
 

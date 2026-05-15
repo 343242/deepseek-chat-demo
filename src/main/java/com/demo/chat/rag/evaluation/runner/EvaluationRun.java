@@ -11,7 +11,7 @@ import java.time.OffsetDateTime;
  * @param datasetId        数据集 ID
  * @param name             运行名称
  * @param configSnapshot   配置快照（JSON）
- * @param status           状态（默认 "pending"）
+ * @param status           状态（默认 PENDING）
  * @param generationModel  生成模型
  * @param judgeModel       Judge 模型
  * @param summary          运行摘要（JSON）
@@ -24,7 +24,7 @@ public record EvaluationRun(
         @Nullable Long datasetId,
         @Nullable String name,
         @Nullable String configSnapshot,
-        @Nullable String status,
+        @Nullable EvaluationRunStatus status,
         @Nullable String generationModel,
         @Nullable String judgeModel,
         @Nullable String summary,
@@ -33,6 +33,6 @@ public record EvaluationRun(
         @Nullable OffsetDateTime createdAt
 ) {
     public EvaluationRun {
-        if (status == null) status = "pending";
+        if (status == null) status = EvaluationRunStatus.PENDING;
     }
 }

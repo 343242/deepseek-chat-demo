@@ -65,7 +65,7 @@ public class DatasetRepository {
                 chunkIds,
                 rs.getString("relevant_content"),
                 tags,
-                rs.getString("status"),
+                EvaluationItemStatus.fromValue(rs.getString("status")),
                 rs.getInt("seq")
         );
     };
@@ -141,7 +141,7 @@ public class DatasetRepository {
                 } else {
                     ps.setNull(6, java.sql.Types.ARRAY);
                 }
-                ps.setString(7, item.status());
+                ps.setString(7, item.status().getValue());
                 ps.setInt(8, item.seq());
 
                 try (var rs = ps.executeQuery()) {
@@ -177,7 +177,7 @@ public class DatasetRepository {
                     } else {
                         ps.setNull(6, java.sql.Types.ARRAY);
                     }
-                    ps.setString(7, item.status());
+                    ps.setString(7, item.status().getValue());
                     ps.setInt(8, item.seq());
 
                     try (var rs = ps.executeQuery()) {
@@ -233,7 +233,7 @@ public class DatasetRepository {
                 } else {
                     ps.setNull(5, java.sql.Types.ARRAY);
                 }
-                ps.setString(6, item.status());
+                ps.setString(6, item.status().getValue());
                 ps.setLong(7, item.id());
                 ps.executeUpdate();
             }

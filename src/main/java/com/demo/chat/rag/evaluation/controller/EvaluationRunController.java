@@ -5,6 +5,7 @@ import com.demo.chat.rag.evaluation.dataset.DatasetRepository;
 import com.demo.chat.rag.evaluation.dataset.EvaluationDatasetItem;
 import com.demo.chat.rag.evaluation.result.EvaluationResultRepository;
 import com.demo.chat.rag.evaluation.runner.EvaluationRun;
+import com.demo.chat.rag.evaluation.runner.EvaluationRunStatus;
 import com.demo.chat.rag.evaluation.runner.EvaluationRunner;
 import com.demo.chat.rag.evaluation.runner.EvaluationRunner.EvalConfig;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -112,7 +113,7 @@ public class EvaluationRunController {
         }
 
         // 更新运行状态
-        String status = failCount == 0 ? "completed" : (successCount > 0 ? "completed" : "failed");
+        EvaluationRunStatus status = failCount == 0 ? EvaluationRunStatus.COMPLETED : (successCount > 0 ? EvaluationRunStatus.COMPLETED : EvaluationRunStatus.FAILED);
         Map<String, Object> summary = Map.of(
                 "totalItems", items.size(),
                 "successCount", successCount,

@@ -15,7 +15,7 @@ import java.util.Set;
  * @param relevantChunkIds   相关 chunk ID 集合
  * @param relevantContent    相关内容
  * @param tags               标签
- * @param status             状态（默认 "draft"）
+ * @param status             状态（默认 DRAFT）
  * @param seq                序号
  */
 public record EvaluationDatasetItem(
@@ -26,10 +26,10 @@ public record EvaluationDatasetItem(
         @Nullable Set<String> relevantChunkIds,
         @Nullable String relevantContent,
         @Nullable List<String> tags,
-        @Nullable String status,
+        @Nullable EvaluationItemStatus status,
         int seq
 ) {
     public EvaluationDatasetItem {
-        if (status == null) status = "draft";
+        if (status == null) status = EvaluationItemStatus.DRAFT;
     }
 }

@@ -15,6 +15,10 @@ import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
  * LLM 自动生成评估数据集
@@ -59,6 +63,13 @@ public class DatasetGenerator {
                 null, name, "LLM auto-generated dataset for user " + userId,
                 0, "llm_generated", props.getJudgeModel(), 0, null, null, null);
         dataset = datasetRepo.insertDataset(dataset);
+        final long datasetId = dataset.id();
+        final String datasetName = dataset.name();
+        final String datasetDesc = dataset.description();
+        final String datasetSource = dataset.source();
+        final String datasetJudgeModel = dataset.judgeModel();
+        final var datasetCreatedAt = dataset.createdAt();
+        final var datasetUpdatedAt = dataset.updatedAt();
 
         // 2. 从 vector_store 随机采样 chunk
         List<Map<String, Object>> chunks = sampleChunks(userId, props.getDataset().getSampleSize());
@@ -69,37 +80,59 @@ public class DatasetGenerator {
 
         log.info("Sampled {} chunks for dataset generation", chunks.size());
 
-        // 3. 对每个 chunk 生成问题
+        // 3. 对每个 chunk 并发生成问题（最大并发数从配置读取）
         ChatClient chatClient = chatClientBuilder.build();
-        List<EvaluationDatasetItem> allItems = new ArrayList<>();
-        int seq = 0;
+        int concurrency = props.getRunner().getConcurrency();
+        ExecutorService executor = Executors.newFixedThreadPool(concurrency);
 
-        for (Map<String, Object> chunk : chunks) {
-            String chunkId = String.valueOf(chunk.get("id"));
-            String content = (String) chunk.get("content");
+        try {
+            List<CompletableFuture<List<EvaluationDatasetItem>>> futures = new ArrayList<>();
+            int[] seqCounter = {0};
 
-            List<GeneratedQuestion> questions = generateQuestions(chatClient, content);
-            for (GeneratedQuestion q : questions) {
-                EvaluationDatasetItem item = new EvaluationDatasetItem(
-                        null, dataset.id(), q.question(), q.groundTruthAnswer(),
-                        new HashSet<>(List.of(chunkId)), content,
-                        List.of(q.difficulty(), q.tag()), null, seq++);
-                allItems.add(item);
+            for (Map<String, Object> chunk : chunks) {
+                String chunkId = String.valueOf(chunk.get("id"));
+                String content = (String) chunk.get("content");
+                int seq = seqCounter[0]++;
+
+                futures.add(CompletableFuture.supplyAsync(() -> {
+                    try {
+                        List<GeneratedQuestion> questions = generateQuestions(chatClient, content);
+                        List<EvaluationDatasetItem> items = new ArrayList<>();
+                        for (GeneratedQuestion q : questions) {
+                            items.add(new EvaluationDatasetItem(
+                                    null, datasetId, q.question(), q.groundTruthAnswer(),
+                                    new HashSet<>(List.of(chunkId)), content,
+                                    List.of(q.difficulty(), q.tag()), null, seq));
+                        }
+                        return items;
+                    } catch (Exception e) {
+                        log.error("Failed to generate questions for chunk {}: {}", chunkId, e.getMessage(), e);
+                        return Collections.<EvaluationDatasetItem>emptyList();
+                    }
+                }, executor));
             }
-        }
 
-        // 4. 批量插入
-        if (!allItems.isEmpty()) {
-            allItems = datasetRepo.insertItems(allItems);
-            datasetRepo.updateDatasetItemCount(dataset.id(), allItems.size());
-            dataset = new EvaluationDataset(
-                    dataset.id(), dataset.name(), dataset.description(),
-                    dataset.version(), dataset.source(), dataset.judgeModel(),
-                    allItems.size(), dataset.createdAt(), dataset.updatedAt(), allItems);
-        }
+            List<EvaluationDatasetItem> allItems = futures.stream()
+                    .map(CompletableFuture::join)
+                    .flatMap(List::stream)
+                    .filter(Objects::nonNull)
+                    .toList();
 
-        log.info("Generated dataset '{}' with {} items", name, allItems.size());
-        return dataset;
+            // 4. 批量插入
+            if (!allItems.isEmpty()) {
+                allItems = datasetRepo.insertItems(allItems);
+                datasetRepo.updateDatasetItemCount(datasetId, allItems.size());
+                dataset = new EvaluationDataset(
+                        datasetId, datasetName, datasetDesc,
+                        dataset.version(), datasetSource, datasetJudgeModel,
+                        allItems.size(), datasetCreatedAt, datasetUpdatedAt, allItems);
+            }
+
+            log.info("Generated dataset '{}' with {} items", name, allItems.size());
+            return dataset;
+        } finally {
+            executor.shutdown();
+        }
     }
 
     /**

@@ -27,6 +27,9 @@ public final class JsonExtractor {
      * @return 提取到的 JSON 字符串
      */
     public static String extractJson(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return raw != null ? raw.trim() : "";
+        }
         String trimmed = raw.trim();
         if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
             return trimmed;

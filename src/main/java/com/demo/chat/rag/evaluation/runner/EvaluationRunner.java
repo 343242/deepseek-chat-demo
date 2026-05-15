@@ -23,6 +23,7 @@ import org.springframework.ai.document.Document;
 import org.springframework.ai.rag.preretrieval.query.transformation.QueryTransformer;
 import org.springframework.ai.rag.Query;
 import org.springframework.ai.vectorstore.VectorStore;
+import org.springframework.beans.BeanUtils;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
@@ -192,21 +193,7 @@ public class EvaluationRunner {
 
     private RagRetrievalProperties copyWithOverride(RagRetrievalProperties original, EvalConfig config) {
         RagRetrievalProperties copy = new RagRetrievalProperties();
-        copy.setQueryRewriteEnabled(original.isQueryRewriteEnabled());
-        copy.setHybridRetrievalEnabled(original.isHybridRetrievalEnabled());
-        copy.setFtsConfig(original.getFtsConfig());
-        copy.setVectorTopK(original.getVectorTopK());
-        copy.setBm25TopK(original.getBm25TopK());
-        copy.setRrfK(original.getRrfK());
-        copy.setRerankEnabled(original.isRerankEnabled());
-        copy.setRerankBaseUrl(original.getRerankBaseUrl());
-        copy.setRerankApiKey(original.getRerankApiKey());
-        copy.setRerankModel(original.getRerankModel());
-        copy.setRerankTopN(original.getRerankTopN());
-        copy.setMmrEnabled(original.isMmrEnabled());
-        copy.setMmrLambda(original.getMmrLambda());
-        copy.setMmrTopK(original.getMmrTopK());
-        copy.setSimilarityThreshold(original.getSimilarityThreshold());
+        BeanUtils.copyProperties(original, copy);
 
         if (config.getVectorTopK() != null) copy.setVectorTopK(config.getVectorTopK());
         if (config.getBm25TopK() != null) copy.setBm25TopK(config.getBm25TopK());

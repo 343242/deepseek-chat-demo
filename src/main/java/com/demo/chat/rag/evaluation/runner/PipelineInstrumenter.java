@@ -2,6 +2,8 @@ package com.demo.chat.rag.evaluation.runner;
 
 import com.demo.chat.rag.evaluation.result.StageSnapshot;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -20,6 +22,8 @@ import java.util.Optional;
  * </p>
  */
 public class PipelineInstrumenter {
+
+    private static final Logger log = LoggerFactory.getLogger(PipelineInstrumenter.class);
 
     private final List<StageSnapshot> snapshots = new ArrayList<>();
     private final long startTimeMs;
@@ -103,6 +107,8 @@ public class PipelineInstrumenter {
         try {
             return objectMapper.writeValueAsString(data);
         } catch (Exception e) {
+            log.warn("Failed to serialize stage data for '{}': {}",
+                    data != null ? data.getClass().getSimpleName() : "null", e.getMessage());
             return String.valueOf(data);
         }
     }

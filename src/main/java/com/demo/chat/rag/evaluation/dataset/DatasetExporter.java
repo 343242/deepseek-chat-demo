@@ -1,5 +1,6 @@
 package com.demo.chat.rag.evaluation.dataset;
 
+import com.demo.chat.exception.BusinessException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import org.springframework.stereotype.Component;
@@ -39,7 +40,7 @@ public class DatasetExporter {
             );
             return objectMapper.writeValueAsString(export);
         } catch (Exception e) {
-            throw new RuntimeException("Failed to export dataset", e);
+            throw new BusinessException("Failed to export dataset", e);
         }
     }
 }

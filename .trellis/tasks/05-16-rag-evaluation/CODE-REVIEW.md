@@ -155,15 +155,18 @@ Jackson 反序列化 `Map<String, Object>` 时，Boolean 值是安全的，但�
 
 ## 🟡 P2 Minor（建议改进）
 
-### P2-1: 实体应使用 Lombok 或 MyBatis-Plus 注解对齐项目标准
+### P2-1: 评估实体应优先使用 record，与项目既有风格对齐
 
 **文件**: `EvaluationDataset.java`, `EvaluationDatasetItem.java`, `EvaluationRun.java`, `EvaluationResult.java`
 
 手写了大量 getter/setter（100+ 行样板代码）。
 
-**对比项目标准**: README 确认使用 MyBatis-Plus 3.5.16。项目既有实体（SysUser、SysRole 等）使用 `@TableName` + `@TableId` + Lombok `@Data`。评估模块实体是纯 POJO。
+**对比项目标准**: 项目大量使用 Java record（30+ 处），包括 DTO、Context、Properties、Response 等。MyBatis 3.5.10+ 已支持 record 的构造器 auto-mapping，MyBatis-Plus 3.5.16 底层继承此支持。
 
-**注意**: 不推荐 record——MyBatis-Plus 需要 setter 进行结果映射。应使用 Lombok `@Data` + MyBatis-Plus 注解，或如果坚持 JdbcTemplate（见 P0-5），至少用 Lombok 消除样板代码。
+**建议**:
+- 评估模块的实体配合 JdbcTemplate（见 P0-5），不需要 MyBatis-Plus 的 setter 映射，用 record 完全可行
+- 如果后续迁移到 MyBatis-Plus BaseMapper 且需要 insert/update，再改为 Lombok `@Data` + `@TableName`
+- `EvaluationResult`（只写一次、不更新）特别适合 record
 
 ### P2-2: V11 migration 缺少注释说明与设计文档关联
 

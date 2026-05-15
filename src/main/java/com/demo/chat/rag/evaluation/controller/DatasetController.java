@@ -56,9 +56,9 @@ public class DatasetController {
 
         EvaluationDataset dataset = datasetGenerator.generate(name, userId);
         return ResponseEntity.ok(Map.of(
-                "id", dataset.getId(),
-                "name", dataset.getName(),
-                "itemCount", dataset.getItemCount(),
+                "id", dataset.id(),
+                "name", dataset.name(),
+                "itemCount", dataset.itemCount(),
                 "status", "generated"
         ));
     }
@@ -86,24 +86,16 @@ public class DatasetController {
     @GetMapping("/{id}")
     public ResponseEntity<?> getDataset(@PathVariable long id) {
         return datasetRepo.findDatasetById(id)
-                .<ResponseEntity<?>>map(dataset -> {
-                    var items = datasetRepo.listItemsByDatasetId(id);
-                    dataset.setItems(items);
-                    return ResponseEntity.ok(dataset);
+                .<ResponseEntity<?>>map(ds -> {
+                    ds = new EvaluationDataset(
+                            ds.id(), ds.name(), ds.description(), ds.version(),
+                            ds.source(), ds.judgeModel(), ds.itemCount(),
+                            ds.createdAt(), ds.updatedAt(),
+                            datasetRepo.listItemsByDatasetId(id));
+                    return ResponseEntity.ok(ds);
                 })
                 .orElse(ResponseEntity.status(404)
                         .body(Map.of("error", "Dataset not found: " + id)));
-    }
-
-    /**
-     * 导出为 JSON（人工审核用）
-     */
-    @GetMapping(value = "/{id}/export", produces = MediaType.APPLICATION_JSON_VALUE)
-    public ResponseEntity<String> exportDataset(@PathVariable long id) {
-        String json = datasetExporter.exportAsJson(id);
-        return ResponseEntity.ok()
-                .contentType(MediaType.APPLICATION_JSON)
-                .body(json);
     }
 
     /**
@@ -121,14 +113,30 @@ public class DatasetController {
         }
 
         EvaluationDatasetItem item = existing.get();
-        if (update.getQuestion() != null) item.setQuestion(update.getQuestion());
-        if (update.getGroundTruthAnswer() != null) item.setGroundTruthAnswer(update.getGroundTruthAnswer());
-        if (update.getRelevantChunkIds() != null) item.setRelevantChunkIds(update.getRelevantChunkIds());
-        if (update.getRelevantContent() != null) item.setRelevantContent(update.getRelevantContent());
-        if (update.getTags() != null) item.setTags(update.getTags());
-        if (update.getStatus() != null) item.setStatus(update.getStatus());
+        EvaluationDatasetItem updated = new EvaluationDatasetItem(
+                item.id(),
+                item.datasetId(),
+                update.question() != null ? update.question() : item.question(),
+                update.groundTruthAnswer() != null ? update.groundTruthAnswer() : item.groundTruthAnswer(),
+                update.relevantChunkIds() != null ? update.relevantChunkIds() : item.relevantChunkIds(),
+                update.relevantContent() != null ? update.relevantContent() : item.relevantContent(),
+                update.tags() != null ? update.tags() : item.tags(),
+                update.status() != null ? update.status() : item.status(),
+                item.seq()
+        );
 
-        datasetRepo.updateItem(item);
+        datasetRepo.updateItem(updated);
         return ResponseEntity.ok(Map.of("status", "updated"));
+    }
+
+    /**
+     * 导出为 JSON（人工审核用）
+     */
+    @GetMapping(value = "/{id}/export", produces = MediaType.APPLICATION_JSON_VALUE)
+    public ResponseEntity<String> exportDataset(@PathVariable long id) {
+        String json = datasetExporter.exportAsJson(id);
+        return ResponseEntity.ok()
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(json);
     }
 }

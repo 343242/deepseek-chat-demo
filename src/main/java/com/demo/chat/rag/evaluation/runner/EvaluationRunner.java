@@ -16,7 +16,6 @@ import com.demo.chat.rag.retrieval.HybridDocumentRetriever;
 import com.demo.chat.rag.retrieval.MmrDocumentPostProcessor;
 import com.demo.chat.rag.retrieval.QueryNormalizer;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
@@ -24,14 +23,10 @@ import org.springframework.ai.document.Document;
 import org.springframework.ai.rag.preretrieval.query.transformation.QueryTransformer;
 import org.springframework.ai.rag.Query;
 import org.springframework.ai.vectorstore.VectorStore;
-import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
-import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 
 /**
@@ -87,31 +82,30 @@ public class EvaluationRunner {
 
     /**
      * 执行单条评估
-     *
-     * @param item         测试数据项
-     * @param config       评估配置（可覆盖 Pipeline 参数）
-     * @return 评估结果
      */
     public EvaluationResult evaluate(EvaluationDatasetItem item, EvalConfig config) {
         long start = System.currentTimeMillis();
-        EvaluationResult result = new EvaluationResult();
-        result.setItemId(item.getId());
-        result.setItemQuestionSnapshot(item.getQuestion());
-        result.setItemGroundTruthSnapshot(item.getGroundTruthAnswer());
-        result.setItemRelevantChunkIdsSnapshot(item.getRelevantChunkIds());
+
+        // 收集变量，最后构建 record
+        String queryRewritten = null;
+        List<String> retrievedDocIds = List.of();
+        RetrievalMetrics retrievalMetrics = null;
+        String generatedAnswer = null;
+        String generationMetrics = null;
+        String error = null;
 
         PipelineInstrumenter inst = new PipelineInstrumenter(objectMapper);
 
         try {
             // 1. 查询规范化
-            String normalized = queryNormalizer.normalize(item.getQuestion());
+            String normalized = queryNormalizer.normalize(item.question());
             inst.capture("after_normalize", normalized);
 
             // 2. 查询改写（可选）
             String queryText = normalized;
             if (config.isQueryRewriteEnabled()) {
                 queryText = rewriteQuery(normalized);
-                result.setQueryRewritten(queryText);
+                queryRewritten = queryText;
             }
             inst.capture("after_rewrite", queryText);
 
@@ -144,48 +138,40 @@ public class EvaluationRunner {
                     ? parentProcessor.process(query, afterMmr) : afterMmr;
             inst.capture("after_parent_child", extractedDocIds(afterParent));
 
-            // 7. 设置检索结果
-            result.setRetrievedDocIds(extractedDocIds(afterParent));
+            // 7. 检索结果
+            retrievedDocIds = extractedDocIds(afterParent);
 
             // 8. 计算检索指标
-            Set<String> relevantIds = item.getRelevantChunkIds() != null
-                    ? item.getRelevantChunkIds() : Set.of();
+            Set<String> relevantIds = item.relevantChunkIds() != null
+                    ? item.relevantChunkIds() : Set.of();
             int k = config.getTopK() != null ? config.getTopK() : evalProps.getRunner().getDefaultK();
-            RetrievalMetrics metrics = metricsCalculator.calculate(
-                    extractedDocIds(retrieved), // 用原始检索结果算指标
-                    relevantIds,
-                    k);
-            result.setRetrievalMetrics(metrics);
+            retrievalMetrics = metricsCalculator.calculate(
+                    extractedDocIds(retrieved), relevantIds, k);
 
             // 9. LLM 生成 + 生成指标
             if (config.isGenerationEnabled()) {
-                String answer = generateAnswer(queryText, afterParent);
-                result.setGeneratedAnswer(answer);
-                inst.capture("after_generation", answer);
+                generatedAnswer = generateAnswer(queryText, afterParent);
+                inst.capture("after_generation", generatedAnswer);
 
-                // 计算生成侧指标
                 GenerationMetrics genMetrics = generationMetricsCalculator.calculate(
-                        item.getQuestion(), answer,
-                        item.getGroundTruthAnswer(), afterParent);
-                result.setGenerationMetrics(objectMapper.writeValueAsString(genMetrics));
+                        item.question(), generatedAnswer,
+                        item.groundTruthAnswer(), afterParent);
+                generationMetrics = objectMapper.writeValueAsString(genMetrics);
             }
 
-            // 10. 保存快照
-            result.setStageSnapshots(inst.getSnapshots());
-
         } catch (Exception e) {
-            log.error("Evaluation failed for item {}: {}", item.getId(), e.getMessage(), e);
-            result.setError(e.getMessage());
-            result.setStageSnapshots(inst.getSnapshots());
+            log.error("Evaluation failed for item {}: {}", item.id(), e.getMessage(), e);
+            error = e.getMessage();
         }
 
-        result.setLatencyMs((int) (System.currentTimeMillis() - start));
-        return result;
+        return new EvaluationResult(
+                null, 0L, item.id() != null ? item.id() : 0L,
+                item.question(), item.groundTruthAnswer(), item.relevantChunkIds(),
+                queryRewritten, retrievedDocIds, generatedAnswer,
+                inst.getSnapshots(), retrievalMetrics, generationMetrics,
+                error, (int) (System.currentTimeMillis() - start));
     }
 
-    /**
-     * 创建 Reranker（零侵入：从 properties 读参数后 new 创建）
-     */
     private BailianRerankPostProcessor createReranker() {
         return new BailianRerankPostProcessor(
                 properties.getRerankBaseUrl(),
@@ -195,12 +181,6 @@ public class EvaluationRunner {
         );
     }
 
-    /**
-     * 创建评估专用的 Retriever（可覆盖运行时参数）
-     * <p>
-     * 零侵入策略：不修改 HybridDocumentRetriever，创建新实例注入覆盖参数。
-     * </p>
-     */
     private HybridDocumentRetriever createEvalRetriever(EvalConfig config) {
         RagRetrievalProperties evalProps = copyWithOverride(properties, config);
         Long userId = config.getTestUserId() != null
@@ -210,12 +190,8 @@ public class EvaluationRunner {
                 queryNormalizer, userId, null, objectMapper);
     }
 
-    /**
-     * 复制 Properties 并覆盖评估配置
-     */
     private RagRetrievalProperties copyWithOverride(RagRetrievalProperties original, EvalConfig config) {
         RagRetrievalProperties copy = new RagRetrievalProperties();
-        // 复制原始配置
         copy.setQueryRewriteEnabled(original.isQueryRewriteEnabled());
         copy.setHybridRetrievalEnabled(original.isHybridRetrievalEnabled());
         copy.setFtsConfig(original.getFtsConfig());
@@ -232,7 +208,6 @@ public class EvaluationRunner {
         copy.setMmrTopK(original.getMmrTopK());
         copy.setSimilarityThreshold(original.getSimilarityThreshold());
 
-        // 应用覆盖
         if (config.getVectorTopK() != null) copy.setVectorTopK(config.getVectorTopK());
         if (config.getBm25TopK() != null) copy.setBm25TopK(config.getBm25TopK());
         if (config.getRrfK() != null) copy.setRrfK(config.getRrfK());
@@ -240,9 +215,6 @@ public class EvaluationRunner {
         return copy;
     }
 
-    /**
-     * 查询改写
-     */
     private String rewriteQuery(String queryText) {
         try {
             Query originalQuery = new Query(queryText);
@@ -256,9 +228,6 @@ public class EvaluationRunner {
         return queryText;
     }
 
-    /**
-     * LLM 生成回答
-     */
     private String generateAnswer(String queryText, List<Document> contextDocs) {
         StringBuilder contextBuilder = new StringBuilder();
         for (int i = 0; i < contextDocs.size(); i++) {
@@ -283,14 +252,10 @@ public class EvaluationRunner {
                 .content();
     }
 
-    /**
-     * 从文档列表提取 ID 列表
-     */
     private List<String> extractedDocIds(List<Document> docs) {
         if (docs == null) return List.of();
         return docs.stream()
                 .map(doc -> {
-                    // Document ID 可能是 UUID 字符串
                     Object id = doc.getId();
                     return id != null ? String.valueOf(id) : "";
                 })
@@ -312,8 +277,6 @@ public class EvaluationRunner {
         private boolean generationEnabled = true;
         private Integer topK;
         private Long testUserId;
-
-        // ======================== Getters & Setters ========================
 
         public Integer getVectorTopK() { return vectorTopK; }
         public void setVectorTopK(Integer vectorTopK) { this.vectorTopK = vectorTopK; }

@@ -2,9 +2,7 @@ package com.demo.chat.rag.evaluation.controller;
 
 import com.demo.chat.rag.evaluation.config.EvaluationProperties;
 import com.demo.chat.rag.evaluation.dataset.DatasetRepository;
-import com.demo.chat.rag.evaluation.dataset.EvaluationDataset;
 import com.demo.chat.rag.evaluation.dataset.EvaluationDatasetItem;
-import com.demo.chat.rag.evaluation.result.EvaluationResult;
 import com.demo.chat.rag.evaluation.result.EvaluationResultRepository;
 import com.demo.chat.rag.evaluation.runner.EvaluationRun;
 import com.demo.chat.rag.evaluation.runner.EvaluationRunner;
@@ -65,22 +63,21 @@ public class EvaluationRunController {
                     .body(Map.of("error", "Dataset not found: " + datasetId));
         }
 
-        // 创建运行记录
-        EvaluationRun run = new EvaluationRun();
-        run.setDatasetId(datasetId);
-        run.setName(name);
-        run.setGenerationModel(evalProps.getGenerationModel());
-        run.setJudgeModel(evalProps.getJudgeModel());
-
-        // 构建配置快照
+        // 创建运行记录（record 构造器）
+        String configSnapshot;
         try {
-            run.setConfigSnapshot(objectMapper.writeValueAsString(configOverride != null ? configOverride : Map.of()));
+            configSnapshot = objectMapper.writeValueAsString(configOverride != null ? configOverride : Map.of());
         } catch (Exception e) {
-            run.setConfigSnapshot("{}");
+            configSnapshot = "{}";
         }
 
+        EvaluationRun run = new EvaluationRun(
+                null, datasetId, name, configSnapshot, null,
+                evalProps.getGenerationModel(), evalProps.getJudgeModel(),
+                null, null, null, null);
+
         run = resultRepo.insertRun(run);
-        resultRepo.markRunStarted(run.getId());
+        resultRepo.markRunStarted(run.id());
 
         // 构建评估配置
         EvalConfig config = buildEvalConfig(configOverride);
@@ -95,107 +92,94 @@ public class EvaluationRunController {
 
         for (EvaluationDatasetItem item : items) {
             try {
-                EvaluationResult result = evaluationRunner.evaluate(item, config);
-                result.setRunId(run.getId());
-                resultRepo.insertResult(result);
-                if (result.getError() == null) {
-                    successCount++;
-                } else {
-                    failCount++;
-                }
-                totalLatency += result.getLatencyMs();
+                var result = evaluationRunner.evaluate(item, config);
+                resultRepo.insertResult(new com.demo.chat.rag.evaluation.result.EvaluationResult(
+                        null, run.id(), result.itemId(), result.itemQuestionSnapshot(),
+                        result.itemGroundTruthSnapshot(), result.itemRelevantChunkIdsSnapshot(),
+                        result.queryRewritten(), result.retrievedDocIds(),
+                        result.generatedAnswer(), result.stageSnapshots(),
+                        result.retrievalMetrics(), result.generationMetrics(),
+                        result.error(), result.latencyMs()));
+                successCount++;
+                totalLatency += result.latencyMs();
             } catch (Exception e) {
-                log.error("Failed to evaluate item {}: {}", item.getId(), e.getMessage(), e);
+                log.error("Failed to evaluate item {}: {}", item.id(), e.getMessage(), e);
                 failCount++;
             }
         }
 
-        // 构建汇总
-        Map<String, Object> summary = new HashMap<>();
-        summary.put("totalItems", items.size());
-        summary.put("successItems", successCount);
-        summary.put("failedItems", failCount);
-        summary.put("avgLatencyMs", items.isEmpty() ? 0 : totalLatency / items.size());
-
+        // 更新运行状态
+        String status = failCount == 0 ? "completed" : (successCount > 0 ? "completed" : "failed");
+        Map<String, Object> summary = Map.of(
+                "totalItems", items.size(),
+                "successCount", successCount,
+                "failCount", failCount,
+                "avgLatencyMs", successCount > 0 ? totalLatency / successCount : 0
+        );
         try {
-            String summaryJson = objectMapper.writeValueAsString(summary);
-            resultRepo.updateRunStatus(run.getId(), "completed", summaryJson);
+            resultRepo.updateRunStatus(run.id(), status, objectMapper.writeValueAsString(summary));
         } catch (Exception e) {
-            resultRepo.updateRunStatus(run.getId(), "completed", "{}");
+            resultRepo.updateRunStatus(run.id(), status, "{}");
         }
 
         return ResponseEntity.ok(Map.of(
-                "runId", run.getId(),
-                "name", name,
-                "status", "completed",
+                "runId", run.id(),
+                "status", status,
                 "summary", summary
         ));
     }
 
     /**
-     * 列出运行（分页+过滤）
-     */
-    @GetMapping
-    public ResponseEntity<Map<String, Object>> listRuns(
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int size,
-            @RequestParam(required = false) String status) {
-        List<EvaluationRun> runs = resultRepo.listRuns(page, size, status);
-        int total = resultRepo.countRuns(status);
-        return ResponseEntity.ok(Map.of(
-                "runs", runs,
-                "total", total,
-                "page", page,
-                "size", size
-        ));
-    }
-
-    /**
-     * 运行详情 + 聚合指标
+     * 获取运行详情
      */
     @GetMapping("/{id}")
     public ResponseEntity<?> getRun(@PathVariable long id) {
         return resultRepo.findRunById(id)
-                .<ResponseEntity<?>>map(run -> ResponseEntity.ok(Map.of(
-                        "run", run,
-                        "resultCount", resultRepo.countResultsByRunId(id)
-                )))
+                .<ResponseEntity<?>>map(ResponseEntity::ok)
                 .orElse(ResponseEntity.status(404)
                         .body(Map.of("error", "Run not found: " + id)));
     }
 
     /**
-     * 逐条结果（分页）
+     * 列出运行（按数据集）
      */
-    @GetMapping("/{id}/results")
-    public ResponseEntity<Map<String, Object>> getResults(
-            @PathVariable long id,
-            @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "50") int size) {
-        List<Map<String, Object>> results = resultRepo.listResultsByRunId(id, page, size);
-        int total = resultRepo.countResultsByRunId(id);
-        return ResponseEntity.ok(Map.of(
-                "results", results,
-                "total", total,
-                "page", page,
-                "size", size
-        ));
+    @GetMapping(params = "datasetId")
+    public ResponseEntity<Map<String, Object>> listRuns(@RequestParam long datasetId) {
+        List<EvaluationRun> runs = resultRepo.listRunsByDatasetId(datasetId);
+        return ResponseEntity.ok(Map.of("runs", runs));
     }
 
     /**
-     * 多次运行对比
+     * 获取运行结果
      */
-    @GetMapping("/compare")
-    public ResponseEntity<?> compareRuns(@RequestParam String ids) {
-        String[] idArray = ids.split(",");
+    @GetMapping("/{runId}/results")
+    public ResponseEntity<Map<String, Object>> listResults(
+            @PathVariable long runId,
+            @RequestParam(defaultValue = "0") int page,
+            @RequestParam(defaultValue = "50") int size) {
+        List<Map<String, Object>> results = resultRepo.listResultsByRunId(runId, page, size);
+        int total = resultRepo.countResultsByRunId(runId);
+        return ResponseEntity.ok(Map.of("results", results, "total", total));
+    }
+
+    /**
+     * 对比多次运行
+     */
+    @PostMapping("/compare")
+    public ResponseEntity<Map<String, Object>> compareRuns(@RequestBody Map<String, Object> request) {
+        @SuppressWarnings("unchecked")
+        List<Number> runIds = (List<Number>) request.get("runIds");
+        if (runIds == null || runIds.isEmpty()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "runIds is required"));
+        }
+
         Map<String, Object> comparison = new HashMap<>();
-        for (String idStr : idArray) {
-            long runId = Long.parseLong(idStr.trim());
-            var run = resultRepo.findRunById(runId);
+        for (Number runId : runIds) {
+            var run = resultRepo.findRunById(runId.longValue());
             if (run.isPresent()) {
-                comparison.put(run.get().getName(), Map.of(
+                comparison.put(run.get().name(), Map.of(
                         "runId", runId,
-                        "summary", run.get().getSummary()
+                        "summary", run.get().summary()
                 ));
             }
         }

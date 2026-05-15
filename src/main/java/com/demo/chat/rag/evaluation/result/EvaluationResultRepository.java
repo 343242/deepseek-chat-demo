@@ -27,21 +27,19 @@ public class EvaluationResultRepository {
     private final JdbcTemplate jdbc;
     private final ObjectMapper objectMapper;
 
-    private final RowMapper<EvaluationRun> runRowMapper = (rs, rowNum) -> {
-        EvaluationRun run = new EvaluationRun();
-        run.setId(rs.getLong("id"));
-        run.setDatasetId(rs.getLong("dataset_id"));
-        run.setName(rs.getString("name"));
-        run.setConfigSnapshot(rs.getString("config_snapshot"));
-        run.setStatus(rs.getString("status"));
-        run.setGenerationModel(rs.getString("generation_model"));
-        run.setJudgeModel(rs.getString("judge_model"));
-        run.setSummary(rs.getString("summary"));
-        run.setStartedAt(rs.getObject("started_at", OffsetDateTime.class));
-        run.setCompletedAt(rs.getObject("completed_at", OffsetDateTime.class));
-        run.setCreatedAt(rs.getObject("created_at", OffsetDateTime.class));
-        return run;
-    };
+    private final RowMapper<EvaluationRun> runRowMapper = (rs, rowNum) -> new EvaluationRun(
+            rs.getLong("id"),
+            rs.getLong("dataset_id"),
+            rs.getString("name"),
+            rs.getString("config_snapshot"),
+            rs.getString("status"),
+            rs.getString("generation_model"),
+            rs.getString("judge_model"),
+            rs.getString("summary"),
+            rs.getObject("started_at", OffsetDateTime.class),
+            rs.getObject("completed_at", OffsetDateTime.class),
+            rs.getObject("created_at", OffsetDateTime.class)
+    );
 
     public EvaluationResultRepository(JdbcTemplate jdbc, ObjectMapper objectMapper) {
         this.jdbc = jdbc;
@@ -56,28 +54,39 @@ public class EvaluationResultRepository {
                 VALUES (?, ?, ?::jsonb, ?, ?, ?)
                 RETURNING id, created_at
                 """,
-                run.getDatasetId(),
-                run.getName(),
-                run.getConfigSnapshot(),
-                run.getStatus(),
-                run.getGenerationModel(),
-                run.getJudgeModel());
-        run.setId(((Number) result.get("id")).longValue());
-        run.setCreatedAt((OffsetDateTime) result.get("created_at"));
-        return run;
+                run.datasetId(),
+                run.name(),
+                run.configSnapshot(),
+                run.status(),
+                run.generationModel(),
+                run.judgeModel());
+        return new EvaluationRun(
+                ((Number) result.get("id")).longValue(),
+                run.datasetId(),
+                run.name(),
+                run.configSnapshot(),
+                run.status(),
+                run.generationModel(),
+                run.judgeModel(),
+                run.summary(),
+                run.startedAt(),
+                run.completedAt(),
+                (OffsetDateTime) result.get("created_at")
+        );
+    }
+
+    public void markRunStarted(long runId) {
+        jdbc.update("UPDATE evaluation_run SET status = 'running', started_at = NOW() WHERE id = ?", runId);
     }
 
     public void updateRunStatus(long runId, String status, String summary) {
         jdbc.update("""
                 UPDATE evaluation_run SET status = ?, summary = ?::jsonb,
                     started_at = COALESCE(started_at, CASE WHEN status = 'pending' THEN NOW() END),
-                    completed_at = CASE WHEN ? IN ('completed', 'failed') THEN NOW() ELSE completed_at END
+                    completed_at = CASE WHEN ? = 'completed' OR ? = 'failed' THEN NOW() ELSE completed_at END
                 WHERE id = ?
-                """, status, summary, status, runId);
-    }
-
-    public void markRunStarted(long runId) {
-        jdbc.update("UPDATE evaluation_run SET status = 'running', started_at = NOW() WHERE id = ?", runId);
+                """,
+                status, summary, status, status, runId);
     }
 
     public Optional<EvaluationRun> findRunById(long id) {
@@ -89,23 +98,31 @@ public class EvaluationResultRepository {
         }
     }
 
-    public List<EvaluationRun> listRuns(int page, int size, String status) {
-        if (status != null && !status.isBlank()) {
-            return jdbc.query(
-                    "SELECT * FROM evaluation_run WHERE status = ? ORDER BY created_at DESC LIMIT ? OFFSET ?",
-                    runRowMapper, status, size, page * size);
-        }
+    public List<EvaluationRun> listRunsByDatasetId(long datasetId) {
         return jdbc.query(
-                "SELECT * FROM evaluation_run ORDER BY created_at DESC LIMIT ? OFFSET ?",
-                runRowMapper, size, page * size);
+                "SELECT * FROM evaluation_run WHERE dataset_id = ? ORDER BY created_at DESC",
+                runRowMapper, datasetId);
     }
 
-    public int countRuns(String status) {
-        if (status != null && !status.isBlank()) {
-            Integer count = jdbc.queryForObject(
-                    "SELECT COUNT(*) FROM evaluation_run WHERE status = ?", Integer.class, status);
-            return count != null ? count : 0;
-        }
+    public List<EvaluationRun> listRunsByStatus(String status) {
+        return jdbc.query(
+                "SELECT * FROM evaluation_run WHERE status = ? ORDER BY created_at DESC",
+                runRowMapper, status);
+    }
+
+    public int countRunsByDatasetId(long datasetId) {
+        Integer count = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM evaluation_run WHERE dataset_id = ?", Integer.class, datasetId);
+        return count != null ? count : 0;
+    }
+
+    public int countRunsByStatus(String status) {
+        Integer count = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM evaluation_run WHERE status = ?", Integer.class, status);
+        return count != null ? count : 0;
+    }
+
+    public int countRuns() {
         Integer count = jdbc.queryForObject("SELECT COUNT(*) FROM evaluation_run", Integer.class);
         return count != null ? count : 0;
     }
@@ -114,9 +131,9 @@ public class EvaluationResultRepository {
 
     public void insertResult(EvaluationResult result) {
         try {
-            String stageSnapshotsJson = objectMapper.writeValueAsString(result.getStageSnapshots());
-            String retrievalMetricsJson = result.getRetrievalMetrics() != null
-                    ? objectMapper.writeValueAsString(result.getRetrievalMetrics()) : null;
+            String stageSnapshotsJson = objectMapper.writeValueAsString(result.stageSnapshots());
+            String retrievalMetricsJson = result.retrievalMetrics() != null
+                    ? objectMapper.writeValueAsString(result.retrievalMetrics()) : null;
 
             jdbc.execute((Connection conn) -> {
                 try (PreparedStatement ps = conn.prepareStatement("""
@@ -128,31 +145,31 @@ public class EvaluationResultRepository {
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?::jsonb, ?, ?)
                         """)) {
 
-                    ps.setLong(1, result.getRunId());
-                    ps.setLong(2, result.getItemId());
-                    ps.setString(3, result.getItemQuestionSnapshot());
-                    ps.setString(4, result.getItemGroundTruthSnapshot());
+                    ps.setLong(1, result.runId());
+                    ps.setLong(2, result.itemId());
+                    ps.setString(3, result.itemQuestionSnapshot());
+                    ps.setString(4, result.itemGroundTruthSnapshot());
 
-                    if (result.getItemRelevantChunkIdsSnapshot() != null && !result.getItemRelevantChunkIdsSnapshot().isEmpty()) {
-                        ps.setArray(5, conn.createArrayOf("TEXT", result.getItemRelevantChunkIdsSnapshot().toArray()));
+                    if (result.itemRelevantChunkIdsSnapshot() != null && !result.itemRelevantChunkIdsSnapshot().isEmpty()) {
+                        ps.setArray(5, conn.createArrayOf("TEXT", result.itemRelevantChunkIdsSnapshot().toArray()));
                     } else {
                         ps.setNull(5, java.sql.Types.ARRAY);
                     }
 
-                    ps.setString(6, result.getQueryRewritten());
+                    ps.setString(6, result.queryRewritten());
 
-                    if (result.getRetrievedDocIds() != null && !result.getRetrievedDocIds().isEmpty()) {
-                        ps.setArray(7, conn.createArrayOf("TEXT", result.getRetrievedDocIds().toArray()));
+                    if (result.retrievedDocIds() != null && !result.retrievedDocIds().isEmpty()) {
+                        ps.setArray(7, conn.createArrayOf("TEXT", result.retrievedDocIds().toArray()));
                     } else {
                         ps.setNull(7, java.sql.Types.ARRAY);
                     }
 
-                    ps.setString(8, result.getGeneratedAnswer());
+                    ps.setString(8, result.generatedAnswer());
                     ps.setString(9, stageSnapshotsJson);
                     ps.setString(10, retrievalMetricsJson);
-                    ps.setString(11, result.getGenerationMetrics());
-                    ps.setString(12, result.getError());
-                    ps.setInt(13, result.getLatencyMs());
+                    ps.setString(11, result.generationMetrics());
+                    ps.setString(12, result.error());
+                    ps.setInt(13, result.latencyMs());
                     ps.executeUpdate();
                 }
                 return null;

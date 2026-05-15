@@ -1,7 +1,7 @@
 package com.demo.chat.rag.evaluation.dataset;
 
+import com.demo.chat.common.util.JsonExtractor;
 import com.demo.chat.rag.evaluation.config.EvaluationProperties;
-import com.demo.chat.rag.evaluation.judge.LlmJudge;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -10,7 +10,6 @@ import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
-import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
@@ -50,17 +49,15 @@ public class DatasetGenerator {
     /**
      * 生成数据集
      *
-     * @param name     数据集名称
-     * @param userId   采样用户 ID
+     * @param name   数据集名称
+     * @param userId 采样用户 ID
      * @return 创建的数据集（含数据项）
      */
     public EvaluationDataset generate(String name, Long userId) {
         // 1. 创建数据集记录
-        EvaluationDataset dataset = new EvaluationDataset();
-        dataset.setName(name);
-        dataset.setDescription("LLM auto-generated dataset for user " + userId);
-        dataset.setSource("llm_generated");
-        dataset.setJudgeModel(props.getJudgeModel());
+        EvaluationDataset dataset = new EvaluationDataset(
+                null, name, "LLM auto-generated dataset for user " + userId,
+                0, "llm_generated", props.getJudgeModel(), 0, null, null, null);
         dataset = datasetRepo.insertDataset(dataset);
 
         // 2. 从 vector_store 随机采样 chunk
@@ -83,28 +80,25 @@ public class DatasetGenerator {
 
             List<GeneratedQuestion> questions = generateQuestions(chatClient, content);
             for (GeneratedQuestion q : questions) {
-                EvaluationDatasetItem item = new EvaluationDatasetItem();
-                item.setDatasetId(dataset.getId());
-                item.setQuestion(q.question());
-                item.setGroundTruthAnswer(q.groundTruthAnswer());
-                item.setRelevantChunkIds(new HashSet<>(List.of(chunkId)));
-                item.setRelevantContent(content);
-                item.setTags(List.of(q.difficulty(), q.tag()));
-                item.setStatus("draft");
-                item.setSeq(seq++);
+                EvaluationDatasetItem item = new EvaluationDatasetItem(
+                        null, dataset.id(), q.question(), q.groundTruthAnswer(),
+                        new HashSet<>(List.of(chunkId)), content,
+                        List.of(q.difficulty(), q.tag()), null, seq++);
                 allItems.add(item);
             }
         }
 
         // 4. 批量插入
         if (!allItems.isEmpty()) {
-            datasetRepo.insertItems(allItems);
-            datasetRepo.updateDatasetItemCount(dataset.getId(), allItems.size());
-            dataset.setItemCount(allItems.size());
+            allItems = datasetRepo.insertItems(allItems);
+            datasetRepo.updateDatasetItemCount(dataset.id(), allItems.size());
+            dataset = new EvaluationDataset(
+                    dataset.id(), dataset.name(), dataset.description(),
+                    dataset.version(), dataset.source(), dataset.judgeModel(),
+                    allItems.size(), dataset.createdAt(), dataset.updatedAt(), allItems);
         }
 
         log.info("Generated dataset '{}' with {} items", name, allItems.size());
-        dataset.setItems(allItems);
         return dataset;
     }
 
@@ -155,32 +149,12 @@ public class DatasetGenerator {
             if (response == null || response.isBlank()) {
                 return Collections.emptyList();
             }
-            String json = extractJson(response);
+            String json = JsonExtractor.extractJson(response);
             return objectMapper.readValue(json, new TypeReference<>() {});
         } catch (Exception e) {
             log.warn("Failed to generate questions for chunk: {}", e.getMessage());
             return Collections.emptyList();
         }
-    }
-
-    /**
-     * 提取 JSON（复用 LlmJudgeImpl 的三层容错逻辑）
-     */
-    private String extractJson(String raw) {
-        String trimmed = raw.trim();
-        if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
-            return trimmed;
-        }
-        var matcher = java.util.regex.Pattern.compile("```json\\s*\\n([\\s\\S]*?)\\n\\s*```").matcher(raw);
-        if (matcher.find()) {
-            return matcher.group(1).trim();
-        }
-        int start = raw.indexOf('[');
-        int end = raw.lastIndexOf(']');
-        if (start >= 0 && end > start) {
-            return raw.substring(start, end + 1);
-        }
-        return trimmed;
     }
 
     /**

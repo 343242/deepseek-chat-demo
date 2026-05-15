@@ -169,6 +169,28 @@
             </exclusions>
         </dependency>
 
+        <!-- Apache Fesod (EasyExcel 孵化版) — 流式读取 XLSX -->
+        <dependency>
+            <groupId>org.apache.fesod</groupId>
+            <artifactId>fesod-sheet</artifactId>
+            <version>2.0.1-incubating</version>
+            <exclusions>
+                <!-- 项目已通过 Tika 传递引入 POI 5.5.1，排除避免版本冲突 -->
+                <exclusion>
+                    <groupId>org.apache.poi</groupId>
+                    <artifactId>poi</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>org.apache.poi</groupId>
+                    <artifactId>poi-ooxml</artifactId>
+                </exclusion>
+                <exclusion>
+                    <groupId>org.apache.poi</groupId>
+                    <artifactId>poi-ooxml-full</artifactId>
+                </exclusion>
+            </exclusions>
+        </dependency>
+
         <!-- Spring AI Tika Document Reader (universal fallback parser) -->
         <dependency>
             <groupId>org.springframework.ai</groupId>

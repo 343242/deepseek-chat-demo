@@ -2,8 +2,8 @@
   "id": "05-16-rag-evaluation",
   "name": "05-16-rag-evaluation",
   "title": "RAG 评估系统",
-  "description": "建立数据驱动的 RAG 评估体系：检索侧 Recall@K/Precision@K/MRR/NDCG，生成侧 Faithfulness/Answer Relevance/Context Relevance",
-  "status": "in_progress",
+  "description": "建立数据驱动的 RAG 评估体系：检索侧 Recall@K/Precision@K/MRR/NDCG/ContextPrecision，生成侧 Faithfulness/ContextRecall/AnswerRelevance/ContextRelevance",
+  "status": "completed",
   "priority": "P1",
   "creator": "instant",
   "assignee": "instant",
@@ -14,10 +14,10 @@
     ".trellis/tasks/05-16-rag-evaluation/design.md"
   ],
   "phases": [
-    {"phase": 1, "name": "基础设施", "status": "pending"},
-    {"phase": 2, "name": "数据集管理", "status": "pending"},
-    {"phase": 3, "name": "检索评估", "status": "pending"},
-    {"phase": 4, "name": "生成评估", "status": "pending"},
-    {"phase": 5, "name": "集成验证", "status": "pending"}
+    {"phase": 1, "name": "基础设施", "status": "completed"},
+    {"phase": 2, "name": "数据集管理", "status": "completed"},
+    {"phase": 3, "name": "检索评估", "status": "completed"},
+    {"phase": 4, "name": "生成评估", "status": "completed"},
+    {"phase": 5, "name": "集成验证", "status": "completed"}
   ]
 }

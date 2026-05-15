@@ -1,0 +1,31 @@
+{
+  "id": "05-15-ppt-xlsx-parsers",
+  "name": "05-15-ppt-xlsx-parsers",
+  "title": "RAG 文档解析器补全：PPT/PPTX + XLS/XLSX 专用 Parser",
+  "description": "新增 PptDocumentParser（Apache POI XSLF）和 ExcelDocumentParser（FastExcel），补全 Office 文档解析能力，替换 Tika 兜底为结构化专用解析",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": "rag:parser",
+  "package": "com.demo.chat.rag.parser",
+  "priority": "P1",
+  "creator": "instant",
+  "assignee": "instant",
+  "createdAt": "2026-05-15",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "rag-dev",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "src/main/java/com/demo/chat/rag/parser/DocumentParser.java",
+    "src/main/java/com/demo/chat/rag/parser/DocumentParserFactory.java",
+    "src/main/java/com/demo/chat/rag/config/DocumentProperties.java",
+    "pom.xml"
+  ],
+  "notes": "",
+  "meta": {}
+}

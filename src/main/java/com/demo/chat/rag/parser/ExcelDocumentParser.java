@@ -2,8 +2,6 @@ package com.demo.chat.rag.parser;
 
 import com.demo.chat.rag.config.DocumentProperties;
 import org.apache.fesod.sheet.FesodSheet;
-import org.apache.fesod.sheet.context.AnalysisContext;
-import org.apache.fesod.sheet.read.listener.ReadListener;
 import org.apache.fesod.sheet.read.metadata.ReadSheet;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -13,12 +11,10 @@ import org.springframework.stereotype.Component;
 
 import java.io.InputStream;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Collectors;
 
 /**
  * XLSX 专用解析器
@@ -53,6 +49,7 @@ public class ExcelDocumentParser implements DocumentParser {
     }
 
     @Override
+    @SuppressWarnings("unchecked")
     public List<Document> parse(Resource resource, String mimeType) {
         String fileName = resource.getFilename();
         log.debug("Parsing XLSX with Apache Fesod: file={}", fileName);
@@ -60,17 +57,22 @@ public class ExcelDocumentParser implements DocumentParser {
         List<Document> documents = new ArrayList<>();
 
         try (InputStream is = resource.getInputStream()) {
-            // First pass: get sheet metadata (names, count)
-            List<ReadSheet> readSheets = FesodSheet.read(is).build().excelExecutor().sheetList();
+            // 单次打开 InputStream：先获取 Sheet 元数据，再逐 Sheet 读取
+            var builder = FesodSheet.read(is);
+            List<ReadSheet> readSheets = builder.build().excelExecutor().sheetList();
             int sheetCount = readSheets.size();
 
             for (int sheetIndex = 0; sheetIndex < sheetCount; sheetIndex++) {
                 String sheetName = readSheets.get(sheetIndex).getSheetName();
+                try {
+                    // 使用同一个 InputStream，通过 Fesod builder 链式读取不同 Sheet
+                    // headRowNumber(0) 表示不使用注解映射，Fesod 将每行返回为 Map<Integer, String>
+                    List<Map<Integer, String>> allRows = builder
+                            .headRowNumber(0)
+                            .sheet(sheetIndex)
+                            .doReadSync();
 
-                try (InputStream sheetIs = resource.getInputStream()) {
-                    processSheet(sheetIs, sheetIndex, sheetName, sheetCount, fileName, mimeType, documents);
-                } catch (DocumentParseException e) {
-                    throw e;
+                    processSheetRows(allRows, sheetIndex, sheetName, sheetCount, fileName, mimeType, documents);
                 } catch (Exception e) {
                     log.warn("Failed to parse sheet '{}' in file '{}': {}", sheetName, fileName, e.getMessage());
                 }
@@ -87,77 +89,66 @@ public class ExcelDocumentParser implements DocumentParser {
     }
 
     /**
-     * 处理单个 Sheet，读取所有行并按分块策略生成 Document。
+     * 处理单个 Sheet 的行数据，按分块策略生成 Document。
      *
-     * @param inputStream 输入流
-     * @param sheetIndex  Sheet 序号（0-based）
-     * @param sheetName   Sheet 名称
-     * @param sheetCount  总 Sheet 数
-     * @param fileName    文件名
-     * @param mimeType    MIME 类型
-     * @param documents   输出文档列表
+     * @param allRows    该 Sheet 的所有行数据（含可能的表头行）
+     * @param sheetIndex Sheet 序号（0-based）
+     * @param sheetName  Sheet 名称
+     * @param sheetCount 总 Sheet 数
+     * @param fileName   文件名
+     * @param mimeType   MIME 类型
+     * @param documents  输出文档列表
      */
-    private void processSheet(InputStream inputStream, int sheetIndex, String sheetName,
-                              int sheetCount, String fileName, String mimeType,
-                              List<Document> documents) {
-        int rowsPerChunk = documentProperties.getExcelRowsPerChunk();
-
-        List<Map<Integer, String>> allRows = Collections.synchronizedList(new ArrayList<>());
-
-        FesodSheet.read(inputStream, (Class<Map<Integer, String>>) null,
-                new ReadListener<Map<Integer, String>>() {
-                    @Override
-                    public void invoke(Map<Integer, String> data, AnalysisContext context) {
-                        allRows.add(data);
-                    }
-
-                    @Override
-                    public void doAfterAllAnalysed(AnalysisContext context) {
-                        // Sheet reading complete
-                    }
-                }
-        ).sheet(sheetIndex).doRead();
-
+    private void processSheetRows(List<Map<Integer, String>> allRows,
+                                  int sheetIndex, String sheetName, int sheetCount,
+                                  String fileName, String mimeType,
+                                  List<Document> documents) {
         if (allRows.isEmpty()) {
             log.debug("Sheet '{}' is empty, skipping", sheetName);
             return;
         }
 
-        int rowCount = allRows.size();
+        int rowsPerChunk = documentProperties.getExcelRowsPerChunk();
+        int totalRowCount = allRows.size(); // 含表头行（如有）
 
         // Detect header
         boolean hasHeader = detectHeader(allRows.get(0));
         List<String> headers;
+        int dataStartIndex;
+
         if (hasHeader) {
             headers = extractHeaders(allRows.get(0));
-            allRows.remove(0);
+            dataStartIndex = 1;
         } else {
             headers = generateColumnNames(getMaxColumn(allRows));
+            dataStartIndex = 0;
         }
 
-        int dataRowCount = allRows.size();
+        int dataRowCount = totalRowCount - dataStartIndex;
+        List<Map<Integer, String>> dataRows = allRows.subList(dataStartIndex, totalRowCount);
+
         if (dataRowCount == 0 && hasHeader) {
             // Only header row, no data — output header only as a small table
-            String tableMd = buildMarkdownTable(headers, allRows);
+            String tableMd = buildMarkdownTable(headers, List.of());
             documents.add(buildDocument(tableMd, sheetIndex, sheetName, sheetCount,
-                    rowCount, 0, hasHeader, fileName, mimeType));
+                    totalRowCount, 0, hasHeader, fileName, mimeType));
             return;
         }
 
         // Small sheet: single document
         if (dataRowCount <= rowsPerChunk) {
-            String tableMd = buildMarkdownTable(headers, allRows);
+            String tableMd = buildMarkdownTable(headers, dataRows);
             documents.add(buildDocument(tableMd, sheetIndex, sheetName, sheetCount,
-                    dataRowCount, 0, hasHeader, fileName, mimeType));
+                    totalRowCount, 0, hasHeader, fileName, mimeType));
         } else {
-            // Large sheet: chunked
+            // Large sheet: chunked — 每块都携带表头行
             int chunkIndex = 0;
             for (int from = 0; from < dataRowCount; from += rowsPerChunk) {
                 int to = Math.min(from + rowsPerChunk, dataRowCount);
-                List<Map<Integer, String>> chunk = allRows.subList(from, to);
+                List<Map<Integer, String>> chunk = dataRows.subList(from, to);
                 String tableMd = buildMarkdownTable(headers, chunk);
                 documents.add(buildDocument(tableMd, sheetIndex, sheetName, sheetCount,
-                        dataRowCount, chunkIndex, hasHeader, fileName, mimeType));
+                        totalRowCount, chunkIndex, hasHeader, fileName, mimeType));
                 chunkIndex++;
             }
         }
@@ -180,7 +171,6 @@ public class ExcelDocumentParser implements DocumentParser {
             return false;
         }
 
-        // Check if all non-empty values are pure numbers or date-like
         boolean allNumericOrDate = true;
         boolean hasNonEmpty = false;
 
@@ -298,6 +288,8 @@ public class ExcelDocumentParser implements DocumentParser {
 
     /**
      * 构建 Excel Document 的 metadata。
+     *
+     * @param rowCount 该 Sheet 的总行数（含表头行，如有）
      */
     private Document buildDocument(String content, int sheetIndex, String sheetName,
                                    int sheetCount, int rowCount, int chunkIndex,

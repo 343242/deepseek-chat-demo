@@ -4,6 +4,8 @@ import com.demo.chat.rag.chunk.ParentDocumentPostProcessor;
 import com.demo.chat.rag.evaluation.config.EvaluationProperties;
 import com.demo.chat.rag.evaluation.dataset.DatasetRepository;
 import com.demo.chat.rag.evaluation.dataset.EvaluationDatasetItem;
+import com.demo.chat.rag.evaluation.metrics.generation.GenerationMetrics;
+import com.demo.chat.rag.evaluation.metrics.generation.GenerationMetricsCalculator;
 import com.demo.chat.rag.evaluation.metrics.retrieval.RetrievalMetrics;
 import com.demo.chat.rag.evaluation.metrics.retrieval.RetrievalMetricsCalculator;
 import com.demo.chat.rag.evaluation.result.EvaluationResult;
@@ -53,6 +55,7 @@ public class EvaluationRunner {
     private final ChatClient.Builder chatClientBuilder;
     private final EvaluationProperties evalProps;
     private final RetrievalMetricsCalculator metricsCalculator;
+    private final GenerationMetricsCalculator generationMetricsCalculator;
     private final ObjectMapper objectMapper;
     private final DatasetRepository datasetRepo;
 
@@ -65,6 +68,7 @@ public class EvaluationRunner {
                             ChatClient.Builder chatClientBuilder,
                             EvaluationProperties evalProps,
                             RetrievalMetricsCalculator metricsCalculator,
+                            GenerationMetricsCalculator generationMetricsCalculator,
                             ObjectMapper objectMapper,
                             DatasetRepository datasetRepo) {
         this.vectorStore = vectorStore;
@@ -76,6 +80,7 @@ public class EvaluationRunner {
         this.chatClientBuilder = chatClientBuilder;
         this.evalProps = evalProps;
         this.metricsCalculator = metricsCalculator;
+        this.generationMetricsCalculator = generationMetricsCalculator;
         this.objectMapper = objectMapper;
         this.datasetRepo = datasetRepo;
     }
@@ -152,11 +157,17 @@ public class EvaluationRunner {
                     k);
             result.setRetrievalMetrics(metrics);
 
-            // 9. LLM 生成（Phase 4 完善生成侧）
+            // 9. LLM 生成 + 生成指标
             if (config.isGenerationEnabled()) {
                 String answer = generateAnswer(queryText, afterParent);
                 result.setGeneratedAnswer(answer);
                 inst.capture("after_generation", answer);
+
+                // 计算生成侧指标
+                GenerationMetrics genMetrics = generationMetricsCalculator.calculate(
+                        item.getQuestion(), answer,
+                        item.getGroundTruthAnswer(), afterParent);
+                result.setGenerationMetrics(objectMapper.writeValueAsString(genMetrics));
             }
 
             // 10. 保存快照

@@ -1,0 +1,23 @@
+{
+  "id": "05-16-rag-evaluation",
+  "name": "05-16-rag-evaluation",
+  "title": "RAG 评估系统",
+  "description": "建立数据驱动的 RAG 评估体系：检索侧 Recall@K/Precision@K/MRR/NDCG，生成侧 Faithfulness/Answer Relevance/Context Relevance",
+  "status": "in_progress",
+  "priority": "P1",
+  "creator": "instant",
+  "assignee": "instant",
+  "createdAt": "2026-05-16",
+  "base_branch": "rag-dev",
+  "relatedFiles": [
+    "src/main/java/com/demo/chat/rag/evaluation/",
+    ".trellis/tasks/05-16-rag-evaluation/design.md"
+  ],
+  "phases": [
+    {"phase": 1, "name": "基础设施", "status": "pending"},
+    {"phase": 2, "name": "数据集管理", "status": "pending"},
+    {"phase": 3, "name": "检索评估", "status": "pending"},
+    {"phase": 4, "name": "生成评估", "status": "pending"},
+    {"phase": 5, "name": "集成验证", "status": "pending"}
+  ]
+}

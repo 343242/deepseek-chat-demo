@@ -8,7 +8,9 @@ import org.springframework.stereotype.Component;
  * <p>
  * 对应 application-evaluation.yml 中 app.evaluation.* 配置项。
  * 仅在 evaluation profile 激活时生效。
- * </p>
+ * <p>
+ * Judge 模型配置独立于 Provider 路由体系（app.evaluation.judge.*），
+ * 评估模块作为 chat-demo 的数据孤岛，自行管理模型连接。
  */
 @Component
 @ConfigurationProperties(prefix = "app.evaluation")
@@ -17,20 +19,29 @@ public class EvaluationProperties {
     /** 是否启用评估模块（需同时激活 evaluation profile） */
     private boolean enabled = false;
 
-    /** Judge 模型（用于生成侧指标评估） */
-    private String judgeModel = "zai/glm-5.1";
-
-    /** 生成模型（用于 Pipeline 答案生成） */
+    /** 生成模型（用于 Pipeline 答案生成，格式：providerId/modelId） */
     private String generationModel = "deepseek/deepseek-v4-pro";
 
     /** 评估使用的测试用户 ID（需确保该用户有足够数据） */
     private Long testUserId = 1L;
+
+    /** Judge 模型独立配置 */
+    private Judge judge = new Judge();
 
     /** 数据集相关配置 */
     private Dataset dataset = new Dataset();
 
     /** 运行器相关配置 */
     private Runner runner = new Runner();
+
+    // ======================== 便捷方法 ========================
+
+    /**
+     * 获取 Judge 模型 ID（如 "glm-5.1"）
+     */
+    public String getJudgeModel() {
+        return judge.getModel();
+    }
 
     // ======================== Getters & Setters ========================
 
@@ -40,14 +51,6 @@ public class EvaluationProperties {
 
     public void setEnabled(boolean enabled) {
         this.enabled = enabled;
-    }
-
-    public String getJudgeModel() {
-        return judgeModel;
-    }
-
-    public void setJudgeModel(String judgeModel) {
-        this.judgeModel = judgeModel;
     }
 
     public String getGenerationModel() {
@@ -64,6 +67,14 @@ public class EvaluationProperties {
 
     public void setTestUserId(Long testUserId) {
         this.testUserId = testUserId;
+    }
+
+    public Judge getJudge() {
+        return judge;
+    }
+
+    public void setJudge(Judge judge) {
+        this.judge = judge;
     }
 
     public Dataset getDataset() {
@@ -83,6 +94,46 @@ public class EvaluationProperties {
     }
 
     // ======================== 嵌套配置类 ========================
+
+    /**
+     * Judge 模型独立配置
+     * <p>
+     * 完全独立于 Provider 路由体系，评估模块自己管理 API 连接。
+     */
+    public static class Judge {
+        /** 模型 ID（如 "glm-5.1"） */
+        private String model = "glm-5.1";
+
+        /** API Base URL */
+        private String baseUrl = "https://open.bigmodel.cn/api/paas/v4";
+
+        /** API Key */
+        private String apiKey;
+
+        public String getModel() {
+            return model;
+        }
+
+        public void setModel(String model) {
+            this.model = model;
+        }
+
+        public String getBaseUrl() {
+            return baseUrl;
+        }
+
+        public void setBaseUrl(String baseUrl) {
+            this.baseUrl = baseUrl;
+        }
+
+        public String getApiKey() {
+            return apiKey;
+        }
+
+        public void setApiKey(String apiKey) {
+            this.apiKey = apiKey;
+        }
+    }
 
     public static class Dataset {
         /** LLM 自动生成时的采样 chunk 数 */

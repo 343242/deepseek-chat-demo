@@ -6,6 +6,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.zhipuai.ZhiPuAiChatModel;
+import org.springframework.ai.zhipuai.ZhiPuAiChatOptions;
+import org.springframework.ai.zhipuai.api.ZhiPuAiApi;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -21,6 +24,10 @@ import org.springframework.context.annotation.Profile;
  * </ul>
  * 生产环境默认关闭，确保零侵入。
  * </p>
+ * <p>
+ * Judge 模型完全独立于 Provider 路由体系（ChatClientRegistry），
+ * 通过 app.evaluation.judge.* 配置直连厂商 API，评估模块作为数据孤岛。
+ * </p>
  */
 @Configuration
 @Profile("evaluation")
@@ -30,10 +37,37 @@ public class EvaluationConfig {
     private static final Logger log = LoggerFactory.getLogger(EvaluationConfig.class);
 
     /**
+     * 创建 Judge 专用 ChatClient
+     * <p>
+     * 直接通过 ZhiPuAiApi 创建，不经过 ChatClientRegistry / ProviderRegistry。
+     * temperature=0 确保评分确定性。
+     */
+    @Bean("judgeChatClient")
+    public ChatClient judgeChatClient(EvaluationProperties evaluationProperties) {
+        EvaluationProperties.Judge judgeConfig = evaluationProperties.getJudge();
+
+        log.info("Initializing isolated Judge ChatClient: model={}, baseUrl={}",
+                judgeConfig.getModel(), judgeConfig.getBaseUrl());
+
+        ZhiPuAiApi api = ZhiPuAiApi.builder()
+                .baseUrl(judgeConfig.getBaseUrl())
+                .apiKey(judgeConfig.getApiKey())
+                .build();
+
+        ZhiPuAiChatOptions options = ZhiPuAiChatOptions.builder()
+                .model(judgeConfig.getModel())
+                .temperature(0.0)
+                .build();
+
+        ZhiPuAiChatModel chatModel = new ZhiPuAiChatModel(api, options);
+
+        return ChatClient.builder(chatModel).build();
+    }
+
+    /**
      * 注册 LLM Judge Bean
      * <p>
      * Judge 模型独立于生成模型，用于生成侧指标的客观评估。
-     * temperature=0 确保评分确定性。
      * </p>
      */
     @Bean
@@ -42,25 +76,5 @@ public class EvaluationConfig {
                              ObjectMapper objectMapper) {
         log.info("LlmJudge initialized with model: {}", evaluationProperties.getJudgeModel());
         return new LlmJudgeImpl(judgeChatClient, evaluationProperties, objectMapper);
-    }
-
-    /**
-     * 通过 ChatClientRegistry 获取指定 Judge 模型的 ChatClient（可选）。
-     * <p>
-     * 如果 Registry 中有该模型，优先使用 Registry 的实例（走 Provider 路由）。
-     * 否则回退到 ChatClient.Builder 构建（使用 Spring AI 默认模型）。
-     * </p>
-     */
-    @Bean("judgeChatClient")
-    public ChatClient judgeChatClient(ChatClient.Builder chatClientBuilder,
-                                     EvaluationProperties evaluationProperties,
-                                     com.demo.chat.chat.client.ChatClientRegistry chatClientRegistry) {
-        String judgeModel = evaluationProperties.getJudgeModel();
-        if (chatClientRegistry.contains(judgeModel)) {
-            log.info("Judge model '{}' found in ChatClientRegistry, using Provider routing", judgeModel);
-            return chatClientRegistry.get(judgeModel);
-        }
-        log.warn("Judge model '{}' not found in ChatClientRegistry, falling back to ChatClient.Builder (may use default model)", judgeModel);
-        return chatClientBuilder.build();
     }
 }

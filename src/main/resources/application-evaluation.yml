@@ -4,7 +4,6 @@
 app:
   evaluation:
     enabled: true
-    judge-model: zai/glm-5.1
     generation-model: deepseek/deepseek-v4-pro
     test-user-id: 1
     dataset:
@@ -14,3 +13,8 @@ app:
       default-k: 10
       concurrency: 1
       timeout-seconds: 300
+    # Judge 模型独立配置（不走 Provider 路由）
+    judge:
+      model: glm-5.1
+      base-url: ${ZHIPU_BASE_URL:https://open.bigmodel.cn/api/paas/v4}
+      api-key: ${ZHIPU_API_KEY:76252e35a4724fc8978f63762d101209.Ff1tofbmCQHV4LkD}

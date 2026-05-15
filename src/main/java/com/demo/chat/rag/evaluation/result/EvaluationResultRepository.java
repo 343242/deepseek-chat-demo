@@ -119,41 +119,42 @@ public class EvaluationResultRepository {
                     ? objectMapper.writeValueAsString(result.getRetrievalMetrics()) : null;
 
             jdbc.execute((Connection conn) -> {
-                PreparedStatement ps = conn.prepareStatement("""
+                try (PreparedStatement ps = conn.prepareStatement("""
                         INSERT INTO evaluation_result
                             (run_id, item_id, item_question_snapshot, item_ground_truth_snapshot,
                              item_relevant_chunk_ids_snapshot, query_rewritten, retrieved_doc_ids,
                              generated_answer, stage_snapshots, retrieval_metrics,
                              generation_metrics, error, latency_ms)
                         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?::jsonb, ?, ?)
-                        """);
+                        """)) {
 
-                ps.setLong(1, result.getRunId());
-                ps.setLong(2, result.getItemId());
-                ps.setString(3, result.getItemQuestionSnapshot());
-                ps.setString(4, result.getItemGroundTruthSnapshot());
+                    ps.setLong(1, result.getRunId());
+                    ps.setLong(2, result.getItemId());
+                    ps.setString(3, result.getItemQuestionSnapshot());
+                    ps.setString(4, result.getItemGroundTruthSnapshot());
 
-                if (result.getItemRelevantChunkIdsSnapshot() != null && !result.getItemRelevantChunkIdsSnapshot().isEmpty()) {
-                    ps.setArray(5, conn.createArrayOf("TEXT", result.getItemRelevantChunkIdsSnapshot().toArray()));
-                } else {
-                    ps.setNull(5, java.sql.Types.ARRAY);
+                    if (result.getItemRelevantChunkIdsSnapshot() != null && !result.getItemRelevantChunkIdsSnapshot().isEmpty()) {
+                        ps.setArray(5, conn.createArrayOf("TEXT", result.getItemRelevantChunkIdsSnapshot().toArray()));
+                    } else {
+                        ps.setNull(5, java.sql.Types.ARRAY);
+                    }
+
+                    ps.setString(6, result.getQueryRewritten());
+
+                    if (result.getRetrievedDocIds() != null && !result.getRetrievedDocIds().isEmpty()) {
+                        ps.setArray(7, conn.createArrayOf("TEXT", result.getRetrievedDocIds().toArray()));
+                    } else {
+                        ps.setNull(7, java.sql.Types.ARRAY);
+                    }
+
+                    ps.setString(8, result.getGeneratedAnswer());
+                    ps.setString(9, stageSnapshotsJson);
+                    ps.setString(10, retrievalMetricsJson);
+                    ps.setString(11, result.getGenerationMetrics());
+                    ps.setString(12, result.getError());
+                    ps.setInt(13, result.getLatencyMs());
+                    ps.executeUpdate();
                 }
-
-                ps.setString(6, result.getQueryRewritten());
-
-                if (result.getRetrievedDocIds() != null && !result.getRetrievedDocIds().isEmpty()) {
-                    ps.setArray(7, conn.createArrayOf("TEXT", result.getRetrievedDocIds().toArray()));
-                } else {
-                    ps.setNull(7, java.sql.Types.ARRAY);
-                }
-
-                ps.setString(8, result.getGeneratedAnswer());
-                ps.setString(9, stageSnapshotsJson);
-                ps.setString(10, retrievalMetricsJson);
-                ps.setString(11, result.getGenerationMetrics());
-                ps.setString(12, result.getError());
-                ps.setInt(13, result.getLatencyMs());
-                ps.executeUpdate();
                 return null;
             });
         } catch (Exception e) {

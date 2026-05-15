@@ -37,10 +37,30 @@ public class EvaluationConfig {
      * </p>
      */
     @Bean
-    public LlmJudge llmJudge(ChatClient.Builder chatClientBuilder,
+    public LlmJudge llmJudge(ChatClient judgeChatClient,
                              EvaluationProperties evaluationProperties,
                              ObjectMapper objectMapper) {
         log.info("LlmJudge initialized with model: {}", evaluationProperties.getJudgeModel());
-        return new LlmJudgeImpl(chatClientBuilder, evaluationProperties, objectMapper);
+        return new LlmJudgeImpl(judgeChatClient, evaluationProperties, objectMapper);
+    }
+
+    /**
+     * 通过 ChatClientRegistry 获取指定 Judge 模型的 ChatClient（可选）。
+     * <p>
+     * 如果 Registry 中有该模型，优先使用 Registry 的实例（走 Provider 路由）。
+     * 否则回退到 ChatClient.Builder 构建（使用 Spring AI 默认模型）。
+     * </p>
+     */
+    @Bean("judgeChatClient")
+    public ChatClient judgeChatClient(ChatClient.Builder chatClientBuilder,
+                                     EvaluationProperties evaluationProperties,
+                                     com.demo.chat.chat.client.ChatClientRegistry chatClientRegistry) {
+        String judgeModel = evaluationProperties.getJudgeModel();
+        if (chatClientRegistry.contains(judgeModel)) {
+            log.info("Judge model '{}' found in ChatClientRegistry, using Provider routing", judgeModel);
+            return chatClientRegistry.get(judgeModel);
+        }
+        log.warn("Judge model '{}' not found in ChatClientRegistry, falling back to ChatClient.Builder (may use default model)", judgeModel);
+        return chatClientBuilder.build();
     }
 }

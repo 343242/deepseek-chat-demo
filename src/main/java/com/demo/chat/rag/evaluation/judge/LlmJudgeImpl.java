@@ -32,11 +32,11 @@ public class LlmJudgeImpl implements LlmJudge {
     private final String judgeModel;
     private final ObjectMapper objectMapper;
 
-    public LlmJudgeImpl(ChatClient.Builder builder,
+    public LlmJudgeImpl(ChatClient judgeClient,
                         EvaluationProperties props,
                         ObjectMapper objectMapper) {
+        this.judgeClient = judgeClient;
         this.judgeModel = props.getJudgeModel();
-        this.judgeClient = builder.build();
         this.objectMapper = objectMapper;
     }
 

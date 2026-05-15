@@ -132,50 +132,12 @@ public class DatasetRepository {
      */
     public EvaluationDatasetItem insertItem(EvaluationDatasetItem item) {
         jdbc.execute((Connection conn) -> {
-            PreparedStatement ps = conn.prepareStatement("""
+            try (PreparedStatement ps = conn.prepareStatement("""
                     INSERT INTO evaluation_dataset_item
                         (dataset_id, question, ground_truth_answer, relevant_chunk_ids, relevant_content, tags, status, seq)
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     RETURNING id
-                    """);
-            ps.setLong(1, item.getDatasetId());
-            ps.setString(2, item.getQuestion());
-            ps.setString(3, item.getGroundTruthAnswer());
-            if (item.getRelevantChunkIds() != null && !item.getRelevantChunkIds().isEmpty()) {
-                ps.setArray(4, conn.createArrayOf("TEXT", item.getRelevantChunkIds().toArray()));
-            } else {
-                ps.setNull(4, java.sql.Types.ARRAY);
-            }
-            ps.setString(5, item.getRelevantContent());
-            if (item.getTags() != null && !item.getTags().isEmpty()) {
-                ps.setArray(6, conn.createArrayOf("VARCHAR", item.getTags().toArray()));
-            } else {
-                ps.setNull(6, java.sql.Types.ARRAY);
-            }
-            ps.setString(7, item.getStatus());
-            ps.setInt(8, item.getSeq());
-
-            var rs = ps.executeQuery();
-            if (rs.next()) {
-                item.setId(rs.getLong("id"));
-            }
-            return null;
-        });
-        return item;
-    }
-
-    /**
-     * 批量插入数据项（同一 Connection，避免连接泄漏）
-     */
-    public List<EvaluationDatasetItem> insertItems(List<EvaluationDatasetItem> items) {
-        jdbc.execute((Connection conn) -> {
-            PreparedStatement ps = conn.prepareStatement("""
-                    INSERT INTO evaluation_dataset_item
-                        (dataset_id, question, ground_truth_answer, relevant_chunk_ids, relevant_content, tags, status, seq)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    RETURNING id
-                    """);
-            for (EvaluationDatasetItem item : items) {
+                    """)) {
                 ps.setLong(1, item.getDatasetId());
                 ps.setString(2, item.getQuestion());
                 ps.setString(3, item.getGroundTruthAnswer());
@@ -192,9 +154,51 @@ public class DatasetRepository {
                 }
                 ps.setString(7, item.getStatus());
                 ps.setInt(8, item.getSeq());
-                var rs = ps.executeQuery();
-                if (rs.next()) {
-                    item.setId(rs.getLong("id"));
+
+                try (var rs = ps.executeQuery()) {
+                    if (rs.next()) {
+                        item.setId(rs.getLong("id"));
+                    }
+                }
+            }
+            return null;
+        });
+        return item;
+    }
+
+    /**
+     * 批量插入数据项（同一 Connection，避免连接泄漏）
+     */
+    public List<EvaluationDatasetItem> insertItems(List<EvaluationDatasetItem> items) {
+        jdbc.execute((Connection conn) -> {
+            try (PreparedStatement ps = conn.prepareStatement("""
+                    INSERT INTO evaluation_dataset_item
+                        (dataset_id, question, ground_truth_answer, relevant_chunk_ids, relevant_content, tags, status, seq)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    RETURNING id
+                    """)) {
+                for (EvaluationDatasetItem item : items) {
+                    ps.setLong(1, item.getDatasetId());
+                    ps.setString(2, item.getQuestion());
+                    ps.setString(3, item.getGroundTruthAnswer());
+                    if (item.getRelevantChunkIds() != null && !item.getRelevantChunkIds().isEmpty()) {
+                        ps.setArray(4, conn.createArrayOf("TEXT", item.getRelevantChunkIds().toArray()));
+                    } else {
+                        ps.setNull(4, java.sql.Types.ARRAY);
+                    }
+                    ps.setString(5, item.getRelevantContent());
+                    if (item.getTags() != null && !item.getTags().isEmpty()) {
+                        ps.setArray(6, conn.createArrayOf("VARCHAR", item.getTags().toArray()));
+                    } else {
+                        ps.setNull(6, java.sql.Types.ARRAY);
+                    }
+                    ps.setString(7, item.getStatus());
+                    ps.setInt(8, item.getSeq());
+                    try (var rs = ps.executeQuery()) {
+                        if (rs.next()) {
+                            item.setId(rs.getLong("id"));
+                        }
+                    }
                 }
             }
             return null;
@@ -219,7 +223,7 @@ public class DatasetRepository {
 
     public void updateItem(EvaluationDatasetItem item) {
         jdbc.execute((Connection conn) -> {
-            PreparedStatement ps = conn.prepareStatement("""
+            try (PreparedStatement ps = conn.prepareStatement("""
                     UPDATE evaluation_dataset_item SET
                         question = ?,
                         ground_truth_answer = ?,
@@ -228,23 +232,24 @@ public class DatasetRepository {
                         tags = ?,
                         status = ?
                     WHERE id = ?
-                    """);
-            ps.setString(1, item.getQuestion());
-            ps.setString(2, item.getGroundTruthAnswer());
-            if (item.getRelevantChunkIds() != null && !item.getRelevantChunkIds().isEmpty()) {
-                ps.setArray(3, conn.createArrayOf("TEXT", item.getRelevantChunkIds().toArray()));
-            } else {
-                ps.setNull(3, java.sql.Types.ARRAY);
+                    """)) {
+                ps.setString(1, item.getQuestion());
+                ps.setString(2, item.getGroundTruthAnswer());
+                if (item.getRelevantChunkIds() != null && !item.getRelevantChunkIds().isEmpty()) {
+                    ps.setArray(3, conn.createArrayOf("TEXT", item.getRelevantChunkIds().toArray()));
+                } else {
+                    ps.setNull(3, java.sql.Types.ARRAY);
+                }
+                ps.setString(4, item.getRelevantContent());
+                if (item.getTags() != null && !item.getTags().isEmpty()) {
+                    ps.setArray(5, conn.createArrayOf("VARCHAR", item.getTags().toArray()));
+                } else {
+                    ps.setNull(5, java.sql.Types.ARRAY);
+                }
+                ps.setString(6, item.getStatus());
+                ps.setLong(7, item.getId());
+                ps.executeUpdate();
             }
-            ps.setString(4, item.getRelevantContent());
-            if (item.getTags() != null && !item.getTags().isEmpty()) {
-                ps.setArray(5, conn.createArrayOf("VARCHAR", item.getTags().toArray()));
-            } else {
-                ps.setNull(5, java.sql.Types.ARRAY);
-            }
-            ps.setString(6, item.getStatus());
-            ps.setLong(7, item.getId());
-            ps.executeUpdate();
             return null;
         });
     }

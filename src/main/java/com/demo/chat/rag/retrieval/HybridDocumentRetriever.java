@@ -1,8 +1,7 @@
 package com.demo.chat.rag.retrieval;
 
 import com.demo.chat.rag.config.RagRetrievalProperties;
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.demo.chat.rag.mapper.VectorStoreMapper;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -12,7 +11,6 @@ import org.springframework.ai.rag.retrieval.search.DocumentRetriever;
 import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.ai.vectorstore.filter.FilterExpressionBuilder;
-import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.util.*;
 
@@ -37,39 +35,36 @@ public class HybridDocumentRetriever implements DocumentRetriever {
     private static final Logger log = LoggerFactory.getLogger(HybridDocumentRetriever.class);
 
     private final VectorStore vectorStore;
-    private final JdbcTemplate jdbcTemplate;
+    private final VectorStoreMapper vectorStoreMapper;
     private final RagRetrievalProperties properties;
     private final QueryNormalizer queryNormalizer;
     private final Long userId;
     @Nullable
     private final Long teamId;
     private final String ftsConfig;
-    private final ObjectMapper objectMapper;
 
     public HybridDocumentRetriever(VectorStore vectorStore,
-                                   JdbcTemplate jdbcTemplate,
+                                   VectorStoreMapper vectorStoreMapper,
                                    RagRetrievalProperties properties,
                                    QueryNormalizer queryNormalizer,
                                    Long userId,
-                                   @Nullable Long teamId,
-                                   ObjectMapper objectMapper) {
+                                   @Nullable Long teamId) {
         this.vectorStore = vectorStore;
-        this.jdbcTemplate = jdbcTemplate;
+        this.vectorStoreMapper = vectorStoreMapper;
         this.properties = properties;
         this.queryNormalizer = queryNormalizer;
         this.userId = userId;
         this.teamId = teamId;
-        this.ftsConfig = properties.getFtsConfig();
-        this.objectMapper = objectMapper;
+        this.ftsConfig = properties.ftsConfig();
     }
 
     @Override
     public List<Document> retrieve(Query query) {
         String queryText = queryNormalizer.normalize(query.text());
-        int vectorTopK = properties.getVectorTopK();
-        int bm25TopK = properties.getBm25TopK();
+        int vectorTopK = properties.vectorTopK();
+        int bm25TopK = properties.bm25TopK();
 
-        if (!properties.isHybridRetrievalEnabled()) {
+        if (!properties.hybridRetrievalEnabled()) {
             return vectorSearch(queryText, vectorTopK);
         }
 
@@ -95,7 +90,7 @@ public class HybridDocumentRetriever implements DocumentRetriever {
                 SearchRequest.builder()
                         .query(queryText)
                         .topK(topK)
-                        .similarityThreshold(properties.getSimilarityThreshold())
+                        .similarityThreshold(properties.similarityThreshold())
                         .filterExpression(filter)
                         .build()
         );
@@ -119,33 +114,17 @@ public class HybridDocumentRetriever implements DocumentRetriever {
         }
 
         try {
-            // 按 teamId 或 userId 隔离
             String isolationField = teamId != null ? "teamId" : "userId";
             String isolationValue = teamId != null ? String.valueOf(teamId) : String.valueOf(userId);
 
-            String sql = """
-                SELECT id, content, metadata
-                FROM vector_store
-                WHERE content_tsv @@ plainto_tsquery(?::regconfig, ?)
-                  AND metadata->> ? = ?
-                ORDER BY ts_rank_cd(content_tsv, plainto_tsquery(?::regconfig, ?)) DESC
-                LIMIT ?
-                """;
+            List<Document> docs = vectorStoreMapper.bm25Search(
+                    ftsConfig, sanitized, isolationField, isolationValue, topK);
 
-            return jdbcTemplate.query(sql,
-                    (rs, rowNum) -> {
-                        String id = rs.getString("id");
-                        String content = rs.getString("content");
-                        String metadataJson = rs.getString("metadata");
-
-                        Map<String, Object> metadata = parseMetadata(metadataJson);
-                        metadata.put("retrievalSource", "bm25");
-
-                        Document doc = new Document(id, content, metadata);
-                        return new ScoredDocument(doc, rowNum + 1);
-                    },
-                    ftsConfig, sanitized, isolationField, isolationValue, ftsConfig, sanitized, topK
-            );
+            List<ScoredDocument> results = new ArrayList<>(docs.size());
+            for (int i = 0; i < docs.size(); i++) {
+                results.add(new ScoredDocument(docs.get(i), i + 1));
+            }
+            return results;
         } catch (Exception e) {
             log.warn("BM25 search failed: {}", e.getMessage());
             return List.of();
@@ -155,7 +134,7 @@ public class HybridDocumentRetriever implements DocumentRetriever {
     // === RRF 融合 ===
 
     private List<Document> rrfFusion(List<ScoredDocument> vectorResults, List<ScoredDocument> bm25Results) {
-        int k = properties.getRrfK();
+        int k = properties.rrfK();
         Map<String, Double> scores = new HashMap<>();
         Map<String, Document> docMap = new HashMap<>();
 
@@ -171,7 +150,7 @@ public class HybridDocumentRetriever implements DocumentRetriever {
 
         return scores.entrySet().stream()
                 .sorted(Map.Entry.<String, Double>comparingByValue().reversed())
-                .limit(properties.getVectorTopK())
+                .limit(properties.vectorTopK())
                 .map(e -> docMap.get(e.getKey()))
                 .filter(Objects::nonNull)
                 .toList();
@@ -182,14 +161,6 @@ public class HybridDocumentRetriever implements DocumentRetriever {
     private String sanitizeQuery(String query) {
         if (query == null || query.isBlank()) return "";
         return query.replaceAll("[&|!()\\[\\]{}:*\\\\]", " ").trim();
-    }
-
-    private Map<String, Object> parseMetadata(String json) {
-        try {
-            return objectMapper.readValue(json, new TypeReference<>() {});
-        } catch (Exception e) {
-            return new HashMap<>();
-        }
     }
 
     private record ScoredDocument(Document doc, int rank) {}

@@ -12,6 +12,7 @@ import com.demo.chat.rag.evaluation.result.EvaluationResult;
 import com.demo.chat.rag.evaluation.result.StageSnapshot;
 import com.demo.chat.rag.config.RagRetrievalProperties;
 import com.demo.chat.rag.retrieval.BailianRerankPostProcessor;
+import com.demo.chat.rag.mapper.VectorStoreMapper;
 import com.demo.chat.rag.retrieval.HybridDocumentRetriever;
 import com.demo.chat.rag.retrieval.MmrDocumentPostProcessor;
 import com.demo.chat.rag.retrieval.QueryNormalizer;
@@ -23,7 +24,6 @@ import org.springframework.ai.document.Document;
 import org.springframework.ai.rag.preretrieval.query.transformation.QueryTransformer;
 import org.springframework.ai.rag.Query;
 import org.springframework.ai.vectorstore.VectorStore;
-import org.springframework.beans.BeanUtils;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
@@ -43,6 +43,7 @@ public class EvaluationRunner {
     private static final Logger log = LoggerFactory.getLogger(EvaluationRunner.class);
 
     private final VectorStore vectorStore;
+    private final VectorStoreMapper vectorStoreMapper;
     private final JdbcTemplate jdbcTemplate;
     private final RagRetrievalProperties properties;
     private final ParentDocumentPostProcessor parentProcessor;
@@ -56,6 +57,7 @@ public class EvaluationRunner {
     private final DatasetRepository datasetRepo;
 
     public EvaluationRunner(VectorStore vectorStore,
+                            VectorStoreMapper vectorStoreMapper,
                             JdbcTemplate jdbcTemplate,
                             RagRetrievalProperties properties,
                             ParentDocumentPostProcessor parentProcessor,
@@ -68,6 +70,7 @@ public class EvaluationRunner {
                             ObjectMapper objectMapper,
                             DatasetRepository datasetRepo) {
         this.vectorStore = vectorStore;
+        this.vectorStoreMapper = vectorStoreMapper;
         this.jdbcTemplate = jdbcTemplate;
         this.properties = properties;
         this.parentProcessor = parentProcessor;
@@ -129,7 +132,7 @@ public class EvaluationRunner {
             List<Document> afterMmr = afterRerank;
             if (config.isMmrEnabled()) {
                 MmrDocumentPostProcessor mmrProc = new MmrDocumentPostProcessor(
-                        properties.getMmrLambda(), properties.getMmrTopK());
+                        properties.mmrLambda(), properties.mmrTopK());
                 afterMmr = mmrProc.process(query, afterRerank);
             }
             inst.capture("after_mmr", extractedDocIds(afterMmr));
@@ -175,10 +178,10 @@ public class EvaluationRunner {
 
     private BailianRerankPostProcessor createReranker() {
         return new BailianRerankPostProcessor(
-                properties.getRerankBaseUrl(),
-                properties.getRerankApiKey(),
-                properties.getRerankModel(),
-                properties.getRerankTopN()
+                properties.rerankBaseUrl(),
+                properties.rerankApiKey(),
+                properties.rerankModel(),
+                properties.rerankTopN()
         );
     }
 
@@ -187,19 +190,16 @@ public class EvaluationRunner {
         Long userId = config.getTestUserId() != null
                 ? config.getTestUserId() : this.evalProps.getTestUserId();
         return new HybridDocumentRetriever(
-                vectorStore, jdbcTemplate, evalProps,
-                queryNormalizer, userId, null, objectMapper);
+                vectorStore, vectorStoreMapper, evalProps,
+                queryNormalizer, userId, null);
     }
 
     private RagRetrievalProperties copyWithOverride(RagRetrievalProperties original, EvalConfig config) {
-        RagRetrievalProperties copy = new RagRetrievalProperties();
-        BeanUtils.copyProperties(original, copy);
-
-        if (config.getVectorTopK() != null) copy.setVectorTopK(config.getVectorTopK());
-        if (config.getBm25TopK() != null) copy.setBm25TopK(config.getBm25TopK());
-        if (config.getRrfK() != null) copy.setRrfK(config.getRrfK());
-
-        return copy;
+        return original.withOverrides(
+                config.getVectorTopK(),
+                config.getBm25TopK(),
+                config.getRrfK()
+        );
     }
 
     private String rewriteQuery(String queryText) {

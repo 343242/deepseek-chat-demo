@@ -1,11 +1,11 @@
 package com.demo.chat.rag.etl;
 
 import com.demo.chat.rag.config.EtlFastTrackProperties;
+import com.demo.chat.rag.mapper.VectorStoreMapper;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.document.Document;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.stereotype.Component;
 
@@ -38,10 +38,9 @@ public class FastTrackStrategy implements EtlRouteStrategy {
     private final Loader loader;
     private final EtlStatusManager statusManager;
     private final EtlFastTrackProperties fastTrackProperties;
-    private final JdbcTemplate jdbcTemplate;
+    private final VectorStoreMapper vectorStoreMapper;
     private final ThreadPoolTaskExecutor ioExecutor;
     private final ThreadPoolTaskExecutor cpuExecutor;
-    private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
 
     /** 追踪进行中的异步向量化任务，支持优雅停机 */
     private final Set<CompletableFuture<?>> activeAsyncTasks = ConcurrentHashMap.newKeySet();
@@ -51,19 +50,17 @@ public class FastTrackStrategy implements EtlRouteStrategy {
                              Loader loader,
                              EtlStatusManager statusManager,
                              EtlFastTrackProperties fastTrackProperties,
-                             JdbcTemplate jdbcTemplate,
+                             VectorStoreMapper vectorStoreMapper,
                              ThreadPoolTaskExecutor etlIoExecutor,
-                             ThreadPoolTaskExecutor etlCpuExecutor,
-                             com.fasterxml.jackson.databind.ObjectMapper objectMapper) {
+                             ThreadPoolTaskExecutor etlCpuExecutor) {
         this.extractor = extractor;
         this.transformer = transformer;
         this.loader = loader;
         this.statusManager = statusManager;
         this.fastTrackProperties = fastTrackProperties;
-        this.jdbcTemplate = jdbcTemplate;
+        this.vectorStoreMapper = vectorStoreMapper;
         this.ioExecutor = etlIoExecutor;
         this.cpuExecutor = etlCpuExecutor;
-        this.objectMapper = objectMapper;
     }
 
     @Override
@@ -143,25 +140,7 @@ public class FastTrackStrategy implements EtlRouteStrategy {
      * embedding 设为 NULL（无向量），BM25 检索仍可通过 content_tsv 命中。
      */
     private void writeBm25Row(Long documentId, String content, Long userId, @Nullable Long teamId) {
-        Map<String, Object> metadata = new java.util.HashMap<>();
-        metadata.put("documentId", String.valueOf(documentId));
-        metadata.put("userId", String.valueOf(userId));
-        metadata.put("fastTrack", true);
-        if (teamId != null) {
-            metadata.put("teamId", String.valueOf(teamId));
-        }
-        String metadataJson;
-        try {
-            metadataJson = objectMapper.writeValueAsString(metadata);
-        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
-            log.error("Failed to serialize BM25 metadata for documentId={}", documentId, e);
-            throw new RuntimeException(e);
-        }
-        jdbcTemplate.update("""
-                INSERT INTO vector_store (id, content, metadata, embedding)
-                VALUES (gen_random_uuid(), ?, ?::json, NULL)
-                """, content, metadataJson);
-        log.debug("BM25 row written for documentId={}", documentId);
+        vectorStoreMapper.insertFastTrackRow(documentId, content, userId, teamId);
     }
 
     // ==================== 异步向量化（P0 修复：直接指定 executor） ====================
@@ -192,7 +171,7 @@ public class FastTrackStrategy implements EtlRouteStrategy {
                 .thenAcceptAsync(chunks -> {
                     // IO 池：Load
                     loader.load(chunks);
-                    deleteBm25Rows(c.documentId());
+                    vectorStoreMapper.deleteFastTrackRows(c.documentId());
                     statusManager.updateChunkCount(c.documentId(), chunks.size());
                     log.info("FastTrack async completed: id={}, chunks={}", c.documentId(), chunks.size());
                 }, ioExecutor)
@@ -204,18 +183,6 @@ public class FastTrackStrategy implements EtlRouteStrategy {
 
         activeAsyncTasks.add(future);
         future.whenComplete((v, ex) -> activeAsyncTasks.remove(future));
-    }
-
-    /**
-     * 删除 BM25 快速写入的原文行
-     */
-    private void deleteBm25Rows(Long documentId) {
-        jdbcTemplate.update("""
-                DELETE FROM vector_store
-                WHERE metadata->>'documentId' = ?
-                  AND metadata->>'fastTrack' = 'true'
-                """, String.valueOf(documentId));
-        log.debug("BM25 fast-track rows deleted for documentId={}", documentId);
     }
 
     // ==================== Extract ====================

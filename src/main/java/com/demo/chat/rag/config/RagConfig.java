@@ -1,16 +1,15 @@
 package com.demo.chat.rag.config;
 
 import com.demo.chat.rag.chunk.ParentDocumentPostProcessor;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import com.demo.chat.rag.mapper.VectorStoreMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.prompt.PromptTemplate;
 import org.springframework.ai.rag.preretrieval.query.transformation.RewriteQueryTransformer;
-import org.springframework.ai.vectorstore.VectorStore;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.jdbc.core.JdbcTemplate;
 
 /**
  * RAG 配置
@@ -31,6 +30,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
  * </p>
  */
 @Configuration
+@EnableConfigurationProperties(RagRetrievalProperties.class)
 public class RagConfig {
 
     private static final Logger log = LoggerFactory.getLogger(RagConfig.class);
@@ -57,11 +57,9 @@ public class RagConfig {
     // ======================== 后处理器 ========================
 
     @Bean
-    public ParentDocumentPostProcessor parentDocumentPostProcessor(VectorStore vectorStore,
-                                                                       JdbcTemplate jdbcTemplate,
-                                                                       ObjectMapper objectMapper) {
+    public ParentDocumentPostProcessor parentDocumentPostProcessor(VectorStoreMapper vectorStoreMapper) {
         log.info("ParentDocumentPostProcessor registered");
-        return new ParentDocumentPostProcessor(jdbcTemplate, objectMapper);
+        return new ParentDocumentPostProcessor(vectorStoreMapper);
     }
 
     // ======================== RAG Advisor 集成 ========================

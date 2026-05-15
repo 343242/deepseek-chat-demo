@@ -1,6 +1,7 @@
 package com.demo.chat.rag.config;
 
 import com.demo.chat.rag.chunk.ParentDocumentPostProcessor;
+import com.demo.chat.rag.mapper.VectorStoreMapper;
 import com.demo.chat.rag.retrieval.BailianRerankPostProcessor;
 import com.demo.chat.rag.retrieval.HybridDocumentRetriever;
 import com.demo.chat.rag.retrieval.MmrDocumentPostProcessor;
@@ -39,6 +40,7 @@ public class RagAdvisorFactory {
 
     private final ChatClient.Builder chatClientBuilder;
     private final VectorStore vectorStore;
+    private final VectorStoreMapper vectorStoreMapper;
     private final JdbcTemplate jdbcTemplate;
     private final RagRetrievalProperties properties;
     private final ParentDocumentPostProcessor parentDocumentPostProcessor;
@@ -51,6 +53,7 @@ public class RagAdvisorFactory {
 
     public RagAdvisorFactory(ChatClient.Builder chatClientBuilder,
                              VectorStore vectorStore,
+                             VectorStoreMapper vectorStoreMapper,
                              JdbcTemplate jdbcTemplate,
                              RagRetrievalProperties properties,
                              ParentDocumentPostProcessor parentDocumentPostProcessor,
@@ -59,6 +62,7 @@ public class RagAdvisorFactory {
                              ObjectMapper objectMapper) {
         this.chatClientBuilder = chatClientBuilder;
         this.vectorStore = vectorStore;
+        this.vectorStoreMapper = vectorStoreMapper;
         this.jdbcTemplate = jdbcTemplate;
         this.properties = properties;
         this.parentDocumentPostProcessor = parentDocumentPostProcessor;
@@ -76,7 +80,7 @@ public class RagAdvisorFactory {
      */
     public RetrievalAugmentationAdvisor create(Long userId, @Nullable Long teamId) {
         List<QueryTransformer> queryTransformers = new ArrayList<>();
-        if (properties.isQueryRewriteEnabled()) {
+        if (properties.queryRewriteEnabled()) {
             queryTransformers.add(rewriteQueryTransformer);
         }
 
@@ -104,29 +108,29 @@ public class RagAdvisorFactory {
     private DocumentRetriever createIsolatedRetriever(Long userId, @Nullable Long teamId) {
         if (teamId != null) {
             // 团队检索：按 teamId 隔离
-            if (properties.isHybridRetrievalEnabled()) {
-                return new HybridDocumentRetriever(vectorStore, jdbcTemplate, properties, queryNormalizer, userId, teamId, objectMapper);
+            if (properties.hybridRetrievalEnabled()) {
+                return new HybridDocumentRetriever(vectorStore, vectorStoreMapper, properties, queryNormalizer, userId, teamId);
             }
             FilterExpressionBuilder filterBuilder = new FilterExpressionBuilder();
             var teamIdFilter = filterBuilder.eq("teamId", String.valueOf(teamId)).build();
             return VectorStoreDocumentRetriever.builder()
                     .vectorStore(vectorStore)
-                    .similarityThreshold(properties.getSimilarityThreshold())
-                    .topK(properties.getVectorTopK())
+                    .similarityThreshold(properties.similarityThreshold())
+                    .topK(properties.vectorTopK())
                     .filterExpression(teamIdFilter)
                     .build();
         }
 
         // 个人检索：按 userId 隔离
-        if (properties.isHybridRetrievalEnabled()) {
-            return new HybridDocumentRetriever(vectorStore, jdbcTemplate, properties, queryNormalizer, userId, null, objectMapper);
+        if (properties.hybridRetrievalEnabled()) {
+            return new HybridDocumentRetriever(vectorStore, vectorStoreMapper, properties, queryNormalizer, userId, null);
         }
         FilterExpressionBuilder filterBuilder = new FilterExpressionBuilder();
         var userIdFilter = filterBuilder.eq("userId", String.valueOf(userId)).build();
         return VectorStoreDocumentRetriever.builder()
                 .vectorStore(vectorStore)
-                .similarityThreshold(properties.getSimilarityThreshold())
-                .topK(properties.getVectorTopK())
+                .similarityThreshold(properties.similarityThreshold())
+                .topK(properties.vectorTopK())
                 .filterExpression(userIdFilter)
                 .build();
     }
@@ -141,19 +145,19 @@ public class RagAdvisorFactory {
     private List<org.springframework.ai.rag.postretrieval.document.DocumentPostProcessor> buildPostProcessors() {
         List<org.springframework.ai.rag.postretrieval.document.DocumentPostProcessor> postProcessors = new ArrayList<>();
 
-        if (properties.isRerankEnabled() && properties.getRerankApiKey() != null) {
+        if (properties.rerankEnabled() && properties.rerankApiKey() != null) {
             postProcessors.add(new BailianRerankPostProcessor(
-                    properties.getRerankBaseUrl(),
-                    properties.getRerankApiKey(),
-                    properties.getRerankModel(),
-                    properties.getRerankTopN()
+                    properties.rerankBaseUrl(),
+                    properties.rerankApiKey(),
+                    properties.rerankModel(),
+                    properties.rerankTopN()
             ));
         }
 
-        if (properties.isMmrEnabled()) {
+        if (properties.mmrEnabled()) {
             postProcessors.add(new MmrDocumentPostProcessor(
-                    properties.getMmrLambda(),
-                    properties.getMmrTopK()
+                    properties.mmrLambda(),
+                    properties.mmrTopK()
             ));
         }
 

@@ -11,9 +11,9 @@
 
 | 级别 | 数量 | 说明 |
 |------|------|------|
-| 🔴 P0 Blocker | 4 | 必须修复，影响正确性/安全性 |
-| 🟠 P1 Important | 5 | 应该修复，影响可维护性/健壮性 |
-| 🟡 P2 Minor | 4 | 建议改进 |
+| 🔴 P0 Blocker | 6 | 必须修复，影响正确性/安全性 |
+| 🟠 P1 Important | 9 | 应该修复，影响可维护性/健壮性 |
+| 🟡 P2 Minor | 7 | 建议改进 |
 
 ---
 
@@ -188,7 +188,135 @@ String filterJson = "{\"userId\": \"" + userId + "\"}";
 
 ---
 
-## 规范符合性检查
+---
+
+## 📌 Spec 增量审查（2026-05-16 第二轮，按 `.trellis/spec/` 全量 spec）
+
+> 对照 spec/backend（database-guidelines、error-handling、quality-guidelines、logging-guidelines、directory-structure）+ spec/guides（code-reuse、cross-layer）逐项审查，去除与上方已有的重复项。
+
+### P0-5: Repository 用 JdbcTemplate 而非项目标准 MyBatis-Plus
+
+**文件**: `DatasetRepository.java`, `EvaluationResultRepository.java`
+
+> 违反 spec database-guidelines > MyBatis-Plus 使用
+
+项目已有 `SysUserMapper` 等 BaseMapper 规范。评估模块的 Repository 全部用 `JdbcTemplate` 手写 SQL，与项目既有模式不一致。
+
+- 如果评估模块有意用 JdbcTemplate（设计文档提到零侵入、独立模块），应在 spec 里补充说明
+- 如果不是有意为之，应迁移到 MyBatis-Plus Mapper
+
+### P0-6: 实体类无 MyBatis-Plus 注解
+
+**文件**: `EvaluationDataset.java`, `EvaluationDatasetItem.java`, `EvaluationRun.java`, `EvaluationResult.java`
+
+> 违反 spec database-guidelines > Entity：需要 `@TableName`、`@TableId`、`@TableField`
+
+四个实体都是纯 POJO（getter/setter），没有 `@TableName`/`@TableId` 注解。与 P0-5 关联——如果坚持 JdbcTemplate，需文档化决策；否则迁移时需要补注解。
+
+---
+
+### P1-6: DatasetGenerator.generate() 串行逐条 LLM 调用
+
+**文件**: `DatasetGenerator.java:55-100`
+
+> 违反 spec quality-guidelines > Design Principles > 性能考虑
+
+50 个采样 chunk × `questionsPerChunk`(2) = 100 次 LLM 调用，全部串行执行。建议：
+- 使用 `CompletableFuture` + `Semaphore` 控制并发
+- 或先批量生成再入库
+
+### P1-7: Controller 无权限控制
+
+**文件**: `DatasetController.java`, `EvaluationRunController.java`
+
+> 违反 spec quality-guidelines > Security Checklist：`@PreAuthorize` 注解保护接口
+
+评估模块 REST API 完全无权限校验。任何人可以：
+- 触发评估运行（消耗大量 LLM Token）
+- 导出数据集内容
+- 删除数据集
+
+### P1-8: EvaluationProperties 用 `@Component` 注册
+
+**文件**: `EvaluationProperties.java`
+
+> 项目既有模式：`@ConfigurationProperties` + `@EnableConfigurationProperties` 或 `@ConfigurationPropertiesScan`
+
+`@Component` 注册 `@ConfigurationProperties` 虽然能工作，但不是 Spring Boot 推荐方式。且 `EvaluationConfig` 中已手动创建 Bean，容易遗忘。
+
+### P1-9: evaluation_run.status 用 VARCHAR 无枚举约束
+
+**文件**: `V11__rag_evaluation.sql`, `EvaluationRun.java`
+
+> 违反 spec quality-guidelines > Security Checklist > 状态枚举：用枚举类约束，不接受裸 Integer/String
+
+SQL 中 `status VARCHAR(20) DEFAULT 'pending'` 无 CHECK 约束，Java 侧也无对应枚举。可写入任意字符串。建议：
+- SQL 侧加 `CHECK (status IN ('pending','running','completed','failed'))`
+- Java 侧定义 `EvaluationRunStatus` 枚举 + `@EnumValue` / `@JsonValue`
+
+### P1-10: P0-3 的 datasetId 缺失场景同样存在于 EvaluationRunController
+
+**文件**: `EvaluationRunController.java:45`
+
+与 P1-3 同源问题，但 `startRun()` 的 `datasetId` 缺失时直接 NPE，且该接口会触发大量 LLM 调用和 Token 消耗，影响比 DatasetController 更严重。
+
+---
+
+### P2-5: DatasetExporter.exportAsJson() 抛 RuntimeException
+
+**文件**: `DatasetExporter.java:28`
+
+> 违反 spec error-handling > Rules > ❌ DON'T：不要抛 RuntimeException
+
+```java
+throw new RuntimeException("Failed to export dataset", e);
+```
+
+应使用项目已有的 `BusinessException` 或自定义 `EvaluationException`。
+
+### P2-6: 零单元测试
+
+> 违反 spec quality-guidelines > Quality Check
+
+25 个 Java 文件、0 个测试。至少应对以下写单元测试：
+- `RetrievalMetricsCalculator` — 纯计算逻辑，无外部依赖
+- `GenerationMetricsCalculator` — 编排逻辑
+- `extractJson()` 抽取后的 `JsonExtractor` 工具类
+
+### P2-7: PipelineInstrumenter 中 StageSnapshot JSON 序列化失败静默吞异常
+
+**文件**: `PipelineInstrumenter.java`
+
+`StageSnapshot` 的 JSON 序列化如果失败，catch 后继续执行（`debug` 级别日志），可能丢失重要的中间状态调试信息。对于评估系统，中间状态的完整性至关重要。
+
+---
+
+## Spec 符合性补充检查
+
+| 检查项 | 结果 | 说明 |
+|--------|------|------|
+| MyBatis-Plus 统一 | ❌ | Repository 用 JdbcTemplate，需文档化决策或迁移 |
+| Entity 注解规范 | ❌ | 无 @TableName/@TableId，与项目不一致 |
+| 权限控制 | ❌ | 评估 API 无 @PreAuthorize（P1-7） |
+| 状态枚举 | ❌ | status VARCHAR 无枚举约束（P1-9） |
+| 异常规范 | ❌ | DatasetExporter 抛 RuntimeException（P2-5） |
+| 单元测试 | ❌ | 0 测试（P2-6） |
+| 日志级别 | ✅ | SLF4J debug/warn/info 分层正确 |
+| 时间类型 | ✅ | TIMESTAMPTZ + OffsetDateTime |
+| Flyway 命名 | ✅ | V11 连续编号 |
+| SQL 列命名 | ✅ | snake_case |
+| ISP/OCP | ✅ | LlmJudge 接口分离、Scorer 独立扩展 |
+
+## 修正优先级建议（更新）
+
+1. **P2-3 → 升级为 P0**: judgeModel 未生效是正确性 Bug（已有）
+2. **P0-5 + P0-6**: Repository 模式决策——文档化或迁移 MyBatis-Plus
+3. **P0-2 + P0-3 + P0-4**: 一起修——资源管理 + DTO + 工具类抽取（已有）
+4. **P0-1 + P0-新无事务**: 抽取 Service 层 + 事务保护（已有）
+5. **P1-7**: 评估 API 权限控制（新增）
+6. **P1-6**: DatasetGenerator 并发优化（新增）
+7. **P1-9**: status 枚举约束（新增）
+8. **P1-1**: Runner 拆分可在后续迭代（已有）
 
 | 检查项 | 结果 | 说明 |
 |--------|------|------|
@@ -204,9 +332,4 @@ String filterJson = "{\"userId\": \"" + userId + "\"}";
 
 ---
 
-## 修正优先级建议
 
-1. **P2-3 → 升级为 P0**: judgeModel 未生效是正确性 Bug，Judge 实际跑的是默认模型
-2. **P0-2 + P0-3 + P0-4**: 一起修——工具类 + DTO + 资源管理
-3. **P0-1**: 抽取 Service 层
-4. **P1-1**: Runner 拆分可在后续迭代

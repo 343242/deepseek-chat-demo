@@ -19,8 +19,8 @@ import org.springframework.context.annotation.Configuration;
  * 用户查询
  *   ↓ RewriteQueryTransformer（查询改写）
  *   ↓ HybridDocumentRetriever（pgvector + BM25, RRF 融合, userId 隔离）
+ *   ↓ MmrDocumentPostProcessor（MMR 多样性去冗余）
  *   ↓ BailianRerankPostProcessor（百炼 Rerank 语义精排）
- *   ↓ MmrDocumentPostProcessor（MMR 多样性去重）
  *   ↓ ParentDocumentPostProcessor（子块→父文档替换）
  *   ↓ 注入 LLM prompt
  * </pre>

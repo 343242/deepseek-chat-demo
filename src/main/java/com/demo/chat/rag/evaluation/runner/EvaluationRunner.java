@@ -120,26 +120,26 @@ public class EvaluationRunner {
             List<String> retrievedIds = extractedDocIds(retrieved);
             inst.capture("after_retrieval", retrievedIds);
 
-            // 4. Rerank 阶段（可选）
-            List<Document> afterRerank = retrieved;
-            if (config.isRerankEnabled()) {
-                BailianRerankPostProcessor reranker = createReranker();
-                afterRerank = reranker.process(query, retrieved);
-            }
-            inst.capture("after_rerank", extractedDocIds(afterRerank));
-
-            // 5. MMR 阶段（可选）
-            List<Document> afterMmr = afterRerank;
+            // 4. MMR 阶段（可选） — 先去冗余，减少 Rerank 算力浪费
+            List<Document> afterMmr = retrieved;
             if (config.isMmrEnabled()) {
                 MmrDocumentPostProcessor mmrProc = new MmrDocumentPostProcessor(
                         properties.mmrLambda(), properties.mmrTopK(), vectorStoreMapper);
-                afterMmr = mmrProc.process(query, afterRerank);
+                afterMmr = mmrProc.process(query, retrieved);
             }
             inst.capture("after_mmr", extractedDocIds(afterMmr));
 
+            // 5. Rerank 阶段（可选） — 去冗余后精排
+            List<Document> afterRerank = afterMmr;
+            if (config.isRerankEnabled()) {
+                BailianRerankPostProcessor reranker = createReranker();
+                afterRerank = reranker.process(query, afterMmr);
+            }
+            inst.capture("after_rerank", extractedDocIds(afterRerank));
+
             // 6. ParentChild 替换（可选）
             List<Document> afterParent = config.isParentChildEnabled()
-                    ? parentProcessor.process(query, afterMmr) : afterMmr;
+                    ? parentProcessor.process(query, afterRerank) : afterRerank;
             inst.capture("after_parent_child", extractedDocIds(afterParent));
 
             // 7. 检索结果

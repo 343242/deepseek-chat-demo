@@ -145,6 +145,16 @@ public class RagAdvisorFactory {
     private List<org.springframework.ai.rag.postretrieval.document.DocumentPostProcessor> buildPostProcessors() {
         List<org.springframework.ai.rag.postretrieval.document.DocumentPostProcessor> postProcessors = new ArrayList<>();
 
+        // 1. MMR 多样性去冗余（粗召回 → 去重，减少后续 Rerank 算力浪费）
+        if (properties.mmrEnabled()) {
+            postProcessors.add(new MmrDocumentPostProcessor(
+                    properties.mmrLambda(),
+                    properties.mmrTopK(),
+                    vectorStoreMapper
+            ));
+        }
+
+        // 2. Rerank 语义精排（去冗余后 → 精排，聚焦有效候选）
         if (properties.rerankEnabled() && properties.rerankApiKey() != null) {
             postProcessors.add(new BailianRerankPostProcessor(
                     properties.rerankBaseUrl(),
@@ -154,14 +164,7 @@ public class RagAdvisorFactory {
             ));
         }
 
-        if (properties.mmrEnabled()) {
-            postProcessors.add(new MmrDocumentPostProcessor(
-                    properties.mmrLambda(),
-                    properties.mmrTopK(),
-                    vectorStoreMapper
-            ));
-        }
-
+        // 3. Parent-Child 子块→父文档替换
         postProcessors.add(parentDocumentPostProcessor);
 
         return postProcessors;

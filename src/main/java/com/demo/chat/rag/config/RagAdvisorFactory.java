@@ -22,6 +22,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * RAG Advisor 工厂 — 按请求动态创建带用户/团队隔离的 RetrievalAugmentationAdvisor
@@ -48,7 +49,7 @@ public class RagAdvisorFactory {
     private final QueryNormalizer queryNormalizer;
     private final ObjectMapper objectMapper;
 
-    private volatile List<org.springframework.ai.rag.postretrieval.document.DocumentPostProcessor> cachedPostProcessors;
+    private final AtomicReference<List<org.springframework.ai.rag.postretrieval.document.DocumentPostProcessor>> cachedPostProcessors = new AtomicReference<>();
 
     public RagAdvisorFactory(ChatClient.Builder chatClientBuilder,
                              VectorStore vectorStore,
@@ -135,14 +136,8 @@ public class RagAdvisorFactory {
     }
 
     private List<org.springframework.ai.rag.postretrieval.document.DocumentPostProcessor> getPostProcessors() {
-        if (cachedPostProcessors == null) {
-            synchronized (this) {
-                if (cachedPostProcessors == null) {
-                    cachedPostProcessors = List.copyOf(buildPostProcessors());
-                }
-            }
-        }
-        return cachedPostProcessors;
+        return cachedPostProcessors.updateAndGet(existing ->
+                existing != null ? existing : List.copyOf(buildPostProcessors()));
     }
 
     private List<org.springframework.ai.rag.postretrieval.document.DocumentPostProcessor> buildPostProcessors() {

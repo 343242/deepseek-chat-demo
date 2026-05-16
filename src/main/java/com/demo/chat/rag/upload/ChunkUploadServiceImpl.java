@@ -4,7 +4,6 @@ import com.demo.chat.common.errorcode.ErrorCode;
 import com.demo.chat.exception.BusinessException;
 import com.demo.chat.rag.config.DocumentProperties;
 import com.demo.chat.rag.upload.BucketResolver;
-import com.demo.chat.common.team.TeamStatusService;
 import com.demo.chat.rag.entity.RagDocument;
 import com.demo.chat.rag.etl.EtlStatus;
 import com.demo.chat.rag.mapper.RagDocumentMapper;

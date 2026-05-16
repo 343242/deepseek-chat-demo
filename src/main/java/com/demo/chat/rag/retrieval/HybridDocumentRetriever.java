@@ -129,7 +129,8 @@ public class HybridDocumentRetriever implements DocumentRetriever {
             }
             return results;
         } catch (Exception e) {
-            log.warn("BM25 search failed: {}", e.getMessage());
+            log.warn("BM25 search failed, falling back to vector-only: {}", e.getMessage());
+            log.debug("BM25 search exception detail", e);
             return List.of();
         }
     }

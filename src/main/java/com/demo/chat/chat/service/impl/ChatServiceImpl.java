@@ -14,26 +14,21 @@ import com.demo.chat.chat.fallback.StreamRetryHandler;
 import com.demo.chat.chat.mode.ChatModeStrategy;
 import com.demo.chat.chat.mode.ModeRouter;
 import com.demo.chat.chat.provider.ModelRouter;
+import com.demo.chat.chat.service.ChatConversationHelper;
 import com.demo.chat.chat.service.ChatRequestSpecFactory;
 import com.demo.chat.chat.service.ChatService;
 import com.demo.chat.chat.service.ChatUsageTracker;
-import com.demo.chat.conversation.service.ConversationMessageService;
-import com.demo.chat.conversation.entity.Message;
+import com.demo.chat.common.errorcode.ErrorCode;
 import com.demo.chat.common.uuid.UuidV7;
 import com.demo.chat.conversation.util.ConversationIdUtil;
-import com.demo.chat.common.errorcode.ErrorCode;
 import com.demo.chat.exception.BusinessException;
 import com.demo.chat.security.util.SecurityUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.memory.ChatMemory;
-import org.springframework.ai.chat.messages.AssistantMessage;
-import org.springframework.ai.chat.metadata.Usage;
 import org.springframework.ai.chat.model.Generation;
-import org.springframework.dao.DuplicateKeyException;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.support.TransactionTemplate;
 import reactor.core.publisher.Flux;
 
 import java.util.List;
@@ -62,6 +57,7 @@ public class ChatServiceImpl implements ChatService {
     private final ModeRouter modeRouter;
     private final ChatRequestSpecFactory requestSpecFactory;
     private final ChatUsageTracker usageTracker;
+    private final ChatConversationHelper conversationHelper;
     private final ChatMemory chatMemory;
     private final ChatFallbackProperties fallbackProperties;
     private final FallbackChainProvider fallbackChainProvider;
@@ -69,30 +65,26 @@ public class ChatServiceImpl implements ChatService {
     private final StreamRetryHandler streamRetryHandler;
     private final RequestContextManager cagContextManager;
     private final CagProperties cagProperties;
-    private final com.demo.chat.conversation.service.ConversationService conversationService;
-    private final ConversationMessageService conversationMessageService;
-    private final TransactionTemplate transactionTemplate;
 
     public ChatServiceImpl(ChatClientRegistry registry,
                            ModelRouter modelRouter,
                            ModeRouter modeRouter,
                            ChatRequestSpecFactory requestSpecFactory,
                            ChatUsageTracker usageTracker,
+                           ChatConversationHelper conversationHelper,
                            ChatMemory chatMemory,
                            ChatFallbackProperties fallbackProperties,
                            FallbackChainProvider fallbackChainProvider,
                            FallbackEligibility fallbackEligibility,
                            StreamRetryHandler streamRetryHandler,
                            RequestContextManager cagContextManager,
-                           CagProperties cagProperties,
-                           com.demo.chat.conversation.service.ConversationService conversationService,
-                           ConversationMessageService conversationMessageService,
-                           TransactionTemplate transactionTemplate) {
+                           CagProperties cagProperties) {
         this.registry = registry;
         this.modelRouter = modelRouter;
         this.modeRouter = modeRouter;
         this.requestSpecFactory = requestSpecFactory;
         this.usageTracker = usageTracker;
+        this.conversationHelper = conversationHelper;
         this.chatMemory = chatMemory;
         this.fallbackProperties = fallbackProperties;
         this.fallbackChainProvider = fallbackChainProvider;
@@ -100,9 +92,6 @@ public class ChatServiceImpl implements ChatService {
         this.streamRetryHandler = streamRetryHandler;
         this.cagContextManager = cagContextManager;
         this.cagProperties = cagProperties;
-        this.conversationService = conversationService;
-        this.conversationMessageService = conversationMessageService;
-        this.transactionTemplate = transactionTemplate;
     }
 
     // ==================== 阻塞式聊天 ====================
@@ -189,7 +178,7 @@ public class ChatServiceImpl implements ChatService {
      */
     private ChatResponse doChat(ChatRequest request, FallbackMeta fallback) {
         ChatContext ctx = prepareContext(request);
-        ensureConversationExists(ctx, request);
+        conversationHelper.ensureConversationExists(ctx.userId, ctx.conversationId, request.model());
         RequestContext cagCtx = buildCagContext(ctx, request);
 
         ChatClient.ChatClientRequestSpec requestSpec = requestSpecFactory.createSpec(
@@ -197,7 +186,7 @@ public class ChatServiceImpl implements ChatService {
 
         org.springframework.ai.chat.model.ChatResponse aiResponse = requestSpec.call().chatResponse();
 
-        recordUsage(ctx.conversationId, ctx.route.toCompositeId(), aiResponse, ctx.elapsed());
+        usageTracker.recordUsage(ctx.conversationId, ctx.route.toCompositeId(), aiResponse, ctx.elapsed());
 
         Generation generation = null;
         if (aiResponse != null) {
@@ -208,8 +197,8 @@ public class ChatServiceImpl implements ChatService {
                 : "";
 
         // 写入业务消息记录 + 通知会话更新
-        saveMessagesAndNotify(ctx, request.message(), content, ctx.route.toCompositeId(),
-                aiResponse, ctx.elapsed());
+        conversationHelper.saveMessagesAndNotify(ctx.conversationId, request.message(), content,
+                ctx.route.toCompositeId(), aiResponse, ctx.elapsed());
 
         return new ChatResponse(ctx.route.toCompositeId(), content, ctx.rawConversationId, fallback);
     }
@@ -223,7 +212,7 @@ public class ChatServiceImpl implements ChatService {
      */
     private Flux<String> doStream(String modelId, ChatRequest request) {
         ChatContext ctx = prepareContext(request);
-        ensureConversationExists(ctx, request);
+        conversationHelper.ensureConversationExists(ctx.userId, ctx.conversationId, request.model());
         RequestContext cagCtx = buildCagContext(ctx, request);
 
         ChatClient.ChatClientRequestSpec requestSpec = requestSpecFactory.createSpec(
@@ -247,12 +236,13 @@ public class ChatServiceImpl implements ChatService {
                             case ON_ERROR, CANCEL -> {
                                 log.warn("Stream {} for conversation {}: collected {} chars",
                                         signal, ctx.conversationId, collectedContent.length());
-                                savePartialResponse(ctx.conversationId, collectedContent.toString());
+                                conversationHelper.savePartialResponse(ctx.conversationId,
+                                        collectedContent.toString());
                             }
                             case ON_COMPLETE -> {
                                 log.debug("Stream completed for conversation: {}", ctx.conversationId);
                                 // 写入业务消息记录 + 通知会话更新
-                                saveMessagesAndNotify(ctx, request.message(),
+                                conversationHelper.saveMessagesAndNotify(ctx.conversationId, request.message(),
                                         collectedContent.toString(), ctx.route.toCompositeId(),
                                         lastAiResponse.get(), ctx.elapsed());
                             }
@@ -314,91 +304,6 @@ public class ChatServiceImpl implements ChatService {
         int msgCount = chatMemory.get(ctx.conversationId).size();
         return cagContextManager.buildContext(
                 ctx.userId, ctx.conversationId, request.isRagEnabled(), msgCount);
-    }
-
-    /**
-     * 确保会话记录存在（自动创建）
-     */
-    private void ensureConversationExists(ChatContext ctx, ChatRequest request) {
-        try {
-            conversationService.getOrCreate(ctx.userId, ctx.conversationId, request.model());
-        } catch (DuplicateKeyException e) {
-            // 并发创建冲突，唯一约束兜底，忽略
-            log.debug("Conversation already exists (concurrent create): {}", ctx.conversationId);
-        } catch (Exception e) {
-            log.error("Failed to ensure conversation exists: conversationId={}", ctx.conversationId, e);
-            throw e;
-        }
-    }
-
-    /**
-     * 保存业务消息记录并通知会话更新
-     */
-    /**
-     * 保存业务消息记录并通知会话更新
-     * <p>
-     * 使用编程式事务保证 USER 消息 + ASSISTANT 消息 + 会话计数的原子性。
-     * 事务失败时向上传播异常，调用方决定是否影响主流程。
-     */
-    private void saveMessagesAndNotify(ChatContext ctx, String userContent, String assistantContent,
-                                       String modelId,
-                                       org.springframework.ai.chat.model.ChatResponse aiResponse,
-                                       long durationMs) {
-        try {
-            transactionTemplate.executeWithoutResult(status -> {
-                // 写入 USER 消息
-                Message userMsg = Message.userMessage(ctx.conversationId, null, userContent);
-                conversationMessageService.saveMessage(userMsg);
-
-                // 写入 ASSISTANT 消息
-                int totalTokens = -1;
-                if (aiResponse != null && aiResponse.getMetadata().getUsage() != null) {
-                    Usage usage = aiResponse.getMetadata().getUsage();
-                    totalTokens = usage.getTotalTokens() != null ? usage.getTotalTokens().intValue() : -1;
-                }
-                Message assistantMsg = Message.assistantMessage(
-                        ctx.conversationId, userMsg.getId(), assistantContent,
-                        modelId, totalTokens, durationMs);
-                conversationMessageService.saveMessage(assistantMsg);
-
-                // 通知会话更新计数和标题
-                conversationService.onNewMessages(ctx.conversationId, userContent, 2);
-            });
-        } catch (Exception e) {
-            // 消息持久化失败不影响已返回给用户的响应，但必须记录完整异常栈
-            log.error("Failed to save message records: conversationId={}, model={}",
-                    ctx.conversationId, modelId, e);
-        }
-    }
-
-    /**
-     * 保存流式部分响应（仅在流中断时调用）
-     */
-    private void savePartialResponse(String conversationId, String content) {
-        if (content != null && !content.isBlank()) {
-            try {
-                var history = chatMemory.get(conversationId);
-                if (!history.isEmpty()) {
-                    var lastMsg = history.getLast();
-                    if (lastMsg instanceof AssistantMessage am && content.equals(am.getText())) {
-                        log.debug("MessageChatMemoryAdvisor already saved identical response, skipping");
-                        return;
-                    }
-                }
-                chatMemory.add(conversationId, new AssistantMessage(content));
-                log.info("Saved partial stream response for conversation: {}", conversationId);
-            } catch (Exception e) {
-                log.warn("Failed to save partial stream response: {}", e.getMessage());
-            }
-        }
-    }
-
-    /**
-     * 记录 Token 用量（委托给 ChatUsageTracker）
-     */
-    private void recordUsage(String conversationId, String modelId,
-                             org.springframework.ai.chat.model.ChatResponse aiResponse, long durationMs) {
-        usageTracker.recordUsage(conversationId, modelId, aiResponse, durationMs);
     }
 
     /**

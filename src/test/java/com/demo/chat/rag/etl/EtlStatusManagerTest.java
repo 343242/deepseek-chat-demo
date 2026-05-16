@@ -10,7 +10,6 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.transaction.support.TransactionCallbackWithoutResult;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -39,8 +38,8 @@ class EtlStatusManagerTest {
         statusManager = new EtlStatusManager(ragDocumentMapper, transactionTemplate);
         // 模拟 TransactionTemplate：立即执行回调
         lenient().doAnswer(invocation -> {
-            TransactionCallbackWithoutResult callback = invocation.getArgument(0);
-            callback.doInTransaction(null);
+            java.util.function.Consumer<org.springframework.transaction.TransactionStatus> consumer = invocation.getArgument(0);
+            consumer.accept(null);
             return null;
         }).when(transactionTemplate).executeWithoutResult(any());
     }
@@ -186,8 +185,8 @@ class EtlStatusManagerTest {
         void failDocument_transactionFailure() {
             // 重新配置 transactionTemplate 使其真正执行（触发 doThrow）
             doAnswer(invocation -> {
-                TransactionCallbackWithoutResult callback = invocation.getArgument(0);
-                callback.doInTransaction(null);
+                java.util.function.Consumer<org.springframework.transaction.TransactionStatus> consumer = invocation.getArgument(0);
+                consumer.accept(null);
                 return null;
             }).when(transactionTemplate).executeWithoutResult(any());
 

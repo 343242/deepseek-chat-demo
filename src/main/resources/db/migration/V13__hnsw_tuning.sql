@@ -34,15 +34,15 @@ CREATE INDEX vector_store_embedding_hnsw_idx
 -- 4. 设置查询时搜索宽度（数据库级默认值，所有会话生效）
 --    ef_search=64: 查询时探查更多邻居（默认 40）
 --    配合百炼 Rerank 精排，多搜一些再精排是合理的策略
-ALTER DATABASE chatdemo SET hnsw.ef_search = 64;
+ALTER DATABASE chat_demo SET hnsw.ef_search = 64;
 
 -- 5. 开启 iterative scan（pgvector 0.8+ 特性）
 --    解决 HNSW + metadata 过滤后的召回不足问题：
 --    当初始 ef_search 返回的结果经过 WHERE 过滤后不足时，
 --    pgvector 会自动扩大搜索范围重试，直到满足条件或达到 max_scan_tuples
-ALTER DATABASE chatdemo SET hnsw.iterative_scan = on;
+ALTER DATABASE chat_demo SET hnsw.iterative_scan = on;
 
 -- 6. 限制 iterative scan 最大扫描行数
 --    防止单次查询扫描过多行导致延迟飙升
 --    20000 行在 1024 维向量下约 80MB 内存扫描，可接受
-ALTER DATABASE chatdemo SET hnsw.max_scan_tuples = 20000;
+ALTER DATABASE chat_demo SET hnsw.max_scan_tuples = 20000;

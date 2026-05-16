@@ -287,6 +287,13 @@
             <artifactId>awaitility</artifactId>
             <scope>test</scope>
         </dependency>
+
+        <!-- OpenDataLoader PDF Core — 结构化 PDF 解析（保留标题层级/表格/阅读顺序） -->
+        <dependency>
+            <groupId>org.opendataloader</groupId>
+            <artifactId>opendataloader-pdf-core</artifactId>
+            <version>1.11.0</version>
+        </dependency>
     </dependencies>
 
     <dependencyManagement>
@@ -309,4 +316,14 @@
             </plugin>
         </plugins>
     </build>
+
+    <repositories>
+        <repository>
+            <id>vera-dev</id>
+            <name>Vera development (OpenDataLoader)</name>
+            <url>https://artifactory.openpreservation.org/artifactory/vera-dev</url>
+            <snapshots><enabled>true</enabled></snapshots>
+        </repository>
+    </repositories>
+
 </project>

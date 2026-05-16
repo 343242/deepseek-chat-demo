@@ -7,24 +7,22 @@ import org.springframework.ai.reader.pdf.PagePdfDocumentReader;
 import org.springframework.ai.reader.pdf.config.PdfDocumentReaderConfig;
 import org.springframework.ai.reader.ExtractedTextFormatter;
 import org.springframework.core.io.Resource;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
 
 /**
- * PDF 专用解析器
+ * PDF 专用解析器（PdfBox 降级方案）
  * <p>
  * 使用 Spring AI 的 {@link PagePdfDocumentReader}（基于 Apache PdfBox），
  * 按页切分并附加页码元数据（startPageNumber / endPageNumber）。
  * <p>
- * 相比 Tika 的优势：
- * <ul>
- *   <li>保留页码元数据，便于溯源</li>
- *   <li>可配置每页或每 N 页为一个 Document</li>
- *   <li>更精确的 PDF 文本提取</li>
- * </ul>
+ * 当 {@link OpenDataLoaderPdfParser} 不可用（opendataloader-pdf-core 未引入）时自动激活。
+ * 相比 OpenDataLoader 的劣势：不保留文档结构（标题/表格/多栏），纯文本按页切分。
  */
 @Component
+@ConditionalOnMissingBean(OpenDataLoaderPdfParser.class)
 public class PdfDocumentParser implements DocumentParser {
 
     private static final Logger log = LoggerFactory.getLogger(PdfDocumentParser.class);

@@ -16,7 +16,7 @@ import com.demo.chat.chat.mode.ModeRouter;
 import com.demo.chat.chat.provider.ModelRouter;
 import com.demo.chat.chat.service.ChatRequestSpecFactory;
 import com.demo.chat.chat.service.ChatService;
-import com.demo.chat.chat.service.UsageService;
+import com.demo.chat.chat.service.ChatUsageTracker;
 import com.demo.chat.conversation.service.ConversationMessageService;
 import com.demo.chat.conversation.entity.Message;
 import com.demo.chat.common.uuid.UuidV7;
@@ -61,7 +61,7 @@ public class ChatServiceImpl implements ChatService {
     private final ModelRouter modelRouter;
     private final ModeRouter modeRouter;
     private final ChatRequestSpecFactory requestSpecFactory;
-    private final UsageService usageService;
+    private final ChatUsageTracker usageTracker;
     private final ChatMemory chatMemory;
     private final ChatFallbackProperties fallbackProperties;
     private final FallbackChainProvider fallbackChainProvider;
@@ -77,7 +77,7 @@ public class ChatServiceImpl implements ChatService {
                            ModelRouter modelRouter,
                            ModeRouter modeRouter,
                            ChatRequestSpecFactory requestSpecFactory,
-                           UsageService usageService,
+                           ChatUsageTracker usageTracker,
                            ChatMemory chatMemory,
                            ChatFallbackProperties fallbackProperties,
                            FallbackChainProvider fallbackChainProvider,
@@ -92,7 +92,7 @@ public class ChatServiceImpl implements ChatService {
         this.modelRouter = modelRouter;
         this.modeRouter = modeRouter;
         this.requestSpecFactory = requestSpecFactory;
-        this.usageService = usageService;
+        this.usageTracker = usageTracker;
         this.chatMemory = chatMemory;
         this.fallbackProperties = fallbackProperties;
         this.fallbackChainProvider = fallbackChainProvider;
@@ -263,15 +263,11 @@ public class ChatServiceImpl implements ChatService {
                         long duration = ctx.elapsed();
                         org.springframework.ai.chat.model.ChatResponse last = lastAiResponse.get();
                         if (last != null && last.getMetadata().getUsage() != null) {
-                            Usage usage = last.getMetadata().getUsage();
-                            usageService.recordUsage(
-                                    ctx.conversationId, ctx.route.toCompositeId(),
-                                    usage.getPromptTokens(), usage.getCompletionTokens(),
-                                    usage.getTotalTokens(), duration);
+                            usageTracker.recordUsage(ctx.conversationId, ctx.route.toCompositeId(),
+                                    last, duration);
                         } else {
-                            usageService.recordUsage(
-                                    ctx.conversationId, ctx.route.toCompositeId(),
-                                    -1, -1, -1, duration);
+                            usageTracker.recordUsage(ctx.conversationId, ctx.route.toCompositeId(),
+                                    duration);
                         }
                     }
                 });
@@ -398,24 +394,11 @@ public class ChatServiceImpl implements ChatService {
     }
 
     /**
-     * 记录 Token 用量
+     * 记录 Token 用量（委托给 ChatUsageTracker）
      */
     private void recordUsage(String conversationId, String modelId,
                              org.springframework.ai.chat.model.ChatResponse aiResponse, long durationMs) {
-        try {
-            Usage usage = aiResponse.getMetadata().getUsage();
-            if (usage != null) {
-                usageService.recordUsage(
-                        conversationId, modelId,
-                        usage.getPromptTokens(), usage.getCompletionTokens(),
-                        usage.getTotalTokens(), durationMs);
-                log.debug("Usage recorded: model={}, prompt={}, completion={}, total={}, duration={}ms",
-                        modelId, usage.getPromptTokens(), usage.getCompletionTokens(),
-                        usage.getTotalTokens(), durationMs);
-            }
-        } catch (Exception e) {
-            log.warn("Failed to record usage: {}", e.getMessage());
-        }
+        usageTracker.recordUsage(conversationId, modelId, aiResponse, durationMs);
     }
 
     /**

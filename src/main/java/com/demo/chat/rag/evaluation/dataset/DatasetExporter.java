@@ -32,7 +32,7 @@ public class DatasetExporter {
      */
     public String exportAsJson(long datasetId) {
         var dataset = datasetRepo.findDatasetById(datasetId)
-                .orElseThrow(() -> new IllegalArgumentException("Dataset not found: " + datasetId));
+                .orElseThrow(() -> new BusinessException("Dataset not found: " + datasetId));
         var items = datasetRepo.listItemsByDatasetId(datasetId);
 
         try {

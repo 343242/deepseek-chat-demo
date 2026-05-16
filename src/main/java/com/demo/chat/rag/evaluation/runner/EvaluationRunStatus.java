@@ -29,6 +29,6 @@ public enum EvaluationRunStatus {
                 return status;
             }
         }
-        throw new IllegalArgumentException("Unknown EvaluationRunStatus: " + value);
+        throw new IllegalStateException("Unknown EvaluationRunStatus: " + value);
     }
 }

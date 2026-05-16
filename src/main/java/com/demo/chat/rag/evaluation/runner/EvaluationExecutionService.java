@@ -11,7 +11,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.Map;
@@ -79,7 +78,6 @@ public class EvaluationExecutionService {
      * @param config  评估配置
      * @return 运行摘要
      */
-    @Transactional
     public RunSummary executeRun(EvaluationRun run, List<EvaluationDatasetItem> items, EvalConfig config) {
         int successCount = 0;
         int failCount = 0;

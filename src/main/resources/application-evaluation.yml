@@ -17,4 +17,4 @@ app:
     judge:
       model: glm-5.1
       base-url: ${ZHIPU_BASE_URL:https://open.bigmodel.cn/api/paas/v4}
-      api-key: ${ZHIPU_API_KEY:76252e35a4724fc8978f63762d101209.Ff1tofbmCQHV4LkD}
+      api-key: ${ZHIPU_API_KEY:CHANGE_ME}

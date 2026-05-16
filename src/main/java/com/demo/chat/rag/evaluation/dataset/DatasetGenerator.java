@@ -147,7 +147,12 @@ public class DatasetGenerator {
                 ORDER BY RANDOM()
                 LIMIT ?
                 """;
-        String filterJson = "{\"userId\": \"" + userId + "\"}";
+        String filterJson;
+        try {
+            filterJson = objectMapper.writeValueAsString(Map.of("userId", String.valueOf(userId)));
+        } catch (Exception e) {
+            filterJson = "{\"userId\": \"" + userId + "\"}";
+        }
         return jdbc.queryForList(sql, filterJson, sampleSize);
     }
 

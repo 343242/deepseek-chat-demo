@@ -28,6 +28,6 @@ public enum EvaluationItemStatus {
                 return status;
             }
         }
-        throw new IllegalArgumentException("Unknown EvaluationItemStatus: " + value);
+        throw new IllegalStateException("Unknown EvaluationItemStatus: " + value);
     }
 }

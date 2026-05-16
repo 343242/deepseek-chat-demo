@@ -75,9 +75,12 @@ public class ContentFilterAdvisor implements BaseAdvisor {
                 String filtered = contentFilterService.replace(content);
                 log.info("Filtered sensitive words in model output");
                 AssistantMessage newMessage = new AssistantMessage(filtered);
-                // 保留原始 Generation 的元数据（finishReason、usage 等）
-                ChatGenerationMetadata metadata = generation.getMetadata();
-                filteredGenerations.add(new Generation(newMessage, metadata));
+                // 保留原始 finishReason，添加 contentFiltered 标记
+                ChatGenerationMetadata newMetadata = ChatGenerationMetadata.builder()
+                        .finishReason(generation.getMetadata().getFinishReason())
+                        .metadata("contentFiltered", true)
+                        .build();
+                filteredGenerations.add(new Generation(newMessage, newMetadata));
             } else {
                 filteredGenerations.add(generation);
             }

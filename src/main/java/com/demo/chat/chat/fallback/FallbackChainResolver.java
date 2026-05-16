@@ -73,6 +73,9 @@ public class FallbackChainResolver implements FallbackChainProvider {
                     if (seen.size() >= MAX_CHAIN_SIZE) {
                         break;
                     }
+                } else {
+                    log.warn("Circular fallback detected for model '{}': '{}' already in chain, skipping",
+                            current, candidate);
                 }
             }
             cursor++;

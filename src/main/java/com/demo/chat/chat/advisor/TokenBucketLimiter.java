@@ -5,6 +5,7 @@ import java.time.Instant;
 import java.util.Iterator;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
  * 令牌桶限流器
@@ -12,7 +13,7 @@ import java.util.concurrent.ConcurrentHashMap;
  * 支持按 key（如 conversationId）独立限流。
  * 每个令牌桶独立维护：容量、当前令牌数、上次补充时间。
  * <p>
- * 线程安全：Bucket 所有操作均在 synchronized 块内完成。
+ * 线程安全：Bucket 所有操作均在 ReentrantLock 保护下完成（避免虚拟线程 Pinning）。
  * 内存安全：通过 {@link #cleanIdleBuckets()} 定期清理空闲桶，
  * 由 {@link com.demo.chat.config.AdvisorAutoConfiguration} 通过 @Scheduled 调用。
  */
@@ -96,33 +97,50 @@ public class TokenBucketLimiter implements RateLimiter {
             this.lastAccessed = Instant.now();
         }
 
-        /**
-         * 尝试消费令牌。synchronized 保证 refill + consume 的原子性。
-         */
-        synchronized boolean tryConsume(long requested) {
-            refill();
-            lastAccessed = Instant.now();
+        private final ReentrantLock lock = new ReentrantLock();
 
-            if (tokens < requested) {
-                return false;
+        /**
+         * 尝试消费令牌。ReentrantLock 保证 refill + consume 的原子性。
+         */
+        boolean tryConsume(long requested) {
+            lock.lock();
+            try {
+                refill();
+                lastAccessed = Instant.now();
+
+                if (tokens < requested) {
+                    return false;
+                }
+                tokens -= requested;
+                return true;
+            } finally {
+                lock.unlock();
             }
-            tokens -= requested;
-            return true;
         }
 
         /**
-         * 查询可用令牌数。synchronized 与 tryConsume 互斥。
+         * 查询可用令牌数。ReentrantLock 与 tryConsume 互斥。
          */
-        synchronized long availableTokens() {
-            refill();
-            return tokens;
+        long availableTokens() {
+            lock.lock();
+            try {
+                refill();
+                return tokens;
+            } finally {
+                lock.unlock();
+            }
         }
 
         /**
          * 是否已空闲超过阈值
          */
-        synchronized boolean isIdle(Instant threshold) {
-            return lastAccessed.isBefore(threshold);
+        boolean isIdle(Instant threshold) {
+            lock.lock();
+            try {
+                return lastAccessed.isBefore(threshold);
+            } finally {
+                lock.unlock();
+            }
         }
 
         private void refill() {

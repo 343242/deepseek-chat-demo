@@ -48,8 +48,7 @@ public class RateLimitAdvisor implements BaseAdvisor {
 
         if (!rateLimiter.tryAcquire(conversationId)) {
             log.warn("Rate limit exceeded for conversation: {}", conversationId);
-            throw new RateLimitExceededException(
-                    "请求过于频繁，请稍后再试。当前对话: " + conversationId);
+            throw new RateLimitExceededException("请求过于频繁，请稍后再试");
         }
 
         log.debug("Rate limit check passed for conversation: {}", conversationId);

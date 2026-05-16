@@ -70,7 +70,8 @@ public class SandboxService {
             tempFile = Files.createTempFile("sandbox-", language.getExtension());
             Files.writeString(tempFile, code, StandardCharsets.UTF_8);
         } catch (IOException e) {
-            return new SandboxResult(-1, "", "创建临时文件失败: " + e.getMessage(), false, 0);
+            log.error("Failed to create temp file for sandbox", e);
+            return new SandboxResult(-1, "", "沙箱初始化失败，请稍后重试", false, 0);
         }
 
         try {

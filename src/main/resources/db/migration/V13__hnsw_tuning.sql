@@ -40,7 +40,7 @@ ALTER DATABASE chat_demo SET hnsw.ef_search = 64;
 --    解决 HNSW + metadata 过滤后的召回不足问题：
 --    当初始 ef_search 返回的结果经过 WHERE 过滤后不足时，
 --    pgvector 会自动扩大搜索范围重试，直到满足条件或达到 max_scan_tuples
-ALTER DATABASE chat_demo SET hnsw.iterative_scan = on;
+ALTER DATABASE chat_demo SET hnsw.iterative_scan = relaxed_order;
 
 -- 6. 限制 iterative scan 最大扫描行数
 --    防止单次查询扫描过多行导致延迟飙升

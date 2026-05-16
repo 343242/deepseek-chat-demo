@@ -26,7 +26,6 @@ import com.demo.chat.security.util.SecurityUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
-import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.chat.model.Generation;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
@@ -50,7 +49,6 @@ public class ChatServiceImpl implements ChatService {
     private final ChatRequestSpecFactory requestSpecFactory;
     private final ChatUsageTracker usageTracker;
     private final ChatConversationHelper conversationHelper;
-    private final ChatMemory chatMemory;
     private final ChatFallbackProperties fallbackProperties;
     private final FallbackChainProvider fallbackChainProvider;
     private final FallbackEligibility fallbackEligibility;
@@ -64,19 +62,18 @@ public class ChatServiceImpl implements ChatService {
                            ChatRequestSpecFactory requestSpecFactory,
                            ChatUsageTracker usageTracker,
                            ChatConversationHelper conversationHelper,
-                           ChatMemory chatMemory,
                            ChatFallbackProperties fallbackProperties,
                            FallbackChainProvider fallbackChainProvider,
                            FallbackEligibility fallbackEligibility,
                            StreamRetryHandler streamRetryHandler,
                            RequestContextManager cagContextManager,
-                           CagProperties cagProperties) {        this.registry = registry;
+                           CagProperties cagProperties) {
+        this.registry = registry;
         this.modelRouter = modelRouter;
         this.modeRouter = modeRouter;
         this.requestSpecFactory = requestSpecFactory;
         this.usageTracker = usageTracker;
         this.conversationHelper = conversationHelper;
-        this.chatMemory = chatMemory;
         this.fallbackProperties = fallbackProperties;
         this.fallbackChainProvider = fallbackChainProvider;
         this.fallbackEligibility = fallbackEligibility;
@@ -266,7 +263,7 @@ public class ChatServiceImpl implements ChatService {
         if (!cagProperties.isEnabled()) {
             return null;
         }
-        int msgCount = chatMemory.get(ctx.conversationId).size();
+        int msgCount = conversationHelper.getMessageCount(ctx.conversationId);
         return cagContextManager.buildContext(
                 ctx.userId, ctx.conversationId, request.isRagEnabled(), msgCount);
     }

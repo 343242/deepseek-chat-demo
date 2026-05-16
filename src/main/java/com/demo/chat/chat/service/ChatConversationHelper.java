@@ -43,6 +43,21 @@ public class ChatConversationHelper {
     }
 
     /**
+     * 获取会话消息数量
+     *
+     * @param conversationId 会话 ID
+     * @return 消息数量
+     */
+    public int getMessageCount(String conversationId) {
+        try {
+            return chatMemory.get(conversationId).size();
+        } catch (Exception e) {
+            log.warn("Failed to get message count for conversation: {}", conversationId, e);
+            return 0;
+        }
+    }
+
+    /**
      * 确保会话记录存在（自动创建）
      *
      * @param userId         用户 ID

@@ -55,6 +55,31 @@ class ChatConversationHelperTest {
     }
 
     @Nested
+    @DisplayName("getMessageCount")
+    class GetMessageCount {
+
+        @Test
+        @DisplayName("正常返回消息数量")
+        void returnsCount() {
+            when(chatMemory.get("conv-1")).thenReturn(List.of(
+                    new org.springframework.ai.chat.messages.UserMessage("hello"),
+                    new AssistantMessage("hi")));
+
+            ChatConversationHelper helper = createHelper();
+            assertEquals(2, helper.getMessageCount("conv-1"));
+        }
+
+        @Test
+        @DisplayName("ChatMemory 异常时返回 0")
+        void returnsZeroOnException() {
+            when(chatMemory.get("conv-1")).thenThrow(new RuntimeException("redis down"));
+
+            ChatConversationHelper helper = createHelper();
+            assertEquals(0, helper.getMessageCount("conv-1"));
+        }
+    }
+
+    @Nested
     @DisplayName("ensureConversationExists")
     class EnsureConversationExists {
 

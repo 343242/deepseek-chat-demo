@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
+import org.springframework.context.annotation.Profile;
 
 import java.util.Collections;
 import java.util.List;
@@ -25,6 +26,7 @@ import java.util.Map;
  * </p>
  */
 @Component
+@Profile("evaluation")
 public class FaithfulnessScorer {
 
     private static final Logger log = LoggerFactory.getLogger(FaithfulnessScorer.class);

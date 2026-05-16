@@ -9,6 +9,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
+import org.springframework.context.annotation.Profile;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -28,6 +29,7 @@ import java.util.concurrent.Executors;
  * </p>
  */
 @Component
+@Profile("evaluation")
 public class DatasetGenerator {
 
     private static final Logger log = LoggerFactory.getLogger(DatasetGenerator.class);

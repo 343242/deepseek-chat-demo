@@ -9,6 +9,7 @@ import com.demo.chat.rag.evaluation.runner.EvaluationRunner.EvalConfig;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -23,6 +24,7 @@ import java.util.Map;
  * </p>
  */
 @Service
+@Profile("evaluation")
 public class EvaluationExecutionService {
 
     private static final Logger log = LoggerFactory.getLogger(EvaluationExecutionService.class);

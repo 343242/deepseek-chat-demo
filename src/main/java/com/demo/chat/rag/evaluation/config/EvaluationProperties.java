@@ -2,6 +2,7 @@ package com.demo.chat.rag.evaluation.config;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
+import org.springframework.context.annotation.Profile;
 
 /**
  * RAG 评估系统配置
@@ -13,6 +14,7 @@ import org.springframework.stereotype.Component;
  * 评估模块作为 chat-demo 的数据孤岛，自行管理模型连接。
  */
 @Component
+@Profile("evaluation")
 @ConfigurationProperties(prefix = "app.evaluation")
 public class EvaluationProperties {
 

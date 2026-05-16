@@ -173,8 +173,14 @@ public class HybridDocumentRetriever implements DocumentRetriever {
      */
     private String sanitizeQuery(String query) {
         if (query == null || query.isBlank()) return "";
-        // 去掉 tsquery 运算符：& | ! ( ) : * \ 和引号
-        return query.replaceAll("[&|!()\\[\\]{}:*\\\\\"']", " ").trim();
+        // 去掉 tsquery 运算符：& | ! ( ) : * \ 和 ASCII 引号
+        // 同时 normalize Unicode 引号 → 空格（plainto_tsquery 会自行处理中文分词）
+        return query
+                .replace('\u201C', ' ').replace('\u201D', ' ')  // " " (curly double)
+                .replace('\u2018', ' ').replace('\u2019', ' ')  // ' ' (curly single)
+                .replace('\u00AB', ' ').replace('\u00BB', ' ')  // « » (guillemets)
+                .replaceAll("[&|!()\\[\\]{}:*\\\\\"']", " ")
+                .trim();
     }
 
     private record ScoredDocument(Document doc, int rank, double score) {}

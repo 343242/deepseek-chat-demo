@@ -55,7 +55,10 @@ public class OpenDataLoaderPdfParser implements DocumentParser {
         try {
             // 1. 将 Resource 写入临时文件
             tempPdf = Files.createTempFile("rag-pdf-", ".pdf");
-            resource.getInputStream().transferTo(Files.newOutputStream(tempPdf));
+            try (var in = resource.getInputStream();
+                 var out = Files.newOutputStream(tempPdf)) {
+                in.transferTo(out);
+            }
             log.debug("PDF written to temp file: {} ({} bytes)", tempPdf, Files.size(tempPdf));
 
             // 2. 创建输出目录
@@ -86,6 +89,9 @@ public class OpenDataLoaderPdfParser implements DocumentParser {
             doc.getMetadata().put("parser", "opendataloader");
             doc.getMetadata().put("mimeType", mimeType);
             doc.getMetadata().put("source", resource.getFilename());
+            // 统计 Markdown 标题数作为结构化程度指标
+            long headingCount = markdown.lines().filter(line -> line.startsWith("#")).count();
+            doc.getMetadata().put("headingCount", headingCount);
 
             log.info("OpenDataLoader parsed: {} → {} chars markdown", resource.getFilename(), markdown.length());
             return List.of(doc);

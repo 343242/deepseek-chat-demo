@@ -65,6 +65,7 @@ public class MmrDocumentPostProcessor implements DocumentPostProcessor {
         }
 
         // 数据库层计算文档间 cosine distance 矩阵
+        // TODO: 热门文档可考虑短时缓存距离矩阵，避免重复 DB 查询（当前文档量小，暂不缓存）
         List<String> docIds = documents.stream().map(Document::getId).toList();
         Map<String, Double> distanceMatrix = vectorStoreMapper.pairwiseCosineDistance(docIds);
 
@@ -138,6 +139,8 @@ public class MmrDocumentPostProcessor implements DocumentPostProcessor {
         if (rrfScore instanceof Number) {
             return ((Number) rrfScore).doubleValue();
         }
+        log.debug("No rerankScore/rrfScore in metadata for doc {}, falling back to 0.5 " +
+                "(expected when MMR runs before Rerank)", doc.getId());
         return 0.5;
     }
 }

@@ -317,6 +317,8 @@
         </plugins>
     </build>
 
+    <!-- 第三方仓库：opendataloader-pdf-core 暂未同步到 Maven Central，需通过 vera-dev 仓库下载
+         备用方案：若该仓库不可用，可手动下载 JAR 后 mvn:install 到本地仓库 -->
     <repositories>
         <repository>
             <id>vera-dev</id>

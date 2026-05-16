@@ -37,6 +37,11 @@ public record RagRetrievalProperties(
         if (rerankModel == null || rerankModel.isBlank()) {
             rerankModel = "qwen3-rerank";
         }
+        // fail-fast：rerank 启用但 apiKey 为空时立即报错
+        if (rerankEnabled && (rerankApiKey == null || rerankApiKey.isBlank())) {
+            throw new IllegalArgumentException(
+                    "app.rag.rerank-api-key must be set when app.rag.rerank-enabled is true");
+        }
     }
 
     /**

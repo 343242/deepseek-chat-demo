@@ -103,6 +103,10 @@ public class BailianRerankPostProcessor implements DocumentPostProcessor {
 
         } catch (Exception e) {
             log.warn("Rerank API call failed after retries, returning original order: {}", e.getMessage());
+            // 标记 fallback，让下游（如 MMR）能感知 Rerank 未生效
+            for (Document doc : documents) {
+                doc.getMetadata().put("rerankFallback", true);
+            }
             return documents;
         }
     }
@@ -157,11 +161,15 @@ public class BailianRerankPostProcessor implements DocumentPostProcessor {
     }
 
     private boolean isRetryable(Exception e) {
-        String msg = e.getMessage();
-        if (msg == null) return true;
-        return msg.contains("429") || msg.contains("Too Many Requests")
-                || msg.contains("503") || msg.contains("Service Unavailable")
-                || msg.contains("timeout") || msg.contains("Timeout")
-                || msg.contains("Connection") || msg.contains("SocketException");
+        // 精确类型检查，替代不可靠的字符串匹配
+        if (e instanceof org.springframework.web.reactive.function.client.WebClientResponseException webEx) {
+            var status = webEx.getStatusCode();
+            return status == org.springframework.http.HttpStatus.TOO_MANY_REQUESTS
+                    || status == org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE;
+        }
+        return e instanceof java.util.concurrent.TimeoutException
+                || e instanceof java.net.ConnectException
+                || e instanceof java.net.SocketTimeoutException
+                || (e.getCause() instanceof Exception cause && isRetryable(cause));
     }
 }

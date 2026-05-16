@@ -164,6 +164,8 @@ public class VectorStoreMapper {
 
     // ======================== 文档间 Cosine 距离 ========================
 
+    private static final int MAX_PAIRWISE_DOCS = 50;
+
     /**
      * 批量计算文档间 cosine 距离矩阵。
      * <p>
@@ -176,6 +178,13 @@ public class VectorStoreMapper {
     public Map<String, Double> pairwiseCosineDistance(List<String> docIds) {
         if (docIds == null || docIds.size() < 2) {
             return Map.of();
+        }
+
+        // 防御性截断：O(n²) SQL，超过上限时截断并告警
+        if (docIds.size() > MAX_PAIRWISE_DOCS) {
+            log.warn("pairwiseCosineDistance: truncating {} docs to {} (O(n²) SQL defense)",
+                    docIds.size(), MAX_PAIRWISE_DOCS);
+            docIds = docIds.subList(0, MAX_PAIRWISE_DOCS);
         }
 
         String placeholders = String.join(",", Collections.nCopies(docIds.size(), "?"));

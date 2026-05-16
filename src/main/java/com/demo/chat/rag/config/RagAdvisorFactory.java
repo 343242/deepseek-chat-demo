@@ -48,7 +48,6 @@ public class RagAdvisorFactory {
     private final QueryNormalizer queryNormalizer;
     private final ObjectMapper objectMapper;
 
-    /** 缓存的后处理器链（配置不变时复用） */
     private volatile List<org.springframework.ai.rag.postretrieval.document.DocumentPostProcessor> cachedPostProcessors;
 
     public RagAdvisorFactory(ChatClient.Builder chatClientBuilder,
@@ -137,7 +136,11 @@ public class RagAdvisorFactory {
 
     private List<org.springframework.ai.rag.postretrieval.document.DocumentPostProcessor> getPostProcessors() {
         if (cachedPostProcessors == null) {
-            cachedPostProcessors = List.copyOf(buildPostProcessors());
+            synchronized (this) {
+                if (cachedPostProcessors == null) {
+                    cachedPostProcessors = List.copyOf(buildPostProcessors());
+                }
+            }
         }
         return cachedPostProcessors;
     }

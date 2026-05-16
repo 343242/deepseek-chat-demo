@@ -157,7 +157,8 @@ public class RagAdvisorFactory {
         if (properties.mmrEnabled()) {
             postProcessors.add(new MmrDocumentPostProcessor(
                     properties.mmrLambda(),
-                    properties.mmrTopK()
+                    properties.mmrTopK(),
+                    vectorStoreMapper
             ));
         }
 

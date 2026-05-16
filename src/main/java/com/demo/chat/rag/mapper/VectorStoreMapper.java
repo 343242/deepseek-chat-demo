@@ -162,6 +162,49 @@ public class VectorStoreMapper {
         log.debug("BM25 fast-track rows deleted for documentId={}", documentId);
     }
 
+    // ======================== 文档间 Cosine 距离 ========================
+
+    /**
+     * 批量计算文档间 cosine 距离矩阵。
+     * <p>
+     * 利用 pgvector 的 {@code embedding <=> embedding} 运算符在数据库层计算，
+     * 避免额外调用 Embedding API。
+     *
+     * @param docIds 文档 ID 列表（通常 5-10 条）
+     * @return 距离矩阵 key = "idA|idB", value = cosine distance (0=相同, 2=相反)
+     */
+    public Map<String, Double> pairwiseCosineDistance(List<String> docIds) {
+        if (docIds == null || docIds.size() < 2) {
+            return Map.of();
+        }
+
+        String placeholders = String.join(",", Collections.nCopies(docIds.size(), "?"));
+        String sql = """
+                SELECT a.id AS id_a, b.id AS id_b, a.embedding <=> b.embedding AS distance
+                FROM vector_store a, vector_store b
+                WHERE a.id IN (%s) AND b.id IN (%s) AND a.id < b.id
+                """.formatted(placeholders, placeholders);
+
+        // 参数：两组 id
+        Object[] params = new Object[docIds.size() * 2];
+        for (int i = 0; i < docIds.size(); i++) {
+            params[i] = docIds.get(i);
+            params[docIds.size() + i] = docIds.get(i);
+        }
+
+        Map<String, Double> result = new HashMap<>();
+        jdbcTemplate.query(sql, rs -> {
+            String idA = rs.getString("id_a");
+            String idB = rs.getString("id_b");
+            double distance = rs.getDouble("distance");
+            result.put(idA + "|" + idB, distance);
+            result.put(idB + "|" + idA, distance);
+        }, params);
+
+        log.debug("Computed {} pairwise distances for {} docs", result.size() / 2, docIds.size());
+        return result;
+    }
+
     // ======================== 工具方法 ========================
 
     private Map<String, Object> parseMetadata(String json) {

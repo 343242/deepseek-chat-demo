@@ -132,7 +132,7 @@ public class EvaluationRunner {
             List<Document> afterMmr = afterRerank;
             if (config.isMmrEnabled()) {
                 MmrDocumentPostProcessor mmrProc = new MmrDocumentPostProcessor(
-                        properties.mmrLambda(), properties.mmrTopK());
+                        properties.mmrLambda(), properties.mmrTopK(), vectorStoreMapper);
                 afterMmr = mmrProc.process(query, afterRerank);
             }
             inst.capture("after_mmr", extractedDocIds(afterMmr));

@@ -60,7 +60,6 @@ public class BailianRerankPostProcessor implements DocumentPostProcessor {
 
         String queryText = query.text();
 
-        // 提取文档文本
         List<String> docTexts = documents.stream()
                 .map(Document::getText)
                 .collect(Collectors.toList());
@@ -70,7 +69,6 @@ public class BailianRerankPostProcessor implements DocumentPostProcessor {
         }
 
         try {
-            // 构建请求体
             Map<String, Object> requestBody = new LinkedHashMap<>();
             requestBody.put("model", model);
             requestBody.put("query", queryText);
@@ -78,15 +76,7 @@ public class BailianRerankPostProcessor implements DocumentPostProcessor {
             requestBody.put("top_n", Math.min(topN, docTexts.size()));
             requestBody.put("instruct", DEFAULT_INSTRUCT);
 
-            // 调用 Rerank API
-            @SuppressWarnings("unchecked")
-            Map<String, Object> response = webClient.post()
-                    .uri("/reranks")
-                    .bodyValue(requestBody)
-                    .retrieve()
-                    .bodyToMono(Map.class)
-                    .timeout(TIMEOUT)
-                    .block();
+            Map<String, Object> response = callWithRetry(requestBody);
 
             if (response == null || !response.containsKey("results")) {
                 log.warn("Rerank API returned null or no results, returning original order");
@@ -96,7 +86,6 @@ public class BailianRerankPostProcessor implements DocumentPostProcessor {
             @SuppressWarnings("unchecked")
             List<Map<String, Object>> results = (List<Map<String, Object>>) response.get("results");
 
-            // 按 rerank 返回的顺序重排文档
             List<Document> reranked = new ArrayList<>(results.size());
             for (Map<String, Object> result : results) {
                 Number index = (Number) result.get("index");
@@ -104,7 +93,6 @@ public class BailianRerankPostProcessor implements DocumentPostProcessor {
 
                 if (index != null && index.intValue() < documents.size()) {
                     Document doc = documents.get(index.intValue());
-                    // 注入 rerank 分数到 metadata
                     doc.getMetadata().put("rerankScore", score != null ? score.doubleValue() : 0.0);
                     reranked.add(doc);
                 }
@@ -114,8 +102,66 @@ public class BailianRerankPostProcessor implements DocumentPostProcessor {
             return reranked;
 
         } catch (Exception e) {
-            log.warn("Rerank API call failed, returning original order: {}", e.getMessage());
+            log.warn("Rerank API call failed after retries, returning original order: {}", e.getMessage());
             return documents;
         }
+    }
+
+    // ======================== 重试机制 ========================
+
+    private static final int MAX_RETRIES = 3;
+    private static final long INITIAL_BACKOFF_MS = 500;
+
+    /**
+     * 带重试的 Rerank API 调用。
+     * 指数退避：500ms → 1000ms → 2000ms。
+     * 可重试：429 限流、503 服务不可用、超时、网络错误。
+     */
+    private Map<String, Object> callWithRetry(Map<String, Object> requestBody) {
+        Exception lastException = null;
+        for (int attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+            try {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> response = webClient.post()
+                        .uri("/reranks")
+                        .bodyValue(requestBody)
+                        .retrieve()
+                        .bodyToMono(Map.class)
+                        .timeout(TIMEOUT)
+                        .block();
+
+                if (response == null) {
+                    throw new RuntimeException("Rerank API returned null response");
+                }
+                return response;
+            } catch (Exception e) {
+                lastException = e;
+                if (isRetryable(e) && attempt < MAX_RETRIES) {
+                    long backoff = INITIAL_BACKOFF_MS * (1L << (attempt - 1));
+                    log.warn("Rerank API call failed (attempt {}/{}), retrying in {}ms: {}",
+                            attempt, MAX_RETRIES, backoff, e.getMessage());
+                    try {
+                        Thread.sleep(backoff);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        throw new RuntimeException("Interrupted during rerank retry backoff", ie);
+                    }
+                } else {
+                    break;
+                }
+            }
+        }
+        throw new RuntimeException(
+                String.format("Rerank API call failed after %d attempts: %s",
+                        MAX_RETRIES, lastException.getMessage()), lastException);
+    }
+
+    private boolean isRetryable(Exception e) {
+        String msg = e.getMessage();
+        if (msg == null) return true;
+        return msg.contains("429") || msg.contains("Too Many Requests")
+                || msg.contains("503") || msg.contains("Service Unavailable")
+                || msg.contains("timeout") || msg.contains("Timeout")
+                || msg.contains("Connection") || msg.contains("SocketException");
     }
 }

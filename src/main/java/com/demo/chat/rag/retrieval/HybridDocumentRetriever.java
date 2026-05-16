@@ -100,7 +100,10 @@ public class HybridDocumentRetriever implements DocumentRetriever {
         List<Document> docs = vectorSearch(queryText, topK);
         List<ScoredDocument> results = new ArrayList<>(docs.size());
         for (int i = 0; i < docs.size(); i++) {
-            results.add(new ScoredDocument(docs.get(i), i + 1));
+            Document doc = docs.get(i);
+            // PgVectorStore DocumentRowMapper 已将 distance 写入 metadata，score = 1 - distance
+            double vectorScore = doc.getScore() != null ? doc.getScore() : 0.5;
+            results.add(new ScoredDocument(doc, i + 1, vectorScore));
         }
         return results;
     }
@@ -122,7 +125,7 @@ public class HybridDocumentRetriever implements DocumentRetriever {
 
             List<ScoredDocument> results = new ArrayList<>(docs.size());
             for (int i = 0; i < docs.size(); i++) {
-                results.add(new ScoredDocument(docs.get(i), i + 1));
+                results.add(new ScoredDocument(docs.get(i), i + 1, 0.0));
             }
             return results;
         } catch (Exception e) {
@@ -138,11 +141,14 @@ public class HybridDocumentRetriever implements DocumentRetriever {
         Map<String, Double> scores = new HashMap<>();
         Map<String, Document> docMap = new HashMap<>();
 
+        // 向量检索：加权 RRF — score * 1/(k + rank)，利用 cosine 相似度提升高质量命中的权重
         for (ScoredDocument sd : vectorResults) {
-            scores.merge(sd.doc.getId(), 1.0 / (k + sd.rank), Double::sum);
+            double weighted = sd.score * (1.0 / (k + sd.rank));
+            scores.merge(sd.doc.getId(), weighted, Double::sum);
             docMap.putIfAbsent(sd.doc.getId(), sd.doc);
         }
 
+        // BM25：纯排名 RRF（BM25 无标准化分数可用）
         for (ScoredDocument sd : bm25Results) {
             scores.merge(sd.doc.getId(), 1.0 / (k + sd.rank), Double::sum);
             docMap.putIfAbsent(sd.doc.getId(), sd.doc);
@@ -158,10 +164,18 @@ public class HybridDocumentRetriever implements DocumentRetriever {
 
     // === 工具方法 ===
 
+    /**
+     * 净化查询文本：只去掉 PostgreSQL tsquery 运算符，保留完整中文文本交给 pg_jieba 分词。
+     * <p>
+     * pg_jieba 的 plainto_tsquery('jiebacfg', text) 会自动调用 jieba 分词，
+     * 因此只需去除 tsquery 特殊运算符即可。
+     * </p>
+     */
     private String sanitizeQuery(String query) {
         if (query == null || query.isBlank()) return "";
-        return query.replaceAll("[&|!()\\[\\]{}:*\\\\]", " ").trim();
+        // 去掉 tsquery 运算符：& | ! ( ) : * \ 和引号
+        return query.replaceAll("[&|!()\\[\\]{}:*\\\\\"']", " ").trim();
     }
 
-    private record ScoredDocument(Document doc, int rank) {}
+    private record ScoredDocument(Document doc, int rank, double score) {}
 }

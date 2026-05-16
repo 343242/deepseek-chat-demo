@@ -36,16 +36,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * 聊天服务（编排层）
- * <p>
- * 职责：请求预处理（路由、隔离）→ 委托工厂构建请求 → 调用并处理响应。
- * 集成兜底策略：主模型调用失败时自动降级到备选模型。
- * <p>
- * 兜底策略：
- * <ul>
- *   <li>阻塞式（chat）— 全链路降级，每次尝试独立，失败后立即切换</li>
- *   <li>流式（chatStream）— 同模型重试（maxRetries 次）→ 降级切换</li>
- * </ul>
+ * 聊天服务（编排层）— 请求预处理 → 委托工厂构建请求 → 调用并处理响应。
+ * 集成兜底策略：阻塞式全链路降级，流式同模型重试后降级。
  */
 @Service
 public class ChatServiceImpl implements ChatService {
@@ -78,8 +70,7 @@ public class ChatServiceImpl implements ChatService {
                            FallbackEligibility fallbackEligibility,
                            StreamRetryHandler streamRetryHandler,
                            RequestContextManager cagContextManager,
-                           CagProperties cagProperties) {
-        this.registry = registry;
+                           CagProperties cagProperties) {        this.registry = registry;
         this.modelRouter = modelRouter;
         this.modeRouter = modeRouter;
         this.requestSpecFactory = requestSpecFactory;
@@ -93,7 +84,6 @@ public class ChatServiceImpl implements ChatService {
         this.cagContextManager = cagContextManager;
         this.cagProperties = cagProperties;
     }
-
     // ==================== 阻塞式聊天 ====================
 
     @Override
@@ -141,7 +131,6 @@ public class ChatServiceImpl implements ChatService {
         throw new BusinessException(ErrorCode.PROVIDER_NOT_FOUND,
                 "所有模型均不可用，请稍后重试（已尝试 " + chain.size() + " 个模型）");
     }
-
     // ==================== 流式聊天 ====================
 
     @Override
@@ -169,13 +158,7 @@ public class ChatServiceImpl implements ChatService {
 
     // ==================== 单次调用核心 ====================
 
-    /**
-     * 执行单次阻塞式聊天（无降级逻辑）
-     *
-     * @param request  聊天请求
-     * @param fallback 降级元数据，null 表示非降级
-     * @return 聊天响应
-     */
+    /** 执行单次阻塞式聊天（无降级逻辑） */
     private ChatResponse doChat(ChatRequest request, FallbackMeta fallback) {
         ChatContext ctx = prepareContext(request);
         conversationHelper.ensureConversationExists(ctx.userId, ctx.conversationId, request.model());
@@ -196,20 +179,13 @@ public class ChatServiceImpl implements ChatService {
                 ? generation.getOutput().getText()
                 : "";
 
-        // 写入业务消息记录 + 通知会话更新
         conversationHelper.saveMessagesAndNotify(ctx.conversationId, request.message(), content,
                 ctx.route.toCompositeId(), aiResponse, ctx.elapsed());
 
         return new ChatResponse(ctx.route.toCompositeId(), content, ctx.rawConversationId, fallback);
     }
 
-    /**
-     * 执行单次流式聊天（无降级逻辑）
-     *
-     * @param modelId  当前模型 ID（用于日志）
-     * @param request  聊天请求
-     * @return SSE 文本流
-     */
+    /** 执行单次流式聊天（无降级逻辑） */
     private Flux<String> doStream(String modelId, ChatRequest request) {
         ChatContext ctx = prepareContext(request);
         conversationHelper.ensureConversationExists(ctx.userId, ctx.conversationId, request.model());
@@ -241,7 +217,6 @@ public class ChatServiceImpl implements ChatService {
                             }
                             case ON_COMPLETE -> {
                                 log.debug("Stream completed for conversation: {}", ctx.conversationId);
-                                // 写入业务消息记录 + 通知会话更新
                                 conversationHelper.saveMessagesAndNotify(ctx.conversationId, request.message(),
                                         collectedContent.toString(), ctx.route.toCompositeId(),
                                         lastAiResponse.get(), ctx.elapsed());
@@ -262,12 +237,9 @@ public class ChatServiceImpl implements ChatService {
                     }
                 });
     }
-
     // ==================== 内部辅助 ====================
 
-    /**
-     * 预处理请求上下文：用户隔离、模式路由、模型路由、获取 ChatClient
-     */
+    /** 预处理请求上下文：用户隔离、模式路由、模型路由 */
     private ChatContext prepareContext(ChatRequest request) {
         Long userId = SecurityUtils.getCurrentUserId();
         ChatModeStrategy modeStrategy = modeRouter.route(request.mode());
@@ -288,14 +260,7 @@ public class ChatServiceImpl implements ChatService {
     }
 
     /**
-     * 构建 CAG 上下文（上下文增强生成）
-     * <p>
-     * CAG 关闭时返回 null，下游（ChatRequestSpecFactory / ContextPromptInjector）
-     * 收到 null 后不做任何增强，保持原有行为。
-     *
-     * @param ctx     请求上下文（含 userId 和隔离后的 conversationId）
-     * @param request 聊天请求
-     * @return RequestContext，CAG 未启用时返回 null
+     * 构建 CAG 上下文。CAG 关闭时返回 null，下游收到 null 后不做增强。
      */
     private RequestContext buildCagContext(ChatContext ctx, ChatRequest request) {
         if (!cagProperties.isEnabled()) {
@@ -306,9 +271,7 @@ public class ChatServiceImpl implements ChatService {
                 ctx.userId, ctx.conversationId, request.isRagEnabled(), msgCount);
     }
 
-    /**
-     * 请求上下文 — 封装预处理结果，避免方法间传大量参数
-     */
+    /** 请求上下文 — 封装预处理结果 */
     private static class ChatContext {
         final ChatClient chatClient;
         final ModelRouter.Route route;

@@ -180,7 +180,8 @@ public class TeamUploadStrategy implements UploadStrategy {
      * 查询成员已上传文档总大小（排除 REJECTED）
      */
     private long getUsedBytes(Long teamId, Long userId) {
-        Long totalBytes = ragDocumentMapper.selectFileSizeSum(teamId, userId);
+        Long totalBytes = ragDocumentMapper.selectFileSizeSum(teamId, userId,
+                EtlStatus.REJECTED.getCode());
         return totalBytes != null ? totalBytes : 0;
     }
 

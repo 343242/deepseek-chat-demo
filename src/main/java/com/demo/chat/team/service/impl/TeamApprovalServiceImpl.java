@@ -1,6 +1,7 @@
 package com.demo.chat.team.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.demo.chat.common.errorcode.ErrorCode;
 import com.demo.chat.common.request.PageRequest;
@@ -132,23 +133,21 @@ public class TeamApprovalServiceImpl implements TeamApprovalService {
         boolean isApprove = "APPROVE".equals(request.action());
 
         txTemplate.executeWithoutResult(status -> {
-            // 事务内查询 + 状态检查 + 更新，防并发
-            TeamUploadApproval approval = approvalMapper.selectById(approvalId);
-            if (approval == null || !approval.getTeamId().equals(teamId)) {
-                throw new BusinessException(ErrorCode.APPROVAL_NOT_FOUND);
-            }
-            if (approval.getStatus() != ApprovalStatus.PENDING) {
+            // 乐观锁：UPDATE WHERE status = PENDING，只有一个审批者能成功
+            int updated = approvalMapper.update(null, new LambdaUpdateWrapper<TeamUploadApproval>()
+                    .eq(TeamUploadApproval::getId, approvalId)
+                    .eq(TeamUploadApproval::getTeamId, teamId)
+                    .eq(TeamUploadApproval::getStatus, ApprovalStatus.PENDING)
+                    .set(TeamUploadApproval::getStatus, isApprove ? ApprovalStatus.APPROVED : ApprovalStatus.REJECTED)
+                    .set(TeamUploadApproval::getReviewerId, reviewerId)
+                    .set(TeamUploadApproval::getReviewComment, request.comment())
+                    .set(TeamUploadApproval::getReviewedAt, OffsetDateTime.now()));
+            if (updated == 0) {
                 throw new BusinessException(ErrorCode.APPROVAL_ALREADY_PROCESSED);
             }
 
-            // 更新审批记录
-            approval.setStatus(isApprove ? ApprovalStatus.APPROVED : ApprovalStatus.REJECTED);
-            approval.setReviewerId(reviewerId);
-            approval.setReviewComment(request.comment());
-            approval.setReviewedAt(OffsetDateTime.now());
-            approvalMapper.updateById(approval);
-
             // 更新文档状态
+            TeamUploadApproval approval = approvalMapper.selectById(approvalId);
             RagDocument doc = ragDocumentMapper.selectById(approval.getDocumentId());
             if (doc != null) {
                 doc.setStatus(isApprove ? EtlStatus.PROCESSING : EtlStatus.REJECTED);
@@ -222,23 +221,19 @@ public class TeamApprovalServiceImpl implements TeamApprovalService {
         List<Long> docIds = timedOut.stream().map(TeamUploadApproval::getDocumentId).distinct().toList();
 
         txTemplate.executeWithoutResult(status -> {
-            // 批量更新审批记录
-            for (Long id : approvalIds) {
-                TeamUploadApproval a = new TeamUploadApproval();
-                a.setId(id);
-                a.setStatus(ApprovalStatus.REJECTED);
-                a.setReviewComment("审批超时，系统自动拒绝");
-                a.setReviewedAt(now);
-                approvalMapper.updateById(a);
-            }
+            // 批量更新审批记录 — WHERE status = PENDING 防覆盖人工审批结果
+            approvalMapper.update(null, new LambdaUpdateWrapper<TeamUploadApproval>()
+                    .in(TeamUploadApproval::getId, approvalIds)
+                    .eq(TeamUploadApproval::getStatus, ApprovalStatus.PENDING)
+                    .set(TeamUploadApproval::getStatus, ApprovalStatus.REJECTED)
+                    .set(TeamUploadApproval::getReviewComment, "审批超时，系统自动拒绝")
+                    .set(TeamUploadApproval::getReviewedAt, now));
 
-            // 批量更新文档状态
-            for (Long docId : docIds) {
-                RagDocument doc = new RagDocument();
-                doc.setId(docId);
-                doc.setStatus(EtlStatus.REJECTED);
-                ragDocumentMapper.updateById(doc);
-            }
+            // 批量更新文档状态 — WHERE status = PENDING_APPROVAL 确保不覆盖已处理的文档
+            ragDocumentMapper.update(null, new LambdaUpdateWrapper<RagDocument>()
+                    .in(RagDocument::getId, docIds)
+                    .eq(RagDocument::getStatus, EtlStatus.PENDING_APPROVAL)
+                    .set(RagDocument::getStatus, EtlStatus.REJECTED));
         });
 
         if (!timedOut.isEmpty()) {
@@ -247,8 +242,10 @@ public class TeamApprovalServiceImpl implements TeamApprovalService {
         return timedOut.size();
     }
 
-    @Override
-    public void approveAndTriggerEtl(Long approvalId) {
+    /**
+     * 审批通过后触发 ETL（内部方法，不应被外部直接调用）
+     */
+    private void approveAndTriggerEtl(Long approvalId) {
         TeamUploadApproval approval = approvalMapper.selectById(approvalId);
         if (approval == null) {
             log.warn("approveAndTriggerEtl: approval not found, id={}", approvalId);

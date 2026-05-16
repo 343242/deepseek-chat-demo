@@ -30,9 +30,4 @@ public interface TeamApprovalService {
      * 超时自动拒绝（定时任务调用）
      */
     int rejectTimedOut();
-
-    /**
-     * 审批通过后触发 ETL（内部方法）
-     */
-    void approveAndTriggerEtl(Long approvalId);
 }

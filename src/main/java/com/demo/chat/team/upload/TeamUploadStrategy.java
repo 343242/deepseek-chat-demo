@@ -1,6 +1,5 @@
 package com.demo.chat.team.upload;
 
-import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.demo.chat.common.errorcode.ErrorCode;
 import com.demo.chat.common.upload.UploadStrategy;
 import com.demo.chat.exception.BusinessException;
@@ -181,13 +180,8 @@ public class TeamUploadStrategy implements UploadStrategy {
      * 查询成员已上传文档总大小（排除 REJECTED）
      */
     private long getUsedBytes(Long teamId, Long userId) {
-        // 使用 MyBatis-Plus 聚合查询
-        List<RagDocument> docs = ragDocumentMapper.selectList(
-                new LambdaQueryWrapper<RagDocument>()
-                        .eq(RagDocument::getTeamId, teamId)
-                        .eq(RagDocument::getUserId, userId)
-                        .ne(RagDocument::getStatus, EtlStatus.REJECTED));
-        return docs.stream().mapToLong(RagDocument::getFileSize).sum();
+        Long totalBytes = ragDocumentMapper.selectFileSizeSum(teamId, userId);
+        return totalBytes != null ? totalBytes : 0;
     }
 
     /**
@@ -243,7 +237,7 @@ public class TeamUploadStrategy implements UploadStrategy {
             return sb.toString();
         } catch (Exception e) {
             log.warn("Failed to compute file MD5: {}", e.getMessage());
-            return null;
+            return "";
         }
     }
 }

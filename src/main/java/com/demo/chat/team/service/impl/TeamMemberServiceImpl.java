@@ -95,11 +95,7 @@ public class TeamMemberServiceImpl implements TeamMemberService {
             }
 
             // 查找是否有历史记录（曾经加入过又退出的）
-            TeamMember existing = teamMemberMapper.selectOne(
-                    new LambdaQueryWrapper<TeamMember>()
-                            .eq(TeamMember::getTeamId, teamId)
-                            .eq(TeamMember::getUserId, targetUserId)
-                            .last("LIMIT 1"));
+            TeamMember existing = teamMemberMapper.selectLatestByTeamAndUser(teamId, targetUserId);
 
             if (existing != null && existing.getStatus() == 1) {
                 throw new BusinessException(ErrorCode.ALREADY_TEAM_MEMBER);

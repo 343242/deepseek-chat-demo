@@ -18,14 +18,21 @@ import java.util.*;
  *   <li>通过 parentId 从 vector_store 表批量回查父文档内容</li>
  *   <li>将子切分替换为其父文档内容（提供完整上下文）</li>
  *   <li>按 parentId 去重（同一父文档的多个子切分只保留一个父文档）</li>
- *   <li>保持原始检索顺序（按首次命中的子切分排序）</li>
+ *   <li>按子块的最高分数降序重排父文档（Parent-level Rescoring）</li>
  * </ol>
+ * <p>
+ * Parent-level Rescoring 基于 H-RAG (arXiv:2605.00631) 的发现：
+ * 子→父替换后按 max(childScore) 重排父文档是所有配置中收益最大的因素（+0.0197 nDCG@5）。
  * <p>
  * SQL 委托给 {@link VectorStoreMapper}，批量一条 SQL 拉取所有父文档。
  */
 public class ParentDocumentPostProcessor implements DocumentPostProcessor {
 
     private static final Logger log = LoggerFactory.getLogger(ParentDocumentPostProcessor.class);
+
+    /** 分数 metadata key 的优先级链：rerankScore > rrfScore > 默认值 */
+    private static final String[] SCORE_KEYS = {"rerankScore", "rrfScore"};
+    private static final double DEFAULT_SCORE = 0.5;
 
     private final VectorStoreMapper vectorStoreMapper;
 
@@ -85,13 +92,54 @@ public class ParentDocumentPostProcessor implements DocumentPostProcessor {
             }
         }
 
+        // 构建 parentId → max(childScore) 映射（Parent-level Rescoring）
+        Map<String, Double> parentScoreMap = new HashMap<>();
+        for (Document doc : documents) {
+            Map<String, Object> metadata = doc.getMetadata();
+            Object isParent = metadata.get(ParentChildChunkStrategy.META_IS_PARENT);
+            if (Boolean.TRUE.equals(isParent)) continue;
+
+            Object parentIdObj = metadata.get(ParentChildChunkStrategy.META_PARENT_ID);
+            if (parentIdObj == null) continue;
+
+            double score = resolveScore(doc);
+            parentScoreMap.merge(parentIdObj.toString(), score, Math::max);
+        }
+
         List<Document> result = new ArrayList<>(resolvedParents.size() + nonChildDocs.size());
         result.addAll(resolvedParents.values());
         result.addAll(nonChildDocs);
+
+        // Parent-level Rescoring：按子块最高分数降序排列父文档
+        // 只对父文档部分排序，non-child 保持原序
+        if (!parentScoreMap.isEmpty() && result.size() > 1) {
+            int parentCount = resolvedParents.size();
+            List<Document> parentDocs = result.subList(0, parentCount);
+            parentDocs.sort(Comparator.comparingDouble(
+                    (Document doc) -> parentScoreMap.getOrDefault(doc.getId(), DEFAULT_SCORE))
+                    .reversed());
+        }
 
         log.debug("ParentDocumentPostProcessor: {} docs → {} parent docs + {} non-child docs",
                 documents.size(), resolvedParents.size(), nonChildDocs.size());
 
         return result;
+    }
+
+    /**
+     * 从文档 metadata 中提取分数，按优先级链：rerankScore > rrfScore > 默认值
+     *
+     * @param doc 文档
+     * @return 分数值
+     */
+    static double resolveScore(Document doc) {
+        Map<String, Object> metadata = doc.getMetadata();
+        for (String key : SCORE_KEYS) {
+            Object value = metadata.get(key);
+            if (value instanceof Number num) {
+                return num.doubleValue();
+            }
+        }
+        return DEFAULT_SCORE;
     }
 }

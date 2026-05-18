@@ -117,7 +117,8 @@ public class FastTrackStrategy implements EtlRouteStrategy {
             } catch (Exception e) {
                 log.error("FastTrack BM25 write failed: id={}", c.documentId(), e);
                 statusManager.failDocument(c.documentId(), e);
-                results.add(EtlResult.failed(c.documentId(), e.getMessage()));
+                results.add(EtlResult.failed(c.documentId(),
+                        e.getClass().getSimpleName() + ": " + e.getMessage()));
             }
         }
 

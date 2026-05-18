@@ -51,8 +51,8 @@ public class StructureAwareChunkStrategy implements ChunkStrategy {
 
     @Override
     public List<Document> chunk(List<Document> documents, String sourceFileName) {
-        if (documents.isEmpty()) {
-            return documents;
+        if (documents == null || documents.isEmpty()) {
+            return List.of();
         }
 
         // 检测文档结构类型

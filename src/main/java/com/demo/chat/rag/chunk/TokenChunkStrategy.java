@@ -35,6 +35,10 @@ public class TokenChunkStrategy implements ChunkStrategy {
 
     @Override
     public List<Document> chunk(List<Document> documents, String sourceFileName) {
+        if (documents == null || documents.isEmpty()) {
+            return List.of();
+        }
+
         TokenTextSplitter splitter = TokenTextSplitter.builder()
                 .withChunkSize(properties.getChunkSize())
                 .build();

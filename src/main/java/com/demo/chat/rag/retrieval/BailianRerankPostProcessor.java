@@ -108,6 +108,13 @@ public class BailianRerankPostProcessor implements DocumentPostProcessor {
             }
 
             log.debug("Rerank: {} docs → {} docs (model={})", documents.size(), reranked.size(), model);
+
+            // Rerank 模型过滤掉所有文档时降级到原始列表
+            if (reranked.isEmpty()) {
+                log.warn("Rerank returned empty results, falling back to original documents");
+                return documents;
+            }
+
             return reranked;
 
         } catch (Exception e) {

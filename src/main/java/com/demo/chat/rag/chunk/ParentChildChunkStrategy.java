@@ -60,6 +60,10 @@ public class ParentChildChunkStrategy implements ChunkStrategy {
 
     @Override
     public List<Document> chunk(List<Document> documents, String sourceFileName) {
+        if (documents == null || documents.isEmpty()) {
+            return List.of();
+        }
+
         int parentSize = properties.getParentChunkSize();
         int childSize = properties.getChildChunkSize();
 

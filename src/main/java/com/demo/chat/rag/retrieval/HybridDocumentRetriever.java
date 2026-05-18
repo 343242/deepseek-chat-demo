@@ -150,15 +150,19 @@ public class HybridDocumentRetriever implements DocumentRetriever {
 
         // 向量检索：加权 RRF — score * 1/(k + rank)，利用 cosine 相似度提升高质量命中的权重
         for (ScoredDocument sd : vectorResults) {
+            String docId = sd.doc.getId();
+            if (docId == null) continue;  // 防御性检查
             double weighted = sd.score * (1.0 / (k + sd.rank));
-            scores.merge(sd.doc.getId(), weighted, Double::sum);
-            docMap.putIfAbsent(sd.doc.getId(), sd.doc);
+            scores.merge(docId, weighted, Double::sum);
+            docMap.putIfAbsent(docId, sd.doc);
         }
 
         // BM25：纯排名 RRF（BM25 无标准化分数可用）
         for (ScoredDocument sd : bm25Results) {
-            scores.merge(sd.doc.getId(), 1.0 / (k + sd.rank), Double::sum);
-            docMap.putIfAbsent(sd.doc.getId(), sd.doc);
+            String docId = sd.doc.getId();
+            if (docId == null) continue;  // 防御性检查
+            scores.merge(docId, 1.0 / (k + sd.rank), Double::sum);
+            docMap.putIfAbsent(docId, sd.doc);
         }
 
         return scores.entrySet().stream()

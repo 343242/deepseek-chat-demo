@@ -21,7 +21,8 @@ public enum EtlStatus {
 
     /** ETL 前状态 — 不参与 ETL 状态机流转 */
     PENDING_APPROVAL("PENDING_APPROVAL"),
-    REJECTED("REJECTED");
+    REJECTED("REJECTED"),
+    SUPERSEDED("SUPERSEDED");
 
     @EnumValue
     private final String code;

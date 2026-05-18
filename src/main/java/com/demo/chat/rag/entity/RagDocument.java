@@ -45,6 +45,15 @@ public class RagDocument {
     /** 所属团队 ID（null=个人文档） */
     private Long teamId;
 
+    /** 文档版本号 */
+    private Integer version;
+
+    /** 被哪个文档替代（null = 当前版本） */
+    private Long supersededBy;
+
+    /** 文档逻辑标识（同一文档不同版本共享） */
+    private String documentGroupId;
+
     @TableField(fill = FieldFill.INSERT)
     private OffsetDateTime createTime;
 
@@ -98,4 +107,13 @@ public class RagDocument {
 
     public Long getTeamId() { return teamId; }
     public void setTeamId(Long teamId) { this.teamId = teamId; }
+
+    public Integer getVersion() { return version; }
+    public void setVersion(Integer version) { this.version = version; }
+
+    public Long getSupersededBy() { return supersededBy; }
+    public void setSupersededBy(Long supersededBy) { this.supersededBy = supersededBy; }
+
+    public String getDocumentGroupId() { return documentGroupId; }
+    public void setDocumentGroupId(String documentGroupId) { this.documentGroupId = documentGroupId; }
 }

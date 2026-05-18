@@ -5,6 +5,8 @@ import com.demo.chat.rag.entity.RagDocument;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
+import org.apache.ibatis.annotations.Update;
+import java.util.List;
 
 @Mapper
 public interface RagDocumentMapper extends BaseMapper<RagDocument> {
@@ -18,4 +20,28 @@ public interface RagDocumentMapper extends BaseMapper<RagDocument> {
             "WHERE team_id = #{teamId} AND user_id = #{userId} AND status != #{excludedStatus}")
     Long selectFileSizeSum(@Param("teamId") Long teamId, @Param("userId") Long userId,
                            @Param("excludedStatus") String excludedStatus);
+
+    /**
+     * 为文档分配 documentGroupId
+     */
+    @Update("UPDATE rag_document SET document_group_id = #{groupId} WHERE id = #{id}")
+    int updateGroupId(@Param("id") Long id, @Param("groupId") String groupId);
+
+    /**
+     * 设置文档的 groupId 和 version
+     */
+    @Update("UPDATE rag_document SET document_group_id = #{groupId}, version = #{version} WHERE id = #{id}")
+    int updateGroupIdAndVersion(@Param("id") Long id, @Param("groupId") String groupId, @Param("version") int version);
+
+    /**
+     * 将旧文档标记为 SUPERSEDED
+     */
+    @Update("UPDATE rag_document SET status = 'SUPERSEDED', superseded_by = #{newDocId} WHERE id = #{oldDocId} AND superseded_by IS NULL")
+    int updateSuperseded(@Param("oldDocId") Long oldDocId, @Param("newDocId") Long newDocId);
+
+    /**
+     * 查找需要补偿清理的旧文档（superseded_by IS NOT NULL 但 status != SUPERSEDED）
+     */
+    @Select("SELECT * FROM rag_document WHERE superseded_by IS NOT NULL AND status != 'SUPERSEDED' AND deleted = 0")
+    List<RagDocument> findStaleSupersededTargets();
 }

@@ -58,7 +58,8 @@ class HybridDocumentRetrieverTest {
                 false,  // mmrEnabled
                 0.7,    // mmrLambda
                 5,      // mmrTopK
-                0.0     // similarityThreshold
+                0.0,    // similarityThreshold
+                null, null    // queryRewriteModel, queryRewriteTemperature
         );
     }
 
@@ -69,7 +70,8 @@ class HybridDocumentRetrieverTest {
                 "jiebacfg",
                 10, 10, 60,
                 false, "https://example.com", null, "qwen3-rerank", 5,
-                false, 0.7, 5, 0.0
+                false, 0.7, 5, 0.0,
+                null, null
         );
     }
 

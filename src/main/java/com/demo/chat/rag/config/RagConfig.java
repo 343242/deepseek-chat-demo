@@ -2,6 +2,9 @@ package com.demo.chat.rag.config;
 
 import com.demo.chat.rag.chunk.ParentDocumentPostProcessor;
 import com.demo.chat.rag.mapper.VectorStoreMapper;
+import com.demo.chat.chat.provider.ModelProvider;
+import com.demo.chat.chat.provider.ProviderRegistry;
+import com.demo.chat.chat.service.ModelRegistryRefresher;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
@@ -37,8 +40,26 @@ public class RagConfig {
 
     // ======================== 查询改写 ========================
 
+    /**
+     * 查询改写 Transformer
+     * <p>
+     * 支持通过 app.rag.query-rewrite-model 和 app.rag.query-rewrite-temperature
+     * 指定独立的改写模型和 temperature，复用项目已有的 ModelProvider 路由体系。
+     * <p>
+     * 未配置时使用全局默认 ChatClient.Builder（行为与改动前一致）。
+     *
+     * @param chatClientBuilder 全局默认 ChatClient.Builder（Spring AI 自动注入）
+     * @param properties        RAG 配置
+     * @param providerRegistry  Provider 注册中心
+     * @param refresher         模型注册刷新器（用于 modelId→providerId 解析）
+     */
     @Bean
-    public RewriteQueryTransformer rewriteQueryTransformer(ChatClient.Builder chatClientBuilder) {
+    public RewriteQueryTransformer rewriteQueryTransformer(
+            ChatClient.Builder chatClientBuilder,
+            RagRetrievalProperties properties,
+            ProviderRegistry providerRegistry,
+            ModelRegistryRefresher refresher) {
+
         String template = """
                 Given the following user query, rewrite it into a clear and specific search query \
                 suitable for querying a {target}. Keep the core intent, remove conversational filler, \
@@ -51,10 +72,57 @@ public class RagConfig {
                 
                 Rewritten search query:""";
 
+        ChatClient.Builder builder = resolveRewriteBuilder(
+                chatClientBuilder, properties, providerRegistry, refresher);
+
         return RewriteQueryTransformer.builder()
-                .chatClientBuilder(chatClientBuilder)
+                .chatClientBuilder(builder)
                 .promptTemplate(new PromptTemplate(template))
                 .build();
+    }
+
+    /**
+     * 解析查询改写用的 ChatClient.Builder
+     * <p>
+     * 配置了 queryRewriteModel 时，通过 ProviderRegistry 路由到对应 Provider，
+     * 调用 createClient(modelId, temperature) 创建独立 ChatClient，再 mutate() 为 Builder。
+     * 未配置时返回全局默认 Builder。
+     */
+    private ChatClient.Builder resolveRewriteBuilder(
+            ChatClient.Builder defaultBuilder,
+            RagRetrievalProperties properties,
+            ProviderRegistry providerRegistry,
+            ModelRegistryRefresher refresher) {
+
+        String rewriteModel = properties.queryRewriteModel();
+        if (rewriteModel == null || rewriteModel.isBlank()) {
+            log.info("Query rewrite using default ChatClient");
+            return defaultBuilder;
+        }
+
+        // 解析 modelId → providerId
+        String providerId = refresher.getProviderIdForModel(rewriteModel);
+        if (providerId == null) {
+            log.warn("Query rewrite model '{}' not found in provider index, falling back to default", rewriteModel);
+            return defaultBuilder;
+        }
+
+        ModelProvider provider = providerRegistry.get(providerId);
+        if (provider == null) {
+            log.warn("Query rewrite provider '{}' not found in registry, falling back to default", providerId);
+            return defaultBuilder;
+        }
+
+        // 提取纯 modelId（复合格式 "provider/model" → "model"）
+        String pureModelId = rewriteModel.contains("/")
+                ? rewriteModel.substring(rewriteModel.indexOf('/') + 1)
+                : rewriteModel;
+
+        ChatClient rewriteClient = provider.createClient(pureModelId, properties.queryRewriteTemperature());
+        log.info("Query rewrite using model '{}' via provider '{}', temperature={}",
+                rewriteModel, providerId, properties.queryRewriteTemperature());
+
+        return rewriteClient.mutate();
     }
 
     // ======================== 后处理器 ========================

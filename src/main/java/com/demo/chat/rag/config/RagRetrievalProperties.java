@@ -25,7 +25,11 @@ public record RagRetrievalProperties(
         boolean mmrEnabled,
         double mmrLambda,
         int mmrTopK,
-        double similarityThreshold
+        double similarityThreshold,
+        /** 查询改写使用的模型（复合格式 provider/model，如 deepseek/deepseek-chat），null 使用全局默认 */
+        String queryRewriteModel,
+        /** 查询改写 temperature，null 使用模型默认 */
+        Double queryRewriteTemperature
 ) {
     public RagRetrievalProperties {
         if (ftsConfig == null || ftsConfig.isBlank()) {
@@ -65,7 +69,9 @@ public record RagRetrievalProperties(
                 mmrEnabled,
                 mmrLambda,
                 mmrTopK,
-                similarityThreshold
+                similarityThreshold,
+                queryRewriteModel,
+                queryRewriteTemperature
         );
     }
 }

@@ -102,12 +102,14 @@ public class BailianRerankPostProcessor implements DocumentPostProcessor {
             return documents;
         }
 
+        // future 声明在 try 外，确保 catch 块中可 cancel
+        Future<Map<String, Object>> future = null;
+
         try {
             Map<String, Object> requestBody = buildRequestBody(queryText, docTexts);
 
             // H4 修复：在独立线程池中执行阻塞调用，避免占 Reactor 线程
-            Future<Map<String, Object>> future = rerankExecutor.submit(
-                    () -> callWithRetry(requestBody));
+            future = rerankExecutor.submit(() -> callWithRetry(requestBody));
 
             Map<String, Object> response = future.get(RERANK_TIMEOUT_SECONDS, TimeUnit.SECONDS);
 
@@ -132,6 +134,10 @@ public class BailianRerankPostProcessor implements DocumentPostProcessor {
             return reranked;
 
         } catch (TimeoutException e) {
+            // 超时后取消任务，释放线程池资源（mayInterruptIfRunning=true 中断 WebClient block）
+            if (future != null) {
+                future.cancel(true);
+            }
             log.warn("Rerank timed out ({}s), degrading: queryLen={}",
                     RERANK_TIMEOUT_SECONDS, queryText.length());
             markFallback(documents);
@@ -141,11 +147,17 @@ public class BailianRerankPostProcessor implements DocumentPostProcessor {
             markFallback(documents);
             return documents;
         } catch (InterruptedException e) {
+            if (future != null) {
+                future.cancel(true);
+            }
             Thread.currentThread().interrupt();
             log.warn("Rerank interrupted, degrading");
             markFallback(documents);
             return documents;
         } catch (Exception e) {
+            if (future != null) {
+                future.cancel(true);
+            }
             log.warn("Rerank unexpected error, degrading: {}", e.getMessage());
             markFallback(documents);
             return documents;

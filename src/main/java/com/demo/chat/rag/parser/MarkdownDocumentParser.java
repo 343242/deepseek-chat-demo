@@ -38,13 +38,16 @@ public class MarkdownDocumentParser implements DocumentParser {
     public List<Document> parse(Resource resource, String mimeType) {
         log.debug("Parsing Markdown: file={}", resource.getFilename());
 
+        // 编码检测：确保传入 MarkdownDocumentReader 的内容是 UTF-8
+        Resource transcoded = EncodingDetector.detectAndTranscode(resource);
+
         MarkdownDocumentReaderConfig config = MarkdownDocumentReaderConfig.builder()
                 .withHorizontalRuleCreateDocument(true)
                 .withIncludeCodeBlock(true)
                 .withIncludeBlockquote(false)
                 .build();
 
-        MarkdownDocumentReader reader = new MarkdownDocumentReader(resource, config);
+        MarkdownDocumentReader reader = new MarkdownDocumentReader(transcoded, config);
         List<Document> documents = reader.get();
 
         for (Document doc : documents) {

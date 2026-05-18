@@ -7,7 +7,6 @@ import org.springframework.core.io.Resource;
 import org.springframework.stereotype.Component;
 
 import java.io.InputStream;
-import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -33,7 +32,8 @@ public class PlainTextDocumentParser implements DocumentParser {
         log.debug("Parsing plain text: file={}", resource.getFilename());
 
         try (InputStream is = resource.getInputStream()) {
-            String content = new String(is.readAllBytes(), StandardCharsets.UTF_8);
+            byte[] bytes = is.readAllBytes();
+            String content = EncodingDetector.detectAndDecode(bytes, resource.getFilename());
 
             if (content.isBlank()) {
                 return List.of();

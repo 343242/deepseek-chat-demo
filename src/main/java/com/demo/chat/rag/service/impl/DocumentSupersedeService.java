@@ -78,6 +78,13 @@ public class DocumentSupersedeService {
                 return;
             }
 
+            if (oldDoc.getSupersededBy() != null) {
+                log.warn("Replace target is already superseded: replaceDocumentId={}, degrading to new document",
+                         event.replaceDocumentId());
+                assignNewGroupId(event.documentId());
+                return;
+            }
+
             if (!isOwner(oldDoc, event.userId(), event.teamId())) {
                 log.warn("Replace target ownership mismatch: replaceDocumentId={}, userId={}, teamId={}",
                          event.replaceDocumentId(), event.userId(), event.teamId());

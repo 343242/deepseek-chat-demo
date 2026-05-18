@@ -44,6 +44,9 @@ public class RagConfig {
                 suitable for querying a {target}. Keep the core intent, remove conversational filler, \
                 and use precise terminology.
                 
+                IMPORTANT: If the query is already clear, specific, and standalone, return it EXACTLY as is.
+                Do NOT over-elaborate short factual queries.
+                
                 Original query: {query}
                 
                 Rewritten search query:""";

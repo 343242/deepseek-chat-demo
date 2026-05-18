@@ -50,12 +50,21 @@
 │                     第一层：意图识别 (Intent Router)              │
 │                                                                 │
 │   用户查询 → IntentClassifier（轻量 LLM 调用）                    │
+│                                                                 │
+│   ① 意图分类：                                                   │
 │     ├── DIRECT_ANSWER  → 直接回答（不暴露任何 RAG Tool）          │
 │     ├── RETRIEVAL      → 暴露检索类 Tool（vector/bm25/hybrid）    │
 │     ├── DEEP_RETRIEVAL → 暴露全量 RAG Tool（检索+rerank+rewrite） │
 │     └── GENERAL_TOOL   → 只暴露通用 Tool（Calculator/DateTime）   │
 │                                                                 │
-│   输出：AgentIntent 枚举 + 动态 Tool 子集                         │
+│   ② 查询分解（RETRIEVAL / DEEP_RETRIEVAL 时执行）：              │
+│     将复杂问题拆解为多个独立子问题，供 Agent 按子问题逐一检索       │
+│     例：「对比 RAG 和 Fine-tuning」→                               │
+│       [子问题1: RAG 的知识更新机制]                                │
+│       [子问题2: Fine-tuning 的知识更新机制]                        │
+│       [子问题3: 两者对比分析]                                      │
+│                                                                 │
+│   输出：AgentIntent + subQueries[] + 动态 Tool 子集               │
 └───────────────────────────────┬─────────────────────────────────┘
                                 │
 ┌───────────────────────────────▼─────────────────────────────────┐
@@ -93,33 +102,42 @@
 用户: "对比 RAG 和 Fine-tuning 在知识更新场景的优劣"
                     │
                     ▼
-        ┌─ 第一层：意图识别 ─┐
-        │ IntentClassifier    │
-        │ → DEEP_RETRIEVAL    │
-        │ （需要深度检索+精排）│
-        └─────────┬──────────┘
-                  │ 动态选择 Tool 子集：
-                  │ hybridSearch, rerank, queryRewrite,
-                  │ parentDocLookup, knowledgeBaseInfo
-                  ▼
-        ┌─ 第二层：Agent ReAct ─┐
-        │                        │
-        │ LLM: "需要检索"        │
-        │ → hybridSearchTool()   │
-        │ ← JSON: 8 docs         │
-        │                        │
-        │ LLM: "结果不够全面"     │
-        │ → queryRewriteTool()   │
-        │ ← JSON: 3 新查询       │
-        │ → hybridSearchTool()   │
-        │ ← JSON: 6 docs         │
-        │                        │
-        │ LLM: "需要精排"        │
-        │ → rerankTool()         │
-        │ ← JSON: Top 5 docs     │
-        │                        │
-        │ LLM: 综合生成最终回答    │
-        └────────────────────────┘
+        ┌─ 第一层：意图识别 + 查询分解 ─┐
+        │ IntentClassifier                │
+        │                                 │
+        │ ① 意图分类: → DEEP_RETRIEVAL     │
+        │                                 │
+        │ ② 查询分解:                      │
+        │   原始问题 → 拆解为子问题:        │
+        │   [1] RAG 系统的知识更新机制       │
+        │   [2] Fine-tuning 的知识更新机制   │
+        │   [3] 两者在知识更新场景的对比      │
+        └─────────────┬──────────────────┘
+                      │ subQueries 写入 Workspace
+                      │ 动态选择 Tool 子集
+                      ▼
+        ┌─ 第二层：Agent ReAct ──────────────┐
+        │                                     │
+        │ LLM: "按子问题逐一检索"              │
+        │                                     │
+        │ Round 1: 子问题[1]                   │
+        │ → hybridSearchTool("RAG 知识更新")    │
+        │ ← JSON: 8 docs                      │
+        │                                     │
+        │ Round 2: 子问题[2]                   │
+        │ → hybridSearchTool("Fine-tuning 更新")│
+        │ ← JSON: 5 docs                      │
+        │                                     │
+        │ LLM: "文档较多，需要精排"             │
+        │ → rerankTool()                      │
+        │ ← JSON: Top 5 docs                  │
+        │                                     │
+        │ Round 3: 子问题[3] (综合对比)         │
+        │ LLM: 基于已检索文档综合分析           │
+        │ → 无需额外检索，直接回答              │
+        │                                     │
+        │ LLM: 综合所有子问题结果生成最终回答     │
+        └─────────────────────────────────────┘
 ```
 
 ### 2.3 意图识别层详细设计
@@ -139,20 +157,44 @@ public enum AgentIntent {
 }
 ```
 
+#### IntentResult — 分类结果
+
+```java
+/**
+ * 意图分类 + 查询分解结果
+ *
+ * @param intent     意图分类
+ * @param confidence 分类置信度
+ * @param subQueries 分解后的子问题列表（DIRECT_ANSWER / GENERAL_TOOL 时为空）
+ */
+public record IntentResult(
+    AgentIntent intent,
+    double confidence,
+    List<String> subQueries
+) {
+    /** 是否需要查询分解 */
+    public boolean hasSubQueries() {
+        return subQueries != null && !subQueries.isEmpty();
+    }
+}
+```
+
 #### IntentClassifier
 
 ```java
 /**
- * 意图分类器 — 在 Agent ReAct 循环之前执行一次轻量 LLM 调用
+ * 意图分类器 + 查询分解器 — 在 Agent ReAct 循环之前执行一次 LLM 调用
  *
  * 职责：
- * 1. 分析用户查询，判断是否需要检索、检索深度
- * 2. 返回意图枚举 + 动态 Tool 子集
+ * 1. 分析用户查询，判断意图分类（是否需要检索、检索深度）
+ * 2. 对 RETRIEVAL / DEEP_RETRIEVAL 类型，将复杂问题拆解为独立子问题
+ * 3. 返回意图 + 子问题列表
  *
  * 设计决策：
+ * - 意图分类 + 查询分解合并在一次 LLM 调用中完成（减少延迟）
+ * - 子问题写入 Workspace，供 Agent ReAct 循环按子问题逐一检索
+ * - 简单问题（DIRECT_ANSWER / GENERAL_TOOL）不进行分解
  * - 独立于主 ChatModel，使用配置的意图识别模型（可用轻量快速模型降本）
- * - 单次调用，不进入 ReAct 循环
- * - 结果缓存到 RagToolContext，供后续 Advisor 链使用
  */
 @Component
 public class IntentClassifier {
@@ -161,14 +203,23 @@ public class IntentClassifier {
     private final IntentToolSetRegistry toolSetRegistry;
 
     /**
-     * 分类用户意图
+     * 分类意图 + 分解查询
      *
      * @param query 用户查询
-     * @return 分类结果（意图 + 推荐的 Tool 子集）
+     * @return 分类结果（意图 + 子问题列表）
      */
     public IntentResult classify(String query) {
-        // 调用 LLM，输出结构化 JSON：{ "intent": "DEEP_RETRIEVAL", "confidence": 0.95 }
-        // 通过 Spring AI Structured Output 直接映射到 IntentResult
+        // 单次 LLM 调用，通过 Spring AI Structured Output 映射到 IntentResult
+        // 输出示例：
+        // {
+        //   "intent": "DEEP_RETRIEVAL",
+        //   "confidence": 0.95,
+        //   "subQueries": [
+        //     "RAG 系统的知识更新机制",
+        //     "Fine-tuning 模型的知识更新方式",
+        //     "两者在知识更新场景的优劣对比"
+        //   ]
+        // }
     }
 }
 ```
@@ -203,19 +254,47 @@ public class IntentToolSetRegistry {
 }
 ```
 
-#### 意图识别 Prompt
+#### 意图识别 + 查询分解 Prompt
 
 ```
-分析用户查询，判断需要什么级别的处理。只返回 JSON。
+分析用户查询，完成两个任务：
 
-分类规则：
+任务 1 — 意图分类：
 - DIRECT_ANSWER: 通用知识、闲聊、简单问答，不需要知识库
-- RETRIEVAL: 需要知识库检索，但单次检索即可满足
+- RETRIEVAL: 需要知识库检索，单次检索即可满足，问题单一明确
 - DEEP_RETRIEVAL: 复杂问题，需要多轮检索、查询改写、语义精排
 - GENERAL_TOOL: 需要数学计算、日期查询、代码执行等工具
 
-输出格式：
-{ "intent": "DIRECT_ANSWER|RETRIEVAL|DEEP_RETRIEVAL|GENERAL_TOOL", "confidence": 0.0-1.0 }
+任务 2 — 查询分解（仅 RETRIEVAL / DEEP_RETRIEVAL 时执行）：
+将用户的原始问题拆解为独立、可并行检索的子问题。
+
+分解规则：
+- 每个子问题应是一个独立的信息需求，可单独检索
+- 对比类问题拆为各方的独立查询 + 对比关系查询
+- 多条件问题拆为各条件的独立查询
+- 简单单一问题不需要分解，保持原样作为唯一子问题
+- 子问题数量控制在 1-5 个
+- 子问题应保留原始问题的核心术语和上下文
+
+示例：
+  原始：「对比 RAG 和 Fine-tuning 在知识更新场景的优劣」
+  分解：[
+    "RAG 系统如何实现知识更新",
+    "Fine-tuning 模型如何更新知识",
+    "RAG 和 Fine-tuning 在知识更新场景的优劣对比"
+  ]
+
+  原始：「Spring Boot 的自动装配原理是什么？」
+  分解：["Spring Boot 自动装配原理"]（单一问题，不分解）
+
+输出格式（JSON）：
+{
+  "intent": "DIRECT_ANSWER|RETRIEVAL|DEEP_RETRIEVAL|GENERAL_TOOL",
+  "confidence": 0.0-1.0,
+  "subQueries": ["子问题1", "子问题2", ...]
+}
+
+注意：DIRECT_ANSWER 和 GENERAL_TOOL 类型，subQueries 为空数组 []
 ```
 
 #### 意图识别模型配置
@@ -257,20 +336,49 @@ public class ToolWorkspace {
 
     // --- Workspace 操作 ---
 
+    // ===== 查询分解相关 =====
+
+    /** 设置意图分类结果 */
+    public void setIntent(AgentIntent intent) { ... }
+
+    /** 设置分解后的子问题 */
+    public void setSubQueries(List<String> subQueries) { ... }
+
+    /** 获取子问题列表 */
+    public List<String> getSubQueries() { ... }
+
+    /** 标记子问题已完成 */
+    public void markSubQueryCompleted(int index) { ... }
+
+    /** 获取未完成的子问题索引列表 */
+    public List<Integer> getPendingSubQueryIndices() { ... }
+
+    // ===== 检索结果相关 =====
+
     /** 获取已检索的文档列表 */
     public List<RetrievedDocument> getRetrievedDocs() { ... }
 
-    /** 追加检索结果 */
+    /** 追加检索结果（关联到指定子问题） */
+    public void addRetrievedDocs(List<RetrievedDocument> docs, int subQueryIndex) { ... }
+
+    /** 追加检索结果（不关联子问题） */
     public void addRetrievedDocs(List<RetrievedDocument> docs) { ... }
 
     /** 替换检索结果（如 rerank 后） */
     public void replaceRetrievedDocs(List<RetrievedDocument> docs) { ... }
+
+    /** 获取指定子问题的检索结果 */
+    public List<RetrievedDocument> getDocsForSubQuery(int subQueryIndex) { ... }
+
+    // ===== 查询改写相关 =====
 
     /** 获取改写后的查询 */
     public List<String> getRewrittenQueries() { ... }
 
     /** 添加改写查询 */
     public void addRewrittenQueries(List<String> queries) { ... }
+
+    // ===== 状态追踪 =====
 
     /** 获取当前检索轮次 */
     public int getRetrievalRound() { ... }
@@ -289,6 +397,13 @@ public class ToolWorkspace {
 {
   "userId": 42,
   "teamId": null,
+  "intent": "DEEP_RETRIEVAL",
+  "subQueries": [
+    "RAG 系统如何实现知识更新",
+    "Fine-tuning 模型如何更新知识",
+    "RAG 和 Fine-tuning 在知识更新场景的优劣对比"
+  ],
+  "completedSubQueries": [0, 1],
   "round": 2,
   "retrievedDocs": [
     {
@@ -296,14 +411,12 @@ public class ToolWorkspace {
       "content": "RAG 系统通过外部知识库增强 LLM...",
       "score": 0.89,
       "source": "hybridSearch",
+      "subQueryIndex": 0,
       "metadata": { "fileName": "rag-intro.pdf", "pageIndex": 3 }
     }
   ],
-  "rewrittenQueries": [
-    "Fine-tuning 模型更新策略 知识时效性",
-    "RAG vs Fine-tuning 对比分析"
-  ],
-  "reranked": true,
+  "rewrittenQueries": [],
+  "reranked": false,
   "parentDocResolved": false
 }
 ```
@@ -396,7 +509,9 @@ com.demo.chat.rag.agent/
     └── AgentSystemPromptAdvisor.java    // 动态 System Prompt 注入
 ```
 
-### 3.3 RagTool 标记接口
+### 3.3 RagTool 标记接口 + RetrievedDocument
+
+#### RagTool 标记接口
 
 ```java
 /**
@@ -406,6 +521,29 @@ com.demo.chat.rag.agent/
  * 实现 RagTool 的 @Component Bean 会被自动归类为 RAG Tool。
  */
 public interface RagTool {}
+```
+
+#### RetrievedDocument — 检索结果 DTO
+
+```java
+/**
+ * 检索结果 DTO — Tool Workspace 中的文档表示
+ *
+ * @param docId         文档 ID
+ * @param content       文档内容
+ * @param score         相关性分数
+ * @param source        来源 Tool 名称（如 hybridSearch）
+ * @param subQueryIndex 关联的子问题索引（-1 表示未关联）
+ * @param metadata      文档元信息（文件名、页码等）
+ */
+public record RetrievedDocument(
+    String docId,
+    String content,
+    double score,
+    String source,
+    int subQueryIndex,
+    Map<String, Object> metadata
+) {}
 ```
 
 ### 3.4 Tool 详细设计
@@ -582,7 +720,7 @@ public final class ToolWorkspaceHolder {
 | 5 | `ToolWorkspace.java` | 新增 | JSON 中间状态管理 |
 | 6 | `ToolWorkspaceHolder.java` | 新增 | ThreadLocal 传递 |
 | 7 | `ToolWorkspaceFactory.java` | 新增 | 按请求创建 Workspace |
-| 8 | `RetrievedDocument.java` | 新增 | 检索结果 DTO record |
+| 8 | `RetrievedDocument.java` | 新增 | 检索结果 DTO record（含 subQueryIndex 关联子问题） |
 | **RAG Tool 层** | | | |
 | 9 | `RagTool.java` | 新增 | RAG Tool 标记接口 |
 | 10 | `VectorSearchTool.java` | 新增 | 向量检索 Tool |
@@ -618,12 +756,15 @@ if (modeStrategy.getMode() == ChatMode.AGENT && agentProperties.enabled()) {
     // 2. 全局 Advisor（限流、内容过滤）
     chain.addAll(getGlobalAdvisors());
 
-    // 3. 意图识别（独立 LLM 调用，不进入 ReAct 循环）
+    // 3. 意图识别 + 查询分解（单次 LLM 调用，完成分类和分解）
     IntentResult intent = intentClassifier.classify(request.message());
 
-    // 4. 创建 ToolWorkspace + 设置 ThreadLocal
+    // 4. 创建 ToolWorkspace + 写入子问题 + 设置 ThreadLocal
     ToolWorkspace workspace = workspaceFactory.create(userId, teamId);
-    workspace.setIntent(intent);
+    workspace.setIntent(intent.intent());
+    if (intent.hasSubQueries()) {
+        workspace.setSubQueries(intent.subQueries());
+    }
     ToolWorkspaceHolder.set(workspace);
 
     // 5. 根据意图选择 Tool 子集
@@ -842,6 +983,7 @@ IntentClassifier（新增）
 | Q2 | 检索结果跨 Tool 轮次如何传递？ | **JSON Workspace** — 结构化中间状态 | 可序列化、可调试、可追踪；比 ThreadLocal List 更明确 |
 | Q3 | 是否支持独立模型？ | **是 — 通过意图识别层** | 意图识别用轻量模型降本；主 Agent 可用更强推理模型 |
 | Q4 | 流式响应？ | **先阻塞式，后续迭代流式** | 降低首版复杂度；流式需处理中间过程展示 |
+| Q5 | 意图识别是否包含查询分解？ | **是 — 意图分类+查询分解合并为单次 LLM 调用** | 减少延迟；子问题写入 Workspace 供 Agent 按子问题逐一检索 |
 
 ---
 

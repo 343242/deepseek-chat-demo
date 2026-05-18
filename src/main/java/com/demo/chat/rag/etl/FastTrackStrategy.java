@@ -131,7 +131,9 @@ public class FastTrackStrategy implements EtlRouteStrategy {
     public void awaitAsyncCompletion() {
         if (activeAsyncTasks.isEmpty()) return;
         log.info("Waiting for {} async vectorize tasks to complete...", activeAsyncTasks.size());
-        CompletableFuture.allOf(activeAsyncTasks.toArray(CompletableFuture[]::new)).join();
+        CompletableFuture.allOf(activeAsyncTasks.toArray(CompletableFuture[]::new))
+                .orTimeout(5, java.util.concurrent.TimeUnit.MINUTES)
+                .join();
     }
 
     // ==================== BM25 快速写入 ====================

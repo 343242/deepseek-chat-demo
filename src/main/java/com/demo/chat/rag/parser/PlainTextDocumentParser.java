@@ -47,6 +47,10 @@ public class PlainTextDocumentParser implements DocumentParser {
                                 contentLength / (1024 * 1024), MAX_TEXT_FILE_SIZE / (1024 * 1024)),
                         null);
             }
+            if (contentLength > 5 * 1024 * 1024) {
+                log.info("Large text file detected ({} MB), memory peak may reach 3x: file={}",
+                        contentLength / (1024 * 1024), resource.getFilename());
+            }
 
             byte[] bytes = is.readAllBytes();
             String content = EncodingDetector.detectAndDecode(bytes, resource.getFilename());

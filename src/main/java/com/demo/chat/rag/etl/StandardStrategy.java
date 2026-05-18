@@ -186,7 +186,9 @@ public class StandardStrategy implements EtlRouteStrategy {
      * 等待所有 Future 完成（不吞异常，异常由各阶段内部处理）
      */
     private void joinAll(List<? extends CompletableFuture<?>> futures) {
-        CompletableFuture.allOf(futures.toArray(CompletableFuture[]::new)).join();
+        CompletableFuture.allOf(futures.toArray(CompletableFuture[]::new))
+                .orTimeout(5, java.util.concurrent.TimeUnit.MINUTES)
+                .join();
     }
 
     private record ExtractOutput(Long documentId, List<Document> documents, Exception error) {}

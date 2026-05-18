@@ -6,6 +6,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.core.io.ByteArrayResource;
 import org.springframework.core.io.Resource;
 
+import java.io.InputStream;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.nio.charset.UnsupportedCharsetException;
@@ -83,7 +84,10 @@ public final class EncodingDetector {
      */
     public static Resource detectAndTranscode(Resource resource) {
         try {
-            byte[] bytes = resource.getInputStream().readAllBytes();
+            byte[] bytes;
+            try (InputStream is = resource.getInputStream()) {
+                bytes = is.readAllBytes();
+            }
 
             if (bytes.length == 0) {
                 return new NamedByteArrayResource(bytes, resource.getFilename());
@@ -94,8 +98,8 @@ public final class EncodingDetector {
             if (detectedCharset == null || isUtf8Compatible(detectedCharset)) {
                 log.debug("Encoding {} for {} is UTF-8 compatible, no transcoding",
                         detectedCharset, resource.getFilename());
-                // UTF-8 兼容文件直接返回原始 Resource，避免不必要的内存拷贝
-                return resource;
+                // 流已消费，必须返回新的 ByteArrayResource（原始 resource 的流不可重读）
+                return new NamedByteArrayResource(bytes, resource.getFilename());
             }
 
             log.info("Detected non-UTF8 encoding: {}, transcoding to UTF-8 for file: {}",

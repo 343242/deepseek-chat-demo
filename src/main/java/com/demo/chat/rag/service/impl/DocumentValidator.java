@@ -10,6 +10,7 @@ import org.springframework.util.unit.DataSize;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.util.Map;
 import java.util.Set;
 
@@ -82,9 +83,9 @@ public class DocumentValidator {
      * 通过文件头部魔数探测真实 MIME 类型
      */
     String detectMimeType(MultipartFile file) {
-        try {
+        try (InputStream is = file.getInputStream()) {
             byte[] header = new byte[8];
-            int read = file.getInputStream().readNBytes(header, 0, 8);
+            int read = is.readNBytes(header, 0, 8);
             if (read < 4) return null;
 
             String headerStr = new String(header, 0, Math.min(read, 4));

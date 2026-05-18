@@ -2,6 +2,7 @@ package com.demo.chat.chat.advisor;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.util.Assert;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -39,6 +40,9 @@ public class TokenBucketLimiter implements RateLimiter {
      * @param maxIdle   桶最大空闲时间，超时清理
      */
     public TokenBucketLimiter(long maxTokens, double refillRate, Duration maxIdle) {
+        if (maxTokens <= 0) throw new IllegalArgumentException("maxTokens must be > 0, got: " + maxTokens);
+        if (refillRate <= 0) throw new IllegalArgumentException("refillRate must be > 0, got: " + refillRate);
+        Assert.notNull(maxIdle, "maxIdle must not be null");
         this.maxTokens = maxTokens;
         this.refillRate = refillRate;
         this.maxIdle = maxIdle;
@@ -81,6 +85,9 @@ public class TokenBucketLimiter implements RateLimiter {
                 it.remove();
                 removed++;
             }
+        }
+        if (removed > 0) {
+            log.debug("Cleaned {} idle buckets, {} remaining", removed, buckets.size());
         }
         return removed;
     }

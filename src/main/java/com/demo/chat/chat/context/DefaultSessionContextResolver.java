@@ -12,8 +12,9 @@ public class DefaultSessionContextResolver implements SessionContextResolver {
 
     @Override
     public SessionContext resolve(String conversationId, int messageCount) {
-        String stage = inferStage(messageCount);
-        return new SessionContext(conversationId, messageCount, stage);
+        int safeCount = Math.max(0, messageCount);
+        String stage = inferStage(safeCount);
+        return new SessionContext(conversationId, safeCount, stage);
     }
 
     /**

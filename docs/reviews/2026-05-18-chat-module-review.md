@@ -166,7 +166,53 @@ public ChatClient createClient(String modelId, Double temperature) {
 
 ## 🟢 LOW（9 项）
 
-L1-L9 全部确认，无变更。
+### L1 ✅ ChatController — 缺少 @PreAuthorize 安全注解
+- **文件**: `controller/ChatController.java`
+- **类别**: 安全
+- **问题**: 所有端点未配置权限校验，任何已认证用户都能访问
+- **修复**: 添加 @PreAuthorize("hasAuthority('chat:send')") 等
+
+### L2 ✅ ChatServiceImpl doStream — collectedContent 无大小限制
+- **文件**: `service/impl/ChatServiceImpl.java` doStream
+- **类别**: 边界条件
+- **问题**: 流式响应 StringBuilder 持续增长无上限
+- **修复**: 添加最大长度限制
+
+### L3 ✅ FallbackChainProvider — 降级链硬编码
+- **文件**: `fallback/FallbackChainProvider.java`
+- **类别**: 可维护性
+- **问题**: 降级链配置写死在代码中，无法动态调整
+- **修复**: 提取为配置项
+
+### L4 ✅ ContentFilterAdvisor after() — 过滤日志 info 级别
+- **文件**: `advisor/ContentFilterAdvisor.java`
+- **类别**: 异常处理
+- **问题**: 正常业务会产生大量 info 日志，建议降为 debug
+
+### L5 ✅ SensitiveWordFilterService — 依赖静态方法
+- **文件**: `content/SensitiveWordFilterService.java`
+- **类别**: 可测试性
+- **问题**: 依赖 SensitiveWordHelper 静态方法，不利于 Mock
+
+### L6 ✅ RedisChatMemoryRepository — findConversationIds 跨用户泄露
+- **文件**: `memory/RedisChatMemoryRepository.java`
+- **类别**: 安全
+- **问题**: 返回所有用户会话 ID，无用户隔离
+
+### L7 ✅ TokenBucketLimiter — cleanIdleBuckets key 未截断
+- **文件**: `advisor/TokenBucketLimiter.java`
+- **类别**: 边界条件
+- **问题**: 日志中 key 未截断，恶意超长 key 可致日志膨胀
+
+### L8 ✅ ConversationContextAdvisor — 未校验 conversationId
+- **文件**: `advisor/ConversationContextAdvisor.java`
+- **类别**: 边界条件
+- **问题**: 构造函数不校验 null/空 conversationId
+
+### L9 ✅ TokenBucketLimiter — 构造函数未校验参数
+- **文件**: `advisor/TokenBucketLimiter.java`
+- **类别**: 边界条件
+- **问题**: maxTokens/refillRate 可能为负/零，maxIdle 可能为 null
 
 ---
 

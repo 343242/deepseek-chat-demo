@@ -192,6 +192,8 @@ public class ChatServiceImpl implements ChatService {
                 ctx.chatClient, ctx.route, request, ctx.conversationId, ctx.modeStrategy, cagCtx);
 
         StringBuilder collectedContent = new StringBuilder();
+        // 流式响应内容上限：防止异常响应导致 OOM（正常回复不会超过 1MB）
+        final int maxContentLength = 1 << 20; // 1 MB
         AtomicBoolean usageRecorded = new AtomicBoolean(false);
         AtomicReference<org.springframework.ai.chat.model.ChatResponse> lastAiResponse = new AtomicReference<>();
 
@@ -204,7 +206,7 @@ public class ChatServiceImpl implements ChatService {
                         return null; // 流结束标记或工具调用中间态，mapNotNull 自动跳过
                     }
                     String text = gen.getOutput().getText();
-                    if (text != null) {
+                    if (text != null && collectedContent.length() < maxContentLength) {
                         collectedContent.append(text);
                     }
                     return text;

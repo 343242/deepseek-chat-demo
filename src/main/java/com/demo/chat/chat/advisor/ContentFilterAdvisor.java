@@ -78,7 +78,7 @@ public class ContentFilterAdvisor implements BaseAdvisor {
             String content = generation.getOutput().getText();
             if (content != null && contentFilterService.containsSensitiveContent(content)) {
                 String filtered = contentFilterService.replace(content);
-                log.info("Filtered sensitive words in model output");
+                log.debug("Filtered sensitive words in model output");
                 AssistantMessage newMessage = new AssistantMessage(filtered);
                 // 保留原始 finishReason，添加 contentFiltered 标记
                 ChatGenerationMetadata newMetadata = ChatGenerationMetadata.builder()

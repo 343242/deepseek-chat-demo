@@ -67,7 +67,11 @@ public class ChatAdvisorChainFactory {
      */
     public boolean hasTools() {
         if (cachedHasTools == null) {
-            cachedHasTools = toolRegistryProvider.getIfAvailable(ToolRegistry::empty).hasTools();
+            synchronized (this) {
+                if (cachedHasTools == null) {
+                    cachedHasTools = toolRegistryProvider.getIfAvailable(ToolRegistry::empty).hasTools();
+                }
+            }
         }
         return cachedHasTools;
     }
@@ -77,7 +81,11 @@ public class ChatAdvisorChainFactory {
      */
     public ToolCallback[] getToolCallbacks() {
         if (cachedToolCallbacks == null) {
-            cachedToolCallbacks = toolRegistryProvider.getIfAvailable(ToolRegistry::empty).getToolCallbacks();
+            synchronized (this) {
+                if (cachedToolCallbacks == null) {
+                    cachedToolCallbacks = toolRegistryProvider.getIfAvailable(ToolRegistry::empty).getToolCallbacks();
+                }
+            }
         }
         return cachedToolCallbacks;
     }
@@ -87,8 +95,12 @@ public class ChatAdvisorChainFactory {
      */
     private List<Advisor> getGlobalAdvisors() {
         if (cachedGlobalAdvisors == null) {
-            cachedGlobalAdvisors = List.copyOf(
-                    globalAdvisorsProvider.getIfAvailable(Collections::emptyList));
+            synchronized (this) {
+                if (cachedGlobalAdvisors == null) {
+                    cachedGlobalAdvisors = List.copyOf(
+                            globalAdvisorsProvider.getIfAvailable(Collections::emptyList));
+                }
+            }
         }
         return cachedGlobalAdvisors;
     }

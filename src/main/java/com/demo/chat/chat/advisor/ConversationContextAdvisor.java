@@ -6,6 +6,7 @@ import org.springframework.ai.chat.client.ChatClientResponse;
 import org.springframework.ai.chat.client.advisor.api.AdvisorChain;
 import org.springframework.ai.chat.client.advisor.api.BaseAdvisor;
 import org.springframework.ai.chat.memory.ChatMemory;
+import org.springframework.util.Assert;
 
 /**
  * 会话上下文注入 Advisor
@@ -20,6 +21,7 @@ public class ConversationContextAdvisor implements BaseAdvisor {
     private final String conversationId;
 
     public ConversationContextAdvisor(String conversationId) {
+        Assert.hasText(conversationId, "conversationId must not be null or blank");
         this.conversationId = conversationId;
     }
 

@@ -50,9 +50,10 @@ public class ChatConversationHelper {
      */
     public int getMessageCount(String conversationId) {
         try {
-            return chatMemory.get(conversationId).size();
+            var messages = chatMemory.get(conversationId);
+            return messages != null ? messages.size() : 0;
         } catch (Exception e) {
-            log.warn("Failed to get message count for conversation: {}", conversationId, e);
+            log.error("Failed to get message count: conversationId={}", conversationId, e);
             return 0;
         }
     }

@@ -67,7 +67,11 @@ public class ModelServiceImpl implements ModelService {
 
     @Override
     public boolean refreshModels() {
-        return refresher.refresh();
+        boolean success = refresher.refresh();
+        if (!success) {
+            log.warn("Model refresh completed with failures — some providers may be unavailable");
+        }
+        return success;
     }
 
 }

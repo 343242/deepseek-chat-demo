@@ -11,6 +11,7 @@ import org.springframework.ai.chat.client.advisor.api.BaseAdvisor;
 import org.springframework.ai.chat.memory.ChatMemory;
 
 import java.util.Map;
+import java.util.UUID;
 
 /**
  * 限流 Advisor
@@ -69,6 +70,8 @@ public class RateLimitAdvisor implements BaseAdvisor {
         if (convId != null && !convId.toString().isBlank()) {
             return convId.toString();
         }
-        return DEFAULT_CONVERSATION_ID;
+        // 无 conversationId 时用随机 key，避免不同请求共享桶导致互相限流
+        log.debug("No conversationId in context, using isolated rate-limit bucket");
+        return UUID.randomUUID().toString();
     }
 }

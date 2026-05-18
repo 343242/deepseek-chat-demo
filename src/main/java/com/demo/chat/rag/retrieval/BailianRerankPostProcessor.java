@@ -1,5 +1,6 @@
 package com.demo.chat.rag.retrieval;
 
+import com.demo.chat.config.NamedThreadFactory;
 import io.netty.channel.ChannelOption;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -13,6 +14,7 @@ import reactor.util.retry.Retry;
 
 import java.time.Duration;
 import java.util.*;
+import java.util.concurrent.*;
 import java.util.stream.Collectors;
 
 /**
@@ -20,7 +22,13 @@ import java.util.stream.Collectors;
  * <p>
  * 调用阿里云百炼 qwen3-rerank 模型对检索结果进行语义级精排。
  * 相比向量相似度，Rerank 模型能更精准地评估查询-文档的相关性。
- * </p>
+ * <p>
+ * 高并发设计：
+ * <ul>
+ *   <li>内部维护独立线程池 {@link #rerankExecutor}，避免阻塞 Reactor 线程</li>
+ *   <li>使用 {@link Future#get(long, TimeUnit)} 显式超时控制</li>
+ *   <li>{@link ThreadPoolExecutor.CallerRunsPolicy} 兜底：线程池满时由调用线程执行</li>
+ * </ul>
  *
  * <p>API 格式（OpenAI 兼容）：</p>
  * <pre>
@@ -39,6 +47,7 @@ public class BailianRerankPostProcessor implements DocumentPostProcessor {
     private static final Duration TIMEOUT = Duration.ofSeconds(30);
     private static final int MAX_RETRIES = 3;
     private static final Duration INITIAL_BACKOFF = Duration.ofMillis(500);
+    private static final long RERANK_TIMEOUT_SECONDS = 15;
 
     /** 问答检索任务指令 */
     private static final String DEFAULT_INSTRUCT = "Given a web search query, retrieve relevant passages that answer the query.";
@@ -47,18 +56,34 @@ public class BailianRerankPostProcessor implements DocumentPostProcessor {
     private final String model;
     private final int topN;
 
+    /** Rerank 专用线程池 — 遵循 EtlExecutorConfig 规范：全 7 参数 + NamedThreadFactory */
+    private final ExecutorService rerankExecutor;
+
     public BailianRerankPostProcessor(String baseUrl, String apiKey, String model, int topN) {
         this.model = model;
         this.topN = topN;
+
         HttpClient httpClient = HttpClient.create()
-                .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 5000);
+                .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 5000)
+                .responseTimeout(Duration.ofSeconds(15)); // L1 修复：Netty 层读超时
+
         this.webClient = WebClient.builder()
                 .baseUrl(baseUrl)
                 .defaultHeader("Authorization", "Bearer " + apiKey)
                 .defaultHeader("Content-Type", "application/json")
                 .clientConnector(new ReactorClientHttpConnector(httpClient))
                 .build();
-        log.info("BailianRerankPostProcessor initialized: model={}, topN={}", model, topN);
+
+        // 遵循项目线程池规约：全 7 参数 + NamedThreadFactory + CallerRunsPolicy
+        this.rerankExecutor = new ThreadPoolExecutor(
+                2, 4, 60L, TimeUnit.SECONDS,
+                new ArrayBlockingQueue<>(50),
+                new NamedThreadFactory("rerank", true),
+                new ThreadPoolExecutor.CallerRunsPolicy()
+        );
+
+        log.info("BailianRerankPostProcessor initialized: model={}, topN={}, timeout={}s",
+                model, topN, RERANK_TIMEOUT_SECONDS);
     }
 
     @Override
@@ -78,14 +103,13 @@ public class BailianRerankPostProcessor implements DocumentPostProcessor {
         }
 
         try {
-            Map<String, Object> requestBody = new LinkedHashMap<>();
-            requestBody.put("model", model);
-            requestBody.put("query", queryText);
-            requestBody.put("documents", docTexts);
-            requestBody.put("top_n", Math.min(topN, docTexts.size()));
-            requestBody.put("instruct", DEFAULT_INSTRUCT);
+            Map<String, Object> requestBody = buildRequestBody(queryText, docTexts);
 
-            Map<String, Object> response = callWithRetry(requestBody);
+            // H4 修复：在独立线程池中执行阻塞调用，避免占 Reactor 线程
+            Future<Map<String, Object>> future = rerankExecutor.submit(
+                    () -> callWithRetry(requestBody));
+
+            Map<String, Object> response = future.get(RERANK_TIMEOUT_SECONDS, TimeUnit.SECONDS);
 
             if (response == null || !response.containsKey("results")) {
                 log.warn("Rerank API returned null or no results, returning original order");
@@ -95,17 +119,7 @@ public class BailianRerankPostProcessor implements DocumentPostProcessor {
             @SuppressWarnings("unchecked")
             List<Map<String, Object>> results = (List<Map<String, Object>>) response.get("results");
 
-            List<Document> reranked = new ArrayList<>(results.size());
-            for (Map<String, Object> result : results) {
-                Number index = (Number) result.get("index");
-                Number score = (Number) result.get("relevance_score");
-
-                if (index != null && index.intValue() < documents.size()) {
-                    Document doc = documents.get(index.intValue());
-                    doc.getMetadata().put("rerankScore", score != null ? score.doubleValue() : 0.0);
-                    reranked.add(doc);
-                }
-            }
+            List<Document> reranked = buildRerankedList(results, documents);
 
             log.debug("Rerank: {} docs → {} docs (model={})", documents.size(), reranked.size(), model);
 
@@ -117,13 +131,68 @@ public class BailianRerankPostProcessor implements DocumentPostProcessor {
 
             return reranked;
 
-        } catch (Exception e) {
-            log.warn("Rerank API call failed after retries, returning original order: {}", e.getMessage());
-            // 标记 fallback，让下游（如 MMR）能感知 Rerank 未生效
-            for (Document doc : documents) {
-                doc.getMetadata().put("rerankFallback", true);
-            }
+        } catch (TimeoutException e) {
+            log.warn("Rerank timed out ({}s), degrading: queryLen={}",
+                    RERANK_TIMEOUT_SECONDS, queryText.length());
+            markFallback(documents);
             return documents;
+        } catch (ExecutionException e) {
+            log.warn("Rerank failed after retries, degrading: {}", e.getCause().getMessage());
+            markFallback(documents);
+            return documents;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            log.warn("Rerank interrupted, degrading");
+            markFallback(documents);
+            return documents;
+        } catch (Exception e) {
+            log.warn("Rerank unexpected error, degrading: {}", e.getMessage());
+            markFallback(documents);
+            return documents;
+        }
+    }
+
+    /**
+     * 构建 Rerank 请求体
+     */
+    private Map<String, Object> buildRequestBody(String queryText, List<String> docTexts) {
+        Map<String, Object> requestBody = new LinkedHashMap<>();
+        requestBody.put("model", model);
+        requestBody.put("query", queryText);
+        requestBody.put("documents", docTexts);
+        requestBody.put("top_n", Math.min(topN, docTexts.size()));
+        requestBody.put("instruct", DEFAULT_INSTRUCT);
+        return requestBody;
+    }
+
+    /**
+     * 构建重排后的文档列表。
+     * <p>
+     * 遵循 Spring AI 框架约定：直接修改 Document metadata，不创建新 Document。
+     * L2 修复：增加 index >= 0 校验。
+     */
+    private List<Document> buildRerankedList(List<Map<String, Object>> results,
+                                              List<Document> source) {
+        List<Document> reranked = new ArrayList<>(results.size());
+        for (Map<String, Object> result : results) {
+            Number index = (Number) result.get("index");
+            Number score = (Number) result.get("relevance_score");
+
+            if (index != null && index.intValue() >= 0 && index.intValue() < source.size()) {
+                Document doc = source.get(index.intValue());
+                doc.getMetadata().put("rerankScore", score != null ? score.doubleValue() : 0.0);
+                reranked.add(doc);
+            }
+        }
+        return reranked;
+    }
+
+    /**
+     * 标记 fallback 状态，让下游（如 MMR）能感知 Rerank 未生效
+     */
+    private void markFallback(List<Document> documents) {
+        for (Document doc : documents) {
+            doc.getMetadata().put("rerankFallback", true);
         }
     }
 
@@ -132,8 +201,6 @@ public class BailianRerankPostProcessor implements DocumentPostProcessor {
     /**
      * 带重试的 Rerank API 调用。
      * 使用 Reactor retryWhen 实现指数退避：500ms → 1000ms → 2000ms。
-     * 退避等待在 Reactor 调度器上执行，不阻塞当前线程。
-     * 可重试：429 限流、503 服务不可用、超时、网络错误。
      */
     @SuppressWarnings("unchecked")
     private Map<String, Object> callWithRetry(Map<String, Object> requestBody) {

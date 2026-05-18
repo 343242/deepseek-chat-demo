@@ -87,7 +87,7 @@ public class DeepSeekModelProvider implements ModelProvider {
             log.warn("DeepSeek API returned empty response, using fallback");
             return FALLBACK_MODELS;
         } catch (Exception e) {
-            log.warn("Failed to fetch DeepSeek models: {}, using fallback", e.getMessage());
+            log.warn("Failed to fetch DeepSeek models, using fallback", e);
             return FALLBACK_MODELS;
         }
     }

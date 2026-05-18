@@ -140,7 +140,8 @@ public class ChatConversationHelper {
                 chatMemory.add(conversationId, new AssistantMessage(content));
                 log.info("Saved partial stream response for conversation: {}", conversationId);
             } catch (Exception e) {
-                log.warn("Failed to save partial stream response: {}", e.getMessage());
+                log.error("Failed to save partial stream response: conversationId={}",
+                        conversationId, e);
             }
         }
     }

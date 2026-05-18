@@ -73,10 +73,10 @@ public class PromptLoaderServiceImpl implements PromptLoaderService {
                     if (template != null) {
                         loadedTemplates.put(template.model(), template);
 
-                        // 仅在 Redis 中不存在时写入，避免每次启动都写 Redis
-                        if (Boolean.FALSE.equals(redisTemplate.hasKey(REDIS_KEY_PREFIX + template.model()))) {
-                            redisTemplate.opsForValue().set(
-                                    REDIS_KEY_PREFIX + template.model(), rawXml, REDIS_TTL);
+                        // 原子写入：setIfAbsent 避免 check-then-act 竞态
+                        Boolean wasSet = redisTemplate.opsForValue().setIfAbsent(
+                                REDIS_KEY_PREFIX + template.model(), rawXml, REDIS_TTL);
+                        if (Boolean.TRUE.equals(wasSet)) {
                             log.info("Loaded prompt template for model: {} → Redis (TTL=1d)", template.model());
                         } else {
                             // 刷新 TTL

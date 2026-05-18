@@ -43,6 +43,10 @@ public class DefaultUserProfileResolver implements UserProfileResolver {
 
     @Override
     public UserContext resolve(Long userId) {
+        if (userId == null) {
+            log.warn("userId is null, returning default context");
+            return new UserContext(null, "unknown", Set.of(), Set.of());
+        }
         SysUser user = userMapper.selectById(userId);
         if (user == null) {
             log.debug("User not found: userId={}", userId);

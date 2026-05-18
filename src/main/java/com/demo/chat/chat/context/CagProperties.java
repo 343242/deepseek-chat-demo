@@ -14,13 +14,13 @@ import org.springframework.stereotype.Component;
 public class CagProperties {
 
     /** 是否启用 CAG（总开关，关闭后不构建上下文） */
-    private boolean enabled = true;
+    private volatile boolean enabled = true;
 
     /** 是否将上下文注入到 system prompt */
-    private boolean injectPrompt = true;
+    private volatile boolean injectPrompt = true;
 
     /** 是否记录上下文组装日志（可观测性） */
-    private boolean logContext = true;
+    private volatile boolean logContext = true;
 
     public boolean isEnabled() {
         return enabled;

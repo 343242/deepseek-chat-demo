@@ -44,7 +44,8 @@ public class ChatUsageTracker {
                         usage.getTotalTokens(), durationMs);
             }
         } catch (Exception e) {
-            log.warn("Failed to record usage: {}", e.getMessage());
+            log.error("Failed to record usage: conversationId={}, model={}",
+                    conversationId, modelId, e);
         }
     }
 
@@ -59,7 +60,8 @@ public class ChatUsageTracker {
         try {
             usageService.recordUsage(conversationId, modelId, -1, -1, -1, durationMs);
         } catch (Exception e) {
-            log.warn("Failed to record usage: {}", e.getMessage());
+            log.error("Failed to record usage (no-response): conversationId={}, model={}",
+                    conversationId, modelId, e);
         }
     }
 }

@@ -17,6 +17,7 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.lang.Nullable;
 import org.springframework.util.Assert;
 
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -165,12 +166,12 @@ public class RedisChatMemoryRepository implements ChatMemoryRepository {
 
         // Pipeline: DELETE + ZADD all + EXPIRE (atomic batch)
         redisTemplate.executePipelined((org.springframework.data.redis.core.RedisCallback<Object>) connection -> {
-            byte[] keyBytes = key.getBytes();
+            byte[] keyBytes = key.getBytes(StandardCharsets.UTF_8);
             connection.keyCommands().del(keyBytes);
 
             for (int i = 0; i < jsonList.size(); i++) {
                 double score = baseTimestamp + i;
-                connection.zSetCommands().zAdd(keyBytes, score, jsonList.get(i).getBytes());
+                connection.zSetCommands().zAdd(keyBytes, score, jsonList.get(i).getBytes(StandardCharsets.UTF_8));
             }
 
             if (ttlSeconds > 0) {

@@ -38,6 +38,7 @@ public class ContentFilterAdvisor implements BaseAdvisor {
     }
 
     @Override
+    @NonNull
     public String getName() {
         return "ContentFilterAdvisor";
     }
@@ -48,6 +49,7 @@ public class ContentFilterAdvisor implements BaseAdvisor {
     }
 
     @Override
+    @NonNull
     public ChatClientRequest before(ChatClientRequest request, @NonNull AdvisorChain chain) {
         String userMessage = extractLastUserMessage(request.prompt().getInstructions());
 
@@ -62,6 +64,7 @@ public class ContentFilterAdvisor implements BaseAdvisor {
     }
 
     @Override
+    @NonNull
     public ChatClientResponse after(ChatClientResponse response, @NonNull AdvisorChain chain) {
         ChatResponse chatResponse = response.chatResponse();
         if (chatResponse == null) {

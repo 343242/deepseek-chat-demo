@@ -265,7 +265,7 @@ public class PptDocumentParser implements DocumentParser {
 
         // 分隔行
         sb.append("|");
-        sb.append("---|".repeat(cols));
+        sb.repeat("---|", cols);
         sb.append("\n");
 
         // 数据行
@@ -293,8 +293,7 @@ public class PptDocumentParser implements DocumentParser {
     /**
      * 构建基础 metadata Map。
      */
-    private Map<String, Object> buildMetadata(int slideIndex, int slideCount,
-                                               String fileName, String mimeType, String shapeType) {
+    private Map<String, Object> buildMetadata(int slideIndex, int slideCount, String fileName, String mimeType, String shapeType) {
         Map<String, Object> meta = new HashMap<>();
         meta.put("parser", "ppt");
         meta.put("mimeType", mimeType);

@@ -24,6 +24,7 @@ public class ConversationContextAdvisor implements BaseAdvisor {
     }
 
     @Override
+    @NonNull
     public String getName() {
         return "ConversationContextAdvisor";
     }
@@ -34,6 +35,7 @@ public class ConversationContextAdvisor implements BaseAdvisor {
     }
 
     @Override
+    @NonNull
     public ChatClientRequest before(ChatClientRequest request, @NonNull AdvisorChain chain) {
         // 通过 mutate + builder 将 conversationId 注入 context
         return request.mutate()
@@ -42,6 +44,7 @@ public class ConversationContextAdvisor implements BaseAdvisor {
     }
 
     @Override
+    @NonNull
     public ChatClientResponse after(@NonNull ChatClientResponse response, @NonNull AdvisorChain chain) {
         return response;
     }

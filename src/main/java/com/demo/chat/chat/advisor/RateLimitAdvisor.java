@@ -33,6 +33,7 @@ public class RateLimitAdvisor implements BaseAdvisor {
     }
 
     @Override
+    @NonNull
     public String getName() {
         return "RateLimitAdvisor";
     }
@@ -43,6 +44,7 @@ public class RateLimitAdvisor implements BaseAdvisor {
     }
 
     @Override
+    @NonNull
     public ChatClientRequest before(@NonNull ChatClientRequest request, @NonNull AdvisorChain chain) {
         String conversationId = extractConversationId(request);
 
@@ -56,6 +58,7 @@ public class RateLimitAdvisor implements BaseAdvisor {
     }
 
     @Override
+    @NonNull
     public ChatClientResponse after(@NonNull ChatClientResponse response, @NonNull AdvisorChain chain) {
         return response;
     }

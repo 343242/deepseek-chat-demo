@@ -1,5 +1,6 @@
 package com.demo.chat.rag.parser;
 
+import org.jspecify.annotations.NonNull;
 import org.opendataloader.pdf.api.Config;
 import org.opendataloader.pdf.api.OpenDataLoaderPDF;
 import org.slf4j.Logger;
@@ -18,15 +19,6 @@ import java.util.List;
  * <p>
  * 使用 OpenDataLoader PDF Core（确定性启发式引擎）替代 PdfBox 纯文本提取。
  * 保留文档语义结构：标题层级、表格、阅读顺序、列表等，输出 Markdown 格式。
- * <p>
- * 优势（对比 PdfBox / PagePdfDocumentReader）：
- * <ul>
- *   <li>多栏布局正确识别阅读顺序</li>
- *   <li>表格保留结构（Markdown table）</li>
- *   <li>标题层级保留（#/##/###）</li>
- *   <li>Benchmark 0.91 准确率（200 篇真实 PDF），同类第一</li>
- *   <li>纯 CPU 处理，~0.05s/页，无需 AI/GPU</li>
- * </ul>
  * <p>
  * 集成策略：
  * <ol>
@@ -138,13 +130,13 @@ public class OpenDataLoaderPdfParser implements DocumentParser {
         try {
             Files.walkFileTree(dir, new SimpleFileVisitor<>() {
                 @Override
-                public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
+                public @NonNull FileVisitResult visitFile(@NonNull Path file, @NonNull BasicFileAttributes attrs) throws IOException {
                     Files.delete(file);
                     return FileVisitResult.CONTINUE;
                 }
 
                 @Override
-                public FileVisitResult postVisitDirectory(Path d, IOException exc) throws IOException {
+                public @NonNull FileVisitResult postVisitDirectory(@NonNull Path d, IOException exc) throws IOException {
                     Files.delete(d);
                     return FileVisitResult.CONTINUE;
                 }

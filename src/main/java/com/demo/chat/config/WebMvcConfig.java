@@ -6,6 +6,8 @@ import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.web.servlet.config.annotation.AsyncSupportConfigurer;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
+import java.util.concurrent.ThreadPoolExecutor;
+
 /**
  * Spring MVC 配置。
  * <p>
@@ -30,6 +32,7 @@ public class WebMvcConfig implements WebMvcConfigurer {
         executor.setQueueCapacity(100);
         executor.setKeepAliveSeconds(60);
         executor.setThreadNamePrefix("mvc-async-");
+        executor.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
         executor.setWaitForTasksToCompleteOnShutdown(true);
         executor.setAwaitTerminationSeconds(30);
         executor.initialize();

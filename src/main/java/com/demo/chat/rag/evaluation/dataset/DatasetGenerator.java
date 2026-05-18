@@ -17,9 +17,11 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
 /**
  * LLM 自动生成评估数据集
@@ -85,7 +87,11 @@ public class DatasetGenerator {
         // 3. 对每个 chunk 并发生成问题（最大并发数从配置读取）
         ChatClient chatClient = chatClientBuilder.build();
         int concurrency = props.getRunner().getConcurrency();
-        ExecutorService executor = Executors.newFixedThreadPool(concurrency);
+        ExecutorService executor = new ThreadPoolExecutor(
+                concurrency, concurrency, 60L, TimeUnit.SECONDS,
+                new ArrayBlockingQueue<>(concurrency * 10),
+                new com.demo.chat.config.NamedThreadFactory("eval-dataset"),
+                new ThreadPoolExecutor.CallerRunsPolicy());
 
         try {
             List<CompletableFuture<List<EvaluationDatasetItem>>> futures = new ArrayList<>();

@@ -2,8 +2,8 @@ package com.demo.chat.chat.memory;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.jspecify.annotations.NonNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.memory.ChatMemoryRepository;
@@ -24,8 +24,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.concurrent.TimeUnit;
-import java.util.stream.Collectors;
 
 /**
  * Redis implementation of {@link ChatMemoryRepository} using Lettuce + Jackson.
@@ -71,8 +69,7 @@ public class RedisChatMemoryRepository implements ChatMemoryRepository {
      * Configures it to skip null fields for compact JSON storage.
      */
     private static ObjectMapper objectMapperCopy(ObjectMapper source) {
-        return source.copy()
-                .setSerializationInclusion(JsonInclude.Include.NON_NULL);
+        return source.copy().setDefaultPropertyInclusion(JsonInclude.Include.NON_NULL);
     }
 
     public static Builder builder() {
@@ -89,9 +86,9 @@ public class RedisChatMemoryRepository implements ChatMemoryRepository {
      * Callers should filter by userId if needed, or use a SCAN with a more specific pattern.
      */
     @Override
-    public List<String> findConversationIds() {
+    public @NonNull List<String> findConversationIds() {
         List<String> ids = new ArrayList<>();
-        java.util.Set<String> keys = redisTemplate.keys(keyPrefix + "*");
+        Set<String> keys = redisTemplate.keys(keyPrefix + "*");
         // 使用 Redis SCAN 替代 KEYS，避免 O(N) 全库阻塞
         redisTemplate.execute((org.springframework.data.redis.core.RedisCallback<Void>) connection -> {
             try (var cursor = connection.keyCommands().scan(
@@ -113,7 +110,7 @@ public class RedisChatMemoryRepository implements ChatMemoryRepository {
     }
 
     @Override
-    public List<Message> findByConversationId(String conversationId) {
+    public @NonNull List<Message> findByConversationId(@NonNull String conversationId) {
         Assert.hasText(conversationId, "Conversation ID must not be empty");
 
         String key = messageKey(conversationId);
@@ -144,7 +141,7 @@ public class RedisChatMemoryRepository implements ChatMemoryRepository {
      * for atomicity. Also sets TTL if configured.
      */
     @Override
-    public void saveAll(String conversationId, List<Message> messages) {
+    public void saveAll(@NonNull String conversationId, @NonNull List<Message> messages) {
         Assert.hasText(conversationId, "Conversation ID must not be empty");
         Assert.notNull(messages, "Messages must not be null");
 
@@ -182,7 +179,7 @@ public class RedisChatMemoryRepository implements ChatMemoryRepository {
     }
 
     @Override
-    public void deleteByConversationId(String conversationId) {
+    public void deleteByConversationId(@NonNull String conversationId) {
         Assert.hasText(conversationId, "Conversation ID must not be empty");
         redisTemplate.delete(messageKey(conversationId));
     }

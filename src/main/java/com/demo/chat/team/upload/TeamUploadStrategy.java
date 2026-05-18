@@ -3,6 +3,7 @@ package com.demo.chat.team.upload;
 import com.demo.chat.common.errorcode.ErrorCode;
 import com.demo.chat.common.upload.UploadStrategy;
 import com.demo.chat.exception.BusinessException;
+import com.demo.chat.rag.event.DocumentCreatedEvent;
 import com.demo.chat.rag.dto.DocumentUploadResponse;
 import com.demo.chat.rag.etl.EtlStatus;
 import com.demo.chat.rag.upload.BucketResolver;
@@ -20,6 +21,7 @@ import com.demo.chat.team.mapper.TeamUploadApprovalMapper;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Component;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -53,6 +55,7 @@ public class TeamUploadStrategy implements UploadStrategy {
     private final EtlDispatchService etlDispatchService;
     private final TeamMemberMapper teamMemberMapper;
     private final TeamUploadApprovalMapper approvalMapper;
+    private final ApplicationEventPublisher eventPublisher;
 
     public TeamUploadStrategy(DocumentValidator documentValidator,
                               FileStorageService fileStorageService,
@@ -60,7 +63,8 @@ public class TeamUploadStrategy implements UploadStrategy {
                               RagDocumentMapper ragDocumentMapper,
                               EtlDispatchService etlDispatchService,
                               TeamMemberMapper teamMemberMapper,
-                              TeamUploadApprovalMapper approvalMapper) {
+                              TeamUploadApprovalMapper approvalMapper,
+                              ApplicationEventPublisher eventPublisher) {
         this.documentValidator = documentValidator;
         this.fileStorageService = fileStorageService;
         this.bucketResolver = bucketResolver;
@@ -68,10 +72,11 @@ public class TeamUploadStrategy implements UploadStrategy {
         this.etlDispatchService = etlDispatchService;
         this.teamMemberMapper = teamMemberMapper;
         this.approvalMapper = approvalMapper;
+        this.eventPublisher = eventPublisher;
     }
 
     @Override
-    public DocumentUploadResponse upload(MultipartFile file, @Nullable Long teamId, Long userId) {
+    public DocumentUploadResponse upload(MultipartFile file, @Nullable Long teamId, @Nullable Long replaceDocumentId, Long userId) {
         documentValidator.validate(file);
 
         // 校验成员上传额度
@@ -86,6 +91,7 @@ public class TeamUploadStrategy implements UploadStrategy {
         String fileMd5 = computeMd5(file);
         RagDocument ragDoc = persistDocument(file.getOriginalFilename(), file.getSize(),
                 file.getContentType(), storageKey, bucket, userId, teamId, autoApproved, fileMd5);
+        eventPublisher.publishEvent(new DocumentCreatedEvent(ragDoc.getId(), replaceDocumentId, userId, teamId));
 
         if (!autoApproved) {
             createApprovalRecord(teamId, ragDoc.getId(), userId);
@@ -103,7 +109,7 @@ public class TeamUploadStrategy implements UploadStrategy {
     }
 
     @Override
-    public List<DocumentUploadResponse> uploadBatch(List<MultipartFile> files, @Nullable Long teamId, Long userId) {
+    public List<DocumentUploadResponse> uploadBatch(List<MultipartFile> files, @Nullable Long teamId, @Nullable Long replaceDocumentId, Long userId) {
         String bucket = bucketResolver.resolve(teamId);
         fileStorageService.ensureBucketExists(bucket);
 
@@ -123,6 +129,7 @@ public class TeamUploadStrategy implements UploadStrategy {
 
             RagDocument ragDoc = persistDocument(file.getOriginalFilename(), file.getSize(),
                     file.getContentType(), storageKey, bucket, userId, teamId, autoApproved, computeMd5(file));
+            eventPublisher.publishEvent(new DocumentCreatedEvent(ragDoc.getId(), null, userId, teamId));
 
             if (!autoApproved) {
                 createApprovalRecord(teamId, ragDoc.getId(), userId);

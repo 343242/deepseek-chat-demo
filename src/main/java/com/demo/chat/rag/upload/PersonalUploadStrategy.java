@@ -3,6 +3,7 @@ package com.demo.chat.rag.upload;
 import com.demo.chat.common.errorcode.ErrorCode;
 import com.demo.chat.common.upload.UploadStrategy;
 import com.demo.chat.exception.BusinessException;
+import com.demo.chat.rag.event.DocumentCreatedEvent;
 import com.demo.chat.rag.upload.BucketResolver;
 import com.demo.chat.rag.dto.DocumentUploadResponse;
 import com.demo.chat.rag.etl.EtlCandidate;
@@ -15,6 +16,7 @@ import com.demo.chat.rag.service.impl.DocumentValidator;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Component;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -48,21 +50,24 @@ public class PersonalUploadStrategy implements UploadStrategy {
     private final RagDocumentMapper ragDocumentMapper;
     private final BucketResolver bucketResolver;
     private final DocumentValidator documentValidator;
+    private final ApplicationEventPublisher eventPublisher;
 
     public PersonalUploadStrategy(FileStorageService fileStorageService,
                                    EtlDispatchService etlDispatchService,
                                    RagDocumentMapper ragDocumentMapper,
                                    BucketResolver bucketResolver,
-                                   DocumentValidator documentValidator) {
+                                   DocumentValidator documentValidator,
+                                   ApplicationEventPublisher eventPublisher) {
         this.fileStorageService = fileStorageService;
         this.etlDispatchService = etlDispatchService;
         this.ragDocumentMapper = ragDocumentMapper;
         this.bucketResolver = bucketResolver;
         this.documentValidator = documentValidator;
+        this.eventPublisher = eventPublisher;
     }
 
     @Override
-    public DocumentUploadResponse upload(MultipartFile file, @Nullable Long teamId, Long userId) {
+    public DocumentUploadResponse upload(MultipartFile file, @Nullable Long teamId, @Nullable Long replaceDocumentId, Long userId) {
         documentValidator.validate(file);
 
         String mimeType = file.getContentType();
@@ -75,6 +80,7 @@ public class PersonalUploadStrategy implements UploadStrategy {
 
         String fileMd5 = computeMd5(file);
         RagDocument ragDoc = persistDocument(originalFilename, file.getSize(), mimeType, storageKey, bucket, userId, fileMd5);
+        eventPublisher.publishEvent(new DocumentCreatedEvent(ragDoc.getId(), replaceDocumentId, userId, ragDoc.getTeamId()));
         log.info("Document uploaded: id={}, file={}, size={}, userId={}", ragDoc.getId(), originalFilename, file.getSize(), userId);
 
         etlDispatchService.dispatchAsync(ragDoc.getId(), bucket, storageKey, originalFilename, mimeType, file.getSize(), userId, ragDoc.getTeamId());
@@ -83,7 +89,7 @@ public class PersonalUploadStrategy implements UploadStrategy {
     }
 
     @Override
-    public List<DocumentUploadResponse> uploadBatch(List<MultipartFile> files, @Nullable Long teamId, Long userId) {
+    public List<DocumentUploadResponse> uploadBatch(List<MultipartFile> files, @Nullable Long teamId, @Nullable Long replaceDocumentId, Long userId) {
         if (files == null || files.isEmpty()) {
             throw new BusinessException(ErrorCode.UPLOAD_LIST_EMPTY);
         }
@@ -107,6 +113,7 @@ public class PersonalUploadStrategy implements UploadStrategy {
 
             String fileMd5 = computeMd5(file);
             RagDocument ragDoc = persistDocument(originalFilename, file.getSize(), mimeType, storageKey, bucket, userId, fileMd5);
+            eventPublisher.publishEvent(new DocumentCreatedEvent(ragDoc.getId(), null, userId, ragDoc.getTeamId()));
             log.debug("Document uploaded (batch): id={}, file={}, size={}, userId={}", ragDoc.getId(), originalFilename, file.getSize(), userId);
 
             candidates.add(new EtlCandidate(ragDoc.getId(), bucket, storageKey, originalFilename, mimeType, file.getSize(), userId, ragDoc.getTeamId()));

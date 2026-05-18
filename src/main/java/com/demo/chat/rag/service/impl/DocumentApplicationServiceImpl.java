@@ -64,7 +64,14 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
     public DocumentUploadResponse upload(MultipartFile file, @Nullable Long teamId) {
         Long currentUserId = SecurityUtils.getCurrentUserId();
         verifyTeamAccess(teamId, currentUserId);
-        return uploadStrategyFactory.route(teamId).upload(file, teamId, currentUserId);
+        return uploadStrategyFactory.route(teamId).upload(file, teamId, null, currentUserId);
+    }
+
+    @Override
+    public DocumentUploadResponse upload(MultipartFile file, @Nullable Long teamId, @Nullable Long replaceDocumentId) {
+        Long currentUserId = SecurityUtils.getCurrentUserId();
+        verifyTeamAccess(teamId, currentUserId);
+        return uploadStrategyFactory.route(teamId).upload(file, teamId, replaceDocumentId, currentUserId);
     }
 
     @Override
@@ -76,7 +83,7 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
     public List<DocumentUploadResponse> uploadBatch(MultipartFile[] files, @Nullable Long teamId) {
         Long currentUserId = SecurityUtils.getCurrentUserId();
         verifyTeamAccess(teamId, currentUserId);
-        return uploadStrategyFactory.route(teamId).uploadBatch(Arrays.asList(files), teamId, currentUserId);
+        return uploadStrategyFactory.route(teamId).uploadBatch(Arrays.asList(files), teamId, null, currentUserId);
     }
 
     @Override
@@ -124,6 +131,9 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
         if (doc == null) {
             throw new BusinessException(ErrorCode.DOCUMENT_NOT_FOUND, "文档不存在: " + id);
         }
+        if (doc.getSupersededBy() != null) {
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "文档已被新版本替代，无法重试");
+        }
         if (doc.getStatus() != EtlStatus.FAILED && doc.getStatus() != EtlStatus.VECTOR_FAILED) {
             throw new BusinessException(ErrorCode.BAD_REQUEST,
                     "仅 FAILED / VECTOR_FAILED 状态的文档可以重试，当前状态: " + doc.getStatus());
@@ -141,6 +151,23 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
                 doc.getFileName(), doc.getMimeType(), doc.getFileSize(), doc.getUserId(), doc.getTeamId());
 
         return new DocumentUploadResponse(id, doc.getFileName(), EtlStatus.PROCESSING);
+    }
+
+    @Override
+    public List<DocumentDTO> getHistory(Long id) {
+        RagDocument doc = verifyAccess(id);
+        if (doc == null) {
+            throw new BusinessException(ErrorCode.DOCUMENT_NOT_FOUND, "文档不存在: " + id);
+        }
+        String groupId = doc.getDocumentGroupId();
+        if (groupId == null) {
+            return List.of(toDTO(doc));
+        }
+        return ragDocumentMapper.selectList(
+                new LambdaQueryWrapper<RagDocument>()
+                        .eq(RagDocument::getDocumentGroupId, groupId)
+                        .orderByDesc(RagDocument::getVersion)
+        ).stream().map(this::toDTO).toList();
     }
 
     // === 私有方法 ===
@@ -194,6 +221,9 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
                 doc.getErrorMessage(),
                 doc.getUserId(),
                 doc.getTeamId(),
+                doc.getVersion(),
+                doc.getSupersededBy(),
+                doc.getDocumentGroupId(),
                 doc.getCreateTime()
         );
     }

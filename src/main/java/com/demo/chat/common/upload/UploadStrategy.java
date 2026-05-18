@@ -22,20 +22,22 @@ public interface UploadStrategy {
     /**
      * 单文件上传
      *
-     * @param file   上传文件
-     * @param teamId 团队 ID（null = 个人上传）
-     * @param userId 当前用户 ID
+     * @param file               上传文件
+     * @param teamId             团队 ID（null = 个人上传）
+     * @param replaceDocumentId  替换目标文档 ID（null = 新文档）
+     * @param userId             当前用户 ID
      * @return 上传结果
      */
-    DocumentUploadResponse upload(MultipartFile file, @Nullable Long teamId, Long userId);
+    DocumentUploadResponse upload(MultipartFile file, @Nullable Long teamId, @Nullable Long replaceDocumentId, Long userId);
 
     /**
      * 批量文件上传
      *
-     * @param files  上传文件列表
-     * @param teamId 团队 ID（null = 个人上传）
-     * @param userId 当前用户 ID
+     * @param files              上传文件列表
+     * @param teamId             团队 ID（null = 个人上传）
+     * @param replaceDocumentId  替换目标文档 ID（null = 新文档）
+     * @param userId             当前用户 ID
      * @return 上传结果列表
      */
-    List<DocumentUploadResponse> uploadBatch(List<MultipartFile> files, @Nullable Long teamId, Long userId);
+    List<DocumentUploadResponse> uploadBatch(List<MultipartFile> files, @Nullable Long teamId, @Nullable Long replaceDocumentId, Long userId);
 }

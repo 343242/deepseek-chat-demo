@@ -28,7 +28,11 @@ public class DocumentController {
     @PostMapping("/upload")
     public GlobalResponse<DocumentUploadResponse> upload(
             @RequestParam("file") MultipartFile file,
-            @RequestParam(value = "teamId", required = false) @Nullable Long teamId) {
+            @RequestParam(value = "teamId", required = false) @Nullable Long teamId,
+            @RequestParam(value = "replaceDocumentId", required = false) @Nullable Long replaceDocumentId) {
+        if (replaceDocumentId != null) {
+            return GlobalResponse.ok(documentService.upload(file, teamId, replaceDocumentId));
+        }
         return GlobalResponse.ok(documentService.upload(file, teamId));
     }
 
@@ -52,6 +56,11 @@ public class DocumentController {
     @GetMapping("/{id}")
     public GlobalResponse<DocumentDTO> get(@PathVariable Long id) {
         return GlobalResponse.ok(documentService.getById(id));
+    }
+
+    @GetMapping("/{id}/history")
+    public GlobalResponse<List<DocumentDTO>> history(@PathVariable Long id) {
+        return GlobalResponse.ok(documentService.getHistory(id));
     }
 
     @DeleteMapping("/{id}")

@@ -21,6 +21,9 @@ public interface DocumentApplicationService {
     /** 上传单个文档（指定团队） */
     DocumentUploadResponse upload(MultipartFile file, @Nullable Long teamId);
 
+    /** 上传单个文档（指定替换目标） */
+    DocumentUploadResponse upload(MultipartFile file, @Nullable Long teamId, @Nullable Long replaceDocumentId);
+
     /** 批量上传文档（个人） */
     List<DocumentUploadResponse> uploadBatch(List<MultipartFile> files);
 
@@ -38,4 +41,7 @@ public interface DocumentApplicationService {
     boolean delete(Long id);
 
     DocumentUploadResponse retry(Long id);
+
+    /** 获取文档版本历史 */
+    List<DocumentDTO> getHistory(Long id);
 }

@@ -8,10 +8,12 @@ import com.demo.chat.rag.etl.Loader;
 import com.demo.chat.rag.etl.EtlRouteStrategy;
 import com.demo.chat.rag.etl.EtlRouteStrategyFactory;
 import com.demo.chat.rag.etl.EtlStatus;
+import com.demo.chat.rag.event.EtlCompletedEvent;
 import com.demo.chat.rag.service.EtlDispatchService;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 
 import org.springframework.beans.factory.annotation.Qualifier;
@@ -33,13 +35,16 @@ public class EtlDispatchServiceImpl implements EtlDispatchService {
     private final EtlRouteStrategyFactory strategyFactory;
     private final ThreadPoolTaskExecutor etlIoExecutor;
     private final Loader loader;
+    private final ApplicationEventPublisher eventPublisher;
 
     public EtlDispatchServiceImpl(EtlRouteStrategyFactory strategyFactory,
                                   @Qualifier("etlIoExecutor") ThreadPoolTaskExecutor etlIoExecutor,
-                                  Loader loader) {
+                                  Loader loader,
+                                  ApplicationEventPublisher eventPublisher) {
         this.strategyFactory = strategyFactory;
         this.etlIoExecutor = etlIoExecutor;
         this.loader = loader;
+        this.eventPublisher = eventPublisher;
     }
 
     @Override
@@ -78,7 +83,10 @@ public class EtlDispatchServiceImpl implements EtlDispatchService {
 
         etlIoExecutor.execute(() -> {
             try {
-                dispatch(List.of(candidate));
+                List<EtlResult> results = dispatch(List.of(candidate));
+                if (!results.isEmpty() && EtlStatus.COMPLETED.equals(results.getFirst().status())) {
+                    eventPublisher.publishEvent(new EtlCompletedEvent(candidate.documentId(), candidate.userId(), candidate.teamId()));
+                }
             } catch (Exception e) {
                 log.error("ETL dispatchAsync failed: documentId={}, file={}", documentId, fileName, e);
             }

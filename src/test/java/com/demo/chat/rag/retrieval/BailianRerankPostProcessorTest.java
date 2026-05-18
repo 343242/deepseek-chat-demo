@@ -78,7 +78,7 @@ class BailianRerankPostProcessorTest {
 
         @BeforeEach
         void setUp() throws Exception {
-            isRetryableMethod = BailianRerankPostProcessor.class.getDeclaredMethod("isRetryable", Exception.class);
+            isRetryableMethod = BailianRerankPostProcessor.class.getDeclaredMethod("isRetryable", Throwable.class);
             isRetryableMethod.setAccessible(true);
         }
 

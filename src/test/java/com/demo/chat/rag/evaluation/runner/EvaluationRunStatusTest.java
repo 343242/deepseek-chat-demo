@@ -48,7 +48,7 @@ class EvaluationRunStatusTest {
         @DisplayName("非法值抛异常")
         void illegalValue() {
             assertThatThrownBy(() -> EvaluationRunStatus.fromValue("unknown"))
-                    .isInstanceOf(IllegalArgumentException.class)
+                    .isInstanceOf(IllegalStateException.class)
                     .hasMessageContaining("unknown");
         }
     }

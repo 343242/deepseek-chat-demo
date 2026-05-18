@@ -4,28 +4,30 @@
 
 ## RAG 检索增强生成
 
-支持完整的 RAG Pipeline：文档上传 → Apache Tika 解析 → Parent-Child 分块 → DashScope Embedding 向量化 → PGvector 存储。
+支持完整的 RAG Pipeline：文档上传（含 GBK/GB2312/GB18030 编码自动检测转码）→ Apache Tika 解析 → Parent-Child 分块 → DashScope Embedding 向量化 → PGvector 存储。
 
-**六阶段检索 Pipeline（优化后）：**
+**六阶段检索 Pipeline（H-RAG 优化后）：**
 
 ```
 用户查询
   ↓ QueryNormalize（全角→半角、NFC、空白压缩）
-  ↓ RewriteQueryTransformer（LLM 查询改写）
+  ↓ RewriteQueryTransformer（LLM 查询改写，短查询原样透传守卫）
   ↓ HybridDocumentRetriever（pgvector 向量检索 topK=30 + BM25 全文检索 topK=30, RRF 加权融合）
   ↓ MmrDocumentPostProcessor（MMR 多样性去冗余 topK=10, pgvector cosine 数据库层计算）
   ↓ BailianRerankPostProcessor（百炼 Rerank 语义精排 topN=5, 三次重试+指数退避）
-  ↓ ParentDocumentPostProcessor（子块→父文档回查替换）
+  ↓ ParentDocumentPostProcessor（子块→父文档回查替换, max(childScore) 降序排列）
   ↓ 注入 LLM prompt → 流式生成
 ```
 
 关键设计：
+- **H-RAG 论文驱动优化**：Query Rewrite 守卫规则（短查询原样透传）、自定义 Rewrite 模型与 temperature、Parent-level Rescoring（子块 max-score 聚合排序父文档）
 - **混合检索 + RRF 加权融合**：向量语义检索与 BM25（pg_jieba 中文分词）互补，向量检索利用 cosine 相似度分数加权
 - **先去冗余再精排**：MMR 在 Rerank 之前执行，避免 Rerank 浪费算力在语义重复文档上
 - **HNSW 参数调优**：m=32, ef_construction=128, ef_search=64, iterative_scan=relaxed_order
 - **ETL 双线程池**：IO 池（Extract/Load）+ CPU 池（Transform），多文档并行处理
 - **快速通道**：小文档走 BM25 即搜即用（异步向量化补齐）
 - **MinIO BucketResolver**：个人/团队文档 bucket 隔离
+- **编码自动检测**：文本/Markdown 上传自动识别 GBK/GB2312/GB18030 编码并转码为 UTF-8
 
 ## 评估系统
 
@@ -55,6 +57,7 @@
 | Spring Security | 随 Boot | JWT 双 Token 认证 + RBAC 授权 |
 | JJWT | 0.13.0 | JWT 双 Token（Access 15min + Refresh 24h） |
 | Apache Tika | 随 Spring AI | 多格式文档解析（PDF/DOCX/PPTX/HTML 等） |
+| juniversalchardet | 2.5.0 | 文本编码自动检测（GBK/GB2312/GB18030） |
 | DashScope text-embedding-v4 | - | 阿里千问 Embedding 模型（1024 维） |
 | Caffeine | 3.x | 本地缓存（SystemPrompt / ModelParams / 验证码） |
 | sensitive-word | 0.29.5 | DFA 敏感词过滤 |
@@ -148,7 +151,7 @@ curl -X POST http://localhost:8080/api/chat \
 curl "http://localhost:8080/api/chat/stream?model=zhipu/glm-4.7&message=你好&conversationId=test" \
   -b cookies.txt
 
-# 6. 上传文档（RAG）
+# 6. 上传文档（RAG，支持 GBK/GB2312/GB18030 自动转码）
 curl -X POST http://localhost:8080/api/documents/upload \
   -b cookies.txt -F "file=@document.pdf"
 
@@ -182,12 +185,12 @@ src/main/java/com/demo/chat/
 ├── rag/                 # RAG 模块
 │   ├── config/          #   RAG 配置（RagRetrievalProperties record、RagAdvisorFactory）
 │   ├── retrieval/       #   检索（HybridDocumentRetriever、Rerank、MMR、QueryNormalizer）
-│   ├── chunk/           #   分块（Parent-Child 策略、ParentDocumentPostProcessor）
+│   ├── chunk/           #   分块（Parent-Child 策略、ParentDocumentPostProcessor 含 Rescoring）
 │   ├── embedding/       #   向量化（DashScopeEmbeddingModel、批量分片、场景识别）
 │   ├── etl/             #   ETL Pipeline（双线程池、Standard/FastTrack 策略路由）
 │   ├── mapper/          #   数据访问（VectorStoreMapper: BM25/ParentChild/Cosine距离）
 │   ├── evaluation/      #   评估系统（@Profile("evaluation"), Judge/LlmScorer/指标计算）
-│   ├── parser/          #   文档解析（Apache Tika）
+│   ├── parser/          #   文档解析（Apache Tika + 编码自动检测）
 │   ├── upload/          #   上传策略（个人上传）
 │   └── entity/          #   RAG 实体
 ├── team/                # 团队协作（团队/成员/审批/额度/权限隔离/团队上传）
@@ -197,6 +200,8 @@ src/main/java/com/demo/chat/
 > 完整的文件级目录结构见 [项目结构文档](docs/PROJECT-STRUCTURE.md)。
 
 ## 文档
+
+### 设计文档
 
 | 文档 | 说明 |
 |------|------|
@@ -211,9 +216,16 @@ src/main/java/com/demo/chat/
 | [RBAC 用户模块设计](docs/RBAC-USER-MODULE-DESIGN.md) | 权限模型与用户管理 |
 | [分片上传设计](docs/design/chunk-upload.md) | 分片上传架构、流程、安全措施 |
 | [团队协作功能 PRD](docs/TEAM-FEATURE-PRD.md) | 团队创建/成员管理/审批流/额度控制/权限隔离 |
-| [代码审查报告](docs/TEAM-CODE-REVIEW.md) | 团队模块代码审查（3B/7H/8M/4L） |
 
-**外部参考：** [Spring AI 1.1.6](https://docs.spring.io/spring-ai/docs/1.1.6/api/) · [DeepSeek API](https://api-docs.deepseek.com/) · [智谱 AI API](https://docs.bigmodel.cn/cn/api/introduction) · [MiniMax API](https://platform.minimaxi.com/docs/api-reference/api-overview) · [PGvector 0.8.2](https://github.com/pgvector/pgvector)
+### 审查报告
+
+| 文档 | 说明 |
+|------|------|
+| [团队模块审查](docs/TEAM-CODE-REVIEW.md) | 六维审查（3B/7H/8M/4L），全部修复，214 测试全绿 |
+| [团队模块审查 (Mimo)](docs/reviews/2026-05-17-team-module-review.md) | Mimo 双模型交叉审查 |
+| [Chat 模块审查](docs/reviews/2026-05-18-chat-module-review.md) | 六维深度审查（4B/6H/13M/9L），5 Phase 全部修复 |
+
+**外部参考：** [Spring AI 1.1.6](https://docs.spring.io/spring-ai/docs/1.1.6/api/) · [DeepSeek API](https://api-docs.deepseek.com/) · [智谱 AI API](https://docs.bigmodel.cn/cn/api/introduction) · [MiniMax API](https://platform.minimaxi.com/docs/api-reference/api-overview) · [PGvector 0.8.2](https://github.com/pgvector/pgvector) · [H-RAG (arXiv:2605.00631)](https://arxiv.org/abs/2605.00631)
 
 ---
 

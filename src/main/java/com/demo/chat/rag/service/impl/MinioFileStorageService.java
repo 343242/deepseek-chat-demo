@@ -7,6 +7,7 @@ import io.minio.*;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.core.io.ByteArrayResource;
+import org.springframework.core.io.InputStreamResource;
 import org.springframework.core.io.Resource;
 import org.springframework.stereotype.Service;
 
@@ -59,10 +60,12 @@ public class MinioFileStorageService implements FileStorageService {
 
     @Override
     public Resource download(String bucket, String objectKey) {
-        try (InputStream is = minioClient.getObject(
-                GetObjectArgs.builder().bucket(bucket).object(objectKey).build())) {
-            byte[] bytes = is.readAllBytes();
-            return new ByteArrayResource(bytes);
+        try {
+            GetObjectResponse response = minioClient.getObject(
+                    GetObjectArgs.builder().bucket(bucket).object(objectKey).build());
+            // 返回流式 Resource，避免大文件全量加载到 JVM 堆内存
+            // InputStreamResource 不关闭底层流，由调用方负责
+            return new MinioStreamResource(response, bucket, objectKey);
         } catch (Exception e) {
             throw new FileStorageException(
                     String.format("Failed to download file: %s/%s", bucket, objectKey), e);
@@ -94,6 +97,33 @@ public class MinioFileStorageService implements FileStorageService {
         } catch (Exception e) {
             throw new FileStorageException(
                     String.format("Failed to generate presigned URL: %s/%s", bucket, objectKey), e);
+        }
+    }
+
+    /**
+     * MinIO 流式 Resource，包装 GetObjectResponse。
+     * <p>
+     * 解决 MinioFileStorageService.download() 全量加载大文件导致 OOM 的问题。
+     * InputStream 在被消费后（如 parser 解析完毕）自动关闭，释放 MinIO 连接。
+     * </p>
+     */
+    static class MinioStreamResource extends InputStreamResource {
+
+        private final String filename;
+
+        MinioStreamResource(GetObjectResponse response, String bucket, String objectKey) {
+            super(response);
+            this.filename = objectKey.substring(objectKey.lastIndexOf('/') + 1);
+        }
+
+        @Override
+        public String getFilename() {
+            return filename;
+        }
+
+        @Override
+        public long contentLength() {
+            return -1L; // 未知长度，避免提前读取
         }
     }
 

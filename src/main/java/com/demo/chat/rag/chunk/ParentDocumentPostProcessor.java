@@ -112,11 +112,17 @@ public class ParentDocumentPostProcessor implements DocumentPostProcessor {
 
         // Parent-level Rescoring：按子块最高分数降序排列父文档
         // 只对父文档部分排序，non-child 保持原序
+        // 注意：parentScoreMap 的 key 是 metadata 中的 parentId，不是 doc.getId()
         if (!parentScoreMap.isEmpty() && result.size() > 1) {
             int parentCount = resolvedParents.size();
             List<Document> parentDocs = result.subList(0, parentCount);
             parentDocs.sort(Comparator.comparingDouble(
-                    (Document doc) -> parentScoreMap.getOrDefault(doc.getId(), DEFAULT_SCORE))
+                    (Document doc) -> {
+                        Object pid = doc.getMetadata().get(ParentChildChunkStrategy.META_PARENT_ID);
+                        return pid != null
+                                ? parentScoreMap.getOrDefault(pid.toString(), DEFAULT_SCORE)
+                                : DEFAULT_SCORE;
+                    })
                     .reversed());
         }
 

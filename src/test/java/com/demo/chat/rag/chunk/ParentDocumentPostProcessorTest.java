@@ -36,6 +36,7 @@ class ParentDocumentPostProcessorTest {
     private Document parentDoc(String id, String content) {
         Map<String, Object> meta = new HashMap<>();
         meta.put(ParentChildChunkStrategy.META_IS_PARENT, true);
+        meta.put(ParentChildChunkStrategy.META_PARENT_ID, id);  // 父文档 metadata 中也有 parentId
         return new Document(id, content, meta);
     }
 

@@ -9,7 +9,6 @@ import org.springframework.core.io.Resource;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
 import java.nio.charset.UnsupportedCharsetException;
-import java.nio.charset.UnsupportedCharsetException;
 
 /**
  * 文本编码检测与转码工具。

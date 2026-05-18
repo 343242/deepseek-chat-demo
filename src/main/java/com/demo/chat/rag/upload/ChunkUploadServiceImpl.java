@@ -255,6 +255,19 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
             throw new BusinessException(ErrorCode.UPLOAD_FILE_MD5_MISMATCH, "声明的文件MD5与会话不匹配");
         }
 
+        // 防止 autoMerge 进行中重复触发：检查 __merging 标记
+        String partsKey = UploadRedisConstants.partsKey(uploadId);
+        Boolean merging = redisTemplate.opsForHash().hasKey(partsKey, UploadRedisConstants.MERGING_FIELD);
+        if (Boolean.TRUE.equals(merging)) {
+            // autoMerge 正在进行中，等待完成后再查结果
+            log.info("Complete deferred: auto-merge in progress, uploadId={}", uploadId);
+            RagDocument existing = findExistingForQuickUpload(fileMd5, userId);
+            if (existing != null) {
+                return existing.getId();
+            }
+            throw new BusinessException(ErrorCode.BAD_REQUEST, "文件合并正在进行中，请稍后重试");
+        }
+
         performMerge(uploadId);
 
         RagDocument doc = findExistingForQuickUpload(fileMd5, userId);

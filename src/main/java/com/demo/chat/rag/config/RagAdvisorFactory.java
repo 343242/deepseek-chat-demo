@@ -17,6 +17,7 @@ import org.springframework.ai.rag.retrieval.search.DocumentRetriever;
 import org.springframework.ai.rag.retrieval.search.VectorStoreDocumentRetriever;
 import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.ai.vectorstore.filter.FilterExpressionBuilder;
+import jakarta.annotation.PreDestroy;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
@@ -166,5 +167,19 @@ public class RagAdvisorFactory {
         postProcessors.add(parentDocumentPostProcessor);
 
         return postProcessors;
+    }
+
+    /**
+     * 优雅停机：关闭 Rerank PostProcessor 内部线程池
+     */
+    @PreDestroy
+    public void destroy() {
+        List<org.springframework.ai.rag.postretrieval.document.DocumentPostProcessor> processors = cachedPostProcessors.get();
+        if (processors != null) {
+            processors.stream()
+                    .filter(p -> p instanceof BailianRerankPostProcessor)
+                    .map(p -> (BailianRerankPostProcessor) p)
+                    .forEach(BailianRerankPostProcessor::shutdown);
+        }
     }
 }

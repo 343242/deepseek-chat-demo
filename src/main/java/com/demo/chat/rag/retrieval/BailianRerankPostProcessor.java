@@ -188,6 +188,23 @@ public class BailianRerankPostProcessor implements DocumentPostProcessor {
     }
 
     /**
+     * 关闭 Rerank 线程池，等待进行中的任务完成。
+     * 由 {@link com.demo.chat.rag.config.RagAdvisorFactory} 在销毁时调用。
+     */
+    public void shutdown() {
+        rerankExecutor.shutdown();
+        try {
+            if (!rerankExecutor.awaitTermination(30, TimeUnit.SECONDS)) {
+                rerankExecutor.shutdownNow();
+                log.warn("Rerank executor did not terminate in 30s, forced shutdown");
+            }
+        } catch (InterruptedException e) {
+            rerankExecutor.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
+    }
+
+    /**
      * 标记 fallback 状态，让下游（如 MMR）能感知 Rerank 未生效
      */
     private void markFallback(List<Document> documents) {

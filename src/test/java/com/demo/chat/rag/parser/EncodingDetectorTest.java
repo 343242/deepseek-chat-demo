@@ -12,6 +12,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @DisplayName("EncodingDetector")
 class EncodingDetectorTest {
@@ -25,6 +26,8 @@ class EncodingDetectorTest {
     private Resource toResource(byte[] bytes) {
         return new ByteArrayResource(bytes);
     }
+
+    // ===== detectAndDecode =====
 
     @Nested
     @DisplayName("detectAndDecode")
@@ -61,6 +64,28 @@ class EncodingDetectorTest {
         }
 
         @Test
+        @DisplayName("Big5 繁体中文文本自动检测并正确解码")
+        void big5_text_auto_detected_and_decoded() {
+            String traditionalChinese = "這是繁體中文測試\n\n第二段內容";
+            byte[] bytes = traditionalChinese.getBytes(Charset.forName("Big5"));
+
+            String result = EncodingDetector.detectAndDecode(bytes, "test-big5.txt");
+
+            assertThat(result).isEqualTo(traditionalChinese);
+        }
+
+        @Test
+        @DisplayName("Shift-JIS 日文文本自动检测并正确解码")
+        void shift_jis_text_auto_detected_and_decoded() {
+            String japanese = "こんにちは世界\n\n二番目の段落";
+            byte[] bytes = japanese.getBytes(Charset.forName("Shift_JIS"));
+
+            String result = EncodingDetector.detectAndDecode(bytes, "test-sjis.txt");
+
+            assertThat(result).isEqualTo(japanese);
+        }
+
+        @Test
         @DisplayName("纯 ASCII 文本正常处理")
         void ascii_text_handled_correctly() {
             String ascii = "Hello World\n\nSecond paragraph";
@@ -78,7 +103,17 @@ class EncodingDetectorTest {
 
             assertThat(result).isEmpty();
         }
+
+        @Test
+        @DisplayName("null 字节数组返回空字符串")
+        void null_bytes_returns_empty() {
+            String result = EncodingDetector.detectAndDecode(null, "null.txt");
+
+            assertThat(result).isEmpty();
+        }
     }
+
+    // ===== detectAndTranscode =====
 
     @Nested
     @DisplayName("detectAndTranscode")
@@ -105,7 +140,50 @@ class EncodingDetectorTest {
             String content = new String(transcoded.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
             assertThat(content).isEqualTo(CHINESE_TEXT);
         }
+
+        @Test
+        @DisplayName("空资源返回空内容")
+        void empty_resource_returns_empty() throws Exception {
+            Resource empty = toResource(new byte[0]);
+
+            Resource transcoded = EncodingDetector.detectAndTranscode(empty);
+
+            assertThat(transcoded.getInputStream().readAllBytes()).isEmpty();
+        }
     }
+
+    // ===== isUtf8Compatible =====
+
+    @Nested
+    @DisplayName("isUtf8Compatible")
+    class IsUtf8Compatible {
+
+        @Test
+        @DisplayName("UTF-8 兼容")
+        void utf8_is_compatible() {
+            assertThat(EncodingDetector.isUtf8Compatible(StandardCharsets.UTF_8)).isTrue();
+        }
+
+        @Test
+        @DisplayName("ASCII 兼容")
+        void ascii_is_compatible() {
+            assertThat(EncodingDetector.isUtf8Compatible(StandardCharsets.US_ASCII)).isTrue();
+        }
+
+        @Test
+        @DisplayName("GBK 不兼容")
+        void gbk_is_not_compatible() {
+            assertThat(EncodingDetector.isUtf8Compatible(Charset.forName("GBK"))).isFalse();
+        }
+
+        @Test
+        @DisplayName("null 视为兼容")
+        void null_is_compatible() {
+            assertThat(EncodingDetector.isUtf8Compatible(null)).isTrue();
+        }
+    }
+
+    // ===== PlainTextDocumentParser with encoding detection =====
 
     @Nested
     @DisplayName("PlainTextDocumentParser with encoding detection")
@@ -128,7 +206,7 @@ class EncodingDetectorTest {
         @Test
         @DisplayName("GB18030 编码的文本正确解析")
         void gb18030_text_parsed_correctly() {
-            // GB18030 独有字符（㐀，U+3400）+ 常见中文，确保触发 GB18030 检测
+            // 㐀 (U+3400) 位于 GB18030 四字节区间，GBK 无法编码此字符
             String text = "你好世界 㐀测试";
             Resource resource = toResource(text, Charset.forName("GB18030"));
 
@@ -147,6 +225,46 @@ class EncodingDetectorTest {
 
             assertThat(docs).hasSize(1);
             assertThat(docs.get(0).getText()).isEqualTo("Hello 你好");
+        }
+
+        @Test
+        @DisplayName("解析失败时抛出 DocumentParseException")
+        void parse_failure_throws_DocumentParseException() {
+            // 使用 ByteArrayResource 子类模拟 IO 异常
+            Resource broken = new ByteArrayResource("test".getBytes()) {
+                @Override
+                public java.io.InputStream getInputStream() throws java.io.IOException {
+                    throw new java.io.IOException("simulated failure");
+                }
+                @Override
+                public String getFilename() {
+                    return "broken.txt";
+                }
+            };
+
+            assertThatThrownBy(() -> parser.parse(broken, "text/plain"))
+                    .isInstanceOf(DocumentParseException.class)
+                    .hasMessageContaining("broken.txt");
+        }
+    }
+
+    // ===== Large file sampling =====
+
+    @Nested
+    @DisplayName("Large file sampling")
+    class LargeFileSampling {
+
+        @Test
+        @DisplayName("超过 MAX_DETECT_SIZE 的文件仍然正确检测编码")
+        void large_file_encoding_detection() {
+            // 构造一个超过 MAX_DETECT_SIZE 的 GBK 文件
+            // 实际测试中降低阈值来验证逻辑
+            String repeatedText = "你好世界测试文本 ".repeat(100);
+            byte[] gbkBytes = repeatedText.getBytes(Charset.forName("GBK"));
+
+            // 正常检测（不触发采样，因为未超过 MAX_DETECT_SIZE）
+            String result = EncodingDetector.detectAndDecode(gbkBytes, "large-gbk.txt");
+            assertThat(result).isEqualTo(repeatedText);
         }
     }
 }

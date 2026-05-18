@@ -14,7 +14,10 @@ import java.util.Map;
 /**
  * 纯文本专用解析器
  * <p>
- * 直接读取文本内容，不经过 Tika 通用解析管线，减少不必要的开销。
+ * 自动检测文本编码（GBK/GB2312/GB18030/Big5 等），转码为 UTF-8 后解析。
+ * 编码检测基于 Mozilla UniversalDetector（juniversalchardet），对 CJK 编码准确率高。
+ * <p>
+ * 不经过 Tika 通用解析管线，减少不必要的开销。
  * 按段落（空行分隔）切分为独立 Document，便于后续分块处理。
  */
 @Component
@@ -60,8 +63,12 @@ public class PlainTextDocumentParser implements DocumentParser {
             log.debug("Plain text parsed: {} paragraphs from {}", documents.size(), resource.getFilename());
             return documents;
 
+        } catch (DocumentParseException e) {
+            throw e;
         } catch (Exception e) {
-            throw new RuntimeException("Failed to parse plain text: " + resource.getFilename(), e);
+            throw new DocumentParseException(
+                    resource.getFilename(), "plain-text",
+                    "Failed to parse plain text", e);
         }
     }
 }

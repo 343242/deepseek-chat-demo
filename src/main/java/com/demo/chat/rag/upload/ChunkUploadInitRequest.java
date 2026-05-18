@@ -36,5 +36,9 @@ public record ChunkUploadInitRequest(
 
     /** 团队 ID，由 Controller 层根据路由填入，前端无需传递 */
     @Nullable
-    Long teamId
+    Long teamId,
+
+    /** 替换目标文档 ID，用于文档增量更新（null = 新文档） */
+    @Nullable
+    Long replaceDocumentId
 ) {}

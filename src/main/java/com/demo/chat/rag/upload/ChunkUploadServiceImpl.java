@@ -3,6 +3,7 @@ package com.demo.chat.rag.upload;
 import com.demo.chat.common.errorcode.ErrorCode;
 import com.demo.chat.exception.BusinessException;
 import com.demo.chat.rag.config.DocumentProperties;
+import com.demo.chat.rag.event.DocumentCreatedEvent;
 import com.demo.chat.rag.upload.BucketResolver;
 import com.demo.chat.rag.entity.RagDocument;
 import com.demo.chat.rag.etl.EtlStatus;
@@ -17,6 +18,7 @@ import io.minio.*;
 import io.minio.SourceObject;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.core.io.ClassPathResource;
 import org.jspecify.annotations.Nullable;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -62,6 +64,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
     private final TeamStatusService teamStatusService;
     private final DefaultRedisScript<List> atomicChunkUploadScript;
     private final ThreadPoolTaskExecutor mergeExecutor;
+    private final ApplicationEventPublisher eventPublisher;
 
     public ChunkUploadServiceImpl(
             StringRedisTemplate redisTemplate,
@@ -74,7 +77,8 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
             RagDocumentMapper ragDocumentMapper,
             EtlDispatchService etlDispatchService,
             TeamStatusService teamStatusService,
-            ThreadPoolTaskExecutor mergeExecutor
+            ThreadPoolTaskExecutor mergeExecutor,
+            ApplicationEventPublisher eventPublisher
     ) {
         this.redisTemplate = redisTemplate;
         this.minioClient = minioClient;
@@ -87,6 +91,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         this.etlDispatchService = etlDispatchService;
         this.teamStatusService = teamStatusService;
         this.mergeExecutor = mergeExecutor;
+        this.eventPublisher = eventPublisher;
 
         this.atomicChunkUploadScript = new DefaultRedisScript<>();
         this.atomicChunkUploadScript.setLocation(new ClassPathResource("scripts/atomic_chunk_upload.lua"));
@@ -366,6 +371,11 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
                 session.get("mimeType"), Long.parseLong(session.get("fileSize")), userId,
                 teamId
         );
+
+        // 9. 发布 DocumentCreatedEvent（用于增量更新版本链接）
+        String replaceDocIdStr = session.get("replaceDocumentId");
+        Long replaceDocumentId = replaceDocIdStr != null ? Long.parseLong(replaceDocIdStr) : null;
+        eventPublisher.publishEvent(new DocumentCreatedEvent(docId, replaceDocumentId, userId, teamId));
     }
 
     // ==================== 私有方法 ====================
@@ -461,6 +471,9 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         ));
         if (request.teamId() != null) {
             sessionFields.put("teamId", String.valueOf(request.teamId()));
+        }
+        if (request.replaceDocumentId() != null) {
+            sessionFields.put("replaceDocumentId", String.valueOf(request.replaceDocumentId()));
         }
         redisTemplate.opsForHash().putAll(sessionKey, sessionFields);
         redisTemplate.expire(sessionKey, UploadRedisConstants.SESSION_TTL);

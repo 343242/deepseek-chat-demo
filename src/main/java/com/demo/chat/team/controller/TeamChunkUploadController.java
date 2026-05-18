@@ -63,7 +63,7 @@ public class TeamChunkUploadController {
         // 将 teamId 注入 request
         ChunkUploadInitRequest teamRequest = new ChunkUploadInitRequest(
                 request.fileMd5(), request.fileName(), request.fileSize(),
-                request.mimeType(), request.chunkSize(), teamId
+                request.mimeType(), request.chunkSize(), teamId, request.replaceDocumentId()
         );
         ChunkUploadResult result = chunkUploadService.init(teamRequest);
         if (result.uploaded()) {

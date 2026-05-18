@@ -93,21 +93,25 @@ class DocumentSupersedeServiceTest {
             service.onDocumentCreated(event);
 
             verify(ragDocumentMapper).updateGroupIdAndVersion(eq(100L), eq("group-abc"), eq(4));
-            verify(ragDocumentMapper, never()).updateGroupId(anyLong(), anyString());
+            verify(ragDocumentMapper).updateSupersededByOnly(50L, 100L);
+            // CAS not needed because oldDoc already has groupId
+            verify(ragDocumentMapper, never()).updateGroupIdCas(anyLong(), anyString());
         }
 
         @Test
-        @DisplayName("linkVersion_oldDocWithoutGroup: 旧文档无 groupId 时先生成 groupId 再分配")
+        @DisplayName("linkVersion_oldDocWithoutGroup: 旧文档无 groupId 时通过 CAS 分配")
         void linkVersion_oldDocWithoutGroup() {
             RagDocument oldDoc = buildDoc(50L, null, 1, 1L, null);
             when(ragDocumentMapper.selectById(50L)).thenReturn(oldDoc);
+            when(ragDocumentMapper.updateGroupIdCas(eq(50L), anyString())).thenReturn(1);
 
             DocumentCreatedEvent event = new DocumentCreatedEvent(100L, 50L, 1L, null);
 
             service.onDocumentCreated(event);
 
-            verify(ragDocumentMapper).updateGroupId(eq(50L), anyString());
+            verify(ragDocumentMapper).updateGroupIdCas(eq(50L), anyString());
             verify(ragDocumentMapper).updateGroupIdAndVersion(eq(100L), anyString(), eq(2));
+            verify(ragDocumentMapper).updateSupersededByOnly(50L, 100L);
         }
 
         @Test

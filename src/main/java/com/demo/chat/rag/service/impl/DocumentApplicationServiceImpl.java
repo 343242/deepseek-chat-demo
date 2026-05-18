@@ -93,6 +93,7 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
                 new LambdaQueryWrapper<RagDocument>()
                         .eq(RagDocument::getUserId, currentUserId)
                         .isNull(RagDocument::getTeamId)
+                        .ne(RagDocument::getStatus, EtlStatus.SUPERSEDED)
                         .orderByDesc(RagDocument::getCreateTime));
         return docs.stream().map(this::toDTO).toList();
     }
@@ -106,6 +107,7 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
         List<RagDocument> docs = ragDocumentMapper.selectList(
                 new LambdaQueryWrapper<RagDocument>()
                         .eq(RagDocument::getTeamId, teamId)
+                        .ne(RagDocument::getStatus, EtlStatus.SUPERSEDED)
                         .orderByDesc(RagDocument::getCreateTime));
         return docs.stream().map(this::toDTO).toList();
     }

@@ -28,6 +28,21 @@ public interface RagDocumentMapper extends BaseMapper<RagDocument> {
     int updateGroupId(@Param("id") Long id, @Param("groupId") String groupId);
 
     /**
+     * CAS 防护：仅当 document_group_id IS NULL 时才写入，避免并发覆盖
+     * @return 影响行数（0 = CAS 失败，其他线程已分配）
+     */
+    @Update("UPDATE rag_document SET document_group_id = #{groupId} WHERE id = #{id} AND document_group_id IS NULL")
+    int updateGroupIdCas(@Param("id") Long id, @Param("groupId") String groupId);
+
+    /**
+     * 仅设置 superseded_by（不改变 status），用于 linkVersion 事务中标记替换关系。
+     * 崩溃安全：superseded_by 写入 DB 后，即使内存 pendingSupersede 丢失，
+     * recoverPendingSupersede 也能通过此字段找到未完成的替换。
+     */
+    @Update("UPDATE rag_document SET superseded_by = #{newDocId} WHERE id = #{oldDocId} AND superseded_by IS NULL")
+    int updateSupersededByOnly(@Param("oldDocId") Long oldDocId, @Param("newDocId") Long newDocId);
+
+    /**
      * 设置文档的 groupId 和 version
      */
     @Update("UPDATE rag_document SET document_group_id = #{groupId}, version = #{version} WHERE id = #{id}")

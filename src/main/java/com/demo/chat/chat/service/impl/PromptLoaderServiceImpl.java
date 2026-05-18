@@ -22,7 +22,6 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * XML 系统提示词加载服务
@@ -42,8 +41,15 @@ public class PromptLoaderServiceImpl implements PromptLoaderService {
     private static final Duration REDIS_TTL = Duration.ofDays(1);
 
     private final StringRedisTemplate redisTemplate;
-    private volatile Map<String, PromptTemplate> templates = new ConcurrentHashMap<>();
-    private volatile PromptTemplate defaultTemplate;
+
+    /** 不可变状态 holder — volatile 保证原子可见性 */
+    private volatile PromptState state = new PromptState(Map.of(), null);
+
+    /**
+     * 不可变快照，封装 templates 和 defaultTemplate。
+     * 单次 volatile 读即可获取一致的两个字段，避免中间态。
+     */
+    record PromptState(Map<String, PromptTemplate> templates, PromptTemplate defaultTemplate) {}
 
     public PromptLoaderServiceImpl(StringRedisTemplate redisTemplate) {
         this.redisTemplate = redisTemplate;
@@ -52,6 +58,9 @@ public class PromptLoaderServiceImpl implements PromptLoaderService {
     @PostConstruct
     @Override
     public void loadPrompts() {
+        Map<String, PromptTemplate> loadedTemplates = new java.util.LinkedHashMap<>();
+        PromptTemplate loadedDefault = null;
+
         try {
             var resolver = new PathMatchingResourcePatternResolver();
             Resource[] resources = resolver.getResources(PROMPT_LOCATION);
@@ -62,7 +71,7 @@ public class PromptLoaderServiceImpl implements PromptLoaderService {
 
                     PromptTemplate template = parseXml(rawXml);
                     if (template != null) {
-                        templates.put(template.model(), template);
+                        loadedTemplates.put(template.model(), template);
 
                         // 仅在 Redis 中不存在时写入，避免每次启动都写 Redis
                         if (Boolean.FALSE.equals(redisTemplate.hasKey(REDIS_KEY_PREFIX + template.model()))) {
@@ -76,14 +85,18 @@ public class PromptLoaderServiceImpl implements PromptLoaderService {
                         }
 
                         if ("default".equals(template.model())) {
-                            defaultTemplate = template;
+                            loadedDefault = template;
                         }
                     }
                 }
             }
 
+            // 原子替换：单次 volatile 写保证一致性
+            this.state = new PromptState(
+                    Collections.unmodifiableMap(loadedTemplates), loadedDefault);
+
             log.info("Prompt templates loaded: {} models, default={}",
-                    templates.size(), defaultTemplate != null);
+                    state.templates().size(), state.defaultTemplate() != null);
 
         } catch (Exception e) {
             log.error("Failed to load prompt templates", e);
@@ -92,9 +105,10 @@ public class PromptLoaderServiceImpl implements PromptLoaderService {
 
     @Override
     public String getPrompt(String modelId) {
-        PromptTemplate template = templates.get(modelId);
+        PromptState snapshot = this.state;
+        PromptTemplate template = snapshot.templates().get(modelId);
         if (template == null) {
-            template = defaultTemplate;
+            template = snapshot.defaultTemplate();
         }
         return template != null ? template.toSystemPrompt() : null;
     }
@@ -106,17 +120,18 @@ public class PromptLoaderServiceImpl implements PromptLoaderService {
 
     @Override
     public PromptTemplate getTemplate(String modelId) {
-        return templates.getOrDefault(modelId, defaultTemplate);
+        PromptState snapshot = this.state;
+        return snapshot.templates().getOrDefault(modelId, snapshot.defaultTemplate());
     }
 
     @Override
     public List<String> getAvailableModels() {
-        return Collections.unmodifiableList(new ArrayList<>(templates.keySet()));
+        return Collections.unmodifiableList(new ArrayList<>(state.templates().keySet()));
     }
 
     @Override
     public void reload() {
-        Map<String, PromptTemplate> newTemplates = new ConcurrentHashMap<>();
+        Map<String, PromptTemplate> newTemplates = new java.util.LinkedHashMap<>();
         PromptTemplate newDefault = null;
 
         try {
@@ -136,8 +151,9 @@ public class PromptLoaderServiceImpl implements PromptLoaderService {
                 }
             }
 
-            this.templates = newTemplates;
-            this.defaultTemplate = newDefault;
+            // 原子替换：单次 volatile 写
+            this.state = new PromptState(
+                    Collections.unmodifiableMap(newTemplates), newDefault);
 
             for (var entry : newTemplates.entrySet()) {
                 redisTemplate.opsForValue().set(
@@ -146,7 +162,7 @@ public class PromptLoaderServiceImpl implements PromptLoaderService {
                         REDIS_TTL);
             }
 
-            log.info("Prompt templates reloaded: {} models, Redis refreshed", templates.size());
+            log.info("Prompt templates reloaded: {} models, Redis refreshed", state.templates().size());
         } catch (Exception e) {
             log.error("Failed to reload prompt templates, keeping existing", e);
         }

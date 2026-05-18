@@ -199,8 +199,14 @@ public class ChatServiceImpl implements ChatService {
                 .chatResponse()
                 .mapNotNull(aiResponse -> {
                     lastAiResponse.set(aiResponse);
-                    String text = aiResponse.getResult().getOutput().getText();
-                    collectedContent.append(text);
+                    Generation gen = aiResponse.getResult();
+                    if (gen == null || gen.getOutput() == null) {
+                        return null; // 流结束标记或工具调用中间态，mapNotNull 自动跳过
+                    }
+                    String text = gen.getOutput().getText();
+                    if (text != null) {
+                        collectedContent.append(text);
+                    }
                     return text;
                 })
                 .doFinally(signal -> {

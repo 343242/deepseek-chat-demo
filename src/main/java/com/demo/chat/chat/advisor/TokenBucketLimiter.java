@@ -1,5 +1,8 @@
 package com.demo.chat.chat.advisor;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Iterator;
@@ -18,6 +21,11 @@ import java.util.concurrent.locks.ReentrantLock;
  * 由 {@link com.demo.chat.config.AdvisorAutoConfiguration} 通过 @Scheduled 调用。
  */
 public class TokenBucketLimiter implements RateLimiter {
+
+    private static final Logger log = LoggerFactory.getLogger(TokenBucketLimiter.class);
+
+    /** 桶数量硬上限，防止 key 爆炸致 OOM */
+    static final int MAX_BUCKETS = 10_000;
 
     private final long maxTokens;
     private final double refillRate;
@@ -38,6 +46,11 @@ public class TokenBucketLimiter implements RateLimiter {
 
     @Override
     public boolean tryAcquire(String key) {
+        if (buckets.size() >= MAX_BUCKETS) {
+            String displayKey = key.length() > 20 ? key.substring(0, 20) + "..." : key;
+            log.warn("Token bucket limit reached ({}), rejecting new key: {}", MAX_BUCKETS, displayKey);
+            return false;
+        }
         Bucket bucket = buckets.computeIfAbsent(key, k -> new Bucket(maxTokens, refillRate));
         return bucket.tryConsume(1);
     }
@@ -145,6 +158,12 @@ public class TokenBucketLimiter implements RateLimiter {
 
         private void refill() {
             Instant now = Instant.now();
+            // 防御 NTP 时钟回拨：负数时重置基准时间
+            if (now.isBefore(lastRefillTime)) {
+                log.warn("Clock moved backwards detected, resetting refill baseline");
+                lastRefillTime = now;
+                return;
+            }
             double elapsedSeconds = Duration.between(lastRefillTime, now).toNanos() / 1_000_000_000.0;
             long tokensToAdd = (long) (elapsedSeconds * refillRate);
 

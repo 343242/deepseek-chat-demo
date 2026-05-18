@@ -89,15 +89,26 @@ public class RedisChatMemoryRepository implements ChatMemoryRepository {
      */
     @Override
     public List<String> findConversationIds() {
-        Set<String> keys = redisTemplate.keys(keyPrefix + "*");
-        if (keys == null || keys.isEmpty()) {
-            return Collections.emptyList();
-        }
-        String prefix = keyPrefix;
-        return keys.stream()
-                .map(key -> key.substring(prefix.length()))
-                .filter(id -> !id.isEmpty())
-                .collect(Collectors.toList());
+        List<String> ids = new ArrayList<>();
+        java.util.Set<String> keys = redisTemplate.keys(keyPrefix + "*");
+        // 使用 Redis SCAN 替代 KEYS，避免 O(N) 全库阻塞
+        redisTemplate.execute((org.springframework.data.redis.core.RedisCallback<Void>) connection -> {
+            try (var cursor = connection.keyCommands().scan(
+                    org.springframework.data.redis.core.ScanOptions.scanOptions()
+                            .match(keyPrefix + "*")
+                            .count(100)
+                            .build())) {
+                cursor.forEachRemaining(key -> {
+                    String keyStr = new String(key);
+                    String id = keyStr.substring(keyPrefix.length());
+                    if (!id.isEmpty()) {
+                        ids.add(id);
+                    }
+                });
+            }
+            return null;
+        });
+        return ids;
     }
 
     @Override

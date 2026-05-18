@@ -5,6 +5,7 @@
 **源文件**: ~55 个 Java 文件 | **测试文件**: 23 个
 **审查维度**: 资源泄漏 / 边界条件 / 并发安全 / 性能陷阱 / 异常处理 / 内存泄漏
 **核实状态**: 全部 21 项已逐条回源码核实 ✅
+**Spec 审查**: H4/H5 高并发改造方案经 spec 合规审查，初始方案被否决（3P0），已给出修正方案 A ✅
 
 ---
 
@@ -194,15 +195,157 @@ BM25 搜索失败只 warn 不抛异常，用户看到"结果少"但不知道 BM2
 | M1 | 🟡 | PlainTextDocumentParser:51 | 内存 | 50MB readAllBytes 峰值 150MB |
 | M2 | 🟡 | HybridDocumentRetriever:138 | 异常处理 | BM25 失败静默降级无感知 |
 | M3 | 🟡 | ChunkUploadServiceImpl:188 | 异常处理 | async merge 失败用户无感知 |
-| M5 | 🟡 | BailianRerankPostProcessor:103 | 边界条件 | 修改传入 documents metadata |
+| M5 | 🟡→🔵 | BailianRerankPostProcessor:103 | 边界条件 | 修改传入 documents metadata（框架约定，实际无影响） |
 | M6 | 🟡 | OrphanChunkCleaner:121 | 性能+边界 | 串行扫描 + 48h 阈值足够宽 |
 | M7 | 🟡 | StandardStrategy:189 | 边界条件 | joinAll 无超时 |
 | H2→L | 🔵 | DocumentSupersedeService:55 | 内存 | pendingSupersede 无 TTL（影响极小） |
 | H3→L | 🔵 | FastTrackStrategy:46 | 内存 | activeAsyncTasks 无超时（whenComplete 兜底） |
-| H4→L | 🔵 | BailianRerankPostProcessor | 性能 | block() 阻塞（低并发场景可接受） |
-| L1 | 🔵 | BailianRerankPostProcessor | 性能 | HttpClient 无 responseTimeout |
-| L2 | 🔵 | BailianRerankPostProcessor:103 | 边界条件 | index < 0 未校验 |
+| H4→M | 🟡 | BailianRerankPostProcessor | 性能+并发 | block() 阻塞 Reactor 线程（方案A：内部线程池解决） |
+| L1 | 🔵 | BailianRerankPostProcessor | 性能 | HttpClient 无 responseTimeout（方案A一并修复） |
+| L2 | 🔵 | BailianRerankPostProcessor:103 | 边界条件 | index < 0 未校验（方案A一并修复） |
 | L3 | 🔵 | ChunkUploadServiceImpl | 内存 | 分片全量读入内存 |
 | L4 | 🔵 | RagAdvisorFactory | 性能 | 每次检索创建新 retriever |
 | L5 | 🔵 | VectorStoreLoader | 边界条件 | 删除无结果校验 |
 | ~~H1~~ | ❌ | — | — | **驳回**：已有 MAX_PAIRWISE_DOCS 防御 |
+
+---
+
+## 🔧 H4/H5 高并发改造方案 — Spec 合规审查
+
+> 审查依据：`.trellis/spec/backend/quality-guidelines.md` + `error-handling.md` + `directory-structure.md` + `cross-layer-thinking-guide.md` + `code-reuse-thinking-guide.md`
+
+### 初始方案（已否决）
+
+1. H4：改 `ChatAdvisorChainFactory`，用 `Mono.subscribeOn(ragExecutor)` 卸载 RAG 链路
+2. H5：`process()` 所有路径创建新 `Document` 返回
+3. L1：HttpClient 增加 `responseTimeout`
+4. L2：index >= 0 校验
+
+### Spec 审查发现 3 个 P0 + 3 个 P1
+
+| # | 级别 | 违反规范 | 问题 |
+|---|------|---------|------|
+| P0-1 | ❌ | OCP 强制 | 改 chat 模块来修 rag 模块的问题——"新功能=新类，不是改旧类" |
+| P0-2 | ❌ | 封装彻底 | chat 模块需知道 rag 内部阻塞 API + 线程池——跨模块泄漏 |
+| P0-3 | ❌ | DIP | 高层（chat）直接依赖低层（rag）的调度细节 + Reactor API |
+| P1-1 | ⚠️ | 批判式思考 | `new Document()` 可能破坏 Spring AI 框架内部引用追踪 |
+| P1-2 | ⚠️ | 线程池规约 | `ragExecutor` 缺 NamedThreadFactory + UncaughtExceptionHandler |
+| P1-3 | ⚠️ | 功能正确性 | `subscribeOn` 只影响 Advisor 组装线程，PostProcessor 仍在 Reactor 线程阻塞——**方案可能不生效** |
+
+### P1-3 技术分析
+
+Spring AI `ChatClient.stream().chatResponse()` 返回 Flux。在外层套 `Mono.fromCallable(() -> ragAdvisor).subscribeOn(executor)` 只影响 `ragAdvisorFactory.create()` 的线程（组装 Advisor 链），**不影响** `DocumentPostProcessor.process()` 的执行线程——PostProcessor 在 Spring AI 的 Reactor 链内同步调用。`block()` 仍然阻塞 Reactor 线程。
+
+### H5 深度分析
+
+Spring AI 框架内置 `MappingDocumentPostProcessor`、`FilteringDocumentPostProcessor` 等 **都直接修改 metadata，不创建新 Document**。原因是 `RetrievalAugmentationAdvisor` 内部用 Document ID 做去重和引用追踪。创建新 Document 可能导致 ID 丢失或重复。
+
+**结论**：H5 的 fallback 路径在原始 documents 上标记 `rerankFallback`，但同一请求内 documents 只用一次就丢弃，实际无影响。**H5 进一步降级为 LOW**。
+
+### 修正方案 A（推荐）— PostProcessor 内部异步化
+
+**核心原则**：rag 模块的问题在 rag 模块内解决，chat 模块零改动。
+
+**改动范围**：
+
+| 文件 | 改动 | 破坏性 |
+|------|------|--------|
+| `BailianRerankPostProcessor.java` | 内部引入 `rerankExecutor` + `Future.get(timeout)` + `responseTimeout` + index>=0 | 构造函数签名不变 |
+| `common/thread/NamedThreadFactory.java` | 新增（从 EtlExecutorConfig 提取复用） | 无破坏 |
+| `etl/EtlExecutorConfig.java` | 改用 common 版 NamedThreadFactory | 无破坏 |
+
+**不需要改的文件**：~~ChatAdvisorChainFactory.java~~、~~RagConfig.java~~、~~RagAdvisorFactory.java~~
+
+**核心实现**：
+
+```java
+// BailianRerankPostProcessor.java
+public class BailianRerankPostProcessor implements DocumentPostProcessor {
+
+    private final WebClient webClient;
+    private final ExecutorService rerankExecutor; // 封装在内部
+
+    public BailianRerankPostProcessor(String baseUrl, String apiKey, String model, int topN) {
+        // HttpClient 增加 responseTimeout（L1 修复）
+        HttpClient httpClient = HttpClient.create()
+                .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 5000)
+                .responseTimeout(Duration.ofSeconds(15));
+        this.webClient = WebClient.builder()
+                .baseUrl(baseUrl)
+                .defaultHeader("Authorization", "Bearer " + apiKey)
+                .defaultHeader("Content-Type", "application/json")
+                .clientConnector(new ReactorClientHttpConnector(httpClient))
+                .build();
+
+        // 遵循 EtlExecutorConfig 规范：全 7 参数
+        this.rerankExecutor = new ThreadPoolExecutor(
+            2, 4, 60L, TimeUnit.SECONDS,
+            new ArrayBlockingQueue<>(50),
+            new NamedThreadFactory("rerank", true),
+            new ThreadPoolExecutor.CallerRunsPolicy()
+        );
+    }
+
+    @Override
+    public List<Document> process(Query query, List<Document> documents) {
+        if (documents == null || documents.isEmpty()) return documents;
+
+        try {
+            Future<Map<String, Object>> future = rerankExecutor.submit(
+                () -> callWithRetry(buildRequestBody(query.text(), documents))
+            );
+            Map<String, Object> response = future.get(15, TimeUnit.SECONDS);
+
+            if (response == null || !response.containsKey("results")) return documents;
+            return buildRerankedList(response, documents);
+
+        } catch (TimeoutException e) {
+            log.warn("Rerank timed out, degrading: queryLen={}", query.text().length());
+            return documents;
+        } catch (Exception e) {
+            log.warn("Rerank failed, degrading: {}", e.getMessage());
+            return documents;
+        }
+    }
+
+    // H5 不改：遵循框架约定，直接修改 metadata
+    // L2 修复：增加 index >= 0
+    private List<Document> buildRerankedList(Map<String, Object> response,
+                                              List<Document> source) {
+        List<Map<String, Object>> results = (List<Map<String, Object>>) response.get("results");
+        List<Document> reranked = new ArrayList<>(results.size());
+        for (Map<String, Object> result : results) {
+            Number index = (Number) result.get("index");
+            Number score = (Number) result.get("relevance_score");
+            if (index != null && index.intValue() >= 0 && index.intValue() < source.size()) {
+                Document doc = source.get(index.intValue());
+                doc.getMetadata().put("rerankScore", score != null ? score.doubleValue() : 0.0);
+                reranked.add(doc);
+            }
+        }
+        return reranked.isEmpty() ? source : reranked;
+    }
+}
+```
+
+### 方案 A Spec 合规检查
+
+| 规范 | 状态 | 说明 |
+|------|------|------|
+| OCP 强制 | ✅ | 只改 BailianRerankPostProcessor，chat 模块零改动 |
+| 封装彻底 | ✅ | 线程池封装在 PostProcessor 内部，不暴露 |
+| SRP | ✅ | PostProcessor 自己管理自己的异步策略 |
+| DIP | ✅ | 不引入新的跨模块依赖 |
+| 线程池规约 | ✅ | 全 7 参数 + NamedThreadFactory + CallerRunsPolicy |
+| 跨层思考 | ✅ | 无跨层泄漏 |
+| code-reuse | ⚠️ | NamedThreadFactory 应从 EtlExecutorConfig 中提取共享 |
+| Error Handling | ✅ | TimeoutException 独立处理，Exception 兜底降级 |
+
+### 最终问题级别调整
+
+| 问题 | 原始 | 核实后 | Spec 审查后 |
+|------|------|--------|-------------|
+| H4 block() 阻塞 | HIGH | MEDIUM | **MEDIUM** → 方案 A 内部线程池解决 |
+| H5 修改 metadata | HIGH | MEDIUM | **LOW** → 框架设计约定，无实际影响 |
+| L1 无 responseTimeout | LOW | LOW | **LOW** → 方案 A 一并修复 |
+| L2 index < 0 | LOW | LOW | **LOW** → 方案 A 一并修复 |

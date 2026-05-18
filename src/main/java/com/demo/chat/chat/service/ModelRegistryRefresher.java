@@ -122,8 +122,11 @@ public class ModelRegistryRefresher {
 
         boolean hasClients = !newClients.isEmpty();
         if (hasClients) {
-            chatClientRegistry.replaceAll(newClients, allModels);
+            // 原子更新：先更新 provider 索引（降级可接受），再更新 registry
+            // modelToProvider 是查询辅助索引，中间态影响有限（查询返回 null）
+            // ChatClientRegistry.replaceAll 是最终一致性，volatile 保证可见性
             modelToProvider = Collections.unmodifiableMap(newIndex);
+            chatClientRegistry.replaceAll(newClients, allModels);
         }
 
         log.info("Refresh complete: {} clients, {} models from {}/{} providers",

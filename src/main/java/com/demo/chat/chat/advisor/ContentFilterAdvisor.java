@@ -53,11 +53,13 @@ public class ContentFilterAdvisor implements BaseAdvisor {
     public ChatClientRequest before(ChatClientRequest request, @NonNull AdvisorChain chain) {
         String userMessage = extractLastUserMessage(request.prompt().getInstructions());
 
-        if (userMessage != null && contentFilterService.containsSensitiveContent(userMessage)) {
+        if (userMessage != null) {
+            // 单次 DFA 扫描：findAll 同时完成检测和收集，避免重复遍历
             List<String> found = contentFilterService.findAll(userMessage);
-            // 只记录命中数量，不打印具体敏感词（避免日志泄露隐私）
-            log.warn("Sensitive words detected in user input: {} word(s) found", found.size());
-            throw new ContentFilteredException(BLOCKED_MESSAGE);
+            if (!found.isEmpty()) {
+                log.warn("Sensitive words detected in user input: {} word(s) found", found.size());
+                throw new ContentFilteredException(BLOCKED_MESSAGE);
+            }
         }
 
         return request;

@@ -3,6 +3,7 @@ package com.demo.chat.chat.context;
 import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
+import java.util.regex.Pattern;
 
 /**
  * 请求上下文 — CAG 的核心数据结构
@@ -18,6 +19,12 @@ public record RequestContext(
         SessionContext session,
         PolicyContext policy
 ) {
+
+    // 预编译正则，避免每次 sanitize() 调用时重复编译
+    private static final Pattern ASCII_CTRL = Pattern.compile("[\\x00-\\x1F\\x7F]");
+    private static final Pattern ZERO_WIDTH = Pattern.compile("[\\u200B-\\u200F\\u2028\\u2029\\uFEFF\\u00A0\\u2000-\\u200A]");
+    private static final Pattern NEWLINE = Pattern.compile("[\\r\\n]");
+    private static final Pattern MULTI_SPACE = Pattern.compile("\\s{2,}");
 
     /**
      * 生成注入 LLM system prompt 的上下文文本段
@@ -64,12 +71,11 @@ public record RequestContext(
      */
     static String sanitize(String input) {
         if (input == null) return "";
-        String cleaned = input
-                .replaceAll("[\\x00-\\x1F\\x7F]", "")
-                .replaceAll("[\\u200B-\\u200F\\u2028\\u2029\\uFEFF\\u00A0\\u2000-\\u200A]", "")
-                .replaceAll("[\\r\\n]", " ")
-                .replaceAll("\\s{2,}", " ")
-                .trim();
+        String cleaned = ASCII_CTRL.matcher(input).replaceAll("");
+        cleaned = ZERO_WIDTH.matcher(cleaned).replaceAll("");
+        cleaned = NEWLINE.matcher(cleaned).replaceAll(" ");
+        cleaned = MULTI_SPACE.matcher(cleaned).replaceAll(" ");
+        cleaned = cleaned.trim();
         return cleaned.length() > 200 ? cleaned.substring(0, 200) : cleaned;
     }
 }

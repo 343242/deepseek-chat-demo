@@ -43,11 +43,13 @@ public class MiniMaxModelProvider implements ModelProvider {
 
     private final MiniMaxProperties properties;
     private final RestClient restClient;
+    private final MiniMaxApi sharedApi;
 
     public MiniMaxModelProvider(MiniMaxProperties properties,
                                 @Qualifier("miniMaxRestClient") RestClient restClient) {
         this.properties = properties;
         this.restClient = restClient;
+        this.sharedApi = new MiniMaxApi(properties.apiKey(), properties.baseUrl());
     }
 
     @Override
@@ -104,8 +106,6 @@ public class MiniMaxModelProvider implements ModelProvider {
      */
     @Override
     public ChatClient createClient(String modelId, Double temperature) {
-        MiniMaxApi api = new MiniMaxApi(properties.apiKey(), properties.baseUrl());
-
         MiniMaxChatOptions.Builder optionsBuilder = MiniMaxChatOptions.builder()
                 .model(modelId);
 
@@ -120,7 +120,7 @@ public class MiniMaxModelProvider implements ModelProvider {
             optionsBuilder.maxTokens(properties.chat().maxTokens());
         }
 
-        MiniMaxChatModel chatModel = new MiniMaxChatModel(api, optionsBuilder.build());
+        MiniMaxChatModel chatModel = new MiniMaxChatModel(sharedApi, optionsBuilder.build());
 
         return ChatClient.builder(chatModel).build();
     }

@@ -47,9 +47,14 @@ public class ZhipuModelProvider implements ModelProvider {
     );
 
     private final ZhipuProperties properties;
+    private final ZhiPuAiApi sharedApi;
 
     public ZhipuModelProvider(ZhipuProperties properties) {
         this.properties = properties;
+        this.sharedApi = ZhiPuAiApi.builder()
+                .baseUrl(properties.baseUrl())
+                .apiKey(properties.apiKey())
+                .build();
     }
 
     @Override
@@ -91,11 +96,6 @@ public class ZhipuModelProvider implements ModelProvider {
      */
     @Override
     public ChatClient createClient(String modelId, Double temperature) {
-        ZhiPuAiApi api = ZhiPuAiApi.builder()
-                .baseUrl(properties.baseUrl())
-                .apiKey(properties.apiKey())
-                .build();
-
         ZhiPuAiChatOptions.Builder optionsBuilder = ZhiPuAiChatOptions.builder()
                 .model(modelId);
 
@@ -110,7 +110,7 @@ public class ZhipuModelProvider implements ModelProvider {
             optionsBuilder.maxTokens(properties.chat().maxTokens());
         }
 
-        ZhiPuAiChatModel chatModel = new ZhiPuAiChatModel(api, optionsBuilder.build());
+        ZhiPuAiChatModel chatModel = new ZhiPuAiChatModel(sharedApi, optionsBuilder.build());
 
         return ChatClient.builder(chatModel).build();
     }

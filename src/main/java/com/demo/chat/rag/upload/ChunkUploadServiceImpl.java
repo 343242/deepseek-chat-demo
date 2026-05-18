@@ -18,6 +18,7 @@ import io.minio.*;
 import io.minio.SourceObject;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.util.unit.DataSize;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.core.io.ClassPathResource;
 import org.jspecify.annotations.Nullable;
@@ -25,7 +26,6 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.stereotype.Service;
-import org.springframework.util.unit.DataSize;
 
 import java.io.ByteArrayInputStream;
 import java.io.InputStream;
@@ -401,9 +401,11 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
     }
 
     private void validateFileSize(Long fileSize) {
-        long maxBytes = DataSize.parse("50MB").toBytes();
+        long maxBytes = DataSize.parse(documentProperties.getMaxFileSize()).toBytes();
         if (fileSize > maxBytes) {
-            throw new BusinessException(ErrorCode.UPLOAD_FILE_TOO_LARGE);
+            throw new BusinessException(ErrorCode.UPLOAD_FILE_TOO_LARGE,
+                    String.format("文件大小 %d MB 超过上限 %s",
+                            fileSize / (1024 * 1024), documentProperties.getMaxFileSize()));
         }
     }
 

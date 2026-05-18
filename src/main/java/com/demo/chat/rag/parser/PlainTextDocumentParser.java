@@ -25,6 +25,9 @@ public class PlainTextDocumentParser implements DocumentParser {
 
     private static final Logger log = LoggerFactory.getLogger(PlainTextDocumentParser.class);
 
+    /** 纯文本文件大小上限：50MB，防止 readAllBytes OOM */
+    private static final long MAX_TEXT_FILE_SIZE = 50L * 1024 * 1024;
+
     @Override
     public List<String> supportedMimeTypes() {
         return List.of("text/plain");
@@ -35,6 +38,16 @@ public class PlainTextDocumentParser implements DocumentParser {
         log.debug("Parsing plain text: file={}", resource.getFilename());
 
         try (InputStream is = resource.getInputStream()) {
+            // 文件大小上限检查，防止超大文件 OOM
+            long contentLength = resource.contentLength();
+            if (contentLength > MAX_TEXT_FILE_SIZE) {
+                throw new DocumentParseException(
+                        resource.getFilename(), "plain-text",
+                        String.format("文本文件过大（%d MB），上限 %d MB",
+                                contentLength / (1024 * 1024), MAX_TEXT_FILE_SIZE / (1024 * 1024)),
+                        null);
+            }
+
             byte[] bytes = is.readAllBytes();
             String content = EncodingDetector.detectAndDecode(bytes, resource.getFilename());
 

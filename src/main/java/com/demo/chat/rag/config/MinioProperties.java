@@ -9,10 +9,10 @@ public class MinioProperties {
 
     /** MinIO 服务地址 */
     private String endpoint = "http://localhost:9000";
-    /** 访问密钥 */
-    private String accessKey = "minioadmin";
-    /** 秘密密钥 */
-    private String secretKey = "minioadmin123";
+    /** 访问密钥（必须配置，无默认值） */
+    private String accessKey;
+    /** 秘密密钥（必须配置，无默认值） */
+    private String secretKey;
     /** 默认存储桶名称 */
     private String bucket = "rag-documents";
 

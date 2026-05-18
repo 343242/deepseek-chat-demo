@@ -81,19 +81,25 @@ public class HybridDocumentRetriever implements DocumentRetriever {
     // === 向量检索 ===
 
     private List<Document> vectorSearch(String queryText, int topK) {
-        FilterExpressionBuilder filterBuilder = new FilterExpressionBuilder();
-        var filter = teamId != null
-                ? filterBuilder.eq("teamId", String.valueOf(teamId)).build()
-                : filterBuilder.eq("userId", String.valueOf(userId)).build();
+        try {
+            FilterExpressionBuilder filterBuilder = new FilterExpressionBuilder();
+            var filter = teamId != null
+                    ? filterBuilder.eq("teamId", String.valueOf(teamId)).build()
+                    : filterBuilder.eq("userId", String.valueOf(userId)).build();
 
-        return vectorStore.similaritySearch(
-                SearchRequest.builder()
-                        .query(queryText)
-                        .topK(topK)
-                        .similarityThreshold(properties.similarityThreshold())
-                        .filterExpression(filter)
-                        .build()
-        );
+            return vectorStore.similaritySearch(
+                    SearchRequest.builder()
+                            .query(queryText)
+                            .topK(topK)
+                            .similarityThreshold(properties.similarityThreshold())
+                            .filterExpression(filter)
+                            .build()
+            );
+        } catch (Exception e) {
+            log.warn("Vector search failed, falling back to BM25-only: {}", e.getMessage());
+            log.debug("Vector search exception detail", e);
+            return List.of();
+        }
     }
 
     private List<ScoredDocument> vectorSearchWithScore(String queryText, int topK) {

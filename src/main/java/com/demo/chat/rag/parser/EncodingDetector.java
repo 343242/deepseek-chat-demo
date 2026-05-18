@@ -94,7 +94,8 @@ public final class EncodingDetector {
             if (detectedCharset == null || isUtf8Compatible(detectedCharset)) {
                 log.debug("Encoding {} for {} is UTF-8 compatible, no transcoding",
                         detectedCharset, resource.getFilename());
-                return new NamedByteArrayResource(bytes, resource.getFilename());
+                // UTF-8 兼容文件直接返回原始 Resource，避免不必要的内存拷贝
+                return resource;
             }
 
             log.info("Detected non-UTF8 encoding: {}, transcoding to UTF-8 for file: {}",

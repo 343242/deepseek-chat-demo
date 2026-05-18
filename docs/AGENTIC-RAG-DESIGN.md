@@ -36,110 +36,307 @@
 将 RAG 从 **Pipeline 模式** 升级为 **Agent 模式**：
 - LLM 通过 `ToolCallAdvisor` 的 ReAct 循环自主编排检索策略
 - 保留现有核心组件（`HybridDocumentRetriever`、`BailianRerankPostProcessor` 等），封装为 Tool
-- 与现有 `ToolRegistry` OCP 体系无缝对接
+- **分离式 Tool 注册**：按意图识别结果动态选择暴露给 LLM 的 Tool 子集
 - 新增 `AGENT` 对话模式，不影响现有 `SIMPLE` / `MULTI_TURN` 模式
 
 ---
 
 ## 2. 架构设计
 
-### 2.1 整体架构
+### 2.1 整体架构（三层）
 
 ```
-                          ChatServiceImpl
-                               │
-                    ChatRequestSpecFactory
-                               │
-                 ┌─────────────┴──────────────┐
-                 │  ChatAdvisorChainFactory    │
-                 │  (mode=AGENT 时走新链路)     │
-                 └─────────────┬──────────────┘
-                               │
-          ┌────────────────────┼────────────────────┐
-          │                    │                     │
-   SIMPLE 模式          MULTI_TURN 模式          AGENT 模式
-   (原有链路)            (原有链路)           (新增 Agentic 链路)
-                                                  │
-                                    ┌─────────────┴──────────────┐
-                                    │   Advisor Chain (Agent)     │
-                                    │                             │
-                                    │ ① ConversationContextAdvisor│
-                                    │ ② MessageChatMemoryAdvisor  │
-                                    │ ③ ToolCallAdvisor (ReAct)   │
-                                    │    ├── vectorSearchTool     │
-                                    │    ├── bm25SearchTool       │
-                                    │    ├── hybridSearchTool     │
-                                    │    ├── rerankTool           │
-                                    │    ├── queryRewriteTool     │
-                                    │    ├── parentDocLookupTool  │
-                                    │    ├── knowledgeBaseInfoTool│
-                                    │    └── (已有 Calculator/    │
-                                    │         DateTime/CodeExec)  │
-                                    │ ④ ChatModel (最终回答)      │
-                                    └─────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                     第一层：意图识别 (Intent Router)              │
+│                                                                 │
+│   用户查询 → IntentClassifier（轻量 LLM 调用）                    │
+│     ├── DIRECT_ANSWER  → 直接回答（不暴露任何 RAG Tool）          │
+│     ├── RETRIEVAL      → 暴露检索类 Tool（vector/bm25/hybrid）    │
+│     ├── DEEP_RETRIEVAL → 暴露全量 RAG Tool（检索+rerank+rewrite） │
+│     └── GENERAL_TOOL   → 只暴露通用 Tool（Calculator/DateTime）   │
+│                                                                 │
+│   输出：AgentIntent 枚举 + 动态 Tool 子集                         │
+└───────────────────────────────┬─────────────────────────────────┘
+                                │
+┌───────────────────────────────▼─────────────────────────────────┐
+│                   第二层：Agent 编排 (ReAct Loop)                 │
+│                                                                 │
+│   ChatClient + ToolCallAdvisor                                  │
+│     ├── 根据意图动态注入 Tool 子集                                 │
+│     ├── LLM 自主决定调用顺序和次数                                 │
+│     └── 中间状态通过 JSON Workspace 传递                           │
+│                                                                 │
+│   Workspace（JSON 中间状态）：                                     │
+│     { "retrieved_docs": [...], "rewritten_queries": [...],       │
+│       "reranked_docs": [...], "round": 2 }                      │
+└───────────────────────────────┬─────────────────────────────────┘
+                                │
+┌───────────────────────────────▼─────────────────────────────────┐
+│                   第三层：Tool 执行                               │
+│                                                                 │
+│   检索类 Tool            精炼类 Tool            通用 Tool         │
+│   ├── vectorSearch       ├── rerank             ├── Calculator   │
+│   ├── bm25Search         ├── queryRewrite       ├── DateTime     │
+│   ├── hybridSearch       └── parentDocLookup    └── CodeExec     │
+│   └── knowledgeBaseInfo                                          │
+│                                                                 │
+│   每个 Tool：                                                    │
+│     1. 从 Workspace 读取输入                                     │
+│     2. 执行操作                                                  │
+│     3. 返回 JSON 格式结果 + 更新 Workspace                       │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-### 2.2 ReAct 循环
+### 2.2 完整请求流程
 
 ```
 用户: "对比 RAG 和 Fine-tuning 在知识更新场景的优劣"
                     │
                     ▼
-            ┌─ LLM 推理 ─┐
-            │ "这个问题涉及  │
-            │  知识库文档，  │
-            │  需要检索"    │
-            └──────┬──────┘
-                   │ 调用 hybridSearchTool("RAG vs Fine-tuning 知识更新")
-                   ▼
-           ┌─ Tool 执行 ─┐
-           │ pgvector+BM25│
-           │ RRF 融合      │
-           │ 返回 8 个文档 │
-           └──────┬──────┘
-                  │ 结果回传 LLM
+        ┌─ 第一层：意图识别 ─┐
+        │ IntentClassifier    │
+        │ → DEEP_RETRIEVAL    │
+        │ （需要深度检索+精排）│
+        └─────────┬──────────┘
+                  │ 动态选择 Tool 子集：
+                  │ hybridSearch, rerank, queryRewrite,
+                  │ parentDocLookup, knowledgeBaseInfo
                   ▼
-           ┌─ LLM 推理 ─┐
-           │ "文档侧重    │
-           │  RAG 部分，  │
-           │  Fine-tuning │
-           │  内容不够，   │
-           │  改写再搜"   │
-           └──────┬──────┘
-                  │ 调用 queryRewriteTool → hybridSearchTool("Fine-tuning 模型更新策略 知识时效性")
-                  ▼
-           ┌─ Tool 执行 ─┐
-           │ 返回 6 个文档 │
-           └──────┬──────┘
-                  │ 结果回传 LLM
-                  ▼
-           ┌─ LLM 推理 ─┐
-           │ "需要精排"   │
-           └──────┬──────┘
-                  │ 调用 rerankTool(14 个文档)
-                  ▼
-           ┌─ Tool 执行 ─┐
-           │ Rerank 返回  │
-           │ Top 5 精排   │
-           └──────┬──────┘
-                  │
-                  ▼
-           ┌─ LLM 生成 ─┐
-           │ 综合分析回答  │
-           └─────────────┘
+        ┌─ 第二层：Agent ReAct ─┐
+        │                        │
+        │ LLM: "需要检索"        │
+        │ → hybridSearchTool()   │
+        │ ← JSON: 8 docs         │
+        │                        │
+        │ LLM: "结果不够全面"     │
+        │ → queryRewriteTool()   │
+        │ ← JSON: 3 新查询       │
+        │ → hybridSearchTool()   │
+        │ ← JSON: 6 docs         │
+        │                        │
+        │ LLM: "需要精排"        │
+        │ → rerankTool()         │
+        │ ← JSON: Top 5 docs     │
+        │                        │
+        │ LLM: 综合生成最终回答    │
+        └────────────────────────┘
 ```
 
-### 2.3 新增 ChatMode
+### 2.3 意图识别层详细设计
+
+#### Intent 枚举
+
+```java
+public enum AgentIntent {
+    /** 直接回答 — 通用知识、闲聊、简单问答 */
+    DIRECT_ANSWER,
+    /** 检索类 — 需要知识库但不需精排 */
+    RETRIEVAL,
+    /** 深度检索 — 需要多轮检索+精排+改写 */
+    DEEP_RETRIEVAL,
+    /** 通用工具 — 数学计算、日期查询、代码执行等 */
+    GENERAL_TOOL;
+}
+```
+
+#### IntentClassifier
+
+```java
+/**
+ * 意图分类器 — 在 Agent ReAct 循环之前执行一次轻量 LLM 调用
+ *
+ * 职责：
+ * 1. 分析用户查询，判断是否需要检索、检索深度
+ * 2. 返回意图枚举 + 动态 Tool 子集
+ *
+ * 设计决策：
+ * - 独立于主 ChatModel，使用配置的意图识别模型（可用轻量快速模型降本）
+ * - 单次调用，不进入 ReAct 循环
+ * - 结果缓存到 RagToolContext，供后续 Advisor 链使用
+ */
+@Component
+public class IntentClassifier {
+
+    private final ChatClient intentChatClient;  // 独立的轻量模型
+    private final IntentToolSetRegistry toolSetRegistry;
+
+    /**
+     * 分类用户意图
+     *
+     * @param query 用户查询
+     * @return 分类结果（意图 + 推荐的 Tool 子集）
+     */
+    public IntentResult classify(String query) {
+        // 调用 LLM，输出结构化 JSON：{ "intent": "DEEP_RETRIEVAL", "confidence": 0.95 }
+        // 通过 Spring AI Structured Output 直接映射到 IntentResult
+    }
+}
+```
+
+#### IntentToolSetRegistry — 意图→Tool 子集映射
+
+```java
+/**
+ * 意图→Tool 子集映射注册表
+ *
+ * 根据意图识别结果，动态决定暴露给 LLM 的 Tool 子集。
+ * 避免向 LLM 暴露所有工具，减少选择困难和误调用。
+ */
+@Component
+public class IntentToolSetRegistry {
+
+    private final Map<AgentIntent, List<ToolCallback>> toolSetMap;
+
+    public IntentToolSetRegistry(
+            List<RagTool> ragTools,       // 所有 RAG Tool
+            List<Object> generalToolBeans  // CalculatorTools, DateTimeTools 等
+    ) {
+        // DIRECT_ANSWER → 空集（LLM 直接回答，无工具）
+        // RETRIEVAL → vectorSearch, bm25Search, hybridSearch, knowledgeBaseInfo
+        // DEEP_RETRIEVAL → 全量 RAG Tool
+        // GENERAL_TOOL → Calculator, DateTime, CodeExecution
+    }
+
+    public List<ToolCallback> getToolSet(AgentIntent intent) {
+        return toolSetMap.getOrDefault(intent, Collections.emptyList());
+    }
+}
+```
+
+#### 意图识别 Prompt
+
+```
+分析用户查询，判断需要什么级别的处理。只返回 JSON。
+
+分类规则：
+- DIRECT_ANSWER: 通用知识、闲聊、简单问答，不需要知识库
+- RETRIEVAL: 需要知识库检索，但单次检索即可满足
+- DEEP_RETRIEVAL: 复杂问题，需要多轮检索、查询改写、语义精排
+- GENERAL_TOOL: 需要数学计算、日期查询、代码执行等工具
+
+输出格式：
+{ "intent": "DIRECT_ANSWER|RETRIEVAL|DEEP_RETRIEVAL|GENERAL_TOOL", "confidence": 0.0-1.0 }
+```
+
+#### 意图识别模型配置
+
+```yaml
+app:
+  agent:
+    intent-model: deepseek/deepseek-chat   # 意图识别用轻量模型
+    intent-temperature: 0.1                 # 低温度，分类任务追求确定性
+```
+
+### 2.4 Tool Workspace — JSON 中间状态
+
+Tool 之间通过结构化 JSON Workspace 传递中间结果，而非 ThreadLocal 的 `List<Document>`。
+
+#### Workspace 数据结构
+
+```java
+/**
+ * Agent Tool Workspace — 请求级别的 JSON 中间状态
+ *
+ * 设计原则：
+ * 1. 所有 Tool 的输入输出都是 JSON 字符串（可序列化、可调试）
+ * 2. Workspace 维护一个 JSON 文档，记录检索中间状态
+ * 3. Tool 从 Workspace 读取前置结果，执行后更新 Workspace
+ * 4. 生命周期：单次 ChatRequest，请求结束清理
+ *
+ * 线程安全：单次请求内单线程执行，无需同步
+ */
+public class ToolWorkspace {
+
+    private final Long userId;
+    @Nullable
+    private final Long teamId;
+
+    /** JSON 格式的中间状态 */
+    private final ObjectMapper objectMapper;
+    private ObjectNode state;
+
+    // --- Workspace 操作 ---
+
+    /** 获取已检索的文档列表 */
+    public List<RetrievedDocument> getRetrievedDocs() { ... }
+
+    /** 追加检索结果 */
+    public void addRetrievedDocs(List<RetrievedDocument> docs) { ... }
+
+    /** 替换检索结果（如 rerank 后） */
+    public void replaceRetrievedDocs(List<RetrievedDocument> docs) { ... }
+
+    /** 获取改写后的查询 */
+    public List<String> getRewrittenQueries() { ... }
+
+    /** 添加改写查询 */
+    public void addRewrittenQueries(List<String> queries) { ... }
+
+    /** 获取当前检索轮次 */
+    public int getRetrievalRound() { ... }
+
+    /** 递增检索轮次 */
+    public void incrementRound() { ... }
+
+    /** 导出完整状态（调试用） */
+    public String exportState() { ... }
+}
+```
+
+#### Workspace JSON 示例
+
+```json
+{
+  "userId": 42,
+  "teamId": null,
+  "round": 2,
+  "retrievedDocs": [
+    {
+      "docId": "abc123",
+      "content": "RAG 系统通过外部知识库增强 LLM...",
+      "score": 0.89,
+      "source": "hybridSearch",
+      "metadata": { "fileName": "rag-intro.pdf", "pageIndex": 3 }
+    }
+  ],
+  "rewrittenQueries": [
+    "Fine-tuning 模型更新策略 知识时效性",
+    "RAG vs Fine-tuning 对比分析"
+  ],
+  "reranked": true,
+  "parentDocResolved": false
+}
+```
+
+#### Tool 返回格式
+
+每个 Tool 统一返回 JSON 字符串给 LLM：
+
+```java
+// Tool 返回格式示例
+{
+  "status": "success",
+  "action": "hybridSearch",
+  "summary": "检索到 8 个相关文档片段",
+  "docCount": 8,
+  "topScores": [0.89, 0.85, 0.82],
+  "workspaceUpdated": true
+}
+```
+
+这样 LLM 收到的是结构化的摘要信息，而非大段原始文本。
+
+### 2.5 新增 ChatMode
 
 ```java
 public enum ChatMode {
     SIMPLE,       // 单轮，无记忆
     MULTI_TURN,   // 多轮，有记忆 + RAG Pipeline
-    AGENT;        // Agent 模式，LLM 自主编排 Tool（含 RAG Tool）
+    AGENT;        // Agent 模式：意图识别 → 动态 Tool 子集 → ReAct 循环
 }
 ```
 
-### 2.4 Advisor 链对比
+### 2.6 Advisor 链对比
 
 | Advisor | SIMPLE | MULTI_TURN | AGENT |
 |---------|--------|------------|-------|
@@ -147,10 +344,13 @@ public enum ChatMode {
 | RateLimitAdvisor | ✅ | ✅ | ✅ |
 | ContentFilterAdvisor | ✅ | ✅ | ✅ |
 | RetrievalAugmentationAdvisor | ❌ | ✅ (ragEnabled) | ❌ (被 Tool 替代) |
-| ToolCallAdvisor | ✅ (有 Tool 时) | ✅ (有 Tool 时) | ✅ (核心) |
+| ToolCallAdvisor | ✅ (有 Tool 时) | ✅ (有 Tool 时) | ✅ (核心，独立实例) |
 | MessageChatMemoryAdvisor | ❌ | ✅ | ✅ |
 
-**关键区别**：AGENT 模式下，RAG 不再通过 `RetrievalAugmentationAdvisor` 固定 Pipeline 执行，而是由 LLM 通过 `ToolCallAdvisor` 自主决定何时、如何检索。
+**关键区别**：
+1. AGENT 模式使用**独立的 ToolCallAdvisor**，只挂载意图识别后的 Tool 子集
+2. RAG 不再通过 `RetrievalAugmentationAdvisor` 固定 Pipeline 执行
+3. Agent 模式**先阻塞式**响应，流式支持在后续迭代
 
 ---
 
@@ -158,81 +358,63 @@ public enum ChatMode {
 
 ### 3.1 Tool 清单
 
-| Tool | 描述 | 封装组件 | returnDirect |
-|------|------|----------|-------------|
-| `vectorSearchTool` | 向量语义检索 | `VectorStore.similaritySearch()` | false |
-| `bm25SearchTool` | BM25 全文检索 | `VectorStoreMapper.bm25Search()` | false |
-| `hybridSearchTool` | 混合检索 + RRF 融合 | `HybridDocumentRetriever` 核心逻辑 | false |
-| `rerankTool` | 语义精排 | `BailianRerankPostProcessor` 核心逻辑 | false |
-| `queryRewriteTool` | 查询改写 | `RewriteQueryTransformer` 核心逻辑 | false |
-| `parentDocLookupTool` | 子块→父文档替换 | `ParentDocumentPostProcessor` 核心逻辑 | false |
-| `knowledgeBaseInfoTool` | 知识库元信息查询 | `VectorStoreMapper` 统计查询 | false |
+| Tool | 描述 | 封装组件 | 输入来源 | 输出更新 |
+|------|------|----------|----------|----------|
+| `vectorSearchTool` | 向量语义检索 | `VectorStore.similaritySearch()` | Workspace.userId/teamId | Workspace.retrievedDocs |
+| `bm25SearchTool` | BM25 全文检索 | `VectorStoreMapper.bm25Search()` | Workspace.userId/teamId | Workspace.retrievedDocs |
+| `hybridSearchTool` | 混合检索 + RRF | `HybridDocumentRetriever` 核心逻辑 | Workspace | Workspace.retrievedDocs |
+| `rerankTool` | 语义精排 | `BailianRerankPostProcessor` 核心逻辑 | Workspace.retrievedDocs | Workspace.retrievedDocs (替换) |
+| `queryRewriteTool` | 查询改写 | `RewriteQueryTransformer` prompt | LLM 调用 | Workspace.rewrittenQueries |
+| `parentDocLookupTool` | 子块→父文档 | `ParentDocumentPostProcessor` | Workspace.retrievedDocs | Workspace.retrievedDocs (替换) |
+| `knowledgeBaseInfoTool` | 知识库元信息 | `VectorStoreMapper` 统计查询 | Workspace.userId/teamId | 无（直接返回） |
 
 ### 3.2 包结构
 
 ```
-com.demo.chat.rag.tool/
-├── RagToolContext.java           // Tool 共享上下文（userId, teamId, 检索结果暂存）
-├── RagToolContextFactory.java    // 按请求创建 ToolContext（类似 RagAdvisorFactory）
-├── VectorSearchTool.java         // 向量检索
-├── Bm25SearchTool.java           // BM25 全文检索
-├── HybridSearchTool.java         // 混合检索 + RRF
-├── RerankTool.java               // 语义精排
-├── QueryRewriteTool.java         // 查询改写
-├── ParentDocLookupTool.java      // 子块→父文档
-└── KnowledgeBaseInfoTool.java    // 知识库元信息
+com.demo.chat.rag.agent/
+├── intent/
+│   ├── AgentIntent.java              // 意图枚举
+│   ├── IntentClassifier.java         // 意图分类器
+│   ├── IntentResult.java             // 分类结果 record
+│   └── IntentToolSetRegistry.java    // 意图→Tool 子集映射
+├── workspace/
+│   ├── ToolWorkspace.java            // JSON 中间状态
+│   ├── ToolWorkspaceHolder.java      // ThreadLocal 传递
+│   ├── ToolWorkspaceFactory.java     // 按请求创建
+│   └── RetrievedDocument.java        // 检索结果 DTO record
+├── tool/
+│   ├── RagTool.java                  // RAG Tool 标记接口
+│   ├── VectorSearchTool.java         // 向量检索
+│   ├── Bm25SearchTool.java           // BM25 全文检索
+│   ├── HybridSearchTool.java         // 混合检索 + RRF
+│   ├── RerankTool.java               // 语义精排
+│   ├── QueryRewriteTool.java         // 查询改写
+│   ├── ParentDocLookupTool.java      // 子块→父文档
+│   └── KnowledgeBaseInfoTool.java    // 知识库元信息
+└── advisor/
+    ├── AgentContextCleanupAdvisor.java  // ThreadLocal 清理
+    └── AgentSystemPromptAdvisor.java    // 动态 System Prompt 注入
 ```
 
-### 3.3 RagToolContext — 请求级共享上下文
-
-Agent 可能多轮调用 Tool，Tool 之间需要共享检索结果（如先 hybridSearch → 再 rerank）。
+### 3.3 RagTool 标记接口
 
 ```java
 /**
- * Agent 请求级别的 RAG Tool 共享上下文
+ * RAG Tool 标记接口
  *
- * 生命周期：单次 ChatRequest → 一次 buildChain() → 一个 Agent 完整 ReAct 循环
- * 作用：
- *   1. 携带 userId/teamId 隔离信息（所有 Tool 共用）
- *   2. 暂存中间检索结果（如 hybridSearch 结果供后续 rerank 使用）
- *
- * 线程安全：单次请求内单线程执行，无需同步
+ * 用于 IntentToolSetRegistry 区分 RAG Tool 和通用 Tool。
+ * 实现 RagTool 的 @Component Bean 会被自动归类为 RAG Tool。
  */
-public class RagToolContext {
-
-    private final Long userId;
-    @Nullable
-    private final Long teamId;
-
-    /** 暂存的检索结果（Tool 可写入，后续 Tool 可读取） */
-    private final List<Document> accumulatedDocuments = new ArrayList<>();
-
-    // --- getters, addDocuments, getAccumulatedDocuments, clear ---
-}
+public interface RagTool {}
 ```
 
-### 3.4 RagToolContextFactory
-
-类似现有 `RagAdvisorFactory` 的按请求创建模式：
-
-```java
-@Component
-public class RagToolContextFactory {
-
-    /** 为每次请求创建独立的 ToolContext */
-    public RagToolContext create(Long userId, @Nullable Long teamId) {
-        return new RagToolContext(userId, teamId);
-    }
-}
-```
-
-### 3.5 Tool 详细设计
+### 3.4 Tool 详细设计
 
 #### VectorSearchTool
 
 ```java
 @Component
-public class VectorSearchTool {
+public class VectorSearchTool implements RagTool {
 
     private final VectorStore vectorStore;
     private final RagRetrievalProperties properties;
@@ -242,9 +424,11 @@ public class VectorSearchTool {
     public String vectorSearch(
             @ToolParam(description = "检索查询文本") String query,
             @ToolParam(description = "返回结果数量，默认10") @Nullable Integer topK) {
-        // 从 RagToolContext 获取 userId/teamId 构建过滤条件
+        ToolWorkspace ws = ToolWorkspaceHolder.get();
+        // 从 ws 获取 userId/teamId 构建过滤条件
         // 调用 vectorStore.similaritySearch()
-        // 返回格式化的文档内容
+        // 追加到 ws.retrievedDocs
+        // 返回 JSON 摘要
     }
 }
 ```
@@ -253,7 +437,7 @@ public class VectorSearchTool {
 
 ```java
 @Component
-public class HybridSearchTool {
+public class HybridSearchTool implements RagTool {
 
     private final VectorStore vectorStore;
     private final VectorStoreMapper vectorStoreMapper;
@@ -266,8 +450,10 @@ public class HybridSearchTool {
     public String hybridSearch(
             @ToolParam(description = "检索查询文本") String query,
             @ToolParam(description = "返回结果数量，默认20") @Nullable Integer topK) {
+        ToolWorkspace ws = ToolWorkspaceHolder.get();
         // 复用 HybridDocumentRetriever 的核心逻辑
-        // 结果写入 RagToolContext.accumulatedDocuments
+        // 追加到 ws.retrievedDocs
+        // 返回 JSON 摘要
     }
 }
 ```
@@ -276,7 +462,7 @@ public class HybridSearchTool {
 
 ```java
 @Component
-public class RerankTool {
+public class RerankTool implements RagTool {
 
     private final BailianRerankPostProcessor rerankProcessor;
 
@@ -285,9 +471,11 @@ public class RerankTool {
     public String rerank(
             @ToolParam(description = "原始查询文本，用于相关性判断") String query,
             @ToolParam(description = "精排后返回的文档数量，默认5") @Nullable Integer topN) {
-        // 从 RagToolContext.accumulatedDocuments 获取待排序文档
+        ToolWorkspace ws = ToolWorkspaceHolder.get();
+        // 从 ws.retrievedDocs 获取待排序文档
         // 调用 BailianRerankPostProcessor 核心逻辑
-        // 替换 RagToolContext 中的文档列表
+        // ws.replaceRetrievedDocs(reranked)
+        // 返回 JSON 摘要
     }
 }
 ```
@@ -296,7 +484,7 @@ public class RerankTool {
 
 ```java
 @Component
-public class QueryRewriteTool {
+public class QueryRewriteTool implements RagTool {
 
     private final ChatClient.Builder chatClientBuilder;
 
@@ -307,7 +495,30 @@ public class QueryRewriteTool {
             @ToolParam(description = "需要改写的原始查询") String query,
             @ToolParam(description = "改写角度，如：更具体、同义替换、拆分子问题",
                        required = false) @Nullable String perspective) {
+        ToolWorkspace ws = ToolWorkspaceHolder.get();
         // 调用 LLM 改写查询（复用 RewriteQueryTransformer 的 prompt）
+        // ws.addRewrittenQueries(rewritten)
+        // 返回 JSON 摘要
+    }
+}
+```
+
+#### ParentDocLookupTool
+
+```java
+@Component
+public class ParentDocLookupTool implements RagTool {
+
+    private final VectorStoreMapper vectorStoreMapper;
+
+    @Tool(description = "将检索到的文档片段替换为其所属的完整父文档。" +
+                        "当需要更完整的上下文信息时使用。")
+    public String parentDocLookup() {
+        ToolWorkspace ws = ToolWorkspaceHolder.get();
+        // 从 ws.retrievedDocs 获取子块文档
+        // 复用 ParentDocumentPostProcessor 核心逻辑
+        // ws.replaceRetrievedDocs(parentDocs)
+        // 返回 JSON 摘要
     }
 }
 ```
@@ -316,40 +527,43 @@ public class QueryRewriteTool {
 
 ```java
 @Component
-public class KnowledgeBaseInfoTool {
+public class KnowledgeBaseInfoTool implements RagTool {
 
     private final VectorStoreMapper vectorStoreMapper;
 
     @Tool(description = "查询当前知识库的元信息，包括文档数量、分块数量等。" +
                         "帮助判断知识库中是否有足够的相关内容来回答问题。")
     public String getKnowledgeBaseInfo() {
-        // 从 RagToolContext 获取 userId/teamId
+        ToolWorkspace ws = ToolWorkspaceHolder.get();
+        // 从 ws 获取 userId/teamId
         // 查询文档数量、分块数量、最近更新时间
+        // 返回 JSON 格式的知识库统计
     }
 }
 ```
 
-### 3.6 ToolContext 传递方案
-
-**方案选择：ThreadLocal**
-
-Agent 模式下 `ToolCallAdvisor` 在单线程中执行 ReAct 循环，Tool 通过 ThreadLocal 获取当前请求的 `RagToolContext`。
+### 3.5 ToolWorkspaceHolder — ThreadLocal 传递
 
 ```java
-public final class RagToolContextHolder {
+/**
+ * ThreadLocal 传递 ToolWorkspace
+ *
+ * 生命周期：
+ * - set: ChatAdvisorChainFactory.buildChain() AGENT 分支
+ * - get: 各 RAG Tool 执行时
+ * - clear: AgentContextCleanupAdvisor（finally 保证）
+ */
+public final class ToolWorkspaceHolder {
 
-    private static final ThreadLocal<RagToolContext> CONTEXT = new ThreadLocal<>();
+    private static final ThreadLocal<ToolWorkspace> WORKSPACE = new ThreadLocal<>();
 
-    public static void set(RagToolContext context) { CONTEXT.set(context); }
-    public static RagToolContext get() { return CONTEXT.get(); }
-    public static void clear() { CONTEXT.remove(); }
+    public static void set(ToolWorkspace workspace) { WORKSPACE.set(workspace); }
+    public static ToolWorkspace get() { return WORKSPACE.get(); }
+    public static void clear() { WORKSPACE.remove(); }
 
-    private RagToolContextHolder() {}
+    private ToolWorkspaceHolder() {}
 }
 ```
-
-**设置时机**：`ChatAdvisorChainFactory.buildChain()` 创建 Agent 链时设置。
-**清理时机**：在 Agent Advisor 链末尾添加清理 Advisor，或通过 try-finally 在 ChatServiceImpl 中清理。
 
 ---
 
@@ -359,28 +573,43 @@ public final class RagToolContextHolder {
 
 | # | 文件 | 改动类型 | 说明 |
 |---|------|----------|------|
-| 1 | `ChatMode.java` | 修改 | 新增 `AGENT` 枚举值 |
-| 2 | `AgentModeStrategy.java` | 新增 | AGENT 模式策略：memory=true, context=true, thinking=false |
-| 3 | `ChatAdvisorChainFactory.java` | 修改 | `buildChain()` 新增 AGENT 分支：挂载 RAG Tool + 设置 ThreadLocal |
-| 4 | `ChatRequestSpecFactory.java` | 修改 | AGENT 模式下动态注入 RAG Tool（带 RagToolContext） |
-| 5 | `RagToolContext.java` | 新增 | 请求级共享上下文 |
-| 6 | `RagToolContextHolder.java` | 新增 | ThreadLocal 传递 |
-| 7 | `RagToolContextFactory.java` | 新增 | 按请求创建 ToolContext |
-| 8 | `VectorSearchTool.java` | 新增 | 向量检索 Tool |
-| 9 | `Bm25SearchTool.java` | 新增 | BM25 全文检索 Tool |
-| 10 | `HybridSearchTool.java` | 新增 | 混合检索 Tool |
-| 11 | `RerankTool.java` | 新增 | Rerank Tool |
-| 12 | `QueryRewriteTool.java` | 新增 | 查询改写 Tool |
-| 13 | `ParentDocLookupTool.java` | 新增 | 父文档查找 Tool |
-| 14 | `KnowledgeBaseInfoTool.java` | 新增 | 知识库元信息 Tool |
-| 15 | `AgentContextCleanupAdvisor.java` | 新增 | Agent 链末尾清理 ThreadLocal |
-| 16 | `AgentRagProperties.java` | 新增 | Agent 模式配置（System Prompt、最大 Tool 调用轮次等） |
+| **意图识别层** | | | |
+| 1 | `AgentIntent.java` | 新增 | 意图枚举 |
+| 2 | `IntentResult.java` | 新增 | 分类结果 record |
+| 3 | `IntentClassifier.java` | 新增 | 意图分类器（独立 LLM 调用） |
+| 4 | `IntentToolSetRegistry.java` | 新增 | 意图→Tool 子集映射 |
+| **Workspace 层** | | | |
+| 5 | `ToolWorkspace.java` | 新增 | JSON 中间状态管理 |
+| 6 | `ToolWorkspaceHolder.java` | 新增 | ThreadLocal 传递 |
+| 7 | `ToolWorkspaceFactory.java` | 新增 | 按请求创建 Workspace |
+| 8 | `RetrievedDocument.java` | 新增 | 检索结果 DTO record |
+| **RAG Tool 层** | | | |
+| 9 | `RagTool.java` | 新增 | RAG Tool 标记接口 |
+| 10 | `VectorSearchTool.java` | 新增 | 向量检索 Tool |
+| 11 | `Bm25SearchTool.java` | 新增 | BM25 全文检索 Tool |
+| 12 | `HybridSearchTool.java` | 新增 | 混合检索 Tool |
+| 13 | `RerankTool.java` | 新增 | Rerank Tool |
+| 14 | `QueryRewriteTool.java` | 新增 | 查询改写 Tool |
+| 15 | `ParentDocLookupTool.java` | 新增 | 父文档查找 Tool |
+| 16 | `KnowledgeBaseInfoTool.java` | 新增 | 知识库元信息 Tool |
+| **Advisor 层** | | | |
+| 17 | `AgentContextCleanupAdvisor.java` | 新增 | ThreadLocal 清理 |
+| 18 | `AgentSystemPromptAdvisor.java` | 新增 | 根据意图动态注入 System Prompt |
+| **编排层改动** | | | |
+| 19 | `ChatMode.java` | 修改 | 新增 `AGENT` 枚举值 |
+| 20 | `AgentModeStrategy.java` | 新增 | AGENT 模式策略 |
+| 21 | `ChatAdvisorChainFactory.java` | 修改 | AGENT 分支：意图识别→独立 ToolCallAdvisor |
+| 22 | `ChatRequestSpecFactory.java` | 修改 | AGENT 模式适配 |
+| 23 | `ChatServiceImpl.java` | 修改 | AGENT 模式支持（阻塞式） |
+| **配置** | | | |
+| 24 | `AgentRagProperties.java` | 新增 | Agent 模式配置 |
+| 25 | `application.yml` | 修改 | 新增 app.agent.* 配置 |
 
 ### 4.2 ChatAdvisorChainFactory 改动
 
 ```java
 // buildChain() 新增 AGENT 分支
-case AGENT -> {
+if (modeStrategy.getMode() == ChatMode.AGENT && agentProperties.enabled()) {
     // 1. 上下文 Advisor
     if (modeStrategy.isContextEnabled()) {
         chain.add(new ConversationContextAdvisor(conversationId));
@@ -389,57 +618,112 @@ case AGENT -> {
     // 2. 全局 Advisor（限流、内容过滤）
     chain.addAll(getGlobalAdvisors());
 
-    // 3. 设置 RAG ToolContext（ThreadLocal）
-    if (request.isRagEnabled()) {
-        Long userId = SecurityUtils.getCurrentUserId();
-        Long teamId = request.teamId();
-        RagToolContext context = ragToolContextFactory.create(userId, teamId);
-        RagToolContextHolder.set(context);
-    }
+    // 3. 意图识别（独立 LLM 调用，不进入 ReAct 循环）
+    IntentResult intent = intentClassifier.classify(request.message());
 
-    // 4. ToolCallAdvisor（核心 ReAct 循环）
-    // RAG Tool 通过 ToolRegistry 自动发现，无需额外注册
-    chain.add(toolCallAdvisorProvider.getObject());
+    // 4. 创建 ToolWorkspace + 设置 ThreadLocal
+    ToolWorkspace workspace = workspaceFactory.create(userId, teamId);
+    workspace.setIntent(intent);
+    ToolWorkspaceHolder.set(workspace);
 
-    // 5. Memory
+    // 5. 根据意图选择 Tool 子集
+    List<ToolCallback> toolSet = intentToolSetRegistry.getToolSet(intent.intent());
+
+    // 6. 创建独立的 ToolCallAdvisor（只挂载选中的 Tool）
+    ToolCallAdvisor agentToolCallAdvisor = ToolCallAdvisor.builder()
+        .toolCallingManager(toolCallingManager)
+        .toolCallbacks(toolSet)
+        .advisorOrder(BaseAdvisor.HIGHEST_PRECEDENCE + 300)
+        .build();
+    chain.add(agentToolCallAdvisor);
+
+    // 7. 动态 System Prompt（根据意图注入不同指令）
+    chain.add(new AgentSystemPromptAdvisor(intent));
+
+    // 8. Memory
     if (modeStrategy.isMemoryEnabled()) {
         chain.add(MessageChatMemoryAdvisor.builder(chatMemory).build());
     }
 
-    // 6. 清理 Advisor（ThreadLocal 清理）
+    // 9. 清理 Advisor
     chain.add(new AgentContextCleanupAdvisor());
+
+    return chain;
 }
 ```
 
-### 4.3 System Prompt 设计
+### 4.3 AgentSystemPromptAdvisor — 动态 System Prompt
 
-Agent 模式需要明确的 System Prompt 指导 LLM 何时使用什么 Tool：
+根据意图识别结果注入不同的 System Prompt：
+
+```java
+/**
+ * 根据意图动态注入 System Prompt
+ *
+ * 不同意图类型需要不同的行为指导：
+ * - DIRECT_ANSWER: 无工具可用，引导 LLM 直接回答
+ * - RETRIEVAL: 提供检索工具使用指南
+ * - DEEP_RETRIEVAL: 提供完整的深度检索策略指南
+ * - GENERAL_TOOL: 提供通用工具使用指南
+ */
+public class AgentSystemPromptAdvisor implements CallAroundAdvisor {
+
+    private final IntentResult intent;
+    private final AgentRagProperties properties;
+
+    @Override
+    public AdvisedResponse aroundCall(AdvisedRequest request, CallAroundAdvisorChain chain) {
+        String systemPrompt = resolvePrompt(intent.intent());
+        // 注入 systemPrompt 到 request
+        return chain.nextAroundCall(request.withSystemText(systemPrompt));
+    }
+
+    private String resolvePrompt(AgentIntent intent) {
+        return switch (intent) {
+            case DIRECT_ANSWER -> properties.directAnswerPrompt();
+            case RETRIEVAL -> properties.retrievalPrompt();
+            case DEEP_RETRIEVAL -> properties.deepRetrievalPrompt();
+            case GENERAL_TOOL -> properties.generalToolPrompt();
+        };
+    }
+}
+```
+
+### 4.4 配置设计
 
 ```yaml
 app:
   agent:
-    system-prompt: |
-      你是一个智能助手，可以自主决定如何回答用户的问题。
+    enabled: true
+    # 意图识别
+    intent-model: deepseek/deepseek-chat    # 独立轻量模型
+    intent-temperature: 0.1                  # 低温度，分类任务
+    # ReAct 循环
+    max-tool-iterations: 10                  # 防止无限循环
+    # 动态 System Prompt
+    direct-answer-prompt: "..."
+    retrieval-prompt: "..."
+    deep-retrieval-prompt: "..."
+    general-tool-prompt: "..."
+```
 
-      你有以下检索工具可以使用：
-      - vectorSearch: 向量语义检索，适合概念性、语义性问题
-      - bm25Search: BM25 全文检索，适合精确关键词匹配
-      - hybridSearch: 混合检索（向量+BM25+RRF），适合大多数场景
-      - rerank: 对检索结果进行语义精排
-      - rewriteQuery: 改写查询以提升检索效果
-      - parentDocLookup: 查找子块对应的完整父文档
-      - knowledgeBaseInfo: 查询知识库元信息
-
-      决策指南：
-      1. 如果问题不需要知识库（如通用知识、闲聊），直接回答
-      2. 如果需要知识库，先用 hybridSearch 检索
-      3. 如果检索结果不够好，用 rewriteQuery 改写后再检索
-      4. 如果检索结果很多但不够精准，用 rerank 精排
-      5. 如果需要更完整的上下文，用 parentDocLookup 获取父文档
-      6. 综合所有信息后给出准确、完整的回答
-
-      回答时标注引用来源，区分知识库内容和自身知识。
-    max-tool-iterations: 10
+```java
+@ConfigurationProperties(prefix = "app.agent")
+public record AgentRagProperties(
+    boolean enabled,
+    String intentModel,
+    Double intentTemperature,
+    int maxToolIterations,
+    String directAnswerPrompt,
+    String retrievalPrompt,
+    String deepRetrievalPrompt,
+    String generalToolPrompt
+) {
+    public AgentRagProperties {
+        if (maxToolIterations <= 0) maxToolIterations = 10;
+        if (intentTemperature == null) intentTemperature = 0.1;
+    }
+}
 ```
 
 ---
@@ -453,9 +737,9 @@ app:
 | SIMPLE 模式 | 零影响 | 不走 AGENT 分支 |
 | MULTI_TURN 模式 | 零影响 | 仍用 `RetrievalAugmentationAdvisor` |
 | `RagAdvisorFactory` | 保留 | MULTI_TURN 模式继续使用 |
-| `HybridDocumentRetriever` | 保留 + 复用 | AGENT 模式的 Tool 复用其核心逻辑 |
-| `ToolRegistry` | 保留 | RAG Tool 是普通 `@Component` + `@Tool`，自动发现 |
-| `CalculatorTools` / `DateTimeTools` | 零影响 | Agent 模式下也可使用这些通用工具 |
+| `HybridDocumentRetriever` | 保留 + 复用 | Tool 复用其核心逻辑，不修改原类 |
+| `ToolRegistry` | 保留 | AGENT 模式不使用 ToolRegistry，改用 IntentToolSetRegistry |
+| `CalculatorTools` / `DateTimeTools` | 保留 | Agent 模式通过 IntentToolSetRegistry 按需暴露 |
 | ETL Pipeline | 零影响 | 文档入库流程不变 |
 | 评估模块 | 零影响 | 评估仍基于 `RetrievalAugmentationAdvisor` |
 
@@ -477,87 +761,72 @@ ParentDocLookupTool（新增）
 RewriteQueryTransformer（现有）
     ↑ 复用改写 prompt
 QueryRewriteTool（新增）
+
+ModelRouter + ProviderRegistry（现有）
+    ↑ 复用模型路由
+IntentClassifier（新增）
 ```
 
 ---
 
-## 6. 配置设计
-
-### 6.1 Agent 配置
-
-```yaml
-app:
-  agent:
-    enabled: true                              # 是否启用 AGENT 模式
-    system-prompt: "..."                        # Agent System Prompt
-    max-tool-iterations: 10                     # 最大 Tool 调用轮次（防止无限循环）
-    rag-tools-enabled: true                     # 是否注册 RAG Tool
-```
-
-```java
-@ConfigurationProperties(prefix = "app.agent")
-public record AgentRagProperties(
-    boolean enabled,
-    String systemPrompt,
-    int maxToolIterations,
-    boolean ragToolsEnabled
-) {
-    public AgentRagProperties {
-        if (maxToolIterations <= 0) maxToolIterations = 10;
-    }
-}
-```
-
----
-
-## 7. 风险与缓解
+## 6. 风险与缓解
 
 | # | 风险 | 级别 | 缓解措施 |
 |---|------|------|----------|
 | R1 | LLM 无限循环调用 Tool | 高 | `maxToolIterations` 硬限制 + ToolCallAdvisor 内置循环上限 |
-| R2 | Agent 模式 token 消耗远高于 Pipeline | 高 | System Prompt 明确指导"简单问题直接回答"；监控用量 |
-| R3 | Tool 调用延迟累加 | 中 | 每次 Tool 调用记录耗时，超阈值告警；异步 Tool 执行 |
-| R4 | ThreadLocal 泄漏 | 中 | `AgentContextCleanupAdvisor` 保证 finally 清理 |
-| R5 | 模型不支持 Tool Calling | 低 | `ToolCallAdvisor` 已有降级机制；Agent 模式要求模型支持 Tool |
-| R6 | 检索结果质量不稳定 | 中 | 保留 `HybridDocumentRetriever` 成熟的 RRF 融合逻辑 |
+| R2 | Agent 模式 token 消耗远高于 Pipeline | 高 | 意图识别层过滤简单问题（DIRECT_ANSWER 跳过检索） |
+| R3 | 意图识别本身消耗 token 和延迟 | 中 | 使用轻量快速模型 + 低 temperature；单次调用成本可控 |
+| R4 | Tool 调用延迟累加 | 中 | 每次 Tool 调用记录耗时，超阈值告警 |
+| R5 | ThreadLocal 泄漏 | 中 | `AgentContextCleanupAdvisor` 保证 finally 清理 |
+| R6 | 意图识别错误导致工具集不匹配 | 中 | 提供 fallback：DEEP_RETRIEVAL 为默认安全集 |
+| R7 | 模型不支持 Tool Calling | 低 | Agent 模式要求模型支持 Tool，配置校验 |
 
 ---
 
-## 8. 实施计划
+## 7. 实施计划
 
-### Phase 1: 基础设施（2-3h）
+### Phase 1: 基础设施（3-4h）
 
 1. `ChatMode` 新增 `AGENT`
 2. `AgentModeStrategy` 实现
-3. `AgentRagProperties` 配置类
-4. `RagToolContext` + `RagToolContextHolder` + `RagToolContextFactory`
+3. `AgentRagProperties` 配置类 + `application.yml`
+4. `ToolWorkspace` + `ToolWorkspaceHolder` + `ToolWorkspaceFactory` + `RetrievedDocument`
 5. `AgentContextCleanupAdvisor`
+6. `AgentSystemPromptAdvisor`
 
-### Phase 2: RAG Tool 实现（4-6h）
+### Phase 2: 意图识别层（3-4h）
 
-1. `VectorSearchTool`（复用 `VectorStore`）
-2. `Bm25SearchTool`（复用 `VectorStoreMapper`）
-3. `HybridSearchTool`（复用 `HybridDocumentRetriever` 核心逻辑）
-4. `RerankTool`（复用 `BailianRerankPostProcessor`）
-5. `QueryRewriteTool`（复用 `RewriteQueryTransformer` prompt）
-6. `ParentDocLookupTool`（复用 `ParentDocumentPostProcessor`）
-7. `KnowledgeBaseInfoTool`（复用 `VectorStoreMapper`）
+1. `AgentIntent` 枚举 + `IntentResult` record
+2. `IntentClassifier`（独立 LLM 调用 + Structured Output）
+3. `IntentToolSetRegistry`（意图→Tool 子集映射）
+4. 意图识别单元测试
 
-### Phase 3: 编排层集成（2-3h）
+### Phase 3: RAG Tool 实现（4-6h）
+
+1. `RagTool` 标记接口
+2. `VectorSearchTool`（复用 `VectorStore`）
+3. `Bm25SearchTool`（复用 `VectorStoreMapper`）
+4. `HybridSearchTool`（复用 `HybridDocumentRetriever` 核心逻辑）
+5. `RerankTool`（复用 `BailianRerankPostProcessor`）
+6. `QueryRewriteTool`（复用 `RewriteQueryTransformer` prompt）
+7. `ParentDocLookupTool`（复用 `ParentDocumentPostProcessor`）
+8. `KnowledgeBaseInfoTool`（复用 `VectorStoreMapper`）
+9. 每个 Tool 单元测试
+
+### Phase 4: 编排层集成（2-3h）
 
 1. `ChatAdvisorChainFactory` AGENT 分支
 2. `ChatRequestSpecFactory` AGENT 模式适配
-3. `ChatServiceImpl` AGENT 模式支持（System Prompt 注入）
-4. `application.yml` 配置
+3. `ChatServiceImpl` AGENT 模式支持（阻塞式）
 
-### Phase 4: 测试与验证（2-3h）
+### Phase 5: 端到端验证（2-3h）
 
-1. 每个 Tool 单元测试
-2. Agent 端到端测试
-3. 与 MULTI_TURN 模式回归对比
-4. 性能基准（延迟、token 消耗）
+1. Agent 端到端测试（DIRECT_ANSWER / RETRIEVAL / DEEP_RETRIEVAL / GENERAL_TOOL）
+2. 与 MULTI_TURN 模式回归对比
+3. 性能基准（延迟、token 消耗）
+4. Workspace 状态正确性验证
 
-### Phase 5: 文档与收尾（1h）
+### Phase 6: 文档与收尾（1h）
 
 1. 更新 `ARCHITECTURE.md`
 2. 更新 `RAG-DESIGN.md`
@@ -565,11 +834,23 @@ public record AgentRagProperties(
 
 ---
 
-## 9. 开放问题
+## 8. 决策记录
 
-| # | 问题 | 待决策 |
-|---|------|--------|
-| Q1 | Agent 模式是否需要独立的 ToolCallAdvisor（不与通用 Tool 混用）？ | 暂定共用，观察是否冲突 |
-| Q2 | 检索结果跨 Tool 轮次如何传递？ | 暂定 `RagToolContext.accumulatedDocuments` |
-| Q3 | 是否需要为 Agent 模式配置独立的 LLM 模型（如用更强推理模型）？ | 后续评估 |
-| Q4 | 流式响应下 Agent 如何工作？ | Phase 4 评估，可能先支持阻塞式 |
+| # | 问题 | 决策 | 理由 |
+|---|------|------|------|
+| Q1 | Agent 的 ToolCallAdvisor 是否独立？ | **分离** — 按意图动态选择 Tool 子集 | 避免 LLM 选择困难和误调用；按需暴露更可控 |
+| Q2 | 检索结果跨 Tool 轮次如何传递？ | **JSON Workspace** — 结构化中间状态 | 可序列化、可调试、可追踪；比 ThreadLocal List 更明确 |
+| Q3 | 是否支持独立模型？ | **是 — 通过意图识别层** | 意图识别用轻量模型降本；主 Agent 可用更强推理模型 |
+| Q4 | 流式响应？ | **先阻塞式，后续迭代流式** | 降低首版复杂度；流式需处理中间过程展示 |
+
+---
+
+## 9. 后续演进方向
+
+| 方向 | 说明 | 优先级 |
+|------|------|--------|
+| 流式 Agent | 支持 SSE 中间过程展示（"正在检索..." → "正在精排..."） | P1 |
+| Agent 可观测性 | 记录每次 Tool 调用的耗时、token、结果摘要 | P1 |
+| 多模型协作 | 意图识别用快速模型，深度推理用推理模型 | P2 |
+| Tool 结果缓存 | 相同查询的检索结果短期缓存，避免重复检索 | P2 |
+| 自定义意图规则 | 允许用户配置意图分类规则（如特定关键词触发 DEEP_RETRIEVAL） | P3 |

@@ -940,13 +940,13 @@ Agent 请求的完整故障点：
   │     ├─ F5d: 查询改写失败（LLM 调用失败）
   │     └─ F5e: 父文档查找失败（数据库异常）
   │
-  ├─ F6: Tool 调用死循环（LLM 反复调用同一 Tool / 不断改写但不收敛）
+  ├─ F6: 循环不收敛（迭代超限 / token 超限）
   │
   ├─ F7: Workspace 状态损坏（并发写入 / 序列化失败）
   │
   ├─ F8: ThreadLocal 泄漏（异常路径未清理）
   │
-  ├─ F9: 总 token 超限（意图识别 + 多轮 Tool + ReAct 累加）
+  ├─ F9: 累计 token 超过模型上下文窗口 80%
   │
   └─ F10: 主 ChatModel 调用失败（生成最终回答时模型不可用）
 ```
@@ -1128,70 +1128,121 @@ public class HybridSearchTool implements RagTool {
 - **错误分类**：`errorCategory` 区分可重试（`API_ERROR`）和不可重试（`DB_ERROR`、`INVALID_INPUT`）
 - **超时保护**：每个 Tool 设定执行超时，防止数据库慢查询或 API 无响应阻塞整个 ReAct 循环
 
-#### 第三层：死循环防御
+#### 第三层：循环护栏（双指标）
 
 ```java
 /**
- * Agent 执行护栏 — 在 ToolCallAdvisor 外层包裹安全检查
+ * Agent 循环护栏 — 只跟踪两个核心指标，任一超标立即跳出循环
  *
- * 防御维度：
- * 1. 总轮次限制
- * 2. 相同 Tool 连续调用限制
- * 3. 总 token 消耗限制
- * 4. 总执行时间限制
+ * 指标 1：累计 Token 消耗
+ *   - 默认上限 = 当前模型最大上下文窗口 × 0.8
+ *   - 涵盖：意图识别 LLM + ReAct 每轮（LLM 推理 + Tool 结果回传）
+ *   - 超标 → 跳出循环，用已有结果强制回答
+ *
+ * 指标 2：循环迭代次数
+ *   - 每轮 = 一次 Tool 调用（LLM 决策 → Tool 执行 → 结果回传）
+ *   - 默认上限：10 次
+ *   - 超标 → 跳出循环，用已有结果强制回答
  */
 @Component
 public class AgentGuardrails {
 
     private final AgentRagProperties properties;
+    private final ProviderRegistry providerRegistry;
 
-    /** 检查是否允许继续 ReAct 循环 */
-    public GuardrailCheck check(ToolWorkspace workspace, int currentIteration,
-                                 int totalTokensUsed, long elapsedMs) {
-        // 1. 总轮次上限
-        if (currentIteration >= properties.maxToolIterations()) {
+    /**
+     * 计算当前模型的最大 token 上限
+     * 默认 = 模型上下文窗口 × 0.8，为 System Prompt + 输出预留 20%
+     */
+    public int resolveTokenLimit(String compositeModelId) {
+        int contextWindow = providerRegistry.getContextWindowSize(compositeModelId);
+        // 默认 80% 作为输入 token 上限
+        double ratio = properties.contextWindowRatio(); // 默认 0.8
+        return (int) (contextWindow * ratio);
+    }
+
+    /**
+     * 检查是否允许继续 ReAct 循环
+     *
+     * @param iteration     当前迭代次数（从 1 开始）
+     * @param tokensUsed    累计 token 消耗
+     * @param tokenLimit    token 上限（resolveTokenLimit 返回值）
+     * @return 检查结果
+     */
+    public GuardrailCheck check(int iteration, int tokensUsed, int tokenLimit) {
+        // 指标 1：迭代次数
+        if (iteration > properties.maxToolIterations()) {
             return GuardrailCheck.stop(
-                "已达到最大调用轮次 (%d)，强制停止".formatted(properties.maxToolIterations()));
+                "ITERATION_LIMIT",
+                "已达到最大调用轮次 (%d/%d)，停止检索。"
+                    .formatted(iteration, properties.maxToolIterations()));
         }
 
-        // 2. 相同 Tool 连续调用检测（同一 Tool 连续 3 次视为死循环）
-        String lastTool = workspace.getLastToolName();
-        int consecutiveSame = workspace.getConsecutiveSameToolCount();
-        if (consecutiveSame >= 3) {
+        // 指标 2：累计 token 消耗
+        if (tokensUsed >= tokenLimit) {
             return GuardrailCheck.stop(
-                "工具 [%s] 已连续调用 %d 次，疑似死循环".formatted(lastTool, consecutiveSame));
-        }
-
-        // 3. 总 token 消耗上限
-        int maxTokens = properties.maxTotalTokens(); // 默认 32768
-        if (totalTokensUsed > maxTokens) {
-            return GuardrailCheck.stop(
-                "总 token 消耗已达 %d（上限 %d）".formatted(totalTokensUsed, maxTokens));
-        }
-
-        // 4. 总执行时间上限
-        long maxDurationMs = properties.maxDurationMs(); // 默认 60000ms
-        if (elapsedMs > maxDurationMs) {
-            return GuardrailCheck.stop(
-                "Agent 执行时间已达 %dms（上限 %dms）".formatted(elapsedMs, maxDurationMs));
+                "TOKEN_LIMIT",
+                "累计 token 消耗已达 %d（上限 %d，模型上下文窗口 %d × %.0f%%），停止检索。"
+                    .formatted(tokensUsed, tokenLimit,
+                        tokenLimit / properties.contextWindowRatio(),
+                        properties.contextWindowRatio() * 100));
         }
 
         return GuardrailCheck.ok();
     }
 
-    public record GuardrailCheck(boolean allowed, @Nullable String reason) {
-        static GuardrailCheck ok() { return new GuardrailCheck(true, null); }
-        static GuardrailCheck stop(String reason) { return new GuardralCheck(false, reason); }
+    public record GuardrailCheck(
+        boolean allowed,
+        @Nullable String stopReason,   // ITERATION_LIMIT | TOKEN_LIMIT
+        @Nullable String message        // 可读的停止原因，用于返回给用户
+    ) {
+        static GuardrailCheck ok() {
+            return new GuardrailCheck(true, null, null);
+        }
+        static GuardrailCheck stop(String reason, String message) {
+            return new GuardrailCheck(false, reason, message);
+        }
     }
 }
 ```
 
-**护栏触发后的行为**：
+**Token 计算范围**：
 
 ```
-GuardrailCheck.stop() 触发时：
-  ├── 已有检索结果 → 用已有结果 + 强制 LLM 生成回答（注入提示："基于已收集的信息回答"）
-  └── 无检索结果 → 降级为 LLM 直接回答（注入提示："检索系统暂时不可用，基于自身知识回答"）
+累计 token 消耗 = 意图识别 LLM 调用
+                + ReAct 第 1 轮（LLM 推理 + Tool 结果回传）
+                + ReAct 第 2 轮（...）
+                + ...
+                + ReAct 第 N 轮
+
+注意：Tool 执行本身（数据库查询、Rerank API）不消耗 LLM token，
+只有 LLM 的输入/输出才计入。每轮 ChatResponse.metadata().usage() 提取。
+```
+
+**护栏触发后的行为**：
+
+```java
+// 在 ToolCallAdvisor 每轮回调中检查
+GuardrailCheck check = guardrails.check(iteration, tokensUsed, tokenLimit);
+if (!check.allowed()) {
+    log.warn("Agent guardrail triggered: reason={}, iteration={}, tokens={}/{}, workspace docs={}",
+        check.stopReason(), iteration, tokensUsed, tokenLimit,
+        workspace.getRetrievedDocs().size());
+
+    // 直接跳出 ReAct 循环，不再调用 LLM
+    // 用已有的 Workspace 检索结果 + check.message() 构造最终响应
+    // 返回给用户：护栏触发原因 + 已收集的部分信息
+    return buildGuardrailResponse(workspace, check);
+}
+```
+
+**用户看到的响应示例**：
+
+```
+⚠️ 检索过程因达到调用上限而提前停止（已执行 10 轮检索，收集到 13 个文档片段）。
+基于已收集的部分信息，回答如下：
+
+[LLM 基于已有结果生成的回答]
 ```
 
 #### 第四层：全局降级
@@ -1242,10 +1293,10 @@ public class AgentDegradationStrategy {
 | F5c: Rerank 失败 | ApiException | ToolResult.failure → LLM 跳过精排直接回答 | 无精排的回答 | 精度可能降低 |
 | F5d: 查询改写失败 | ApiException | ToolResult.failure → LLM 用原查询检索 | 原查询检索 | 可能召回不够好 |
 | F5e: 父文档查找失败 | DataAccessException | ToolResult.failure → LLM 用子块回答 | 子块粒度回答 | 上下文可能不完整 |
-| F6: 死循环 | Guardrails 轮次/重复/时间检测 | 强制停止 + 用已有结果回答 | 强制生成回答 | 可能不完整 |
+| F6: 死循环 | Guardrails 双指标检测（迭代次数 / token 消耗） | 跳出循环 + 用已有结果回答 + 告知用户 | 回答可能不完整 |
 | F7: Workspace 损坏 | JsonProcessingException | 重建空 Workspace 继续或降级 | MULTI_TURN 模式 | 回退到 Pipeline RAG |
 | F8: ThreadLocal 泄漏 | try-finally in CleanupAdvisor | finally 块强制清理 | 无（已清理） | 无感知 |
-| F9: Token 超限 | Guardrails token 计数 | 强制停止 + 用已有结果回答 | 强制生成回答 | 可能不完整 |
+| F9: Token 超限 | Guardrails token 计数（模型上下文窗口 × 80%） | 跳出循环 + 用已有结果回答 + 告知用户 | 回答可能不完整 |
 | F10: 主模型失败 | ChatServiceImpl 兜底策略 | 复用现有 FallbackChainProvider | 备选模型回答 | 回退到备选模型 |
 
 ### 6.4 可观测性设计
@@ -1304,11 +1355,11 @@ app:
   agent:
     # ... 已有配置 ...
 
-    # 容错与安全
-    max-tool-iterations: 10           # ReAct 最大轮次
-    max-consecutive-same-tool: 3       # 同一 Tool 连续调用上限（疑似死循环）
-    max-total-tokens: 32768            # 总 token 消耗上限
-    max-duration-ms: 60000             # 总执行时间上限（60s）
+    # 循环护栏
+    max-tool-iterations: 10           # ReAct 最大迭代轮次
+    context-window-ratio: 0.8         # token 上限 = 模型上下文窗口 × 此比例
+
+    # 容错
     intent-retries: 2                  # 意图识别重试次数
     intent-timeout-ms: 5000            # 意图识别超时（5s）
     tool-timeout-ms: 10000             # 单次 Tool 超时（10s）
@@ -1324,13 +1375,11 @@ public record AgentRagProperties(
     Double intentTemperature,
     int intentRetries,
     int intentTimeoutMs,
-    // ReAct 循环
+    // 循环护栏
     int maxToolIterations,
-    int maxConsecutiveSameTool,
-    int maxTotalTokens,
-    long maxDurationMs,
+    double contextWindowRatio,
+    // 容错
     int toolTimeoutMs,
-    // 降级
     boolean degradeOnFailure,
     // System Prompt
     String directAnswerPrompt,
@@ -1340,9 +1389,7 @@ public record AgentRagProperties(
 ) {
     public AgentRagProperties {
         if (maxToolIterations <= 0) maxToolIterations = 10;
-        if (maxConsecutiveSameTool <= 0) maxConsecutiveSameTool = 3;
-        if (maxTotalTokens <= 0) maxTotalTokens = 32768;
-        if (maxDurationMs <= 0) maxDurationMs = 60000;
+        if (contextWindowRatio <= 0 || contextWindowRatio > 1) contextWindowRatio = 0.8;
         if (intentRetries < 0) intentRetries = 2;
         if (intentTimeoutMs <= 0) intentTimeoutMs = 5000;
         if (toolTimeoutMs <= 0) toolTimeoutMs = 10000;

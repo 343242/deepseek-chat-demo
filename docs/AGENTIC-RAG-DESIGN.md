@@ -1190,8 +1190,58 @@ public record AgentRagProperties(
 | `CalculatorTools` / `DateTimeTools` | 保留 | Agent 模式通过 IntentToolSetRegistry 按需暴露 |
 | ETL Pipeline | 零影响 | 文档入库流程不变 |
 | 评估模块 | 零影响 | 评估仍基于 `RetrievalAugmentationAdvisor` |
+| **CAG 上下文增强** | **保留 + 合并注入** | AGENT 模式下 CAG 输出合并到 Agent System Prompt，详见 5.2 |
 
-### 5.2 组件复用关系
+### 5.2 CAG 上下文增强在 Agent 模式下的适用性
+
+现有 CAG（Context-Augmented Generation）模块负责收集三类运行时信号并注入 System Prompt：
+
+| 信号 | 数据来源 | 注入内容 |
+|------|----------|----------|
+| 用户画像 (`UserContext`) | 用户服务 | 昵称、角色 |
+| 会话状态 (`SessionContext`) | 消息数量 | 对话阶段 |
+| 策略约束 (`PolicyContext`) | 角色权限 | 回答限制规则 |
+
+**CAG 与 Agentic RAG 的关系是正交的**：
+
+```
+CAG 解决的问题：你是谁？有什么约束？（用户级上下文）
+Agent 解决的问题：怎么查？查什么？（检索策略编排）
+
+两者职责不重叠，合并注入即可：
+
+System Prompt = Agent Prompt（检索策略指导 + 原子决策引导）
+             + CAG Context（用户信息 + 对话阶段 + 回答约束）
+```
+
+**三种模式下的 CAG 行为**：
+
+| 模式 | CAG 来源 | 注入方式 |
+|------|----------|----------|
+| SIMPLE | `ContextPromptInjector` | 直接注入 ChatClient system prompt |
+| MULTI_TURN | `ContextPromptInjector` | 直接注入 ChatClient system prompt |
+| AGENT | `ContextPromptInjector` → `AgentSystemPromptAdvisor` | 合并到 Agent 动态 System Prompt |
+
+**代码层面**（在 `ChatAdvisorChainFactory` AGENT 分支中）：
+
+```java
+// 复用现有 CAG 构建逻辑
+String cagContext = buildCagContext(ctx, request);
+
+// Agent 自身的 Prompt（含原子决策引导 + 自省格式 + 检索代价意识）
+String agentPrompt = resolvePrompt(intent);
+
+// 合并注入
+String mergedPrompt = agentPrompt;
+if (cagContext != null && !cagContext.isBlank()) {
+    mergedPrompt += "\n\n## 当前用户上下文\n" + cagContext;
+}
+chain.add(new AgentSystemPromptAdvisor(intent, mergedPrompt));
+```
+
+**CAG 模块零改动**：`CagProperties`、`RequestContext`、`RequestContextManager`、`ContextPromptInjector` 等所有文件不需要任何修改。
+
+### 5.3 组件复用关系
 
 ```
 HybridDocumentRetriever（现有）

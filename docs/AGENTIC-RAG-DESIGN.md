@@ -31,12 +31,37 @@
 | P3 | **单次检索**：检索结果不佳时无法自动改写查询重试 | 召回质量完全依赖首次查询 |
 | P4 | **所有请求同质化**：不能根据问题类型选择检索策略（精确匹配走 BM25、语义匹配走向量） | 策略选择无弹性 |
 
-### 1.3 目标
+### 1.3 学术基础
+
+本方案融合两篇前沿论文的核心思想：
+
+#### DeepRAG (ICLR 2026)
+
+将 retrieval-augmented reasoning 建模为 **Markov Decision Process (MDP)**，核心贡献：
+
+1. **原子决策 (Atomic Decision)**：对每个子问题独立判断 `retrieve`（检索外部知识）还是 `parametric`（依赖模型自身知识），而非对整个问题一刀切
+2. **检索代价感知**：奖励函数同时考虑正确性和检索成本，鼓励模型"能不检索就不检索"
+3. **中间答案累积**：每处理一个子问题就生成中间答案，后续子问题可引用
+
+#### Self-RAG (ICLR 2024 Oral)
+
+通过 **Reflection Tokens** 实现自省式检索-生成，核心贡献：
+
+1. **自适应检索**：按 segment 级别动态决定是否检索（`Retrieve: yes/no`），非全量或全不
+2. **自省式评估**：生成后自我评估——检索结果是否相关 (`IsRel`)、回答是否有据 (`IsSup`)、回答是否有用 (`IsUse`)
+3. **可定制推理**：通过调整阈值平衡事实性与创造性
+
+**落地策略**：不训练专用模型，通过 **System Prompt + Structured Output + Workspace** 实现同等效果的工程化方案。
+
+### 1.4 目标
 
 将 RAG 从 **Pipeline 模式** 升级为 **Agent 模式**：
 - LLM 通过 `ToolCallAdvisor` 的 ReAct 循环自主编排检索策略
-- 保留现有核心组件（`HybridDocumentRetriever`、`BailianRerankPostProcessor` 等），封装为 Tool
-- **分离式 Tool 注册**：按意图识别结果动态选择暴露给 LLM 的 Tool 子集
+- **原子决策**（DeepRAG）：每个子问题独立判断是否检索，减少不必要的检索调用
+- **自省式评估**（Self-RAG）：检索后自评相关性和充分性，驱动下一步决策
+- **中间答案累积**（DeepRAG）：逐步累积子问题答案，避免信息丢失
+- **检索代价感知**（DeepRAG）：Prompt 引导 LLM 优先使用已有知识，降低检索成本
+- 保留现有核心组件，封装为 Tool，与 `ToolRegistry` OCP 体系无缝对接
 - 新增 `AGENT` 对话模式，不影响现有 `SIMPLE` / `MULTI_TURN` 模式
 
 ---
@@ -96,7 +121,7 @@
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### 2.2 完整请求流程
+### 2.2 完整请求流程（融合 DeepRAG + Self-RAG）
 
 ```
 用户: "对比 RAG 和 Fine-tuning 在知识更新场景的优劣"
@@ -108,36 +133,56 @@
         │ ① 意图分类: → DEEP_RETRIEVAL     │
         │                                 │
         │ ② 查询分解:                      │
-        │   原始问题 → 拆解为子问题:        │
         │   [1] RAG 系统的知识更新机制       │
         │   [2] Fine-tuning 的知识更新机制   │
         │   [3] 两者在知识更新场景的对比      │
         └─────────────┬──────────────────┘
                       │ subQueries 写入 Workspace
-                      │ 动态选择 Tool 子集
                       ▼
-        ┌─ 第二层：Agent ReAct ──────────────┐
-        │                                     │
-        │ LLM: "按子问题逐一检索"              │
-        │                                     │
-        │ Round 1: 子问题[1]                   │
-        │ → hybridSearchTool("RAG 知识更新")    │
-        │ ← JSON: 8 docs                      │
-        │                                     │
-        │ Round 2: 子问题[2]                   │
-        │ → hybridSearchTool("Fine-tuning 更新")│
-        │ ← JSON: 5 docs                      │
-        │                                     │
-        │ LLM: "文档较多，需要精排"             │
-        │ → rerankTool()                      │
-        │ ← JSON: Top 5 docs                  │
-        │                                     │
-        │ Round 3: 子问题[3] (综合对比)         │
-        │ LLM: 基于已检索文档综合分析           │
-        │ → 无需额外检索，直接回答              │
-        │                                     │
-        │ LLM: 综合所有子问题结果生成最终回答     │
-        └─────────────────────────────────────┘
+        ┌─ 第二层：Agent ReAct（增强循环）──┐
+        │                                    │
+        │ ┌── 子问题[1]: "RAG 知识更新" ──┐  │
+        │ │                                │  │
+        │ │ ① 原子决策(DeepRAG):           │  │
+        │ │   LLM: "这个需要知识库"         │  │
+        │ │   → hybridSearchTool()         │  │
+        │ │   ← JSON: 8 docs               │  │
+        │ │                                │  │
+        │ │ ② 自省评估(Self-RAG):           │  │
+        │ │   is_relevant: true             │  │
+        │ │   is_sufficient: true           │  │
+        │ │   → 不需要重搜                  │  │
+        │ │                                │  │
+        │ │ ③ 中间答案(DeepRAG):            │  │
+        │ │   → "RAG通过外部知识库实时更新..." │  │
+        │ └────────────────────────────────┘  │
+        │                                    │
+        │ ┌── 子问题[2]: "Fine-tuning更新" ─┐ │
+        │ │                                │  │
+        │ │ ① 原子决策(DeepRAG):           │  │
+        │ │   LLM: "自身知识足够"            │  │
+        │ │   → 不调用检索Tool(零成本)       │  │
+        │ │                                │  │
+        │ │ ③ 中间答案(DeepRAG):            │  │
+        │ │   → "Fine-tuning需重训模型..."   │  │
+        │ └────────────────────────────────┘  │
+        │                                    │
+        │ ┌── 子问题[3]: "两者对比" ───────┐ │
+        │ │                                │  │
+        │ │ ① 原子决策: 需要检索+精排        │  │
+        │ │   → hybridSearch() + rerank()   │  │
+        │ │                                │  │
+        │ │ ② 自省评估:                     │  │
+        │ │   is_sufficient: true           │  │
+        │ │                                │  │
+        │ │ ③ 中间答案:                     │  │
+        │ │   → 综合对比分析...              │  │
+        │ └────────────────────────────────┘  │
+        │                                    │
+        │ ④ 最终回答 = 综合所有中间答案        │
+        │    + 质量自评(IsSup/IsUse)          │
+        │    + 引用标注                       │
+        └────────────────────────────────────┘
 ```
 
 ### 2.3 意图识别层详细设计
@@ -306,7 +351,165 @@ app:
     intent-temperature: 0.1                 # 低温度，分类任务追求确定性
 ```
 
-### 2.4 Tool Workspace — JSON 中间状态
+### 2.4 ReAct 循环增强设计（DeepRAG + Self-RAG）
+
+在第二层 ReAct 循环中，LLM 的每个子问题处理流程扩展为四步增强循环：
+
+```
+每个子问题的处理流程：
+
+  ┌──────────────────────────────────────────────────────┐
+  │  Step 1: 原子决策 (Atomic Decision) — 来自 DeepRAG    │
+  │                                                      │
+  │  LLM 判断：这个子问题需要检索外部知识吗？              │
+  │    ├── retrieve    → 调用检索 Tool                    │
+  │    └── parametric  → 直接用自身知识回答（零检索成本）   │
+  └──────────────────────┬───────────────────────────────┘
+                         │
+                    (如果 retrieve)
+                         │
+  ┌──────────────────────▼───────────────────────────────┐
+  │  Step 2: 检索 + 自省评估 (Self-Reflection) — 来自 Self-RAG │
+  │                                                      │
+  │  执行检索 Tool → 获得文档                              │
+  │                                                      │
+  │  LLM 自省（结构化 JSON 输出）：                        │
+  │    is_relevant: 检索结果是否与子问题相关？              │
+  │    is_sufficient: 信息是否足够回答？                    │
+  │    missing_aspects: 如果不够，缺少什么？               │
+  │    next_action: rewrite_and_search / rerank / proceed  │
+  │                                                      │
+  │  如果不够 → 改写查询重搜 或 精排                       │
+  └──────────────────────┬───────────────────────────────┘
+                         │
+  ┌──────────────────────▼───────────────────────────────┐
+  │  Step 3: 中间答案累积 (Intermediate Answer) — DeepRAG  │
+  │                                                      │
+  │  基于检索结果或自身知识，生成该子问题的中间答案          │
+  │  写入 Workspace.intermediateAnswers                   │
+  │  后续子问题可引用前面的中间答案                         │
+  └──────────────────────┬───────────────────────────────┘
+                         │
+           (所有子问题处理完毕)
+                         │
+  ┌──────────────────────▼───────────────────────────────┐
+  │  Step 4: 最终回答 + 质量自评 — 来自 Self-RAG            │
+  │                                                      │
+  │  综合所有中间答案生成最终回答                           │
+  │  自评回答质量：                                       │
+  │    is_supported: 回答是否有文档支撑                    │
+  │    is_useful: 是否完整回答了用户问题                    │
+  │    citations: 标注引用来源                             │
+  └──────────────────────────────────────────────────────┘
+```
+
+#### 2.4.1 原子决策 (Atomic Decision)
+
+**来源**：DeepRAG 的核心思想 — 对每个子问题独立判断是否需要检索。
+
+**工程化实现**：通过 System Prompt 引导 LLM 对每个子问题先输出决策 JSON，再执行。
+
+```json
+// LLM 在处理每个子问题前的输出（Structured Output）
+{
+  "sub_query": "RAG 系统的知识更新机制",
+  "decision": "retrieve",
+  "reason": "涉及具体的 RAG 技术细节，需要知识库文档支撑"
+}
+// 或
+{
+  "sub_query": "什么是 Fine-tuning",
+  "decision": "parametric",
+  "reason": "Fine-tuning 是基础机器学习概念，自身知识足够"
+}
+```
+
+**效果**：减少不必要的检索调用，降低延迟和 token 成本。DeepRAG 实验表明检索尝试主要集中在 0-2 次，大多数子问题可由模型自身知识回答。
+
+#### 2.4.2 自省式评估 (Self-Reflection)
+
+**来源**：Self-RAG 的 Reflection Tokens — 检索后自评相关性和充分性。
+
+**工程化实现**：检索结果返回后，LLM 输出自省 JSON，驱动下一步决策。
+
+```json
+// 检索后的自省输出
+{
+  "is_relevant": true,
+  "is_sufficient": false,
+  "missing_aspects": ["Fine-tuning 的知识更新成本对比"],
+  "next_action": "rewrite_and_search",
+  "rewrite_query": "Fine-tuning 模型知识更新成本和时间开销"
+}
+```
+
+**自省驱动的决策树**：
+
+```
+检索结果 → 自省评估
+  ├── is_relevant=false → 改写查询重搜
+  ├── is_relevant=true, is_sufficient=true → 生成中间答案
+  └── is_relevant=true, is_sufficient=false
+        ├── missing_aspects 可通过其他 Tool 补充 → 切换 Tool
+        └── missing_aspects 需要新检索 → 改写查询重搜
+```
+
+#### 2.4.3 中间答案累积 (Intermediate Answer)
+
+**来源**：DeepRAG — 每处理一个子问题生成中间答案，逐步累积。
+
+```java
+// Workspace 中的中间答案
+public record IntermediateAnswer(
+    int subQueryIndex,       // 关联的子问题索引
+    String subQuery,         // 子问题原文
+    String answer,           // 中间答案
+    String source,           // "retrieval" 或 "parametric"
+    List<String> citedDocIds // 引用的文档 ID（parametric 时为空）
+) {}
+```
+
+**关键设计**：后续子问题的 LLM prompt 中自动注入前面所有中间答案，避免重复检索同一信息。
+
+#### 2.4.4 检索代价感知 (Retrieval Cost Awareness)
+
+**来源**：DeepRAG 的奖励函数 — 正确性 × 检索成本，鼓励减少不必要的检索。
+
+**工程化实现**：System Prompt 注入代价意识 + Workspace 追踪已有知识。
+
+System Prompt 中的关键引导：
+```
+检索代价规则：
+1. 每次检索都有成本（延迟 + token 消耗），优先使用已有知识
+2. 检查 Workspace.intermediateAnswers — 如果前面的子问题已检索过相关信息，直接引用
+3. 只有在确实需要外部知识时才调用检索工具
+4. 能用 rerank 精排解决的，不要重新检索
+5. 能用自身知识回答的，不要调用任何工具
+```
+
+#### 2.4.5 回答质量自评 (Answer Quality Self-Evaluation)
+
+**来源**：Self-RAG 的 IsSup / IsUse — 生成后自我评估回答质量。
+
+**工程化实现**：最终回答生成时，LLM 同时输出自评和引用标注。
+
+```json
+// 最终回答附带的自评
+{
+  "answer": "RAG 和 Fine-tuning 在知识更新场景各有优劣...",
+  "self_evaluation": {
+    "is_supported": true,
+    "is_useful": true,
+    "confidence": 0.85,
+    "citations": [
+      { "claim": "RAG 支持实时知识更新", "sourceDoc": "doc1", "sourceFile": "rag-intro.pdf", "page": 3 },
+      { "claim": "Fine-tuning 需要重训模型", "source": "parametric" }
+    ]
+  }
+}
+```
+
+### 2.5 Tool Workspace — JSON 中间状态
 
 Tool 之间通过结构化 JSON Workspace 传递中间结果，而非 ThreadLocal 的 `List<Document>`。
 
@@ -378,6 +581,25 @@ public class ToolWorkspace {
     /** 添加改写查询 */
     public void addRewrittenQueries(List<String> queries) { ... }
 
+    // ===== 自省评估相关（Self-RAG）=====
+
+    /** 添加自省结果 */
+    public void addSelfReflection(SelfReflection reflection) { ... }
+
+    /** 获取所有自省结果 */
+    public List<SelfReflection> getSelfReflections() { ... }
+
+    // ===== 中间答案相关（DeepRAG）=====
+
+    /** 添加中间答案 */
+    public void addIntermediateAnswer(IntermediateAnswer answer) { ... }
+
+    /** 获取所有中间答案 */
+    public List<IntermediateAnswer> getIntermediateAnswers() { ... }
+
+    /** 获取所有中间答案的摘要文本（注入后续子问题的 prompt） */
+    public String getIntermediateAnswersSummary() { ... }
+
     // ===== 状态追踪 =====
 
     /** 获取当前检索轮次 */
@@ -389,6 +611,48 @@ public class ToolWorkspace {
     /** 导出完整状态（调试用） */
     public String exportState() { ... }
 }
+```
+
+#### SelfReflection — 自省 DTO
+
+```java
+/**
+ * 自省结果 — 检索后 LLM 的自我评估（Self-RAG 启发）
+ *
+ * @param subQueryIndex  关联的子问题索引
+ * @param isRelevant     检索结果是否相关
+ * @param isSufficient   信息是否足够回答
+ * @param missingAspects 缺少的方面
+ * @param nextAction     下一步：proceed / rewrite_and_search / rerank / switch_tool
+ */
+public record SelfReflection(
+    int subQueryIndex,
+    boolean isRelevant,
+    boolean isSufficient,
+    List<String> missingAspects,
+    String nextAction
+) {}
+```
+
+#### IntermediateAnswer — 中间答案 DTO
+
+```java
+/**
+ * 中间答案 — 每个子问题处理后的累积答案（DeepRAG 启发）
+ *
+ * @param subQueryIndex 关联的子问题索引
+ * @param subQuery      子问题原文
+ * @param answer        中间答案内容
+ * @param source        来源："retrieval" 或 "parametric"
+ * @param citedDocIds   引用的文档 ID（parametric 时为空）
+ */
+public record IntermediateAnswer(
+    int subQueryIndex,
+    String subQuery,
+    String answer,
+    String source,
+    List<String> citedDocIds
+) {}
 ```
 
 #### Workspace JSON 示例
@@ -404,7 +668,7 @@ public class ToolWorkspace {
     "RAG 和 Fine-tuning 在知识更新场景的优劣对比"
   ],
   "completedSubQueries": [0, 1],
-  "round": 2,
+  "round": 3,
   "retrievedDocs": [
     {
       "docId": "abc123",
@@ -413,6 +677,38 @@ public class ToolWorkspace {
       "source": "hybridSearch",
       "subQueryIndex": 0,
       "metadata": { "fileName": "rag-intro.pdf", "pageIndex": 3 }
+    }
+  ],
+  "selfReflections": [
+    {
+      "subQueryIndex": 0,
+      "isRelevant": true,
+      "isSufficient": true,
+      "missingAspects": [],
+      "nextAction": "proceed"
+    },
+    {
+      "subQueryIndex": 1,
+      "isRelevant": false,
+      "isSufficient": false,
+      "missingAspects": ["Fine-tuning 知识更新的具体成本"],
+      "nextAction": "rewrite_and_search"
+    }
+  ],
+  "intermediateAnswers": [
+    {
+      "subQueryIndex": 0,
+      "subQuery": "RAG 系统如何实现知识更新",
+      "answer": "RAG 通过外部知识库实时增强 LLM，无需重训模型...",
+      "source": "retrieval",
+      "citedDocIds": ["abc123"]
+    },
+    {
+      "subQueryIndex": 1,
+      "subQuery": "Fine-tuning 模型如何更新知识",
+      "answer": "Fine-tuning 需要在新数据上重新训练模型参数...",
+      "source": "parametric",
+      "citedDocIds": []
     }
   ],
   "rewrittenQueries": [],
@@ -742,12 +1038,17 @@ public final class ToolWorkspaceHolder {
 | **配置** | | | |
 | 24 | `AgentRagProperties.java` | 新增 | Agent 模式配置 |
 | 25 | `application.yml` | 修改 | 新增 app.agent.* 配置 |
+| **DTO（论文增强）** | | | |
+| 26 | `SelfReflection.java` | 新增 | 自省结果 record（Self-RAG: isRelevant/isSufficient/nextAction） |
+| 27 | `IntermediateAnswer.java` | 新增 | 中间答案 record（DeepRAG: subQuery/answer/source/citedDocIds） |
 | **容错与安全** | | | |
-| 26 | `ToolResult.java` | 新增 | Tool 调用统一结果 record（success/failure + errorCategory） |
-| 27 | `AgentGuardrails.java` | 新增 | ReAct 循环护栏（迭代总数/token 消耗/连续 Tool 三指标） |
-| 28 | `AgentDegradationStrategy.java` | 新增 | Agent 全局降级策略（降级到 MULTI_TURN） |
-| 29 | `AgentTrace.java` | 新增 | Agent 执行追踪记录 |
-| 30 | `ToolCallRecord.java` | 新增 | 单次 Tool 调用记录 |
+| 28 | `ToolResult.java` | 新增 | Tool 调用统一结果 record（success/failure + errorCategory） |
+| 29 | `AgentGuardrails.java` | 新增 | ReAct 循环护栏（迭代总数/token 消耗/连续 Tool 三指标） |
+| 30 | `AgentDegradationStrategy.java` | 新增 | Agent 全局降级策略（降级到 MULTI_TURN） |
+| 31 | `AgentTrace.java` | 新增 | Agent 执行追踪记录 |
+| 32 | `ToolCallRecord.java` | 新增 | 单次 Tool 调用记录 |
+| **论文增强** | | | |
+| 33 | `AgentSystemPromptAdvisor.java` | 新增 | 动态 System Prompt 注入（含原子决策引导+检索代价意识+自省格式） |
 
 ### 4.2 ChatAdvisorChainFactory 改动
 
@@ -1461,9 +1762,9 @@ public record AgentRagProperties(
 1. `ChatMode` 新增 `AGENT`
 2. `AgentModeStrategy` 实现
 3. `AgentRagProperties` 配置类 + `application.yml`
-4. `ToolWorkspace` + `ToolWorkspaceHolder` + `ToolWorkspaceFactory` + `RetrievedDocument`
-5. `AgentContextCleanupAdvisor`
-6. `AgentSystemPromptAdvisor`
+4. `ToolWorkspace` + `ToolWorkspaceHolder` + `ToolWorkspaceFactory`
+5. `RetrievedDocument` + `SelfReflection` + `IntermediateAnswer` DTO
+6. `AgentContextCleanupAdvisor`
 
 ### Phase 2: 意图识别层（3-4h）
 
@@ -1475,25 +1776,51 @@ public record AgentRagProperties(
 ### Phase 3: RAG Tool 实现（4-6h）
 
 1. `RagTool` 标记接口
-2. `VectorSearchTool`（复用 `VectorStore`）
-3. `Bm25SearchTool`（复用 `VectorStoreMapper`）
-4. `HybridSearchTool`（复用 `HybridDocumentRetriever` 核心逻辑）
-5. `RerankTool`（复用 `BailianRerankPostProcessor`）
-6. `QueryRewriteTool`（复用 `RewriteQueryTransformer` prompt）
-7. `ParentDocLookupTool`（复用 `ParentDocumentPostProcessor`）
-8. `KnowledgeBaseInfoTool`（复用 `VectorStoreMapper`）
-9. 每个 Tool 单元测试
+2. `ToolResult` 统一返回格式（success/failure + errorCategory）
+3. 7 个 RAG Tool（每个含异常捕获 + ToolResult + Workspace 操作）
+4. 每个 Tool 单元测试
 
-### Phase 4: 编排层集成（2-3h）
+### Phase 4: ReAct 循环增强（3-4h）— 论文驱动
+
+1. `AgentSystemPromptAdvisor`：动态 System Prompt（含原子决策引导+检索代价意识+自省格式）
+2. System Prompt 定义：
+   - 原子决策引导（DeepRAG）：对每个子问题先输出 retrieve/parametric 决策
+   - 自省评估格式（Self-RAG）：is_relevant/is_sufficient/next_action
+   - 中间答案格式（DeepRAG）：每个子问题生成中间答案
+   - 检索代价规则（DeepRAG）：优先使用已有知识、引用中间答案
+   - 回答质量自评（Self-RAG）：is_supported/is_useful/citations
+3. Workspace 中间答案注入机制：后续子问题 prompt 自动包含前面的中间答案
+4. 增强逻辑单元测试
+
+### Phase 5: 护栏 + 容错（2-3h）
+
+1. `AgentGuardrails`（三指标：迭代总数/token 消耗/连续 Tool）
+2. `AgentDegradationStrategy`（全局降级）
+3. `AgentTrace` + `ToolCallRecord`（可观测性）
+4. 容错逻辑单元测试
+
+### Phase 6: 编排层集成（2-3h）
 
 1. `ChatAdvisorChainFactory` AGENT 分支
 2. `ChatRequestSpecFactory` AGENT 模式适配
 3. `ChatServiceImpl` AGENT 模式支持（阻塞式）
 
-### Phase 5: 端到端验证（2-3h）
+### Phase 7: 端到端验证（2-3h）
 
 1. Agent 端到端测试（DIRECT_ANSWER / RETRIEVAL / DEEP_RETRIEVAL / GENERAL_TOOL）
-2. 与 MULTI_TURN 模式回归对比
+2. 论文增强验证：
+   - 原子决策：部分子问题走 parametric 路径（零检索）
+   - 自省评估：不够时触发改写重搜
+   - 中间答案累积：后续子问题引用前面的答案
+   - 检索代价感知：检索次数低于无引导版本
+3. 与 MULTI_TURN 模式回归对比
+4. 性能基准（延迟、token 消耗、检索次数）
+
+### Phase 8: 文档与收尾（1h）
+
+1. 更新 `ARCHITECTURE.md`
+2. 更新 `RAG-DESIGN.md`
+3. 更新 `API-DOCS.md`
 3. 性能基准（延迟、token 消耗）
 4. Workspace 状态正确性验证
 
@@ -1514,6 +1841,11 @@ public record AgentRagProperties(
 | Q3 | 是否支持独立模型？ | **是 — 通过意图识别层** | 意图识别用轻量模型降本；主 Agent 可用更强推理模型 |
 | Q4 | 流式响应？ | **先阻塞式，后续迭代流式** | 降低首版复杂度；流式需处理中间过程展示 |
 | Q5 | 意图识别是否包含查询分解？ | **是 — 意图分类+查询分解合并为单次 LLM 调用** | 减少延迟；子问题写入 Workspace 供 Agent 按子问题逐一检索 |
+| Q6 | 是否融入 DeepRAG 原子决策？ | **是 — 每个子问题独立判断 retrieve/parametric** | 减少不必要的检索调用，降低成本和延迟 |
+| Q7 | 是否融入 Self-RAG 自省评估？ | **是 — 检索后自评 is_relevant/is_sufficient** | 驱动改写重搜、Tool 切换等下一步决策 |
+| Q8 | 是否融入 DeepRAG 中间答案？ | **是 — 每个子问题生成中间答案，后续可引用** | 避免重复检索同一信息 |
+| Q9 | 是否融入 DeepRAG 检索代价感知？ | **是 — System Prompt 注入代价意识** | 鼓励 LLM 优先使用已有知识 |
+| Q10 | 是否融入 Self-RAG 回答质量自评？ | **是 — 最终回答自评 IsSup/IsUse + 引用标注** | 提高回答可信度和可追溯性 |
 
 ---
 

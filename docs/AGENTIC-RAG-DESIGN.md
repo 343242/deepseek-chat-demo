@@ -1164,23 +1164,27 @@ public final class ToolWorkspaceHolder {
 | **编排层改动** | | | |
 | 19 | `ChatMode.java` | 修改 | 新增 `AGENT` 枚举值 |
 | 20 | `AgentModeStrategy.java` | 新增 | AGENT 模式策略 |
-| 21 | `ChatAdvisorChainFactory.java` | 修改 | AGENT 分支：意图识别→独立 ToolCallAdvisor |
-| 22 | `ChatRequestSpecFactory.java` | 修改 | AGENT 模式适配 |
-| 23 | `ChatServiceImpl.java` | 修改 | AGENT 模式支持（阻塞式） |
+| 21 | `ChatModeStrategy.java` | 修改 | 新增 `default isAgentMode()` |
+| 22 | `ChatRequest.java` | 修改 | mode 正则扩展加入 AGENT（P1） |
+| 23 | `ChatAdvisorChainFactory.java` | 修改 | AGENT 分支：自建 ToolCallAdvisor（P2） |
+| 24 | `ChatRequestSpecFactory.java` | 修改 | AGENT 分支：跳过 tools() + 跳过 DB Prompt（P3/P4） |
+| 25 | `ChatServiceImpl.java` | 修改 | AGENT 模式支持（阻塞式 + 元数据注入） |
+| 26 | `ChatController.java` | 修改 | 响应序列化分支 |
+| 27 | `AgentChatResponse.java` | 新增 | Agent 响应 DTO（P6） |
 | **配置** | | | |
-| 24 | `AgentRagProperties.java` | 新增 | Agent 模式配置 |
-| 25 | `application.yml` | 修改 | 新增 app.agent.* 配置 |
+| 28 | `AgentRagProperties.java` | 新增 | Agent 模式配置 |
+| 29 | `application.yml` | 修改 | 新增 app.agent.* 配置 |
 | **DTO（论文增强）** | | | |
-| 26 | `SelfReflection.java` | 新增 | 自省结果 record（Self-RAG: isRelevant/isSufficient/nextAction） |
-| 27 | `IntermediateAnswer.java` | 新增 | 中间答案 record（DeepRAG: subQuery/answer/source/citedDocIds） |
+| 30 | `SelfReflection.java` | 新增 | 自省结果 record（Self-RAG: isRelevant/isSufficient/nextAction） |
+| 31 | `IntermediateAnswer.java` | 新增 | 中间答案 record（DeepRAG: subQuery/answer/source/citedDocIds） |
 | **容错与安全** | | | |
-| 28 | `ToolResult.java` | 新增 | Tool 调用统一结果 record（success/failure + errorCategory） |
-| 29 | `AgentGuardrails.java` | 新增 | ReAct 循环护栏（迭代总数/token 消耗/连续 Tool 三指标） |
-| 30 | `AgentDegradationStrategy.java` | 新增 | Agent 全局降级策略（降级到 MULTI_TURN） |
-| 31 | `AgentTrace.java` | 新增 | Agent 执行追踪记录 |
-| 32 | `ToolCallRecord.java` | 新增 | 单次 Tool 调用记录 |
+| 32 | `ToolResult.java` | 新增 | Tool 调用统一结果 record（success/failure + errorCategory） |
+| 33 | `AgentGuardrails.java` | 新增 | ReAct 循环护栏（迭代总数/token 消耗/连续 Tool 三指标） |
+| 34 | `AgentDegradationStrategy.java` | 新增 | Agent 全局降级策略（降级到 MULTI_TURN） |
+| 35 | `AgentTrace.java` | 新增 | Agent 执行追踪记录 |
+| 36 | `ToolCallRecord.java` | 新增 | 单次 Tool 调用记录 |
 | **论文增强** | | | |
-| 33 | `AgentSystemPromptAdvisor.java` | 新增 | 动态 System Prompt 注入（含原子决策引导+检索代价意识+自省格式） |
+| 37 | `AgentSystemPromptAdvisor.java` | 新增 | 动态 System Prompt 注入（含原子决策引导+检索代价意识+自省格式） |
 
 ### 4.2 ChatAdvisorChainFactory 改动
 
@@ -1396,6 +1400,238 @@ ModelRouter + ProviderRegistry（现有）
     ↑ 复用模型路由
 IntentClassifier（新增）
 ```
+
+### 5.4 集成风险与修复方案
+
+逐项审查现有代码后，识别出 6 个真实存在的集成冲突点。
+
+#### P1: `ChatRequest.mode` 校验正则硬编码
+
+**现状**：
+```java
+// ChatRequest.java
+@Pattern(regexp = "^(SIMPLE|MULTI_TURN)$",
+         message = "对话模式仅支持 SIMPLE 或 MULTI_TURN")
+String mode,
+```
+
+**问题**：传入 `mode=AGENT` 会被 Bean Validation 直接拒绝，请求无法到达 Controller。
+
+**修复**：
+```java
+@Pattern(regexp = "^(SIMPLE|MULTI_TURN|AGENT)$",
+         message = "对话模式仅支持 SIMPLE、MULTI_TURN 或 AGENT")
+String mode,
+```
+
+**改动文件**：`ChatRequest.java`（1 行）
+
+---
+
+#### P2: `ToolCallAdvisor` 全局单例 — Agent 需按意图动态创建
+
+**现状**：
+```java
+// ToolAutoConfiguration.java — 全局唯一 Bean
+@Bean
+public ToolCallAdvisor toolCallAdvisor(ToolCallingManager toolCallingManager) {
+    return ToolCallAdvisor.builder()
+            .toolCallingManager(toolCallingManager)  // 包含 CalculatorTools、DateTimeTools 等 ALL 工具
+            .disableMemory()
+            .advisorOrder(2)
+            .build();
+}
+
+// ChatAdvisorChainFactory.java — 直接拿全局单例
+if (hasTools()) {
+    chain.add(toolCallAdvisorProvider.getObject());
+}
+```
+
+**问题**：
+- 全局 `ToolCallAdvisor` 的 `ToolCallingManager` 包含所有通用工具（Calculator、DateTime 等）
+- Agent 模式需要**只暴露 RAG Tool 子集**（按意图过滤），且每次请求子集不同
+- 这是**最核心的架构冲突**
+
+**修复**：Agent 分支自建 `ToolCallAdvisor`，不复用全局 Bean
+```java
+// ChatAdvisorChainFactory.java AGENT 分支
+public List<Advisor> buildAgentChain(String conversationId, ChatRequest request,
+                                      AgentIntent intent, ToolCallback[] agentTools) {
+    List<Advisor> chain = new ArrayList<>();
+
+    // 全局 Advisor（RateLimit、ContentFilter 等）
+    chain.addAll(getGlobalAdvisors());
+
+    // Agent 专用 ToolCallAdvisor（按意图过滤的 Tool 子集）
+    ToolCallingManager agentToolManager = DefaultToolCallingManager.builder()
+            .toolCallbackResolver(new StaticToolCallbackResolver(List.of(agentTools)))
+            .build();
+    chain.add(ToolCallAdvisor.builder()
+            .toolCallingManager(agentToolManager)
+            .disableMemory()
+            .advisorOrder(2)
+            .build());
+
+    // Memory（Agent 需要多轮记忆）
+    chain.add(MessageChatMemoryAdvisor.builder(chatMemory).build());
+
+    return chain;
+}
+```
+
+**改动文件**：`ChatAdvisorChainFactory.java`（新增方法，不改现有 `buildChain`）
+
+---
+
+#### P3: `ChatRequestSpecFactory` 全量 Tool 绑定
+
+**现状**：
+```java
+// ChatRequestSpecFactory.createSpec()
+if (advisorChainFactory.hasTools()) {
+    spec = spec.tools((Object) advisorChainFactory.getToolCallbacks());  // ALL 工具全量绑定
+}
+```
+
+**问题**：Agent 模式的 Tool 已由自建 `ToolCallAdvisor` 管理，不能再通过 `spec.tools()` 全量挂载，否则会重复注册。
+
+**修复**：Agent 分支跳过 `spec.tools()` 调用
+```java
+// ChatRequestSpecFactory.createSpec() 增加判断
+if (advisorChainFactory.hasTools() && !modeStrategy.isAgentMode()) {
+    spec = spec.tools((Object) advisorChainFactory.getToolCallbacks());
+}
+```
+
+**改动文件**：`ChatRequestSpecFactory.java`（1 行条件判断）
+
+---
+
+#### P4: System Prompt 固定从 DB 查询 — Agent 需动态生成
+
+**现状**：
+```java
+// ChatRequestSpecFactory.createSpec()
+String systemPrompt = resolveSystemPrompt(route);  // 按 modelId 查 DB 固定模板
+systemPrompt = contextPromptInjector.inject(systemPrompt, cagContext);
+spec = spec.system(systemPrompt);
+```
+
+**问题**：Agent 的 System Prompt 是**运行时动态生成**的，包含：
+- 原子决策引导（retrieve/parametric）
+- 自省输出格式（is_relevant/is_sufficient/next_action）
+- 检索代价意识规则
+- 当前意图信息 + 可用 Tool 列表
+- CAG 上下文
+
+不能从 DB 查固定模板。
+
+**修复**：Agent 分支由 `AgentSystemPromptAdvisor` 接管 System Prompt
+```java
+// ChatRequestSpecFactory.createSpec() 增加判断
+if (modeStrategy.isAgentMode()) {
+    // Agent 模式：跳过 DB 查询，System Prompt 由 AgentSystemPromptAdvisor 在 Advisor 链中动态注入
+    // CAG 上下文传递给 Agent 编排层处理
+} else {
+    String systemPrompt = resolveSystemPrompt(route);
+    systemPrompt = contextPromptInjector.inject(systemPrompt, cagContext);
+    if (systemPrompt != null && !systemPrompt.isBlank()) {
+        spec = spec.system(systemPrompt);
+    }
+}
+```
+
+**改动文件**：`ChatRequestSpecFactory.java`（if-else 分支）
+
+---
+
+#### P5: `ChatModeStrategy` 接口能力不足
+
+**现状**：
+```java
+public interface ChatModeStrategy {
+    ChatMode getMode();
+    boolean isMemoryEnabled();
+    boolean isContextEnabled();
+    boolean isThinkingEnabled();
+}
+```
+
+**问题**：四个 boolean 方法无法表达 Agent 模式的本质差异：
+- Agent 需要自建 ToolCallAdvisor（不共享全局的）
+- Agent 需要跳过固定 System Prompt
+- Agent 需要独立编排层（IntentClassifier → ReAct Loop）
+
+**修复**：扩展接口，使用 default 方法保持向后兼容
+```java
+public interface ChatModeStrategy {
+    ChatMode getMode();
+    boolean isMemoryEnabled();
+    boolean isContextEnabled();
+    boolean isThinkingEnabled();
+
+n    /**
+     * 是否为 Agent 模式（需要动态 Tool 绑定 + 动态 System Prompt）
+     * default false 保证 SIMPLE / MULTI_TURN 无需改动
+     */
+    default boolean isAgentMode() {
+        return false;
+    }
+}
+```
+
+`AgentModeStrategy` 覆写 `isAgentMode()` 返回 `true`，其他策略不受影响。
+
+**改动文件**：`ChatModeStrategy.java`（新增 default 方法）、新增 `AgentModeStrategy.java`
+
+---
+
+#### P6: 响应结构缺少 Agent 元数据
+
+**现状**：`ChatServiceImpl` 返回 `ChatResponse`（Spring AI 标准），包含 content + metadata。
+
+**问题**：Agent 模式的响应需要携带额外元数据：
+- `AgentTrace`：轮次、各 Tool 调用记录、耗时
+- `SelfReflection`：质量自评（is_supported/is_useful）
+- 检索文档引用列表（供前端展示）
+- 意图识别结果（用于调试）
+
+**修复**：利用 Spring AI `ChatResponse.metadata` 扩展，不破坏现有结构
+```java
+// Agent 模式响应构建
+if (modeStrategy.isAgentMode()) {
+    ChatResponse response = spec.chatResponse();
+    // 将 Agent 元数据注入 metadata
+    Map<String, Object> agentMeta = Map.of(
+        "agentTrace", workspace.exportTrace(),
+        "agentIntent", intent.name(),
+        "retrievedDocs", workspace.getRetrievedDocuments(),
+        "selfEvaluation", workspace.getSelfEvaluation()
+    );
+    // 返回包装后的响应
+    return new AgentChatResponse(response, agentMeta);
+}
+```
+
+新增 `AgentChatResponse` record 包装标准 `ChatResponse` + Agent 元数据。Controller 层按 mode 分支序列化。
+
+**改动文件**：`ChatServiceImpl.java`（Agent 分支）、新增 `AgentChatResponse.java`、`ChatController.java`（响应序列化分支）
+
+---
+
+#### 修复方案汇总
+
+| 问题 | 严重度 | 修复方案 | 改动文件 |
+|------|--------|----------|----------|
+| P1: mode 正则 | 🔴 阻塞 | 扩展正则加入 AGENT | `ChatRequest.java`（1 行） |
+| P2: ToolCallAdvisor 单例 | 🔴 核心 | Agent 分支自建 ToolCallAdvisor | `ChatAdvisorChainFactory.java`（新增方法） |
+| P3: 全量 Tool 绑定 | 🟡 冲突 | Agent 分支跳过 spec.tools() | `ChatRequestSpecFactory.java`（1 行） |
+| P4: System Prompt 固定 | 🟡 冲突 | Agent 分支跳过 DB 查询 | `ChatRequestSpecFactory.java`（if-else） |
+| P5: Strategy 接口 | 🟡 扩展 | 加 default isAgentMode() | `ChatModeStrategy.java` + 新增 `AgentModeStrategy` |
+| P6: 响应结构 | 🟢 增强 | AgentChatResponse 包装 | `ChatServiceImpl.java` + 新增 DTO |
+
+**关键约束**：所有修复均通过 **if-else 分支隔离**，SIMPLE 和 MULTI_TURN 的代码路径完全不变。
 
 ---
 
@@ -1941,12 +2177,14 @@ public record AgentRagProperties(
 
 ### Phase 1: 基础设施（3-4h）
 
-1. `ChatMode` 新增 `AGENT`
-2. `AgentModeStrategy` 实现
-3. `AgentRagProperties` 配置类 + `application.yml`
-4. `ToolWorkspace` + `ToolWorkspaceHolder` + `ToolWorkspaceFactory`
-5. `RetrievedDocument` + `SelfReflection` + `IntermediateAnswer` DTO
-6. `AgentContextCleanupAdvisor`
+1. `ChatMode` 新增 `AGENT` + `ChatRequest.mode` 正则扩展（P1）
+2. `ChatModeStrategy` 加 `default isAgentMode()`（P5）
+3. `AgentModeStrategy` 实现
+4. `AgentRagProperties` 配置类 + `application.yml`
+5. `ToolWorkspace` + `ToolWorkspaceHolder` + `ToolWorkspaceFactory`
+6. `RetrievedDocument` + `SelfReflection` + `IntermediateAnswer` DTO
+7. `AgentContextCleanupAdvisor`
+8. `AgentChatResponse` DTO（P6）
 
 ### Phase 2: 意图识别层（3-4h）
 
@@ -1983,9 +2221,10 @@ public record AgentRagProperties(
 
 ### Phase 6: 编排层集成（2-3h）
 
-1. `ChatAdvisorChainFactory` AGENT 分支
-2. `ChatRequestSpecFactory` AGENT 模式适配
-3. `ChatServiceImpl` AGENT 模式支持（阻塞式）
+1. `ChatAdvisorChainFactory.buildAgentChain()` — 自建 ToolCallAdvisor（P2）
+2. `ChatRequestSpecFactory` AGENT 分支 — 跳过 spec.tools() + 跳过 DB System Prompt（P3/P4）
+3. `ChatServiceImpl` AGENT 模式支持 — 阻塞式 + AgentChatResponse 元数据注入（P6）
+4. `ChatController` 响应序列化分支
 
 ### Phase 7: 端到端验证（2-3h）
 

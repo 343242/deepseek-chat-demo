@@ -742,6 +742,12 @@ public final class ToolWorkspaceHolder {
 | **配置** | | | |
 | 24 | `AgentRagProperties.java` | 新增 | Agent 模式配置 |
 | 25 | `application.yml` | 修改 | 新增 app.agent.* 配置 |
+| **容错与安全** | | | |
+| 26 | `ToolResult.java` | 新增 | Tool 调用统一结果 record（success/failure + errorCategory） |
+| 27 | `AgentGuardrails.java` | 新增 | ReAct 循环护栏（轮次/重复/token/时间四维检测） |
+| 28 | `AgentDegradationStrategy.java` | 新增 | Agent 全局降级策略（降级到 MULTI_TURN） |
+| 29 | `AgentTrace.java` | 新增 | Agent 执行追踪记录 |
+| 30 | `ToolCallRecord.java` | 新增 | 单次 Tool 调用记录 |
 
 ### 4.2 ChatAdvisorChainFactory 改动
 
@@ -910,17 +916,440 @@ IntentClassifier（新增）
 
 ---
 
-## 6. 风险与缓解
+## 6. 工程化容错设计
 
-| # | 风险 | 级别 | 缓解措施 |
-|---|------|------|----------|
-| R1 | LLM 无限循环调用 Tool | 高 | `maxToolIterations` 硬限制 + ToolCallAdvisor 内置循环上限 |
-| R2 | Agent 模式 token 消耗远高于 Pipeline | 高 | 意图识别层过滤简单问题（DIRECT_ANSWER 跳过检索） |
-| R3 | 意图识别本身消耗 token 和延迟 | 中 | 使用轻量快速模型 + 低 temperature；单次调用成本可控 |
-| R4 | Tool 调用延迟累加 | 中 | 每次 Tool 调用记录耗时，超阈值告警 |
-| R5 | ThreadLocal 泄漏 | 中 | `AgentContextCleanupAdvisor` 保证 finally 清理 |
-| R6 | 意图识别错误导致工具集不匹配 | 中 | 提供 fallback：DEEP_RETRIEVAL 为默认安全集 |
-| R7 | 模型不支持 Tool Calling | 低 | Agent 模式要求模型支持 Tool，配置校验 |
+### 6.1 故障模式全景
+
+```
+Agent 请求的完整故障点：
+
+用户查询
+  │
+  ├─ F1: 意图识别 LLM 调用失败（网络超时 / 模型不可用 / 响应解析失败）
+  │
+  ├─ F2: 查询分解失败（LLM 返回空 subQueries / 格式不合法）
+  │
+  ├─ F3: 意图识别错误（误分类 → 工具集不匹配）
+  │
+  ├─ F4: ToolCallAdvisor 初始化失败（无可用 ToolCallback）
+  │
+  ├─ F5: 单次 Tool 调用失败
+  │     ├─ F5a: 向量检索失败（VectorStore 不可用 / 超时）
+  │     ├─ F5b: BM25 检索失败（数据库连接异常 / SQL 错误）
+  │     ├─ F5c: Rerank 失败（百炼 API 不可用 / 超时 / 额度耗尽）
+  │     ├─ F5d: 查询改写失败（LLM 调用失败）
+  │     └─ F5e: 父文档查找失败（数据库异常）
+  │
+  ├─ F6: Tool 调用死循环（LLM 反复调用同一 Tool / 不断改写但不收敛）
+  │
+  ├─ F7: Workspace 状态损坏（并发写入 / 序列化失败）
+  │
+  ├─ F8: ThreadLocal 泄漏（异常路径未清理）
+  │
+  ├─ F9: 总 token 超限（意图识别 + 多轮 Tool + ReAct 累加）
+  │
+  └─ F10: 主 ChatModel 调用失败（生成最终回答时模型不可用）
+```
+
+### 6.2 分层容错策略
+
+#### 第一层：意图识别容错
+
+```java
+@Component
+public class IntentClassifier {
+
+    private static final Logger log = LoggerFactory.getLogger(IntentClassifier.class);
+
+    /** 最大重试次数 */
+    private static final int MAX_RETRIES = 2;
+    /** 单次调用超时 */
+    private static final Duration INTENT_TIMEOUT = Duration.ofSeconds(5);
+
+    /** 安全默认值：降级到 DEEP_RETRIEVAL（暴露全量 Tool，宁可多检索不漏检） */
+    private static final IntentResult SAFE_FALLBACK = new IntentResult(
+        AgentIntent.DEEP_RETRIEVAL, 0.0, Collections.emptyList()
+    );
+
+    public IntentResult classify(String query) {
+        // 1. 空查询保护
+        if (query == null || query.isBlank()) {
+            return SAFE_FALLBACK;
+        }
+
+        // 2. 带重试的 LLM 调用
+        for (int attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+            try {
+                IntentResult result = doClassify(query);
+                // 3. 结构校验：subQueries 为 null 时补空列表
+                return validate(result);
+            } catch (JsonProcessingException e) {
+                // LLM 返回了无法解析的 JSON
+                log.warn("Intent classification parse failed (attempt {}): {}",
+                    attempt, e.getMessage());
+            } catch (ApiException e) {
+                // 模型 API 不可用
+                log.warn("Intent classification API error (attempt {}): status={}",
+                    attempt, e.getStatusCode());
+            } catch (Exception e) {
+                log.error("Intent classification unexpected error (attempt {})", attempt, e);
+            }
+        }
+
+        // 3. 全部重试失败 → 降级到安全默认值
+        log.warn("Intent classification failed after {} retries, falling back to {}",
+            MAX_RETRIES, SAFE_FALLBACK.intent());
+        return SAFE_FALLBACK;
+    }
+
+    private IntentResult validate(IntentResult result) {
+        // intent 不能为 null
+        if (result.intent() == null) {
+            return SAFE_FALLBACK;
+        }
+        // subQueries 为 null 时补空列表
+        List<String> queries = result.subQueries() != null
+            ? result.subQueries() : Collections.emptyList();
+        // subQueries 数量限制
+        if (queries.size() > 5) {
+            queries = queries.subList(0, 5);
+        }
+        return new IntentResult(result.intent(), result.confidence(), queries);
+    }
+}
+```
+
+**容错规则**：
+- 意图识别失败 → 降级为 `DEEP_RETRIEVAL`（暴露全量 Tool，最安全策略）
+- 查询分解失败 → 不分解，用原始查询作为唯一子问题
+- 意图识别超时 → 2 次重试 + 5s 超时 → 降级
+
+#### 第二层：Tool 调用容错
+
+```java
+/**
+ * Tool 调用结果 — 统一的返回格式
+ */
+public record ToolResult(
+    boolean success,
+    String action,
+    String summary,
+    @Nullable String errorMessage,
+    @Nullable String errorCategory,
+    @Nullable List<RetrievedDocument> documents,
+    long durationMs
+) {
+    /** 成功结果 */
+    public static ToolResult success(String action, String summary,
+                                     List<RetrievedDocument> docs, long durationMs) {
+        return new ToolResult(true, action, summary, null, null, docs, durationMs);
+    }
+
+    /** 失败结果 — 供 LLM 决策是否重试或换策略 */
+    public static ToolResult failure(String action, String errorMessage,
+                                     String errorCategory, long durationMs) {
+        return new ToolResult(false, action, null, errorMessage,
+            errorCategory, null, durationMs);
+    }
+
+    /** 序列化为 JSON 返回给 LLM */
+    public String toJson() {
+        // 返回结构化 JSON，让 LLM 知道失败原因并决策
+        // success=false 时包含 errorMessage，引导 LLM 换策略
+    }
+}
+```
+
+**每个 Tool 的容错模板**：
+
+```java
+@Component
+public class HybridSearchTool implements RagTool {
+
+    private static final Duration TOOL_TIMEOUT = Duration.ofSeconds(10);
+
+    @Tool(description = "...")
+    public String hybridSearch(String query, @Nullable Integer topK) {
+        long start = System.currentTimeMillis();
+        try {
+            // 参数校验
+            if (query == null || query.isBlank()) {
+                return ToolResult.failure("hybridSearch",
+                    "查询文本不能为空", "INVALID_INPUT", 0).toJson();
+            }
+
+            ToolWorkspace ws = ToolWorkspaceHolder.get();
+            if (ws == null) {
+                return ToolResult.failure("hybridSearch",
+                    "Workspace 未初始化", "INTERNAL_ERROR", 0).toJson();
+            }
+
+            // 执行检索（带超时保护）
+            List<Document> docs = doHybridSearch(query, topK, ws);
+
+            long duration = System.currentTimeMillis() - start;
+            List<RetrievedDocument> retrieved = toRetrievedDocs(docs, ws.getCurrentSubQueryIndex());
+            ws.addRetrievedDocs(retrieved);
+
+            return ToolResult.success("hybridSearch",
+                formatSummary(query, retrieved.size()),
+                retrieved, duration).toJson();
+
+        } catch (DataAccessException e) {
+            // 数据库异常 — 不可重试，建议 LLM 换策略
+            long duration = System.currentTimeMillis() - start;
+            log.error("Hybrid search DB error", e);
+            return ToolResult.failure("hybridSearch",
+                "数据库暂时不可用，请尝试其他检索方式",
+                "DB_ERROR", duration).toJson();
+
+        } catch (ApiException e) {
+            // API 异常（如 embedding 服务不可用）— 可重试
+            long duration = System.currentTimeMillis() - start;
+            log.error("Hybrid search API error: status={}", e.getStatusCode(), e);
+            return ToolResult.failure("hybridSearch",
+                "检索服务暂时不可用，可以稍后重试或尝试 bm25Search",
+                "API_ERROR", duration).toJson();
+
+        } catch (Exception e) {
+            long duration = System.currentTimeMillis() - start;
+            log.error("Hybrid search unexpected error", e);
+            return ToolResult.failure("hybridSearch",
+                "检索发生未知错误",
+                "UNKNOWN_ERROR", duration).toJson();
+        }
+    }
+}
+```
+
+**关键原则**：
+- **Tool 永远不抛异常到 ToolCallAdvisor**：所有异常捕获后转为 `ToolResult.failure()`
+- **失败信息指导 LLM**：`errorMessage` 明确告知 LLM 失败原因和建议（"尝试 bm25Search"）
+- **错误分类**：`errorCategory` 区分可重试（`API_ERROR`）和不可重试（`DB_ERROR`、`INVALID_INPUT`）
+- **超时保护**：每个 Tool 设定执行超时，防止数据库慢查询或 API 无响应阻塞整个 ReAct 循环
+
+#### 第三层：死循环防御
+
+```java
+/**
+ * Agent 执行护栏 — 在 ToolCallAdvisor 外层包裹安全检查
+ *
+ * 防御维度：
+ * 1. 总轮次限制
+ * 2. 相同 Tool 连续调用限制
+ * 3. 总 token 消耗限制
+ * 4. 总执行时间限制
+ */
+@Component
+public class AgentGuardrails {
+
+    private final AgentRagProperties properties;
+
+    /** 检查是否允许继续 ReAct 循环 */
+    public GuardrailCheck check(ToolWorkspace workspace, int currentIteration,
+                                 int totalTokensUsed, long elapsedMs) {
+        // 1. 总轮次上限
+        if (currentIteration >= properties.maxToolIterations()) {
+            return GuardrailCheck.stop(
+                "已达到最大调用轮次 (%d)，强制停止".formatted(properties.maxToolIterations()));
+        }
+
+        // 2. 相同 Tool 连续调用检测（同一 Tool 连续 3 次视为死循环）
+        String lastTool = workspace.getLastToolName();
+        int consecutiveSame = workspace.getConsecutiveSameToolCount();
+        if (consecutiveSame >= 3) {
+            return GuardrailCheck.stop(
+                "工具 [%s] 已连续调用 %d 次，疑似死循环".formatted(lastTool, consecutiveSame));
+        }
+
+        // 3. 总 token 消耗上限
+        int maxTokens = properties.maxTotalTokens(); // 默认 32768
+        if (totalTokensUsed > maxTokens) {
+            return GuardrailCheck.stop(
+                "总 token 消耗已达 %d（上限 %d）".formatted(totalTokensUsed, maxTokens));
+        }
+
+        // 4. 总执行时间上限
+        long maxDurationMs = properties.maxDurationMs(); // 默认 60000ms
+        if (elapsedMs > maxDurationMs) {
+            return GuardrailCheck.stop(
+                "Agent 执行时间已达 %dms（上限 %dms）".formatted(elapsedMs, maxDurationMs));
+        }
+
+        return GuardrailCheck.ok();
+    }
+
+    public record GuardrailCheck(boolean allowed, @Nullable String reason) {
+        static GuardrailCheck ok() { return new GuardrailCheck(true, null); }
+        static GuardrailCheck stop(String reason) { return new GuardralCheck(false, reason); }
+    }
+}
+```
+
+**护栏触发后的行为**：
+
+```
+GuardrailCheck.stop() 触发时：
+  ├── 已有检索结果 → 用已有结果 + 强制 LLM 生成回答（注入提示："基于已收集的信息回答"）
+  └── 无检索结果 → 降级为 LLM 直接回答（注入提示："检索系统暂时不可用，基于自身知识回答"）
+```
+
+#### 第四层：全局降级
+
+```java
+/**
+ * Agent 全局降级策略
+ *
+ * 当 Agent 模式完全不可用时，降级到 MULTI_TURN + RetrievalAugmentationAdvisor
+ */
+@Component
+public class AgentDegradationStrategy {
+
+    private static final Logger log = LoggerFactory.getLogger(AgentDegradationStrategy.class);
+
+    /**
+     * Agent 模式是否可用
+     * 前置检查：模型是否支持 Tool Calling、意图识别模型是否可达
+     */
+    public boolean isAgentAvailable() {
+        // 可扩展为健康检查
+        return true;
+    }
+
+    /**
+     * 构建降级后的 Advisor 链（回退到 MULTI_TURN + RAG Pipeline）
+     */
+    public List<Advisor> buildDegradedChain(String conversationId,
+                                            ChatRequest request,
+                                            ChatModeStrategy modeStrategy) {
+        log.warn("Agent mode degraded to MULTI_TURN with RAG Pipeline");
+        // 复用 MULTI_TURN 的链路构建逻辑
+        // ...
+    }
+}
+```
+
+### 6.3 完整容错矩阵
+
+| 故障点 | 检测方式 | 容错策略 | 降级目标 | 用户感知 |
+|--------|----------|----------|----------|----------|
+| F1: 意图识别 LLM 失败 | 异常捕获 + 2 次重试 | 降级为 `DEEP_RETRIEVAL` | Agent 模式（全量 Tool） | 无感知（略慢） |
+| F2: 查询分解失败 | 返回 null / 空列表 | 用原始查询作为唯一子问题 | Agent 模式（单查询） | 无感知 |
+| F3: 意图误分类 | 无（静默） | DEEP_RETRIEVAL 为安全兜底 | Agent 模式 | 可能多检索（token 增） |
+| F4: ToolCallAdvisor 无 Tool | `toolSet.isEmpty()` 检查 | 降级为 MULTI_TURN + RAG Pipeline | MULTI_TURN 模式 | 回退到 Pipeline RAG |
+| F5a: 向量检索失败 | DataAccessException | ToolResult.failure → LLM 决策换 bm25 | LLM 自动切换 | 可能略慢 |
+| F5b: BM25 失败 | DataAccessException | ToolResult.failure → LLM 决策换 vectorSearch | LLM 自动切换 | 可能略慢 |
+| F5c: Rerank 失败 | ApiException | ToolResult.failure → LLM 跳过精排直接回答 | 无精排的回答 | 精度可能降低 |
+| F5d: 查询改写失败 | ApiException | ToolResult.failure → LLM 用原查询检索 | 原查询检索 | 可能召回不够好 |
+| F5e: 父文档查找失败 | DataAccessException | ToolResult.failure → LLM 用子块回答 | 子块粒度回答 | 上下文可能不完整 |
+| F6: 死循环 | Guardrails 轮次/重复/时间检测 | 强制停止 + 用已有结果回答 | 强制生成回答 | 可能不完整 |
+| F7: Workspace 损坏 | JsonProcessingException | 重建空 Workspace 继续或降级 | MULTI_TURN 模式 | 回退到 Pipeline RAG |
+| F8: ThreadLocal 泄漏 | try-finally in CleanupAdvisor | finally 块强制清理 | 无（已清理） | 无感知 |
+| F9: Token 超限 | Guardrails token 计数 | 强制停止 + 用已有结果回答 | 强制生成回答 | 可能不完整 |
+| F10: 主模型失败 | ChatServiceImpl 兜底策略 | 复用现有 FallbackChainProvider | 备选模型回答 | 回退到备选模型 |
+
+### 6.4 可观测性设计
+
+```java
+/**
+ * Agent 执行追踪记录
+ * 每次请求一条，记录完整的 Agent 执行过程
+ */
+public record AgentTrace(
+    String traceId,                   // 追踪 ID（UUIDv7）
+    long userId,
+    String query,                     // 原始查询
+    AgentIntent intent,               // 意图分类结果
+    List<String> subQueries,          // 子问题
+    List<ToolCallRecord> toolCalls,   // Tool 调用记录
+    int totalIterations,              // 总迭代轮次
+    int totalTokensUsed,              // 总 token 消耗
+    long totalDurationMs,             // 总耗时
+    String finalStatus,               // COMPLETED / DEGRADED / FAILED
+    @Nullable String stopReason       // 停止原因（正常完成 / 护栏触发 / 异常）
+) {}
+
+public record ToolCallRecord(
+    int iteration,                    // 第几轮
+    String toolName,                  // Tool 名称
+    Map<String, Object> inputParams,  // 输入参数
+    boolean success,                  // 是否成功
+    @Nullable String errorCategory,   // 错误分类
+    int resultDocCount,               // 结果文档数
+    long durationMs                   // 耗时
+) {}
+```
+
+**日志策略**：
+
+```yaml
+# Agent 执行追踪日志格式
+# INFO 级别：摘要（意图、轮次、总耗时、状态）
+# DEBUG 级别：每轮 Tool 调用详情（参数、结果数、耗时）
+# TRACE 级别：Workspace 完整状态快照
+
+2026-05-19 14:30:00 INFO  [AgentTrace] traceId=xxx intent=DEEP_RETRIEVAL subQueries=3
+  iterations=5 tokens=8200 duration=3200ms status=COMPLETED
+2026-05-19 14:30:01 DEBUG [AgentTrace] iter=1 tool=hybridSearch success=true docs=8 duration=420ms
+2026-05-19 14:30:01 DEBUG [AgentTrace] iter=2 tool=hybridSearch success=true docs=5 duration=380ms
+2026-05-19 14:30:02 DEBUG [AgentTrace] iter=3 tool=rerank success=true docs=5 duration=680ms
+2026-05-19 14:30:02 DEBUG [AgentTrace] iter=4 tool=parentDocLookup success=true docs=3 duration=120ms
+2026-05-19 14:30:02 WARN  [AgentGuardrail] traceId=xxx consecutiveSameTool=hybridSearch count=2 (threshold=3)
+```
+
+### 6.5 配置补充
+
+```yaml
+app:
+  agent:
+    # ... 已有配置 ...
+
+    # 容错与安全
+    max-tool-iterations: 10           # ReAct 最大轮次
+    max-consecutive-same-tool: 3       # 同一 Tool 连续调用上限（疑似死循环）
+    max-total-tokens: 32768            # 总 token 消耗上限
+    max-duration-ms: 60000             # 总执行时间上限（60s）
+    intent-retries: 2                  # 意图识别重试次数
+    intent-timeout-ms: 5000            # 意图识别超时（5s）
+    tool-timeout-ms: 10000             # 单次 Tool 超时（10s）
+    degrade-on-failure: true           # Agent 全部失败时是否降级到 MULTI_TURN
+```
+
+```java
+@ConfigurationProperties(prefix = "app.agent")
+public record AgentRagProperties(
+    boolean enabled,
+    // 意图识别
+    String intentModel,
+    Double intentTemperature,
+    int intentRetries,
+    int intentTimeoutMs,
+    // ReAct 循环
+    int maxToolIterations,
+    int maxConsecutiveSameTool,
+    int maxTotalTokens,
+    long maxDurationMs,
+    int toolTimeoutMs,
+    // 降级
+    boolean degradeOnFailure,
+    // System Prompt
+    String directAnswerPrompt,
+    String retrievalPrompt,
+    String deepRetrievalPrompt,
+    String generalToolPrompt
+) {
+    public AgentRagProperties {
+        if (maxToolIterations <= 0) maxToolIterations = 10;
+        if (maxConsecutiveSameTool <= 0) maxConsecutiveSameTool = 3;
+        if (maxTotalTokens <= 0) maxTotalTokens = 32768;
+        if (maxDurationMs <= 0) maxDurationMs = 60000;
+        if (intentRetries < 0) intentRetries = 2;
+        if (intentTimeoutMs <= 0) intentTimeoutMs = 5000;
+        if (toolTimeoutMs <= 0) toolTimeoutMs = 10000;
+        if (intentTemperature == null) intentTemperature = 0.1;
+    }
+}
+```
 
 ---
 

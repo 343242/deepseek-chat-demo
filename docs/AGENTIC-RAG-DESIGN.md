@@ -744,7 +744,7 @@ public final class ToolWorkspaceHolder {
 | 25 | `application.yml` | 修改 | 新增 app.agent.* 配置 |
 | **容错与安全** | | | |
 | 26 | `ToolResult.java` | 新增 | Tool 调用统一结果 record（success/failure + errorCategory） |
-| 27 | `AgentGuardrails.java` | 新增 | ReAct 循环护栏（轮次/重复/token/时间四维检测） |
+| 27 | `AgentGuardrails.java` | 新增 | ReAct 循环护栏（迭代总数/token 消耗/连续 Tool 三指标） |
 | 28 | `AgentDegradationStrategy.java` | 新增 | Agent 全局降级策略（降级到 MULTI_TURN） |
 | 29 | `AgentTrace.java` | 新增 | Agent 执行追踪记录 |
 | 30 | `ToolCallRecord.java` | 新增 | 单次 Tool 调用记录 |
@@ -940,7 +940,7 @@ Agent 请求的完整故障点：
   │     ├─ F5d: 查询改写失败（LLM 调用失败）
   │     └─ F5e: 父文档查找失败（数据库异常）
   │
-  ├─ F6: 循环不收敛（迭代超限 / token 超限）
+  ├─ F6: 循环不收敛（迭代超限 / token 超限 / 同一 Tool 连续调用超限）
   │
   ├─ F7: Workspace 状态损坏（并发写入 / 序列化失败）
   │
@@ -1128,21 +1128,27 @@ public class HybridSearchTool implements RagTool {
 - **错误分类**：`errorCategory` 区分可重试（`API_ERROR`）和不可重试（`DB_ERROR`、`INVALID_INPUT`）
 - **超时保护**：每个 Tool 设定执行超时，防止数据库慢查询或 API 无响应阻塞整个 ReAct 循环
 
-#### 第三层：循环护栏（双指标）
+#### 第三层：循环护栏（三指标）
 
 ```java
 /**
- * Agent 循环护栏 — 只跟踪两个核心指标，任一超标立即跳出循环
+ * Agent 循环护栏 — 跟踪三个指标，任一超标立即跳出 ReAct 循环
  *
- * 指标 1：累计 Token 消耗
+ * 指标 1：循环迭代总次数
+ *   - 整个 ReAct 循环的总轮次（LLM 决策 → Tool 执行 → 结果回传 = 1 轮）
+ *   - 默认上限：10 次
+ *   - 防御：无意义的无限循环
+ *
+ * 指标 2：累计 Token 消耗
  *   - 默认上限 = 当前模型最大上下文窗口 × 0.8
  *   - 涵盖：意图识别 LLM + ReAct 每轮（LLM 推理 + Tool 结果回传）
- *   - 超标 → 跳出循环，用已有结果强制回答
+ *   - 防御：token 爆炸导致 API 报错或成本失控
  *
- * 指标 2：循环迭代次数
- *   - 每轮 = 一次 Tool 调用（LLM 决策 → Tool 执行 → 结果回传）
- *   - 默认上限：10 次
- *   - 超标 → 跳出循环，用已有结果强制回答
+ * 指标 3：同一 Tool 连续调用次数
+ *   - 跟踪每个 Tool 的连续调用次数，同一 Tool 连续调用超过阈值视为死循环
+ *   - 默认阈值：3 次
+ *   - 防御：LLM 卡在某个 Tool 上反复调用（如反复改写查询但结果无改善）
+ *   - 注意：不同 Tool 交替调用会重置计数器
  */
 @Component
 public class AgentGuardrails {
@@ -1150,13 +1156,16 @@ public class AgentGuardrails {
     private final AgentRagProperties properties;
     private final ProviderRegistry providerRegistry;
 
+    /** 上一次调用的 Tool 名称，用于连续调用检测 */
+    private String lastToolName;
+    private int consecutiveCount;
+
     /**
-     * 计算当前模型的最大 token 上限
+     * 计算当前模型的 token 上限
      * 默认 = 模型上下文窗口 × 0.8，为 System Prompt + 输出预留 20%
      */
     public int resolveTokenLimit(String compositeModelId) {
         int contextWindow = providerRegistry.getContextWindowSize(compositeModelId);
-        // 默认 80% 作为输入 token 上限
         double ratio = properties.contextWindowRatio(); // 默认 0.8
         return (int) (contextWindow * ratio);
     }
@@ -1164,13 +1173,15 @@ public class AgentGuardrails {
     /**
      * 检查是否允许继续 ReAct 循环
      *
-     * @param iteration     当前迭代次数（从 1 开始）
+     * @param iteration     当前迭代轮次（从 1 开始，整个 ReAct 循环的总轮次）
      * @param tokensUsed    累计 token 消耗
-     * @param tokenLimit    token 上限（resolveTokenLimit 返回值）
+     * @param tokenLimit    token 上限
+     * @param currentTool   当前即将调用的 Tool 名称
      * @return 检查结果
      */
-    public GuardrailCheck check(int iteration, int tokensUsed, int tokenLimit) {
-        // 指标 1：迭代次数
+    public GuardrailCheck check(int iteration, int tokensUsed,
+                                 int tokenLimit, String currentTool) {
+        // 指标 1：循环迭代总次数
         if (iteration > properties.maxToolIterations()) {
             return GuardrailCheck.stop(
                 "ITERATION_LIMIT",
@@ -1188,13 +1199,29 @@ public class AgentGuardrails {
                         properties.contextWindowRatio() * 100));
         }
 
+        // 指标 3：同一 Tool 连续调用检测
+        if (currentTool != null && currentTool.equals(lastToolName)) {
+            consecutiveCount++;
+        } else {
+            lastToolName = currentTool;
+            consecutiveCount = 1;
+        }
+        if (consecutiveCount > properties.maxConsecutiveSameTool()) {
+            return GuardrailCheck.stop(
+                "CONSECUTIVE_TOOL",
+                "工具 [%s] 已连续调用 %d 次，疑似死循环，停止检索。"
+                    .formatted(currentTool, consecutiveCount));
+        }
+
         return GuardrailCheck.ok();
     }
 
+    public int getConsecutiveCount() { return consecutiveCount; }
+
     public record GuardrailCheck(
         boolean allowed,
-        @Nullable String stopReason,   // ITERATION_LIMIT | TOKEN_LIMIT
-        @Nullable String message        // 可读的停止原因，用于返回给用户
+        @Nullable String stopReason,   // ITERATION_LIMIT | TOKEN_LIMIT | CONSECUTIVE_TOOL
+        @Nullable String message        // 可读的停止原因，返回给用户
     ) {
         static GuardrailCheck ok() {
             return new GuardrailCheck(true, null, null);
@@ -1205,6 +1232,14 @@ public class AgentGuardrails {
     }
 }
 ```
+
+**三指标说明**：
+
+| 指标 | 计算方式 | 默认上限 | 防御目标 |
+|------|----------|----------|----------|
+| 循环迭代总次数 | 整个 ReAct 循环，每轮 = LLM 决策 → Tool 执行 → 结果回传 | 10 | 防止无限循环 |
+| 累计 Token 消耗 | 意图识别 + 所有 ReAct 轮次的 LLM token | 模型上下文窗口 × 80% | 防止 token 爆炸 |
+| 同一 Tool 连续调用 | 同一 Tool 连续调用次数（切换 Tool 会重置） | 3 | 防止 LLM 卡在某个 Tool 上 |
 
 **Token 计算范围**：
 
@@ -1223,15 +1258,15 @@ public class AgentGuardrails {
 
 ```java
 // 在 ToolCallAdvisor 每轮回调中检查
-GuardrailCheck check = guardrails.check(iteration, tokensUsed, tokenLimit);
+GuardrailCheck check = guardrails.check(iteration, tokensUsed, tokenLimit, currentTool);
 if (!check.allowed()) {
-    log.warn("Agent guardrail triggered: reason={}, iteration={}, tokens={}/{}, workspace docs={}",
+    log.warn("Agent guardrail triggered: reason={}, iteration={}, tokens={}/{}, tool={}, consecutive={}, workspace docs={}",
         check.stopReason(), iteration, tokensUsed, tokenLimit,
+        currentTool, guardrails.getConsecutiveCount(),
         workspace.getRetrievedDocs().size());
 
     // 直接跳出 ReAct 循环，不再调用 LLM
     // 用已有的 Workspace 检索结果 + check.message() 构造最终响应
-    // 返回给用户：护栏触发原因 + 已收集的部分信息
     return buildGuardrailResponse(workspace, check);
 }
 ```
@@ -1293,7 +1328,7 @@ public class AgentDegradationStrategy {
 | F5c: Rerank 失败 | ApiException | ToolResult.failure → LLM 跳过精排直接回答 | 无精排的回答 | 精度可能降低 |
 | F5d: 查询改写失败 | ApiException | ToolResult.failure → LLM 用原查询检索 | 原查询检索 | 可能召回不够好 |
 | F5e: 父文档查找失败 | DataAccessException | ToolResult.failure → LLM 用子块回答 | 子块粒度回答 | 上下文可能不完整 |
-| F6: 死循环 | Guardrails 双指标检测（迭代次数 / token 消耗） | 跳出循环 + 用已有结果回答 + 告知用户 | 回答可能不完整 |
+| F6: 死循环 | Guardrails 三指标检测（迭代总数 / token 消耗 / 连续 Tool） | 跳出循环 + 用已有结果回答 + 告知用户 | 回答可能不完整 |
 | F7: Workspace 损坏 | JsonProcessingException | 重建空 Workspace 继续或降级 | MULTI_TURN 模式 | 回退到 Pipeline RAG |
 | F8: ThreadLocal 泄漏 | try-finally in CleanupAdvisor | finally 块强制清理 | 无（已清理） | 无感知 |
 | F9: Token 超限 | Guardrails token 计数（模型上下文窗口 × 80%） | 跳出循环 + 用已有结果回答 + 告知用户 | 回答可能不完整 |
@@ -1356,7 +1391,8 @@ app:
     # ... 已有配置 ...
 
     # 循环护栏
-    max-tool-iterations: 10           # ReAct 最大迭代轮次
+    max-tool-iterations: 10           # ReAct 最大迭代总轮次（整个循环）
+    max-consecutive-same-tool: 3       # 同一 Tool 连续调用上限（切换 Tool 重置）
     context-window-ratio: 0.8         # token 上限 = 模型上下文窗口 × 此比例
 
     # 容错
@@ -1377,6 +1413,7 @@ public record AgentRagProperties(
     int intentTimeoutMs,
     // 循环护栏
     int maxToolIterations,
+    int maxConsecutiveSameTool,
     double contextWindowRatio,
     // 容错
     int toolTimeoutMs,
@@ -1389,6 +1426,7 @@ public record AgentRagProperties(
 ) {
     public AgentRagProperties {
         if (maxToolIterations <= 0) maxToolIterations = 10;
+        if (maxConsecutiveSameTool <= 0) maxConsecutiveSameTool = 3;
         if (contextWindowRatio <= 0 || contextWindowRatio > 1) contextWindowRatio = 0.8;
         if (intentRetries < 0) intentRetries = 2;
         if (intentTimeoutMs <= 0) intentTimeoutMs = 5000;

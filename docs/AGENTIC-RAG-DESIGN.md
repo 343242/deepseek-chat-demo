@@ -745,7 +745,139 @@ public enum ChatMode {
 }
 ```
 
-### 2.6 Advisor 链对比
+### 2.6 Agent 状态机
+
+Agent 请求的生命周期由以下状态机驱动：
+
+```
+                              ┌──────────────┐
+                              │   RECEIVED    │ ← 用户请求到达
+                              └──────┬───────┘
+                                     │
+                                     ▼
+                              ┌──────────────┐
+                              │  CLASSIFYING  │ ← 意图识别 + 查询分解
+                              └──────┬───────┘
+                                     │
+                        ┌────────────┼────────────┐
+                        │            │            │
+                        ▼            ▼            ▼
+                 ┌───────────┐ ┌──────────┐ ┌────────────┐
+                 │DIRECT_ANS │ │GENERAL_  │ │ RETRIEVAL  │
+                 │  WER(终态)│ │TOOL(终态)│ │ DEEP_RETR  │
+                 └───────────┘ └──────────┘ └─────┬──────┘
+                        │            │            │
+                        ▼            ▼            ▼
+                   直接回答     调用通用Tool   ┌───────────────┐
+                                               │ SUBQUERY_LOOP │
+                                               │ (子问题循环)   │
+                                               └───────┬───────┘
+                                                       │
+                                    ┌──────────────────┼──────────────────┐
+                                    │                  │                  │
+                                    ▼                  ▼                  ▼
+                             ┌─────────────┐  ┌──────────────┐  ┌──────────────┐
+                             │  ATOMIC_DEC  │  │  ATOMIC_DEC  │  │  ATOMIC_DEC  │
+                             │  → retrieve  │  │  → parametric│  │  → retrieve  │
+                             │ (子问题[i])  │  │ (子问题[i])  │  │ (子问题[i])  │
+                             └──────┬──────┘  └──────┬───────┘  └──────┬──────┘
+                                    │                  │                  │
+                                    ▼                  ▼                  ▼
+                             ┌─────────────┐  ┌──────────────┐  ┌──────────────┐
+                             │  RETRIEVING │  │PARAMETRIC_ANS│  │  RETRIEVING  │
+                             │ (调用Tool)   │  │ (自身知识回答) │  │ (调用Tool)   │
+                             └──────┬──────┘  └──────┬───────┘  └──────┬──────┘
+                                    │                  │                  │
+                                    ▼                  │                  │
+                             ┌─────────────┐           │                  │
+                             │ REFLECTING  │           │                  │
+                             │ (自省评估)   │           │                  │
+                             └──────┬──────┘           │                  │
+                          ┌─────────┼─────────┐        │                  │
+                          │         │         │        │                  │
+                          ▼         ▼         ▼        │                  │
+                    relevant+   relevant+   not         │                  │
+                    sufficient  insufficient relevant   │                  │
+                          │         │         │        │                  │
+                          ▼         ▼         ▼        │                  │
+                    ┌─────────┐ ┌─────────┐ ┌─────────┐│                  │
+                    │INTER_ANS│ │REWRITE   │ │SWITCH   ││                  │
+                    │(中间答案)│ │(改写重搜)│ │(换Tool) ││                  │
+                    └────┬────┘ └────┬────┘ └────┬────┘│                  │
+                         │           │           │     │                  │
+                         ▼           ▼           ▼     ▼                  ▼
+                    ┌──────────────────────────────────────────────┐
+                    │              所有子问题处理完毕？               │
+                    └──────────────────────┬───────────────────────┘
+                                           │
+                              ┌────────────┼────────────┐
+                              │ 否                      │ 是
+                              ▼                        ▼
+                        ┌──────────┐           ┌──────────────┐
+                        │下一子问题 │           │  GENERATING  │
+                        │ ATOMIC_DEC│           │ (生成最终回答)│
+                        └──────────┘           └──────┬───────┘
+                                                      │
+                                                      ▼
+                                               ┌──────────────┐
+                                               │SELF_EVALUATE │
+                                               │(质量自评)     │
+                                               └──────┬───────┘
+                                                      │
+                                                      ▼
+                                               ┌──────────────┐
+                                               │  COMPLETED   │ (终态)
+                                               └──────────────┘
+```
+
+#### 状态定义
+
+| 状态 | 说明 | 进入条件 | 可能的转换 |
+|------|------|----------|-----------|
+| `RECEIVED` | 请求到达，尚未处理 | 用户发送消息 | → CLASSIFYING |
+| `CLASSIFYING` | 意图识别 + 查询分解 | 进入 Agent 分支 | → DIRECT_ANSWER / GENERAL_TOOL / SUBQUERY_LOOP |
+| `DIRECT_ANSWER` | LLM 直接回答，无 Tool（终态） | 意图=DIRECT_ANSWER | → COMPLETED |
+| `GENERAL_TOOL` | 调用通用 Tool（终态） | 意图=GENERAL_TOOL | → COMPLETED |
+| `SUBQUERY_LOOP` | 子问题循环入口 | 意图=RETRIEVAL/DEEP_RETRIEVAL | → ATOMIC_DECIDE |
+| `ATOMIC_DECIDE` | 原子决策：retrieve or parametric | 取出下一个未处理子问题 | → RETRIEVING / PARAMETRIC_ANS |
+| `RETRIEVING` | 调用检索类 Tool | 决策=retrieve | → REFLECTING |
+| `PARAMETRIC_ANS` | 用自身知识生成中间答案 | 决策=parametric | → INTERMEDIATE_ANS |
+| `REFLECTING` | 检索后自省评估 | Tool 返回结果 | → INTERMEDIATE_ANS / REWRITE / SWITCH_TOOL |
+| `INTERMEDIATE_ANS` | 生成中间答案 | 自省通过 或 parametric | → SUBQUERY_LOOP(下一子问题) / GENERATING |
+| `REWRITE` | 改写查询重搜 | 自省=is_sufficient=false | → RETRIEVING |
+| `SWITCH_TOOL` | 切换 Tool 重试 | 自省=not_relevant | → RETRIEVING |
+| `GENERATING` | 综合所有中间答案生成最终回答 | 所有子问题处理完毕 | → SELF_EVALUATE |
+| `SELF_EVALUATE` | 回答质量自评 + 引用标注 | 最终回答生成 | → COMPLETED |
+| `COMPLETED` | 正常完成（终态） | 自评完成 | — |
+| `GUARDRAIL_STOPPED` | 护栏触发强制停止（终态） | 迭代/token 超限 | — |
+| `DEGRADED` | 降级到 MULTI_TURN（终态） | Agent 完全不可用 | — |
+
+#### 护栏在状态机中的切入点
+
+```
+每次状态转换前检查护栏：
+
+  SUBQUERY_LOOP → ATOMIC_DECIDE 之前
+    ├── GuardrailCheck.ok()       → 正常继续
+    ├── GuardrailCheck.warn()     → 注入提醒，继续循环
+    └── GuardrailCheck.stop()     → → GUARDRAIL_STOPPED (终态)
+
+  GUARDRAIL_STOPPED 处理：
+    ├── Workspace 有中间答案 → 用已有答案 + 强制 GENERATING
+    └── Workspace 无中间答案 → 返回提示信息给用户
+```
+
+#### 容错在状态机中的切入点
+
+```
+  CLASSIFYING 失败 → 降级为 DEEP_RETRIEVAL（安全默认），继续 SUBQUERY_LOOP
+  RETRIEVING 失败 → ToolResult.failure()，进入 REFLECTING（自省决定换策略）
+  REFLECTING 所有策略都失败 → INTERMEDIATE_ANS(标明信息不足)，继续下一子问题
+  GENERATING 失败 → 复用 FallbackChainProvider（现有兜底策略）
+  全局降级 → DEGRADED（回退到 MULTI_TURN + RAG Pipeline）
+```
+
+### 2.7 Advisor 链对比
 
 | Advisor | SIMPLE | MULTI_TURN | AGENT |
 |---------|--------|------------|-------|

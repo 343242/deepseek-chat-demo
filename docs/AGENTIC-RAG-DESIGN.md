@@ -940,7 +940,7 @@ Agent 请求的完整故障点：
   │     ├─ F5d: 查询改写失败（LLM 调用失败）
   │     └─ F5e: 父文档查找失败（数据库异常）
   │
-  ├─ F6: 循环不收敛（迭代超限 / token 超限 / 同一 Tool 连续调用超限）
+  ├─ F6: 循环不收敛（迭代超限 / token 超限 / 同一 Tool 连续调用需干预）
   │
   ├─ F7: Workspace 状态损坏（并发写入 / 序列化失败）
   │
@@ -1144,10 +1144,11 @@ public class HybridSearchTool implements RagTool {
  *   - 涵盖：意图识别 LLM + ReAct 每轮（LLM 推理 + Tool 结果回传）
  *   - 防御：token 爆炸导致 API 报错或成本失控
  *
- * 指标 3：同一 Tool 连续调用次数
- *   - 跟踪每个 Tool 的连续调用次数，同一 Tool 连续调用超过阈值视为死循环
+ * 指标 3：同一 Tool 连续调用次数（软干预）
+ *   - 跟踪每个 Tool 的连续调用次数，超过阈值时注入提醒信息给 LLM
  *   - 默认阈值：3 次
- *   - 防御：LLM 卡在某个 Tool 上反复调用（如反复改写查询但结果无改善）
+ *   - 不跳出循环，而是告知 LLM 当前状态，让 LLM 自主决策：
+ *     信息是否足够？还缺少哪些部分？切换 Tool 能否解决？
  *   - 注意：不同 Tool 交替调用会重置计数器
  */
 @Component
@@ -1199,7 +1200,7 @@ public class AgentGuardrails {
                         properties.contextWindowRatio() * 100));
         }
 
-        // 指标 3：同一 Tool 连续调用检测
+        // 指标 3：同一 Tool 连续调用检测（软干预）
         if (currentTool != null && currentTool.equals(lastToolName)) {
             consecutiveCount++;
         } else {
@@ -1207,9 +1208,12 @@ public class AgentGuardrails {
             consecutiveCount = 1;
         }
         if (consecutiveCount > properties.maxConsecutiveSameTool()) {
-            return GuardrailCheck.stop(
+            // 不跳出循环，返回警告信息让 LLM 自主决策
+            return GuardrailCheck.warn(
                 "CONSECUTIVE_TOOL",
-                "工具 [%s] 已连续调用 %d 次，疑似死循环，停止检索。"
+                "注意：工具 [%s] 已连续调用 %d 次。请评估：当前已收集的信息是否足够回答用户问题？"
+                    + "如果不够，还缺少哪些部分？尝试切换其他工具（如 bm25Search、vectorSearch、hybridSearch）"
+                    + "是否能获得更好的结果？如果信息已充分，请直接生成最终回答。"
                     .formatted(currentTool, consecutiveCount));
         }
 
@@ -1221,13 +1225,17 @@ public class AgentGuardrails {
     public record GuardrailCheck(
         boolean allowed,
         @Nullable String stopReason,   // ITERATION_LIMIT | TOKEN_LIMIT | CONSECUTIVE_TOOL
-        @Nullable String message        // 可读的停止原因，返回给用户
+        @Nullable String message,
+        boolean shouldWarn              // true = 软干预（注入提醒但不跳出循环）
     ) {
         static GuardrailCheck ok() {
-            return new GuardrailCheck(true, null, null);
+            return new GuardrailCheck(true, null, null, false);
         }
         static GuardrailCheck stop(String reason, String message) {
-            return new GuardrailCheck(false, reason, message);
+            return new GuardrailCheck(false, reason, message, false);
+        }
+        static GuardrailCheck warn(String reason, String message) {
+            return new GuardrailCheck(true, reason, message, true);
         }
     }
 }
@@ -1239,7 +1247,7 @@ public class AgentGuardrails {
 |------|----------|----------|----------|
 | 循环迭代总次数 | 整个 ReAct 循环，每轮 = LLM 决策 → Tool 执行 → 结果回传 | 10 | 防止无限循环 |
 | 累计 Token 消耗 | 意图识别 + 所有 ReAct 轮次的 LLM token | 模型上下文窗口 × 80% | 防止 token 爆炸 |
-| 同一 Tool 连续调用 | 同一 Tool 连续调用次数（切换 Tool 会重置） | 3 | 防止 LLM 卡在某个 Tool 上 |
+| 同一 Tool 连续调用 | 同一 Tool 连续调用次数（切换 Tool 会重置） | 3 | 软干预：告知 LLM 评估信息是否充足，建议切换 Tool 或直接回答 |
 
 **Token 计算范围**：
 
@@ -1259,14 +1267,22 @@ public class AgentGuardrails {
 ```java
 // 在 ToolCallAdvisor 每轮回调中检查
 GuardrailCheck check = guardrails.check(iteration, tokensUsed, tokenLimit, currentTool);
-if (!check.allowed()) {
-    log.warn("Agent guardrail triggered: reason={}, iteration={}, tokens={}/{}, tool={}, consecutive={}, workspace docs={}",
-        check.stopReason(), iteration, tokensUsed, tokenLimit,
-        currentTool, guardrails.getConsecutiveCount(),
-        workspace.getRetrievedDocs().size());
 
-    // 直接跳出 ReAct 循环，不再调用 LLM
-    // 用已有的 Workspace 检索结果 + check.message() 构造最终响应
+if (check.shouldWarn()) {
+    // 软干预：不跳出循环，将提醒信息注入下一轮 LLM 的 prompt
+    // LLM 收到后会自主评估：信息够不够？要不要换 Tool？要不要直接回答？
+    log.info("Agent guardrail warning: reason={}, tool={}, consecutive={}",
+        check.stopReason(), currentTool, guardrails.getConsecutiveCount());
+    // 将 check.message() 注入到下一轮 LLM 调用的 user message 中
+    workspace.setPendingWarning(check.message());
+    // 继续循环
+}
+
+if (!check.allowed()) {
+    // 硬中断：迭代超限或 token 超限，立即跳出循环
+    log.warn("Agent guardrail stop: reason={}, iteration={}, tokens={}/{}, workspace docs={}",
+        check.stopReason(), iteration, tokensUsed, tokenLimit,
+        workspace.getRetrievedDocs().size());
     return buildGuardrailResponse(workspace, check);
 }
 ```
@@ -1328,7 +1344,7 @@ public class AgentDegradationStrategy {
 | F5c: Rerank 失败 | ApiException | ToolResult.failure → LLM 跳过精排直接回答 | 无精排的回答 | 精度可能降低 |
 | F5d: 查询改写失败 | ApiException | ToolResult.failure → LLM 用原查询检索 | 原查询检索 | 可能召回不够好 |
 | F5e: 父文档查找失败 | DataAccessException | ToolResult.failure → LLM 用子块回答 | 子块粒度回答 | 上下文可能不完整 |
-| F6: 死循环 | Guardrails 三指标检测（迭代总数 / token 消耗 / 连续 Tool） | 跳出循环 + 用已有结果回答 + 告知用户 | 回答可能不完整 |
+| F6: 同一 Tool 死循环 | 连续调用检测 → 软干预（告知 LLM 评估信息是否充足，建议切换 Tool） | LLM 自主决策切换 Tool 或直接回答 | 可能略慢但最终收敛 |
 | F7: Workspace 损坏 | JsonProcessingException | 重建空 Workspace 继续或降级 | MULTI_TURN 模式 | 回退到 Pipeline RAG |
 | F8: ThreadLocal 泄漏 | try-finally in CleanupAdvisor | finally 块强制清理 | 无（已清理） | 无感知 |
 | F9: Token 超限 | Guardrails token 计数（模型上下文窗口 × 80%） | 跳出循环 + 用已有结果回答 + 告知用户 | 回答可能不完整 |

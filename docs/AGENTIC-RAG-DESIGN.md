@@ -245,7 +245,7 @@ public record IntentResult(
 public class IntentClassifier {
 
     private final ChatClient intentChatClient;  // 独立的轻量模型
-    private final IntentToolSetRegistry toolSetRegistry;
+    // 不依赖 AgentToolCallbackFactory — 意图分类与 Tool 选择职责分离
 
     /**
      * 分类意图 + 分解查询
@@ -269,34 +269,45 @@ public class IntentClassifier {
 }
 ```
 
-#### IntentToolSetRegistry — 意图→Tool 子集映射
+#### AgentToolCallbackFactory — 意图→Tool 子集映射 + 闭包创建
 
 ```java
 /**
- * 意图→Tool 子集映射注册表
+ * 意图→Tool 子集映射 + FunctionToolCallback 闭包创建工厂
  *
- * 根据意图识别结果，动态决定暴露给 LLM 的 Tool 子集。
+ * 职责合并（原 IntentToolSetRegistry + 工厂逻辑）：
+ * 1. 根据意图识别结果，动态决定暴露给 LLM 的 Tool 子集
+ * 2. 通过闭包捕获 ToolWorkspace 局部变量，创建 FunctionToolCallback
+ *
  * 避免向 LLM 暴露所有工具，减少选择困难和误调用。
+ * 每个 Tool 的闭包捕获同一个 workspace 实例，
+ * 请求结束 GC 回收，无全局状态。
  */
 @Component
-public class IntentToolSetRegistry {
+public class AgentToolCallbackFactory {
 
-    private final Map<AgentIntent, List<ToolCallback>> toolSetMap;
+    private final List<RagTool> ragTools;        // 所有 RAG Tool 实现
+    private final List<Object> generalToolBeans; // CalculatorTools, DateTimeTools 等
 
-    public IntentToolSetRegistry(
-            List<RagTool> ragTools,       // 所有 RAG Tool
-            List<Object> generalToolBeans  // CalculatorTools, DateTimeTools 等
-    ) {
-        // DIRECT_ANSWER → 空集（LLM 直接回答，无工具）
-        // RETRIEVAL → vectorSearch, bm25Search, hybridSearch, knowledgeBaseInfo
-        // DEEP_RETRIEVAL → 全量 RAG Tool
-        // GENERAL_TOOL → Calculator, DateTime, CodeExecution
+    /**
+     * 根据意图创建 ToolCallback 数组
+     *
+     * @param intent    意图分类
+     * @param workspace 请求级 Workspace（闭包捕获）
+     * @return 该意图下可用的 ToolCallback 数组
+     */
+    public ToolCallback[] createToolCallbacks(AgentIntent intent, ToolWorkspace workspace) {
+        return switch (intent) {
+            case DIRECT_ANSWER -> new ToolCallback[]{}; // 无 Tool
+            case RETRIEVAL -> buildRetrievalToolSet(workspace);
+            case DEEP_RETRIEVAL -> buildDeepRetrievalToolSet(workspace);
+            case GENERAL_TOOL -> buildGeneralToolSet();
+        };
     }
 
-    public List<ToolCallback> getToolSet(AgentIntent intent) {
-        return toolSetMap.getOrDefault(intent, Collections.emptyList());
-    }
+    // ... 各 Tool 的 buildXxx 方法通过 FunctionToolCallback 闭包创建
 }
+```
 ```
 
 #### 意图识别 + 查询分解 Prompt
@@ -511,7 +522,7 @@ System Prompt 中的关键引导：
 
 ### 2.5 Tool Workspace — JSON 中间状态
 
-Tool 之间通过结构化 JSON Workspace 传递中间结果，而非 ThreadLocal 的 `List<Document>`。
+Tool 之间通过结构化 JSON Workspace 传递中间结果。每个 Tool 的闭包捕获同一个 `workspace` 局部变量，无需任何全局状态传递机制。
 
 #### Workspace 数据结构
 
@@ -523,7 +534,8 @@ Tool 之间通过结构化 JSON Workspace 传递中间结果，而非 ThreadLoca
  * 1. 所有 Tool 的输入输出都是 JSON 字符串（可序列化、可调试）
  * 2. Workspace 维护一个 JSON 文档，记录检索中间状态
  * 3. Tool 从 Workspace 读取前置结果，执行后更新 Workspace
- * 4. 生命周期：单次 ChatRequest，请求结束清理
+ * 4. 生命周期：ToolWorkspaceFactory.create() 创建 → 闭包捕获 → 请求结束 GC 回收
+ *    （无 ThreadLocal、无手动清理、无泄漏风险）
  *
  * 线程安全：单次请求内单线程执行，无需同步
  */
@@ -917,7 +929,7 @@ com.demo.chat.rag.agent/
 │   ├── AgentIntent.java              // 意图枚举
 │   ├── IntentClassifier.java         // 意图分类器
 │   ├── IntentResult.java             // 分类结果 record
-│   └── IntentToolSetRegistry.java    // 意图→Tool 子集映射
+│   └── (IntentToolSetRegistry 职责已合并到 AgentToolCallbackFactory)
 ├── workspace/
 │   ├── ToolWorkspace.java            // JSON 中间状态
 │   ├── ToolWorkspaceFactory.java     // 按请求创建
@@ -944,7 +956,7 @@ com.demo.chat.rag.agent/
 /**
  * RAG Tool 标记接口
  *
- * 用于 IntentToolSetRegistry 区分 RAG Tool 和通用 Tool。
+ * 用于 AgentToolCallbackFactory 区分 RAG Tool 和通用 Tool。
  * 实现 RagTool 的 @Component Bean 会被自动归类为 RAG Tool。
  */
 public interface RagTool {}
@@ -1124,7 +1136,7 @@ buildAgentChain() 创建 workspace（局部变量）
  * 闭包 ToolCallback 工厂
  *
  * 根据意图按需创建 FunctionToolCallback，闭包捕获 workspace 局部变量。
- * Tool 类本身不感知 workspace 传递机制（无 ThreadLocal、无全局状态）。
+ * Tool 类本身不感知 workspace 传递机制（无全局状态，闭包捕获局部变量）。
  */
 @Component
 public class AgentToolCallbackFactory {
@@ -1236,6 +1248,26 @@ public class AgentToolCallbackFactory {
 | 可测试性 | 需 mock ThreadLocal | 直接传入 workspace 对象 |
 | Spring AI API | 依赖 @Tool 注解 + 内部 resolver | FunctionToolCallback 闭包，完全控制 |
 
+#### returnDirect 优化
+
+Spring AI `ToolCallAdvisor` 支持 `returnDirect` 特性：当 Tool 的 `ToolMetadata` 设置 `returnDirect=true` 时，Tool 结果直接返回给客户端，不再回传 LLM。适用于不需要 LLM 加工的查询类 Tool：
+
+```java
+// knowledgeBaseInfo — 统计信息直接返回，无需 LLM 再加工
+private ToolCallback buildKnowledgeBaseInfo(ToolWorkspace workspace) {
+    return FunctionToolCallback.<Void, String>builder(
+            "knowledgeBaseInfo",
+            (request, ctx) -> knowledgeBaseInfoTool.execute(workspace)
+        )
+        .description("查询当前知识库的元信息，包括文档数量、分块数量等")
+        .inputType(Void.class)
+        .toolMetadata(ToolMetadata.builder().returnDirect(true).build())
+        .build();
+}
+```
+
+> **注意**：`returnDirect` 跳过 LLM，直接将 Tool 结果作为 `ChatResponse` 返回。只适用于 `DIRECT_ANSWER` 意图下的简单查询场景。`RETRIEVAL` / `DEEP_RETRIEVAL` 意图下的检索 Tool 不应设置 `returnDirect`，因为检索结果需要 LLM 综合生成回答。
+
 ---
 
 ## 4. 核心改动
@@ -1248,7 +1280,7 @@ public class AgentToolCallbackFactory {
 | 1 | `AgentIntent.java` | 新增 | 意图枚举 |
 | 2 | `IntentResult.java` | 新增 | 分类结果 record |
 | 3 | `IntentClassifier.java` | 新增 | 意图分类器（独立 LLM 调用） |
-| 4 | `IntentToolSetRegistry.java` | 新增 | 意图→Tool 子集映射 |
+| 4 | `IntentClassifier.java` | 新增 | 意图分类器（独立 LLM 调用） |
 | **Workspace 层** | | | |
 | 5 | `ToolWorkspace.java` | 新增 | JSON 中间状态管理 |
 | 6 | `ToolWorkspaceFactory.java` | 新增 | 按请求创建 Workspace |
@@ -1262,7 +1294,7 @@ public class AgentToolCallbackFactory {
 | 13 | `QueryRewriteTool.java` | 新增 | 查询改写 Tool |
 | 14 | `ParentDocLookupTool.java` | 新增 | 父文档查找 Tool |
 | 15 | `KnowledgeBaseInfoTool.java` | 新增 | 知识库元信息 Tool |
-| 16 | `AgentToolCallbackFactory.java` | 新增 | 闭包创建 FunctionToolCallback（按意图动态生成 Tool 子集） |
+| 16 | `AgentToolCallbackFactory.java` | 新增 | 闭包创建 FunctionToolCallback（按意图动态生成 Tool 子集，合并原 IntentToolSetRegistry 职责） |
 | **Advisor 层** | | | |
 | 17 | `AgentSystemPromptAdvisor.java` | 新增 | 根据意图动态注入 System Prompt（含原子决策引导+检索代价意识+自省格式） |
 | **编排层改动** | | | |
@@ -1314,6 +1346,8 @@ public List<Advisor> buildAgentChain(Long userId, @Nullable Long teamId,
         .createToolCallbacks(intent.intent(), workspace);
 
     // 5. 创建 ToolCallAdvisor（ToolCallback 通过 resolver 传入）
+    //    disableMemory() 等价于 conversationHistoryEnabled=false，
+    //    由 MessageChatMemoryAdvisor(order=3) 统一管理对话历史，避免重复
     ToolCallbackResolver resolver = new StaticToolCallbackResolver(List.of(agentTools));
     ToolCallingManager agentToolManager = DefaultToolCallingManager.builder()
         .toolCallbackResolver(resolver)
@@ -1324,8 +1358,14 @@ public List<Advisor> buildAgentChain(Long userId, @Nullable Long teamId,
         .disableMemory()
         .build());
 
-    // 6. 动态 System Prompt（根据意图注入不同指令 + workspace 状态）
-    chain.add(new AgentSystemPromptAdvisor(intent, workspace));
+    // 6. 动态 System Prompt（Agent Prompt + CAG 上下文合并）
+    String agentPrompt = resolvePrompt(intent.intent());
+    String cagContext = buildCagContext(ctx, request);
+    String mergedPrompt = agentPrompt;
+    if (cagContext != null && !cagContext.isBlank()) {
+        mergedPrompt += "\n\n## 当前用户上下文\n" + cagContext;
+    }
+    chain.add(new AgentSystemPromptAdvisor(intent.intent(), mergedPrompt));
 
     // 7. Memory
     chain.add(MessageChatMemoryAdvisor.builder(chatMemory).build());
@@ -1341,42 +1381,64 @@ public List<Advisor> buildAgentChain(Long userId, @Nullable Long teamId,
 > - ✅ `agentToolCallbackFactory.createToolCallbacks(intent, workspace)` — 闭包捕获
 > - ✅ `StaticToolCallbackResolver` 包装闭包 callbacks，注入到独立的 `DefaultToolCallingManager`
 > - ✅ 每次 Agent 请求自建 `ToolCallAdvisor`，不复用全局单例
+> - ✅ CAG 上下文在 buildAgentChain 中合并到 Agent Prompt，`AgentSystemPromptAdvisor` 只负责注入
 
 ### 4.3 AgentSystemPromptAdvisor — 动态 System Prompt
 
-根据意图识别结果注入不同的 System Prompt：
+根据意图识别结果注入不同的 System Prompt。构造时接收**已合并的最终 Prompt 字符串**（Agent Prompt + CAG 上下文），不再关心 CAG 合并逻辑（由调用方 `buildAgentChain` 负责）。
 
 ```java
+import org.springframework.ai.chat.client.advisor.api.CallAroundAdvisor;
+import org.springframework.ai.chat.client.advisor.api.AdvisedRequest;
+import org.springframework.ai.chat.client.advisor.api.AdvisedResponse;
+import org.springframework.ai.chat.client.advisor.api.CallAroundAdvisorChain;
+
 /**
  * 根据意图动态注入 System Prompt
  *
- * 不同意图类型需要不同的行为指导：
- * - DIRECT_ANSWER: 无工具可用，引导 LLM 直接回答
- * - RETRIEVAL: 提供检索工具使用指南
- * - DEEP_RETRIEVAL: 提供完整的深度检索策略指南
- * - GENERAL_TOOL: 提供通用工具使用指南
+ * 职责单一：将预构建的 mergedSystemPrompt 注入到 AdvisedRequest。
+ * Prompt 内容由调用方在 buildAgentChain() 中组装
+ * （Agent Prompt + CAG 上下文 + Workspace 状态摘要）。
+ *
+ * 注意：实现 Spring AI 的 CallAroundAdvisor 接口，
+ * 使用 aroundCall 拦截请求并注入 system prompt。
+ * conversationHistoryEnabled 由 ToolCallAdvisor 管理，
+ * 本 Advisor 不涉及对话历史。
  */
 public class AgentSystemPromptAdvisor implements CallAroundAdvisor {
 
-    private final IntentResult intent;
-    private final AgentRagProperties properties;
+    private final AgentIntent intent;
+    private final String mergedSystemPrompt;
+
+    /**
+     * @param intent             意图分类结果（用于日志和条件判断）
+     * @param mergedSystemPrompt 已合并的最终 Prompt（Agent + CAG + Workspace 状态）
+     */
+    public AgentSystemPromptAdvisor(AgentIntent intent, String mergedSystemPrompt) {
+        this.intent = intent;
+        this.mergedSystemPrompt = mergedSystemPrompt;
+    }
+
+    @Override
+    public String getName() {
+        return "AgentSystemPromptAdvisor";
+    }
+
+    @Override
+    public int getOrder() {
+        return 1; // 在 ToolCallAdvisor(order=2) 之前执行
+    }
 
     @Override
     public AdvisedResponse aroundCall(AdvisedRequest request, CallAroundAdvisorChain chain) {
-        String systemPrompt = resolvePrompt(intent.intent());
-        // 注入 systemPrompt 到 request
-        return chain.nextAroundCall(request.withSystemText(systemPrompt));
-    }
-
-    private String resolvePrompt(AgentIntent intent) {
-        return switch (intent) {
-            case DIRECT_ANSWER -> properties.directAnswerPrompt();
-            case RETRIEVAL -> properties.retrievalPrompt();
-            case DEEP_RETRIEVAL -> properties.deepRetrievalPrompt();
-            case GENERAL_TOOL -> properties.generalToolPrompt();
-        };
+        // 将 mergedSystemPrompt 注入到 request
+        AdvisedRequest updated = AdvisedRequest.from(request)
+            .withSystemText(mergedSystemPrompt)
+            .build();
+        return chain.nextAroundCall(updated);
     }
 }
+```
 ```
 
 ### 4.4 配置设计
@@ -1428,8 +1490,8 @@ public record AgentRagProperties(
 | MULTI_TURN 模式 | 零影响 | 仍用 `RetrievalAugmentationAdvisor` |
 | `RagAdvisorFactory` | 保留 | MULTI_TURN 模式继续使用 |
 | `HybridDocumentRetriever` | 保留 + 复用 | Tool 复用其核心逻辑，不修改原类 |
-| `ToolRegistry` | 保留 | AGENT 模式不使用 ToolRegistry，改用 IntentToolSetRegistry |
-| `CalculatorTools` / `DateTimeTools` | 保留 | Agent 模式通过 IntentToolSetRegistry 按需暴露 |
+| `ToolRegistry` | 保留 | AGENT 模式不使用 ToolRegistry，改用 AgentToolCallbackFactory |
+| `CalculatorTools` / `DateTimeTools` | 保留 | Agent 模式通过 AgentToolCallbackFactory 按需暴露 |
 | ETL Pipeline | 零影响 | 文档入库流程不变 |
 | 评估模块 | 零影响 | 评估仍基于 `RetrievalAugmentationAdvisor` |
 | **CAG 上下文增强** | **保留 + 合并注入** | AGENT 模式下 CAG 输出合并到 Agent System Prompt，详见 5.2 |
@@ -1478,7 +1540,7 @@ String mergedPrompt = agentPrompt;
 if (cagContext != null && !cagContext.isBlank()) {
     mergedPrompt += "\n\n## 当前用户上下文\n" + cagContext;
 }
-chain.add(new AgentSystemPromptAdvisor(intent, mergedPrompt));
+chain.add(new AgentSystemPromptAdvisor(intent.intent(), mergedPrompt));
 ```
 
 **CAG 模块零改动**：`CagProperties`、`RequestContext`、`RequestContextManager`、`ContextPromptInjector` 等所有文件不需要任何修改。
@@ -1584,6 +1646,8 @@ public List<Advisor> buildAgentChain(Long userId, @Nullable Long teamId,
         .createToolCallbacks(intent.intent(), workspace);
 
     // 5. Agent 专用 ToolCallAdvisor（闭包 ToolCallback 通过 resolver 传入）
+    //    disableMemory() 等价于 conversationHistoryEnabled=false，
+    //    由 MessageChatMemoryAdvisor 统一管理对话历史
     ToolCallingManager agentToolManager = DefaultToolCallingManager.builder()
             .toolCallbackResolver(new StaticToolCallbackResolver(List.of(agentTools)))
             .build();
@@ -1593,8 +1657,14 @@ public List<Advisor> buildAgentChain(Long userId, @Nullable Long teamId,
             .advisorOrder(2)
             .build());
 
-    // 6. 动态 System Prompt
-    chain.add(new AgentSystemPromptAdvisor(intent, workspace));
+    // 6. 动态 System Prompt（Agent Prompt + CAG 上下文合并）
+    String agentPrompt = resolvePrompt(intent.intent());
+    String cagContext = buildCagContext(ctx, request);
+    String mergedPrompt = agentPrompt;
+    if (cagContext != null && !cagContext.isBlank()) {
+        mergedPrompt += "\n\n## 当前用户上下文\n" + cagContext;
+    }
+    chain.add(new AgentSystemPromptAdvisor(intent.intent(), mergedPrompt));
 
     // 7. Memory
     chain.add(MessageChatMemoryAdvisor.builder(chatMemory).build());
@@ -1791,7 +1861,7 @@ Agent 请求的完整故障点：
   │
   ├─ F7: Workspace 状态损坏（并发写入 / 序列化失败）
   │
-  ├─ F8: ThreadLocal 泄漏（异常路径未清理）
+  ├─ F8: Workspace 不可用（闭包方案下不应发生，仅防御性处理）
   │
   ├─ F9: 累计 token 超过模型上下文窗口 80%
   │
@@ -1925,7 +1995,7 @@ public class HybridSearchTool implements RagTool {
                     "查询文本不能为空", "INVALID_INPUT", 0).toJson();
             }
 
-            ToolWorkspace ws = ToolWorkspaceHolder.get();
+            ToolWorkspace ws = workspace; // 闭包捕获的 workspace 局部变量
             if (ws == null) {
                 return ToolResult.failure("hybridSearch",
                     "Workspace 未初始化", "INTERNAL_ERROR", 0).toJson();
@@ -2193,7 +2263,7 @@ public class AgentDegradationStrategy {
 | F5e: 父文档查找失败 | DataAccessException | ToolResult.failure → LLM 用子块回答 | 子块粒度回答 | 上下文可能不完整 |
 | F6: 同一 Tool 死循环 | 连续调用检测 → 软干预（告知 LLM 评估信息是否充足，建议切换 Tool） | LLM 自主决策切换 Tool 或直接回答 | 可能略慢但最终收敛 |
 | F7: Workspace 损坏 | JsonProcessingException | 重建空 Workspace 继续或降级 | MULTI_TURN 模式 | 回退到 Pipeline RAG |
-| F8: ThreadLocal 泄漏 | try-finally in CleanupAdvisor | finally 块强制清理 | 无（已清理） | 无感知 |
+| F8: Workspace 不可用 | 闭包方案不会发生 | workspace 作为闭包局部变量，随请求创建和回收 | 无（设计消除） |
 | F9: Token 超限 | Guardrails token 计数（模型上下文窗口 × 80%） | 跳出循环 + 用已有结果回答 + 告知用户 | 回答可能不完整 |
 | F10: 主模型失败 | ChatServiceImpl 兜底策略 | 复用现有 FallbackChainProvider | 备选模型回答 | 回退到备选模型 |
 
@@ -2309,16 +2379,16 @@ public record AgentRagProperties(
 2. `ChatModeStrategy` 加 `default isAgentMode()`（P5）
 3. `AgentModeStrategy` 实现
 4. `AgentRagProperties` 配置类 + `application.yml`
-5. `ToolWorkspace` + `ToolWorkspaceHolder` + `ToolWorkspaceFactory`
+5. `ToolWorkspace` + `ToolWorkspaceFactory`
 6. `RetrievedDocument` + `SelfReflection` + `IntermediateAnswer` DTO
-7. `AgentContextCleanupAdvisor`
+7. ~~`AgentContextCleanupAdvisor`~~ — 闭包方案不需要，删除
 8. `AgentChatResponse` DTO（P6）
 
 ### Phase 2: 意图识别层（3-4h）
 
 1. `AgentIntent` 枚举 + `IntentResult` record
 2. `IntentClassifier`（独立 LLM 调用 + Structured Output）
-3. `IntentToolSetRegistry`（意图→Tool 子集映射）
+3. `AgentToolCallbackFactory`（意图→Tool 子集映射 + 闭包创建）
 4. 意图识别单元测试
 
 ### Phase 3: RAG Tool 实现（4-6h）
@@ -2370,14 +2440,8 @@ public record AgentRagProperties(
 1. 更新 `ARCHITECTURE.md`
 2. 更新 `RAG-DESIGN.md`
 3. 更新 `API-DOCS.md`
-3. 性能基准（延迟、token 消耗）
-4. Workspace 状态正确性验证
-
-### Phase 6: 文档与收尾（1h）
-
-1. 更新 `ARCHITECTURE.md`
-2. 更新 `RAG-DESIGN.md`
-3. 更新 `API-DOCS.md`
+4. 性能基准（延迟、token 消耗）
+5. Workspace 状态正确性验证
 
 ---
 

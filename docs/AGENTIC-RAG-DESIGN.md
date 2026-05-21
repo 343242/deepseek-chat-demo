@@ -920,20 +920,19 @@ com.demo.chat.rag.agent/
 │   └── IntentToolSetRegistry.java    // 意图→Tool 子集映射
 ├── workspace/
 │   ├── ToolWorkspace.java            // JSON 中间状态
-│   ├── ToolWorkspaceHolder.java      // ThreadLocal 传递
 │   ├── ToolWorkspaceFactory.java     // 按请求创建
 │   └── RetrievedDocument.java        // 检索结果 DTO record
 ├── tool/
 │   ├── RagTool.java                  // RAG Tool 标记接口
-│   ├── VectorSearchTool.java         // 向量检索
-│   ├── Bm25SearchTool.java           // BM25 全文检索
-│   ├── HybridSearchTool.java         // 混合检索 + RRF
-│   ├── RerankTool.java               // 语义精排
-│   ├── QueryRewriteTool.java         // 查询改写
-│   ├── ParentDocLookupTool.java      // 子块→父文档
-│   └── KnowledgeBaseInfoTool.java    // 知识库元信息
+│   ├── VectorSearchTool.java         // 向量检索（接收 workspace 参数）
+│   ├── HybridSearchTool.java         // 混合检索 + RRF（接收 workspace 参数）
+│   ├── RerankTool.java               // 语义精排（接收 workspace 参数）
+│   ├── QueryRewriteTool.java         // 查询改写（接收 workspace 参数）
+│   ├── ParentDocLookupTool.java      // 子块→父文档（接收 workspace 参数）
+│   ├── KnowledgeBaseInfoTool.java    // 知识库元信息（接收 workspace 参数）
+│   └── callback/
+│       └── AgentToolCallbackFactory.java  // 闭包创建 FunctionToolCallback
 └── advisor/
-    ├── AgentContextCleanupAdvisor.java  // ThreadLocal 清理
     └── AgentSystemPromptAdvisor.java    // 动态 System Prompt 注入
 ```
 
@@ -985,19 +984,20 @@ public class VectorSearchTool implements RagTool {
     private final VectorStore vectorStore;
     private final RagRetrievalProperties properties;
 
-    @Tool(description = "在知识库中进行向量语义检索。适用于概念性、语义性的问题。" +
-                        "返回与查询语义最相似的文档片段。")
-    public String vectorSearch(
-            @ToolParam(description = "检索查询文本") String query,
-            @ToolParam(description = "返回结果数量，默认10") @Nullable Integer topK) {
-        ToolWorkspace ws = ToolWorkspaceHolder.get();
-        // 从 ws 获取 userId/teamId 构建过滤条件
+    /**
+     * 向量语义检索。workspace 由闭包传入，Tool 不感知传递机制。
+     */
+    public String execute(VectorSearchRequest request, ToolWorkspace workspace) {
+        // 从 workspace 获取 userId/teamId 构建过滤条件
         // 调用 vectorStore.similaritySearch()
-        // 追加到 ws.retrievedDocs
+        // 追加到 workspace.retrievedDocs
         // 返回 JSON 摘要
     }
 }
 ```
+
+> **注意**：Tool 类**不使用 `@Tool` 注解**，而是由 `AgentToolCallbackFactory` 通过闭包包装为
+> `FunctionToolCallback` 注册给框架。Tool 方法签名只关注业务逻辑，workspace 由闭包捕获传入。
 
 #### HybridSearchTool
 
@@ -1010,15 +1010,12 @@ public class HybridSearchTool implements RagTool {
     private final QueryNormalizer queryNormalizer;
     private final RagRetrievalProperties properties;
 
-    @Tool(description = "混合检索：同时使用向量语义检索和 BM25 全文检索，" +
-                        "通过 RRF (Reciprocal Rank Fusion) 融合结果。" +
-                        "适用于大多数检索场景，兼顾语义匹配和精确关键词匹配。")
-    public String hybridSearch(
-            @ToolParam(description = "检索查询文本") String query,
-            @ToolParam(description = "返回结果数量，默认20") @Nullable Integer topK) {
-        ToolWorkspace ws = ToolWorkspaceHolder.get();
+    /**
+     * 混合检索 + RRF 融合。workspace 由闭包传入。
+     */
+    public String execute(HybridSearchRequest request, ToolWorkspace workspace) {
         // 复用 HybridDocumentRetriever 的核心逻辑
-        // 追加到 ws.retrievedDocs
+        // 追加到 workspace.retrievedDocs
         // 返回 JSON 摘要
     }
 }
@@ -1032,15 +1029,13 @@ public class RerankTool implements RagTool {
 
     private final BailianRerankPostProcessor rerankProcessor;
 
-    @Tool(description = "对已检索的文档进行语义精排。当检索结果较多且需要精选最相关文档时使用。" +
-                        "基于百炼 Rerank API，返回重新排序后的 Top-N 文档。")
-    public String rerank(
-            @ToolParam(description = "原始查询文本，用于相关性判断") String query,
-            @ToolParam(description = "精排后返回的文档数量，默认5") @Nullable Integer topN) {
-        ToolWorkspace ws = ToolWorkspaceHolder.get();
-        // 从 ws.retrievedDocs 获取待排序文档
+    /**
+     * 语义精排。workspace 由闭包传入。
+     */
+    public String execute(RerankRequest request, ToolWorkspace workspace) {
+        // 从 workspace.retrievedDocs 获取待排序文档
         // 调用 BailianRerankPostProcessor 核心逻辑
-        // ws.replaceRetrievedDocs(reranked)
+        // workspace.replaceRetrievedDocs(reranked)
         // 返回 JSON 摘要
     }
 }
@@ -1054,16 +1049,12 @@ public class QueryRewriteTool implements RagTool {
 
     private final ChatClient.Builder chatClientBuilder;
 
-    @Tool(description = "改写查询以提升检索效果。当原始查询检索结果不理想时，" +
-                        "使用此工具生成更精确、更适合检索的查询。" +
-                        "支持多角度改写，可一次生成多个变体查询。")
-    public String rewriteQuery(
-            @ToolParam(description = "需要改写的原始查询") String query,
-            @ToolParam(description = "改写角度，如：更具体、同义替换、拆分子问题",
-                       required = false) @Nullable String perspective) {
-        ToolWorkspace ws = ToolWorkspaceHolder.get();
+    /**
+     * 查询改写。workspace 由闭包传入。
+     */
+    public String execute(QueryRewriteRequest request, ToolWorkspace workspace) {
         // 调用 LLM 改写查询（复用 RewriteQueryTransformer 的 prompt）
-        // ws.addRewrittenQueries(rewritten)
+        // workspace.addRewrittenQueries(rewritten)
         // 返回 JSON 摘要
     }
 }
@@ -1077,13 +1068,13 @@ public class ParentDocLookupTool implements RagTool {
 
     private final VectorStoreMapper vectorStoreMapper;
 
-    @Tool(description = "将检索到的文档片段替换为其所属的完整父文档。" +
-                        "当需要更完整的上下文信息时使用。")
-    public String parentDocLookup() {
-        ToolWorkspace ws = ToolWorkspaceHolder.get();
-        // 从 ws.retrievedDocs 获取子块文档
+    /**
+     * 子块→父文档替换。workspace 由闭包传入。
+     */
+    public String execute(ToolWorkspace workspace) {
+        // 从 workspace.retrievedDocs 获取子块文档
         // 复用 ParentDocumentPostProcessor 核心逻辑
-        // ws.replaceRetrievedDocs(parentDocs)
+        // workspace.replaceRetrievedDocs(parentDocs)
         // 返回 JSON 摘要
     }
 }
@@ -1097,39 +1088,153 @@ public class KnowledgeBaseInfoTool implements RagTool {
 
     private final VectorStoreMapper vectorStoreMapper;
 
-    @Tool(description = "查询当前知识库的元信息，包括文档数量、分块数量等。" +
-                        "帮助判断知识库中是否有足够的相关内容来回答问题。")
-    public String getKnowledgeBaseInfo() {
-        ToolWorkspace ws = ToolWorkspaceHolder.get();
-        // 从 ws 获取 userId/teamId
+    /**
+     * 知识库元信息查询。workspace 由闭包传入。
+     */
+    public String execute(ToolWorkspace workspace) {
+        // 从 workspace 获取 userId/teamId
         // 查询文档数量、分块数量、最近更新时间
         // 返回 JSON 格式的知识库统计
     }
 }
 ```
 
-### 3.5 ToolWorkspaceHolder — ThreadLocal 传递
+### 3.5 AgentToolCallbackFactory — 闭包创建 FunctionToolCallback
+
+**核心设计**：每次请求动态创建 `FunctionToolCallback`，闭包捕获 `ToolWorkspace` 局部变量。
+消除全局状态（ThreadLocal），Tool 方法签名零侵入，请求结束 GC 自动回收 workspace。
+
+#### 传递路径
+
+```
+buildAgentChain() 创建 workspace（局部变量）
+  → AgentToolCallbackFactory.createToolCallbacks(intent, workspace)
+    → 闭包捕获 workspace，创建 FunctionToolCallback
+      → StaticToolCallbackResolver 包装闭包 callbacks
+        → DefaultToolCallingManager 持有 resolver
+          → ToolCallAdvisor 调用 agentToolManager
+            → LLM 请求 tool call → resolver 解析 → callback.call(jsonInput)
+              → 闭包内 tool.execute(request, workspace) → 更新 workspace → 返回 JSON
+```
+
+#### AgentToolCallbackFactory
 
 ```java
 /**
- * ThreadLocal 传递 ToolWorkspace
+ * 闭包 ToolCallback 工厂
  *
- * 生命周期：
- * - set: ChatAdvisorChainFactory.buildChain() AGENT 分支
- * - get: 各 RAG Tool 执行时
- * - clear: AgentContextCleanupAdvisor（finally 保证）
+ * 根据意图按需创建 FunctionToolCallback，闭包捕获 workspace 局部变量。
+ * Tool 类本身不感知 workspace 传递机制（无 ThreadLocal、无全局状态）。
  */
-public final class ToolWorkspaceHolder {
+@Component
+public class AgentToolCallbackFactory {
 
-    private static final ThreadLocal<ToolWorkspace> WORKSPACE = new ThreadLocal<>();
+    private final HybridSearchTool hybridSearchTool;
+    private final VectorSearchTool vectorSearchTool;
+    private final RerankTool rerankTool;
+    private final QueryRewriteTool queryRewriteTool;
+    private final ParentDocLookupTool parentDocLookupTool;
+    private final KnowledgeBaseInfoTool knowledgeBaseInfoTool;
 
-    public static void set(ToolWorkspace workspace) { WORKSPACE.set(workspace); }
-    public static ToolWorkspace get() { return WORKSPACE.get(); }
-    public static void clear() { WORKSPACE.remove(); }
+    /**
+     * 按意图创建对应 Tool 子集的 FunctionToolCallback 数组
+     *
+     * @param intent    意图分类结果
+     * @param workspace 请求级 workspace（局部变量，闭包捕获）
+     * @return 该意图需要的 ToolCallback 数组
+     */
+    public ToolCallback[] createToolCallbacks(AgentIntent intent, ToolWorkspace workspace) {
+        return switch (intent) {
+            case RETRIEVAL -> new ToolCallback[]{
+                buildHybridSearch(workspace),
+                buildRerank(workspace)
+            };
+            case DEEP_RETRIEVAL -> new ToolCallback[]{
+                buildVectorSearch(workspace),
+                buildHybridSearch(workspace),
+                buildRerank(workspace),
+                buildQueryRewrite(workspace),
+                buildParentDocLookup(workspace)
+            };
+            case GENERAL_TOOL -> new ToolCallback[]{
+                buildHybridSearch(workspace),
+                buildKnowledgeBaseInfo(workspace)
+            };
+            case DIRECT_ANSWER -> new ToolCallback[]{}; // 无 Tool
+        };
+    }
 
-    private ToolWorkspaceHolder() {}
+    private ToolCallback buildHybridSearch(ToolWorkspace workspace) {
+        return FunctionToolCallback.<HybridSearchRequest, String>builder(
+                "hybridSearch",
+                (request, ctx) -> hybridSearchTool.execute(request, workspace)
+            )
+            .description("混合检索：结合向量语义搜索和 BM25 关键词搜索，通过 RRF 融合排序")
+            .inputType(HybridSearchRequest.class)
+            .build();
+    }
+
+    private ToolCallback buildVectorSearch(ToolWorkspace workspace) {
+        return FunctionToolCallback.<VectorSearchRequest, String>builder(
+                "vectorSearch",
+                (request, ctx) -> vectorSearchTool.execute(request, workspace)
+            )
+            .description("纯向量语义检索，适用于概念性查询")
+            .inputType(VectorSearchRequest.class)
+            .build();
+    }
+
+    private ToolCallback buildRerank(ToolWorkspace workspace) {
+        return FunctionToolCallback.<RerankRequest, String>builder(
+                "rerank",
+                (request, ctx) -> rerankTool.execute(request, workspace)
+            )
+            .description("对已检索文档进行语义精排，基于百炼 Rerank API")
+            .inputType(RerankRequest.class)
+            .build();
+    }
+
+    private ToolCallback buildQueryRewrite(ToolWorkspace workspace) {
+        return FunctionToolCallback.<QueryRewriteRequest, String>builder(
+                "queryRewrite",
+                (request, ctx) -> queryRewriteTool.execute(request, workspace)
+            )
+            .description("改写查询以提升检索效果，支持多角度改写生成多个变体")
+            .inputType(QueryRewriteRequest.class)
+            .build();
+    }
+
+    private ToolCallback buildParentDocLookup(ToolWorkspace workspace) {
+        return FunctionToolCallback.<Void, String>builder(
+                "parentDocLookup",
+                (request, ctx) -> parentDocLookupTool.execute(workspace)
+            )
+            .description("将检索到的文档片段替换为其所属的完整父文档")
+            .inputType(Void.class)
+            .build();
+    }
+
+    private ToolCallback buildKnowledgeBaseInfo(ToolWorkspace workspace) {
+        return FunctionToolCallback.<Void, String>builder(
+                "knowledgeBaseInfo",
+                (request, ctx) -> knowledgeBaseInfoTool.execute(workspace)
+            )
+            .description("查询当前知识库的元信息，包括文档数量、分块数量等")
+            .inputType(Void.class)
+            .build();
+    }
 }
 ```
+
+#### 闭包方案 vs ThreadLocal 方案对比
+
+| 维度 | ThreadLocal（已否决） | 闭包捕获（当前方案） |
+|------|----------------------|---------------------|
+| 状态管理 | 全局 ThreadLocal，需手动 set/get/clear | 局部变量，闭包引用，GC 回收 |
+| 异常安全 | finally 块可能漏清理（异步/异常路径） | 无清理需求，无泄漏风险 |
+| Tool 签名 | Tool 需调用 `ToolWorkspaceHolder.get()` | workspace 作为参数显式传入 |
+| 可测试性 | 需 mock ThreadLocal | 直接传入 workspace 对象 |
+| Spring AI API | 依赖 @Tool 注解 + 内部 resolver | FunctionToolCallback 闭包，完全控制 |
 
 ---
 
@@ -1146,95 +1251,96 @@ public final class ToolWorkspaceHolder {
 | 4 | `IntentToolSetRegistry.java` | 新增 | 意图→Tool 子集映射 |
 | **Workspace 层** | | | |
 | 5 | `ToolWorkspace.java` | 新增 | JSON 中间状态管理 |
-| 6 | `ToolWorkspaceHolder.java` | 新增 | ThreadLocal 传递 |
-| 7 | `ToolWorkspaceFactory.java` | 新增 | 按请求创建 Workspace |
-| 8 | `RetrievedDocument.java` | 新增 | 检索结果 DTO record（含 subQueryIndex 关联子问题） |
+| 6 | `ToolWorkspaceFactory.java` | 新增 | 按请求创建 Workspace |
+| 7 | `RetrievedDocument.java` | 新增 | 检索结果 DTO record（含 subQueryIndex 关联子问题） |
 | **RAG Tool 层** | | | |
-| 9 | `RagTool.java` | 新增 | RAG Tool 标记接口 |
-| 10 | `VectorSearchTool.java` | 新增 | 向量检索 Tool |
-| 11 | `Bm25SearchTool.java` | 新增 | BM25 全文检索 Tool |
-| 12 | `HybridSearchTool.java` | 新增 | 混合检索 Tool |
-| 13 | `RerankTool.java` | 新增 | Rerank Tool |
-| 14 | `QueryRewriteTool.java` | 新增 | 查询改写 Tool |
-| 15 | `ParentDocLookupTool.java` | 新增 | 父文档查找 Tool |
-| 16 | `KnowledgeBaseInfoTool.java` | 新增 | 知识库元信息 Tool |
+| 8 | `RagTool.java` | 新增 | RAG Tool 标记接口 |
+| 9 | `VectorSearchTool.java` | 新增 | 向量检索 Tool |
+| 10 | `Bm25SearchTool.java` | 新增 | BM25 全文检索 Tool |
+| 11 | `HybridSearchTool.java` | 新增 | 混合检索 Tool |
+| 12 | `RerankTool.java` | 新增 | Rerank Tool |
+| 13 | `QueryRewriteTool.java` | 新增 | 查询改写 Tool |
+| 14 | `ParentDocLookupTool.java` | 新增 | 父文档查找 Tool |
+| 15 | `KnowledgeBaseInfoTool.java` | 新增 | 知识库元信息 Tool |
+| 16 | `AgentToolCallbackFactory.java` | 新增 | 闭包创建 FunctionToolCallback（按意图动态生成 Tool 子集） |
 | **Advisor 层** | | | |
-| 17 | `AgentContextCleanupAdvisor.java` | 新增 | ThreadLocal 清理 |
-| 18 | `AgentSystemPromptAdvisor.java` | 新增 | 根据意图动态注入 System Prompt |
+| 17 | `AgentSystemPromptAdvisor.java` | 新增 | 根据意图动态注入 System Prompt（含原子决策引导+检索代价意识+自省格式） |
 | **编排层改动** | | | |
-| 19 | `ChatMode.java` | 修改 | 新增 `AGENT` 枚举值 |
-| 20 | `AgentModeStrategy.java` | 新增 | AGENT 模式策略 |
-| 21 | `ChatModeStrategy.java` | 修改 | 新增 `default isAgentMode()` |
-| 22 | `ChatRequest.java` | 修改 | mode 正则扩展加入 AGENT（P1） |
-| 23 | `ChatAdvisorChainFactory.java` | 修改 | AGENT 分支：自建 ToolCallAdvisor（P2） |
-| 24 | `ChatRequestSpecFactory.java` | 修改 | AGENT 分支：跳过 tools() + 跳过 DB Prompt（P3/P4） |
-| 25 | `ChatServiceImpl.java` | 修改 | AGENT 模式支持（阻塞式 + 元数据注入） |
-| 26 | `ChatController.java` | 修改 | 响应序列化分支 |
-| 27 | `AgentChatResponse.java` | 新增 | Agent 响应 DTO（P6） |
+| 18 | `ChatMode.java` | 修改 | 新增 `AGENT` 枚举值 |
+| 19 | `AgentModeStrategy.java` | 新增 | AGENT 模式策略 |
+| 20 | `ChatModeStrategy.java` | 修改 | 新增 `default isAgentMode()` |
+| 21 | `ChatRequest.java` | 修改 | mode 正则扩展加入 AGENT（P1） |
+| 22 | `ChatAdvisorChainFactory.java` | 修改 | AGENT 分支：闭包 ToolCallback + 自建 ToolCallAdvisor（P2） |
+| 23 | `ChatRequestSpecFactory.java` | 修改 | AGENT 分支：跳过 tools() + 跳过 DB Prompt（P3/P4） |
+| 24 | `ChatServiceImpl.java` | 修改 | AGENT 模式支持（阻塞式 + 元数据注入） |
+| 25 | `ChatController.java` | 修改 | 响应序列化分支 |
+| 26 | `AgentChatResponse.java` | 新增 | Agent 响应 DTO（P6） |
 | **配置** | | | |
-| 28 | `AgentRagProperties.java` | 新增 | Agent 模式配置 |
-| 29 | `application.yml` | 修改 | 新增 app.agent.* 配置 |
+| 27 | `AgentRagProperties.java` | 新增 | Agent 模式配置 |
+| 28 | `application.yml` | 修改 | 新增 app.agent.* 配置 |
 | **DTO（论文增强）** | | | |
-| 30 | `SelfReflection.java` | 新增 | 自省结果 record（Self-RAG: isRelevant/isSufficient/nextAction） |
-| 31 | `IntermediateAnswer.java` | 新增 | 中间答案 record（DeepRAG: subQuery/answer/source/citedDocIds） |
+| 29 | `SelfReflection.java` | 新增 | 自省结果 record（Self-RAG: isRelevant/isSufficient/nextAction） |
+| 30 | `IntermediateAnswer.java` | 新增 | 中间答案 record（DeepRAG: subQuery/answer/source/citedDocIds） |
 | **容错与安全** | | | |
-| 32 | `ToolResult.java` | 新增 | Tool 调用统一结果 record（success/failure + errorCategory） |
-| 33 | `AgentGuardrails.java` | 新增 | ReAct 循环护栏（迭代总数/token 消耗/连续 Tool 三指标） |
-| 34 | `AgentDegradationStrategy.java` | 新增 | Agent 全局降级策略（降级到 MULTI_TURN） |
-| 35 | `AgentTrace.java` | 新增 | Agent 执行追踪记录 |
-| 36 | `ToolCallRecord.java` | 新增 | 单次 Tool 调用记录 |
-| **论文增强** | | | |
-| 37 | `AgentSystemPromptAdvisor.java` | 新增 | 动态 System Prompt 注入（含原子决策引导+检索代价意识+自省格式） |
+| 31 | `ToolResult.java` | 新增 | Tool 调用统一结果 record（success/failure + errorCategory） |
+| 32 | `AgentGuardrails.java` | 新增 | ReAct 循环护栏（迭代总数/token 消耗/连续 Tool 三指标） |
+| 33 | `AgentDegradationStrategy.java` | 新增 | Agent 全局降级策略（降级到 MULTI_TURN） |
+| 34 | `AgentTrace.java` | 新增 | Agent 执行追踪记录 |
+| 35 | `ToolCallRecord.java` | 新增 | 单次 Tool 调用记录 |
 
 ### 4.2 ChatAdvisorChainFactory 改动
 
 ```java
-// buildChain() 新增 AGENT 分支
-if (modeStrategy.getMode() == ChatMode.AGENT && agentProperties.enabled()) {
-    // 1. 上下文 Advisor
-    if (modeStrategy.isContextEnabled()) {
-        chain.add(new ConversationContextAdvisor(conversationId));
-    }
+// ChatAdvisorChainFactory AGENT 分支
+public List<Advisor> buildAgentChain(Long userId, @Nullable Long teamId,
+                                     ChatRequest request) {
+    List<Advisor> chain = new ArrayList<>();
 
-    // 2. 全局 Advisor（限流、内容过滤）
+    // 1. 全局 Advisor（限流、内容过滤）
     chain.addAll(getGlobalAdvisors());
 
-    // 3. 意图识别 + 查询分解（单次 LLM 调用，完成分类和分解）
+    // 2. 意图识别（阻塞式 LLM 调用）
     IntentResult intent = intentClassifier.classify(request.message());
 
-    // 4. 创建 ToolWorkspace + 写入子问题 + 设置 ThreadLocal
+    // 3. 创建 Workspace（局部变量，不进 ThreadLocal）
     ToolWorkspace workspace = workspaceFactory.create(userId, teamId);
     workspace.setIntent(intent.intent());
     if (intent.hasSubQueries()) {
         workspace.setSubQueries(intent.subQueries());
     }
-    ToolWorkspaceHolder.set(workspace);
 
-    // 5. 根据意图选择 Tool 子集
-    List<ToolCallback> toolSet = intentToolSetRegistry.getToolSet(intent.intent());
+    // 4. 闭包创建 FunctionToolCallback（捕获 workspace 局部变量）
+    ToolCallback[] agentTools = agentToolCallbackFactory
+        .createToolCallbacks(intent.intent(), workspace);
 
-    // 6. 创建独立的 ToolCallAdvisor（只挂载选中的 Tool）
-    ToolCallAdvisor agentToolCallAdvisor = ToolCallAdvisor.builder()
-        .toolCallingManager(toolCallingManager)
-        .toolCallbacks(toolSet)
-        .advisorOrder(BaseAdvisor.HIGHEST_PRECEDENCE + 300)
+    // 5. 创建 ToolCallAdvisor（ToolCallback 通过 resolver 传入）
+    ToolCallbackResolver resolver = new StaticToolCallbackResolver(List.of(agentTools));
+    ToolCallingManager agentToolManager = DefaultToolCallingManager.builder()
+        .toolCallbackResolver(resolver)
         .build();
-    chain.add(agentToolCallAdvisor);
+    chain.add(ToolCallAdvisor.builder()
+        .toolCallingManager(agentToolManager)
+        .advisorOrder(2)
+        .disableMemory()
+        .build());
 
-    // 7. 动态 System Prompt（根据意图注入不同指令）
-    chain.add(new AgentSystemPromptAdvisor(intent));
+    // 6. 动态 System Prompt（根据意图注入不同指令 + workspace 状态）
+    chain.add(new AgentSystemPromptAdvisor(intent, workspace));
 
-    // 8. Memory
-    if (modeStrategy.isMemoryEnabled()) {
-        chain.add(MessageChatMemoryAdvisor.builder(chatMemory).build());
-    }
+    // 7. Memory
+    chain.add(MessageChatMemoryAdvisor.builder(chatMemory).build());
 
-    // 9. 清理 Advisor
-    chain.add(new AgentContextCleanupAdvisor());
-
+    // workspace 是局部变量，闭包引用它，请求结束 GC 回收
     return chain;
 }
 ```
+
+> **关键变更**：
+> - ❌ 删除 `ToolWorkspaceHolder.set(workspace)` — 不再使用 ThreadLocal
+> - ❌ 删除 `AgentContextCleanupAdvisor` — 无全局状态需要清理
+> - ✅ `agentToolCallbackFactory.createToolCallbacks(intent, workspace)` — 闭包捕获
+> - ✅ `StaticToolCallbackResolver` 包装闭包 callbacks，注入到独立的 `DefaultToolCallingManager`
+> - ✅ 每次 Agent 请求自建 `ToolCallAdvisor`，不复用全局单例
 
 ### 4.3 AgentSystemPromptAdvisor — 动态 System Prompt
 
@@ -1453,17 +1559,31 @@ if (hasTools()) {
 - Agent 模式需要**只暴露 RAG Tool 子集**（按意图过滤），且每次请求子集不同
 - 这是**最核心的架构冲突**
 
-**修复**：Agent 分支自建 `ToolCallAdvisor`，不复用全局 Bean
+**修复**：Agent 分支自建 `ToolCallAdvisor`，通过闭包工厂创建 ToolCallback，不复用全局 Bean
 ```java
 // ChatAdvisorChainFactory.java AGENT 分支
-public List<Advisor> buildAgentChain(String conversationId, ChatRequest request,
-                                      AgentIntent intent, ToolCallback[] agentTools) {
+public List<Advisor> buildAgentChain(Long userId, @Nullable Long teamId,
+                                     ChatRequest request) {
     List<Advisor> chain = new ArrayList<>();
 
-    // 全局 Advisor（RateLimit、ContentFilter 等）
+    // 1. 全局 Advisor（RateLimit、ContentFilter 等）
     chain.addAll(getGlobalAdvisors());
 
-    // Agent 专用 ToolCallAdvisor（按意图过滤的 Tool 子集）
+    // 2. 意图识别
+    IntentResult intent = intentClassifier.classify(request.message());
+
+    // 3. 创建 Workspace（局部变量）
+    ToolWorkspace workspace = workspaceFactory.create(userId, teamId);
+    workspace.setIntent(intent.intent());
+    if (intent.hasSubQueries()) {
+        workspace.setSubQueries(intent.subQueries());
+    }
+
+    // 4. 闭包创建 FunctionToolCallback（捕获 workspace）
+    ToolCallback[] agentTools = agentToolCallbackFactory
+        .createToolCallbacks(intent.intent(), workspace);
+
+    // 5. Agent 专用 ToolCallAdvisor（闭包 ToolCallback 通过 resolver 传入）
     ToolCallingManager agentToolManager = DefaultToolCallingManager.builder()
             .toolCallbackResolver(new StaticToolCallbackResolver(List.of(agentTools)))
             .build();
@@ -1473,12 +1593,20 @@ public List<Advisor> buildAgentChain(String conversationId, ChatRequest request,
             .advisorOrder(2)
             .build());
 
-    // Memory（Agent 需要多轮记忆）
+    // 6. 动态 System Prompt
+    chain.add(new AgentSystemPromptAdvisor(intent, workspace));
+
+    // 7. Memory
     chain.add(MessageChatMemoryAdvisor.builder(chatMemory).build());
 
+    // workspace 是局部变量，闭包引用它，请求结束 GC 回收
     return chain;
 }
 ```
+
+> **核心区别**：每次请求动态创建 `FunctionToolCallback` 闭包捕获 `workspace` 局部变量，
+> 通过 `StaticToolCallbackResolver` → `DefaultToolCallingManager` → `ToolCallAdvisor` 完整传递链，
+> 不依赖 ThreadLocal，不需要 cleanup Advisor。
 
 **改动文件**：`ChatAdvisorChainFactory.java`（新增方法，不改现有 `buildChain`）
 

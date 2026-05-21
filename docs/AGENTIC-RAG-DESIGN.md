@@ -244,8 +244,9 @@ public record IntentResult(
 @Component
 public class IntentClassifier {
 
-    private final ChatClient intentChatClient;  // 独立的轻量模型
+    private final ChatClient intentChatClient;  // 通过 ChatClientRegistry.get(properties.intentModel()) 获取
     // 不依赖 AgentToolCallbackFactory — 意图分类与 Tool 选择职责分离
+    // intentChatClient 在构造时从 ChatClientRegistry 获取，非运行时动态创建
 
     /**
      * 分类意图 + 分解查询
@@ -757,9 +758,11 @@ public enum ChatMode {
 }
 ```
 
-### 2.6 Agent 状态机
+### 2.6 Agent 概念流程图
 
-Agent 请求的生命周期由以下状态机驱动：
+> **说明**：以下为 Agent 请求的概念流程图，描述 LLM 在 System Prompt 引导下的隐式行为。
+> **实现层面不包含显式状态机类**——所有状态转换由 LLM 的 ReAct 循环隐式驱动。
+> 后续迭代可视需要引入显式 `AgentStateMachine`。
 
 ```
                               ┌──────────────┐
@@ -915,7 +918,7 @@ Agent 请求的生命周期由以下状态机驱动：
 |------|------|----------|----------|----------|
 | `vectorSearchTool` | 向量语义检索 | `VectorStore.similaritySearch()` | Workspace.userId/teamId | Workspace.retrievedDocs |
 | `bm25SearchTool` | BM25 全文检索 | `VectorStoreMapper.bm25Search()` | Workspace.userId/teamId | Workspace.retrievedDocs |
-| `hybridSearchTool` | 混合检索 + RRF | `HybridDocumentRetriever` 核心逻辑 | Workspace | Workspace.retrievedDocs |
+| `hybridSearchTool` | 混合检索 + RRF | `HybridSearchService`（新增，提取 HybridDocumentRetriever 核心逻辑） | Workspace | Workspace.retrievedDocs |
 | `rerankTool` | 语义精排 | `BailianRerankPostProcessor` 核心逻辑 | Workspace.retrievedDocs | Workspace.retrievedDocs (替换) |
 | `queryRewriteTool` | 查询改写 | `RewriteQueryTransformer` prompt | LLM 调用 | Workspace.rewrittenQueries |
 | `parentDocLookupTool` | 子块→父文档 | `ParentDocumentPostProcessor` | Workspace.retrievedDocs | Workspace.retrievedDocs (替换) |
@@ -944,6 +947,8 @@ com.demo.chat.rag.agent/
 │   ├── KnowledgeBaseInfoTool.java    // 知识库元信息（接收 workspace 参数）
 │   └── callback/
 │       └── AgentToolCallbackFactory.java  // 闭包创建 FunctionToolCallback
+├── service/
+│   └── HybridSearchService.java     // 提取 HybridDocumentRetriever 核心逻辑，供 Tool 和 Retriever 共用
 └── advisor/
     └── AgentSystemPromptAdvisor.java    // 动态 System Prompt 注入
 ```
@@ -1017,16 +1022,18 @@ public class VectorSearchTool implements RagTool {
 @Component
 public class HybridSearchTool implements RagTool {
 
-    private final VectorStore vectorStore;
-    private final VectorStoreMapper vectorStoreMapper;
-    private final QueryNormalizer queryNormalizer;
-    private final RagRetrievalProperties properties;
+    private final HybridSearchService hybridSearchService;
 
     /**
      * 混合检索 + RRF 融合。workspace 由闭包传入。
+     *
+     * 设计说明：HybridDocumentRetriever 的构造函数绑定了 userId/teamId，
+     * 不适合 Tool 场景（Tool 需从 workspace 获取用户信息）。
+     * 因此提取 HybridSearchService 封装检索核心逻辑，
+     * HybridDocumentRetriever 和本 Tool 都委托给它。
      */
     public String execute(HybridSearchRequest request, ToolWorkspace workspace) {
-        // 复用 HybridDocumentRetriever 的核心逻辑
+        // 委托 HybridSearchService.execute(query, topK, userId, teamId)
         // 追加到 workspace.retrievedDocs
         // 返回 JSON 摘要
     }
@@ -1116,6 +1123,12 @@ public class KnowledgeBaseInfoTool implements RagTool {
 **核心设计**：每次请求动态创建 `FunctionToolCallback`，闭包捕获 `ToolWorkspace` 局部变量。
 消除全局状态（ThreadLocal），Tool 方法签名零侵入，请求结束 GC 自动回收 workspace。
 
+> **⚠️ Phase 2 前置验证**：Spring AI 1.1.6 的 `FunctionToolCallback.builder(name, biFunction)`
+> 的泛型签名需写 PoC 验证。设计文档假设签名为
+> `FunctionToolCallback.<I, O>builder(String name, BiFunction<I, ToolContext, O> fn)`。
+> 若实际签名不同（如接受 `Function<I, O>` 而非 `BiFunction`），以下所有 build 方法
+> 需要对应调整。在 Phase 2 开始前必须确认。
+
 #### 传递路径
 
 ```
@@ -1168,10 +1181,7 @@ public class AgentToolCallbackFactory {
                 buildQueryRewrite(workspace),
                 buildParentDocLookup(workspace)
             };
-            case GENERAL_TOOL -> new ToolCallback[]{
-                buildHybridSearch(workspace),
-                buildKnowledgeBaseInfo(workspace)
-            };
+            case GENERAL_TOOL -> buildGeneralToolSet();
             case DIRECT_ANSWER -> new ToolCallback[]{}; // 无 Tool
         };
     }
@@ -1280,7 +1290,6 @@ private ToolCallback buildKnowledgeBaseInfo(ToolWorkspace workspace) {
 | 1 | `AgentIntent.java` | 新增 | 意图枚举 |
 | 2 | `IntentResult.java` | 新增 | 分类结果 record |
 | 3 | `IntentClassifier.java` | 新增 | 意图分类器（独立 LLM 调用） |
-| 4 | `IntentClassifier.java` | 新增 | 意图分类器（独立 LLM 调用） |
 | **Workspace 层** | | | |
 | 5 | `ToolWorkspace.java` | 新增 | JSON 中间状态管理 |
 | 6 | `ToolWorkspaceFactory.java` | 新增 | 按请求创建 Workspace |
@@ -1295,43 +1304,52 @@ private ToolCallback buildKnowledgeBaseInfo(ToolWorkspace workspace) {
 | 14 | `ParentDocLookupTool.java` | 新增 | 父文档查找 Tool |
 | 15 | `KnowledgeBaseInfoTool.java` | 新增 | 知识库元信息 Tool |
 | 16 | `AgentToolCallbackFactory.java` | 新增 | 闭包创建 FunctionToolCallback（按意图动态生成 Tool 子集，合并原 IntentToolSetRegistry 职责） |
+| 17 | `HybridSearchService.java` | 新增 | 提取 HybridDocumentRetriever 核心逻辑，供 Tool 和 Retriever 共用 |
 | **Advisor 层** | | | |
-| 17 | `AgentSystemPromptAdvisor.java` | 新增 | 根据意图动态注入 System Prompt（含原子决策引导+检索代价意识+自省格式） |
+| 18 | `AgentSystemPromptAdvisor.java` | 新增 | 根据意图动态注入 System Prompt（实现 BaseAdvisor，非旧版 CallAroundAdvisor） |
 | **编排层改动** | | | |
-| 18 | `ChatMode.java` | 修改 | 新增 `AGENT` 枚举值 |
-| 19 | `AgentModeStrategy.java` | 新增 | AGENT 模式策略 |
-| 20 | `ChatModeStrategy.java` | 修改 | 新增 `default isAgentMode()` |
-| 21 | `ChatRequest.java` | 修改 | mode 正则扩展加入 AGENT（P1） |
-| 22 | `ChatAdvisorChainFactory.java` | 修改 | AGENT 分支：闭包 ToolCallback + 自建 ToolCallAdvisor（P2） |
-| 23 | `ChatRequestSpecFactory.java` | 修改 | AGENT 分支：跳过 tools() + 跳过 DB Prompt（P3/P4） |
-| 24 | `ChatServiceImpl.java` | 修改 | AGENT 模式支持（阻塞式 + 元数据注入） |
-| 25 | `ChatController.java` | 修改 | 响应序列化分支 |
-| 26 | `AgentChatResponse.java` | 新增 | Agent 响应 DTO（P6） |
+| 19 | `ChatMode.java` | 修改 | 新增 `AGENT` 枚举值 |
+| 20 | `AgentModeStrategy.java` | 新增 | AGENT 模式策略 |
+| 21 | `ChatModeStrategy.java` | 修改 | 新增 `default isAgentMode()` |
+| 22 | `ChatRequest.java` | 修改 | mode 正则扩展加入 AGENT（P1） |
+| 23 | `ChatAdvisorChainFactory.java` | 修改 | AGENT 分支：闭包 ToolCallback + 自建 ToolCallAdvisor（P2） |
+| 24 | `ChatRequestSpecFactory.java` | 修改 | AGENT 分支：跳过 tools() + 跳过 DB Prompt + 跳过 DB ModelParams（P3/P4） |
+| 25 | `ChatServiceImpl.java` | 修改 | AGENT 模式支持（阻塞式 + 元数据注入） |
+| 26 | `ChatController.java` | 修改 | 响应序列化分支 |
+| 27 | `AgentChatResponse.java` | 新增 | Agent 响应 DTO（P6） |
 | **配置** | | | |
-| 27 | `AgentRagProperties.java` | 新增 | Agent 模式配置 |
-| 28 | `application.yml` | 修改 | 新增 app.agent.* 配置 |
+| 28 | `AgentRagProperties.java` | 新增 | Agent 模式配置 |
+| 29 | `application.yml` | 修改 | 新增 app.agent.* 配置 |
 | **DTO（论文增强）** | | | |
-| 29 | `SelfReflection.java` | 新增 | 自省结果 record（Self-RAG: isRelevant/isSufficient/nextAction） |
-| 30 | `IntermediateAnswer.java` | 新增 | 中间答案 record（DeepRAG: subQuery/answer/source/citedDocIds） |
+| 30 | `SelfReflection.java` | 新增 | 自省结果 record（Self-RAG: isRelevant/isSufficient/nextAction） |
+| 31 | `IntermediateAnswer.java` | 新增 | 中间答案 record（DeepRAG: subQuery/answer/source/citedDocIds） |
 | **容错与安全** | | | |
-| 31 | `ToolResult.java` | 新增 | Tool 调用统一结果 record（success/failure + errorCategory） |
-| 32 | `AgentGuardrails.java` | 新增 | ReAct 循环护栏（迭代总数/token 消耗/连续 Tool 三指标） |
-| 33 | `AgentDegradationStrategy.java` | 新增 | Agent 全局降级策略（降级到 MULTI_TURN） |
-| 34 | `AgentTrace.java` | 新增 | Agent 执行追踪记录 |
-| 35 | `ToolCallRecord.java` | 新增 | 单次 Tool 调用记录 |
+| 32 | `ToolResult.java` | 新增 | Tool 调用统一结果 record（success/failure + errorCategory） |
+| 33 | `AgentGuardrails.java` | 新增 | ReAct 循环护栏（迭代总数/token 消耗/连续 Tool 三指标） |
+| 34 | `AgentDegradationStrategy.java` | 新增 | Agent 全局降级策略（降级到 MULTI_TURN） |
+| 35 | `AgentTrace.java` | 新增 | Agent 执行追踪记录 |
+| 36 | `ToolCallRecord.java` | 新增 | 单次 Tool 调用记录 |
 
 ### 4.2 ChatAdvisorChainFactory 改动
 
 ```java
 // ChatAdvisorChainFactory AGENT 分支
-public List<Advisor> buildAgentChain(Long userId, @Nullable Long teamId,
-                                     ChatRequest request) {
+public List<Advisor> buildAgentChain(String conversationId,
+                                    ChatRequest request,
+                                    ChatModeStrategy modeStrategy) {
     List<Advisor> chain = new ArrayList<>();
 
-    // 1. 全局 Advisor（限流、内容过滤）
+    // 1. 上下文注入（与 buildChain 一致）
+    if (modeStrategy.isContextEnabled()) {
+        chain.add(new ConversationContextAdvisor(conversationId));
+    }
+
+    // 2. 全局 Advisor（限流、内容过滤）
     chain.addAll(getGlobalAdvisors());
 
-    // 2. 意图识别（阻塞式 LLM 调用）
+    // 3. 意图识别（阻塞式 LLM 调用）
+    Long userId = SecurityUtils.getCurrentUserId();
+    Long teamId = request.teamId();
     IntentResult intent = intentClassifier.classify(request.message());
 
     // 3. 创建 Workspace（局部变量，不进 ThreadLocal）
@@ -1388,24 +1406,33 @@ public List<Advisor> buildAgentChain(Long userId, @Nullable Long teamId,
 根据意图识别结果注入不同的 System Prompt。构造时接收**已合并的最终 Prompt 字符串**（Agent Prompt + CAG 上下文），不再关心 CAG 合并逻辑（由调用方 `buildAgentChain` 负责）。
 
 ```java
-import org.springframework.ai.chat.client.advisor.api.CallAroundAdvisor;
-import org.springframework.ai.chat.client.advisor.api.AdvisedRequest;
-import org.springframework.ai.chat.client.advisor.api.AdvisedResponse;
-import org.springframework.ai.chat.client.advisor.api.CallAroundAdvisorChain;
+import org.jspecify.annotations.NonNull;
+import org.springframework.ai.chat.client.ChatClientRequest;
+import org.springframework.ai.chat.client.ChatClientResponse;
+import org.springframework.ai.chat.client.advisor.api.AdvisorChain;
+import org.springframework.ai.chat.client.advisor.api.BaseAdvisor;
+import org.springframework.ai.chat.messages.SystemMessage;
+
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * 根据意图动态注入 System Prompt
  *
- * 职责单一：将预构建的 mergedSystemPrompt 注入到 AdvisedRequest。
+ * 职责单一：将预构建的 mergedSystemPrompt 注入到 ChatClientRequest。
  * Prompt 内容由调用方在 buildAgentChain() 中组装
  * （Agent Prompt + CAG 上下文 + Workspace 状态摘要）。
  *
- * 注意：实现 Spring AI 的 CallAroundAdvisor 接口，
- * 使用 aroundCall 拦截请求并注入 system prompt。
+ * 实现 Spring AI 1.1.6 的 BaseAdvisor 接口，
+ * 使用 before() 拦截请求并注入 SystemMessage。
  * conversationHistoryEnabled 由 ToolCallAdvisor 管理，
  * 本 Advisor 不涉及对话历史。
+ *
+ * API 说明：Spring AI 1.1.6 Advisor 体系为 BaseAdvisor
+ * （before/after 模式），不是旧版的 CallAroundAdvisor
+ * （aroundCall/AdvisedRequest 模式）。
  */
-public class AgentSystemPromptAdvisor implements CallAroundAdvisor {
+public class AgentSystemPromptAdvisor implements BaseAdvisor {
 
     private final AgentIntent intent;
     private final String mergedSystemPrompt;
@@ -1420,6 +1447,7 @@ public class AgentSystemPromptAdvisor implements CallAroundAdvisor {
     }
 
     @Override
+    @NonNull
     public String getName() {
         return "AgentSystemPromptAdvisor";
     }
@@ -1430,15 +1458,28 @@ public class AgentSystemPromptAdvisor implements CallAroundAdvisor {
     }
 
     @Override
-    public AdvisedResponse aroundCall(AdvisedRequest request, CallAroundAdvisorChain chain) {
-        // 将 mergedSystemPrompt 注入到 request
-        AdvisedRequest updated = AdvisedRequest.from(request)
-            .withSystemText(mergedSystemPrompt)
+    @NonNull
+    public ChatClientRequest before(@NonNull ChatClientRequest request, @NonNull AdvisorChain chain) {
+        // 将 mergedSystemPrompt 作为 SystemMessage 注入到 prompt instructions 首位
+        SystemMessage systemMessage = new SystemMessage(mergedSystemPrompt);
+        List<org.springframework.ai.chat.messages.Message> instructions =
+            new ArrayList<>(request.prompt().getInstructions());
+        instructions.add(0, systemMessage);
+
+        return ChatClientRequest.builder()
+            .prompt(request.prompt().mutate()
+                .instructions(instructions)
+                .build())
+            .context(request.context())
             .build();
-        return chain.nextAroundCall(updated);
+    }
+
+    @Override
+    @NonNull
+    public ChatClientResponse after(@NonNull ChatClientResponse response, @NonNull AdvisorChain chain) {
+        return response; // 不修改响应
     }
 }
-```
 ```
 
 ### 4.4 配置设计
@@ -1548,9 +1589,10 @@ chain.add(new AgentSystemPromptAdvisor(intent.intent(), mergedPrompt));
 ### 5.3 组件复用关系
 
 ```
-HybridDocumentRetriever（现有）
-    ↑ 复用核心逻辑
-HybridSearchTool（新增）
+HybridSearchService（新增，提取核心逻辑）
+    ↑ 复用核心逻辑    ↑ 复用核心逻辑
+    |                 |
+HybridDocumentRetriever（现有）  HybridSearchTool（新增）
 
 BailianRerankPostProcessor（现有）
     ↑ 复用 rerank 调用逻辑
@@ -1624,14 +1666,22 @@ if (hasTools()) {
 **修复**：Agent 分支自建 `ToolCallAdvisor`，通过闭包工厂创建 ToolCallback，不复用全局 Bean
 ```java
 // ChatAdvisorChainFactory.java AGENT 分支
-public List<Advisor> buildAgentChain(Long userId, @Nullable Long teamId,
-                                     ChatRequest request) {
+public List<Advisor> buildAgentChain(String conversationId,
+                                    ChatRequest request,
+                                    ChatModeStrategy modeStrategy) {
     List<Advisor> chain = new ArrayList<>();
 
-    // 1. 全局 Advisor（RateLimit、ContentFilter 等）
+    // 1. 上下文注入（与 buildChain 一致）
+    if (modeStrategy.isContextEnabled()) {
+        chain.add(new ConversationContextAdvisor(conversationId));
+    }
+
+    // 2. 全局 Advisor（RateLimit、ContentFilter 等）
     chain.addAll(getGlobalAdvisors());
 
-    // 2. 意图识别
+    // 3. 意图识别
+    Long userId = SecurityUtils.getCurrentUserId();
+    Long teamId = request.teamId();
     IntentResult intent = intentClassifier.classify(request.message());
 
     // 3. 创建 Workspace（局部变量）
@@ -1729,7 +1779,8 @@ spec = spec.system(systemPrompt);
 ```java
 // ChatRequestSpecFactory.createSpec() 增加判断
 if (modeStrategy.isAgentMode()) {
-    // Agent 模式：跳过 DB 查询，System Prompt 由 AgentSystemPromptAdvisor 在 Advisor 链中动态注入
+    // Agent 模式：跳过 DB System Prompt，由 AgentSystemPromptAdvisor 动态注入
+    // 跳过 DB ModelParams（temperature 等），Agent 模型的参数由 AgentRagProperties 控制
     // CAG 上下文传递给 Agent 编排层处理
 } else {
     String systemPrompt = resolveSystemPrompt(route);
@@ -1737,8 +1788,17 @@ if (modeStrategy.isAgentMode()) {
     if (systemPrompt != null && !systemPrompt.isBlank()) {
         spec = spec.system(systemPrompt);
     }
+    // 模型参数
+    ChatOptions options = resolveChatOptions(route);
+    if (options != null) {
+        spec = spec.options(options);
+    }
 }
 ```
+
+**设计决策**：Agent 模式下 `temperature`、`topP` 等参数由 `AgentRagProperties` 统一控制，
+不从 DB `ModelParams` 读取。原因是 Agent ReAct 循环需要稳定的模型行为
+（如 temperature 偏低以减少幻觉），不应被 DB 配置意外覆盖。
 
 **改动文件**：`ChatRequestSpecFactory.java`（if-else 分支）
 
@@ -2179,6 +2239,12 @@ public class AgentGuardrails {
 只有 LLM 的输入/输出才计入。每轮 ChatResponse.metadata().usage() 提取。
 ```
 
+> **⚠️ 可行性验证**：Spring AI 1.1.6 的 `ToolCallAdvisor` 在 ReAct 循环中，
+> 每轮 Tool 调用后的中间 `ChatResponse` 是否暴露 `usage` 元数据需要验证。
+> 如果 `ToolCallAdvisor` 内部吞掉了中间响应的 usage，
+> 则 token 计数指标需改为基于输入文本估算（input tokens ≈ 字符数 / 4），
+> 而非精确计数。在 Phase 5 前写 PoC 验证。
+
 **护栏触发后的行为**：
 
 ```java
@@ -2388,8 +2454,11 @@ public record AgentRagProperties(
 
 1. `AgentIntent` 枚举 + `IntentResult` record
 2. `IntentClassifier`（独立 LLM 调用 + Structured Output）
-3. `AgentToolCallbackFactory`（意图→Tool 子集映射 + 闭包创建）
-4. 意图识别单元测试
+3. `HybridSearchService` — 提取 `HybridDocumentRetriever` 核心逻辑为独立 Service，
+   `HybridDocumentRetriever` 和 `HybridSearchTool` 都委托给它（重构，不改行为）
+4. `AgentToolCallbackFactory`（意图→Tool 子集映射 + 闭包创建）
+5. 意图识别单元测试
+6. **前置 PoC**：验证 `FunctionToolCallback.builder()` 泛型签名与本文档假设一致
 
 ### Phase 3: RAG Tool 实现（4-6h）
 
@@ -2400,7 +2469,7 @@ public record AgentRagProperties(
 
 ### Phase 4: ReAct 循环增强（3-4h）— 论文驱动
 
-1. `AgentSystemPromptAdvisor`：动态 System Prompt（含原子决策引导+检索代价意识+自省格式）
+1. `AgentSystemPromptAdvisor`：动态 System Prompt（实现 `BaseAdvisor` 接口，非旧版 `CallAroundAdvisor`；含原子决策引导+检索代价意识+自省格式）
 2. System Prompt 定义：
    - 原子决策引导（DeepRAG）：对每个子问题先输出 retrieve/parametric 决策
    - 自省评估格式（Self-RAG）：is_relevant/is_sufficient/next_action
@@ -2413,14 +2482,16 @@ public record AgentRagProperties(
 ### Phase 5: 护栏 + 容错（2-3h）
 
 1. `AgentGuardrails`（三指标：迭代总数/token 消耗/连续 Tool）
-2. `AgentDegradationStrategy`（全局降级）
-3. `AgentTrace` + `ToolCallRecord`（可观测性）
-4. 容错逻辑单元测试
+2. **前置 PoC**：验证 `ToolCallAdvisor` ReAct 循环中每轮中间 `ChatResponse.metadata().usage()` 是否可获取，
+   如果不可用则 token 计数改为基于输入文本估算（input tokens ≈ 字符数 / 4）
+3. `AgentDegradationStrategy`（全局降级）
+4. `AgentTrace` + `ToolCallRecord`（可观测性）
+5. 容错逻辑单元测试
 
 ### Phase 6: 编排层集成（2-3h）
 
-1. `ChatAdvisorChainFactory.buildAgentChain()` — 自建 ToolCallAdvisor（P2）
-2. `ChatRequestSpecFactory` AGENT 分支 — 跳过 spec.tools() + 跳过 DB System Prompt（P3/P4）
+1. `ChatAdvisorChainFactory.buildAgentChain()` — 自建 ToolCallAdvisor（P2），签名与 `buildChain()` 一致
+2. `ChatRequestSpecFactory` AGENT 分支 — 跳过 spec.tools() + 跳过 DB System Prompt + 跳过 DB ModelParams（P3/P4）
 3. `ChatServiceImpl` AGENT 模式支持 — 阻塞式 + AgentChatResponse 元数据注入（P6）
 4. `ChatController` 响应序列化分支
 

@@ -23,6 +23,7 @@ import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -80,6 +81,8 @@ public class RagAdvisorFactory {
      * @return 带隔离过滤的 RetrievalAugmentationAdvisor
      */
     public RetrievalAugmentationAdvisor create(Long userId, @Nullable Long teamId) {
+        Objects.requireNonNull(userId, "userId must not be null for RAG retrieval");
+
         List<QueryTransformer> queryTransformers = new ArrayList<>();
         if (properties.queryRewriteEnabled()) {
             queryTransformers.add(rewriteQueryTransformer);

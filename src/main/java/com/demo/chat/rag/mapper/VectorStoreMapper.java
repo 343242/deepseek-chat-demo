@@ -51,11 +51,12 @@ public class VectorStoreMapper {
     public List<Document> bm25Search(String ftsConfig, String sanitizedQuery,
                                      String isolationField, String isolationValue, int topK) {
         String sql = """
-                SELECT id, content, metadata
-                FROM vector_store
-                WHERE content_tsv @@ plainto_tsquery(?::regconfig, ?)
-                  AND metadata->> ? = ?
-                ORDER BY ts_rank_cd(content_tsv, plainto_tsquery(?::regconfig, ?)) DESC
+                WITH tsq AS (SELECT plainto_tsquery(?::regconfig, ?) AS q)
+                SELECT v.id, v.content, v.metadata
+                FROM vector_store v, tsq
+                WHERE v.content_tsv @@ tsq.q
+                  AND v.metadata->> ? = ?
+                ORDER BY ts_rank_cd(v.content_tsv, tsq.q) DESC
                 LIMIT ?
                 """;
 
@@ -70,8 +71,7 @@ public class VectorStoreMapper {
 
                     return new Document(id, content, metadata);
                 },
-                ftsConfig, sanitizedQuery, isolationField, isolationValue,
-                ftsConfig, sanitizedQuery, topK
+                ftsConfig, sanitizedQuery, isolationField, isolationValue, topK
         );
     }
 

@@ -8,6 +8,7 @@ import org.springframework.ai.rag.Query;
 import org.springframework.ai.rag.postretrieval.document.DocumentPostProcessor;
 
 import java.util.*;
+import java.util.stream.Collectors;
 
 /**
  * MMR (Maximal Marginal Relevance) 多样性重排处理器
@@ -39,6 +40,12 @@ public class MmrDocumentPostProcessor implements DocumentPostProcessor {
     private final VectorStoreMapper vectorStoreMapper;
 
     public MmrDocumentPostProcessor(double lambda, int topK, VectorStoreMapper vectorStoreMapper) {
+        if (lambda < 0.0 || lambda > 1.0) {
+            throw new IllegalArgumentException("MMR lambda must be in [0, 1], got: " + lambda);
+        }
+        if (topK <= 0) {
+            throw new IllegalArgumentException("MMR topK must be > 0, got: " + topK);
+        }
         this.lambda = lambda;
         this.topK = topK;
         this.vectorStoreMapper = vectorStoreMapper;
@@ -67,7 +74,16 @@ public class MmrDocumentPostProcessor implements DocumentPostProcessor {
         // 数据库层计算文档间 cosine distance 矩阵
         // TODO: 热门文档可考虑短时缓存距离矩阵，避免重复 DB 查询（当前文档量小，暂不缓存）
         List<String> docIds = documents.stream().map(Document::getId).toList();
-        Map<String, Double> distanceMatrix = vectorStoreMapper.pairwiseCosineDistance(docIds);
+        Map<String, Double> distanceMatrix;
+        try {
+            distanceMatrix = vectorStoreMapper.pairwiseCosineDistance(docIds);
+        } catch (Exception e) {
+            log.warn("MMR pairwise distance failed, degrading to relevance-only selection: {}", e.getMessage());
+            return documents.stream()
+                    .sorted(Comparator.comparingDouble(this::resolveRelevanceScore).reversed())
+                    .limit(topK)
+                    .collect(Collectors.toList());
+        }
 
         // 贪心 MMR 选择
         List<Integer> selected = new ArrayList<>(topK);
@@ -118,7 +134,6 @@ public class MmrDocumentPostProcessor implements DocumentPostProcessor {
         // 构建结果
         List<Document> result = new ArrayList<>(selected.size());
         for (int idx : selected) {
-            documents.get(idx).getMetadata().put("mmrSelected", true);
             result.add(documents.get(idx));
         }
 

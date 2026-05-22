@@ -96,6 +96,7 @@ public class BailianRerankPostProcessor implements DocumentPostProcessor {
 
         List<String> docTexts = documents.stream()
                 .map(Document::getText)
+                .filter(Objects::nonNull)
                 .collect(Collectors.toList());
 
         if (docTexts.isEmpty()) {
@@ -249,6 +250,12 @@ public class BailianRerankPostProcessor implements DocumentPostProcessor {
     }
 
     private boolean isRetryable(Throwable t) {
+        return isRetryable0(t, 0);
+    }
+
+    private boolean isRetryable0(Throwable t, int depth) {
+        if (t == null || depth > 10) return false;
+
         // 解包 Reactor retry 包装的异常
         Throwable e = t;
         while (e != null && e.getClass().getName().startsWith("reactor.")) {
@@ -264,6 +271,6 @@ public class BailianRerankPostProcessor implements DocumentPostProcessor {
         return e instanceof java.util.concurrent.TimeoutException
                 || e instanceof java.net.ConnectException
                 || e instanceof java.net.SocketTimeoutException
-                || (e.getCause() != null && isRetryable(e.getCause()));
+                || (e.getCause() != null && isRetryable0(e.getCause(), depth + 1));
     }
 }

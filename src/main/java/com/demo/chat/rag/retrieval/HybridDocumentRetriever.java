@@ -13,6 +13,7 @@ import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.ai.vectorstore.filter.FilterExpressionBuilder;
 
 import java.util.*;
+import java.util.concurrent.CompletableFuture;
 
 /**
  * 混合检索器 — 向量检索 + BM25 全文检索 + RRF 融合 + 用户/团队隔离
@@ -68,8 +69,26 @@ public class HybridDocumentRetriever implements DocumentRetriever {
             return vectorSearch(queryText, vectorTopK);
         }
 
-        List<ScoredDocument> vectorResults = vectorSearchWithScore(queryText, vectorTopK);
-        List<ScoredDocument> bm25Results = bm25Search(queryText, bm25TopK);
+        List<ScoredDocument> vectorResults;
+        List<ScoredDocument> bm25Results;
+
+        CompletableFuture<List<ScoredDocument>> vectorFuture =
+                CompletableFuture.supplyAsync(() -> vectorSearchWithScore(queryText, vectorTopK));
+        CompletableFuture<List<ScoredDocument>> bm25Future =
+                CompletableFuture.supplyAsync(() -> bm25Search(queryText, bm25TopK));
+
+        try {
+            vectorResults = vectorFuture.join();
+        } catch (Exception e) {
+            log.warn("Vector search future failed, using empty results: {}", e.getMessage());
+            vectorResults = List.of();
+        }
+        try {
+            bm25Results = bm25Future.join();
+        } catch (Exception e) {
+            log.warn("BM25 search future failed, using empty results: {}", e.getMessage());
+            bm25Results = List.of();
+        }
         List<Document> fused = rrfFusion(vectorResults, bm25Results);
 
         log.debug("Hybrid retrieval: query='{}', vector={}, bm25={}, fused={}, teamId={}",
@@ -168,7 +187,13 @@ public class HybridDocumentRetriever implements DocumentRetriever {
         return scores.entrySet().stream()
                 .sorted(Map.Entry.<String, Double>comparingByValue().reversed())
                 .limit(properties.vectorTopK())
-                .map(e -> docMap.get(e.getKey()))
+                .map(e -> {
+                    Document doc = docMap.get(e.getKey());
+                    if (doc != null) {
+                        doc.getMetadata().put("rrfScore", e.getValue());
+                    }
+                    return doc;
+                })
                 .filter(Objects::nonNull)
                 .toList();
     }

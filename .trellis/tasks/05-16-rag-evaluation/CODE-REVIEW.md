@@ -85,7 +85,7 @@ public ResponseEntity<Map<String, Object>> generateDataset(
 
 **违反**: spec guides/code-reuse-thinking-guide > Pattern 1: Copy-Paste Functions
 **对比项目标准**: 项目已有 `common/` 公共模块放工具类（雪花 ID 等），extractJson 应同样放 `common/`
-**正确做法**: 抽取到 `com.demo.chat.common.util.JsonExtractor`，所有消费者引用同一个实现
+**正确做法**: 抽取到 `util.common.com.smart.rag.JsonExtractor`，所有消费者引用同一个实现
 
 ---
 

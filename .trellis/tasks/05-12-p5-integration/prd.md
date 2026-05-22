@@ -6,7 +6,7 @@
 ## 实现清单
 
 ### 1. EtlDispatchService
-- 路径: `com.demo.chat.rag.service.EtlDispatchService`
+- 路径: `service.rag.com.smart.rag.EtlDispatchService`
 - 接口方法:
   - `EtlDispatchResult dispatch(List<EtlCandidate> candidates)` — 批量调度
   - `int executeSingle(Long documentId, String bucket, String objectKey, String fileName, String mimeType)` — 单文档同步（保持向后兼容）

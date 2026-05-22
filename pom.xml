@@ -11,10 +11,10 @@
         <relativePath/>
     </parent>
 
-    <groupId>com.demo</groupId>
-    <artifactId>chat-demo</artifactId>
+    <groupId>com.smart</groupId>
+    <artifactId>smart-rag</artifactId>
     <version>0.0.1-SNAPSHOT</version>
-    <name>chat-demo</name>
+    <name>smart-rag</name>
     <description>Multi-provider AI chat demo (DeepSeek, Zhipu, MiniMax) using Spring AI</description>
 
     <properties>

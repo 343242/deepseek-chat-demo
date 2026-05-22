@@ -6,13 +6,13 @@
 ## 实现清单
 
 ### 1. EtlExecutorProperties
-- 路径: `com.demo.chat.rag.config.EtlExecutorProperties`
+- 路径: `config.rag.com.smart.rag.EtlExecutorProperties`
 - `@ConfigurationProperties(prefix = "app.etl.executor")`
 - 内嵌 `PoolConfig io` 和 `PoolConfig cpu` 两个配置组
 - PoolConfig: corePoolSize, maxPoolSize, queueCapacity, threadNamePrefix, keepAliveSeconds
 
 ### 2. EtlExecutorConfig
-- 路径: `com.demo.chat.rag.etl.EtlExecutorConfig`
+- 路径: `etl.rag.com.smart.rag.EtlExecutorConfig`
 - `@Configuration`
 - Bean `etlIoExecutor` → ThreadPoolTaskExecutor（IO 密集型：大核心池、大队列）
 - Bean `etlCpuExecutor` → ThreadPoolTaskExecutor（CPU 密集型：核心数=CPU核数，小队列）

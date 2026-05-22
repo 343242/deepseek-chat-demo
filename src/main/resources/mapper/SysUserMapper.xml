@@ -1,17 +1,17 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
-<mapper namespace="com.demo.chat.user.mapper.SysUserMapper">
+<mapper namespace="com.smart.rag.user.mapper.SysUserMapper">
 
-    <select id="selectByUsername" resultType="com.demo.chat.user.entity.SysUser">
+    <select id="selectByUsername" resultType="com.smart.rag.user.entity.SysUser">
         SELECT * FROM sys_user WHERE username = #{username} AND deleted = 0
     </select>
 
-    <select id="selectActiveById" resultType="com.demo.chat.user.entity.SysUser">
+    <select id="selectActiveById" resultType="com.smart.rag.user.entity.SysUser">
         SELECT * FROM sys_user WHERE id = #{id} AND deleted = 0
     </select>
 
-    <select id="selectByEmailExcludingId" resultType="com.demo.chat.user.entity.SysUser">
+    <select id="selectByEmailExcludingId" resultType="com.smart.rag.user.entity.SysUser">
         SELECT * FROM sys_user WHERE email = #{email} AND deleted = 0 AND id != #{excludeId}
     </select>
 

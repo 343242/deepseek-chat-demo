@@ -141,7 +141,7 @@ WHERE document_group_id IS NULL AND deleted = 0;
 #### 2.3.1 新增事件
 
 ```java
-// com.demo.chat.rag.event.DocumentCreatedEvent
+// event.rag.com.smart.rag.DocumentCreatedEvent
 // 文档记录创建后发出（所有上传路径统一触发）
 public record DocumentCreatedEvent(
     Long documentId,
@@ -150,7 +150,7 @@ public record DocumentCreatedEvent(
     @Nullable Long teamId
 ) {}
 
-// com.demo.chat.rag.event.EtlCompletedEvent
+// event.rag.com.smart.rag.EtlCompletedEvent
 // ETL 处理成功后发出
 public record EtlCompletedEvent(
     Long documentId,
@@ -173,7 +173,7 @@ public record EtlCompletedEvent(
 #### 2.3.3 事件消费：DocumentSupersedeService
 
 ```java
-// com.demo.chat.rag.service.impl.DocumentSupersedeService
+// impl.service.rag.com.smart.rag.DocumentSupersedeService
 // 职责单一：处理文档版本替换逻辑
 
 @Service
@@ -452,8 +452,8 @@ public class DocumentSupersedeService {
 
 | 文件 | 说明 |
 |---|---|
-| **新增** `com.demo.chat.rag.event.DocumentCreatedEvent` | 文档创建事件（含 `replaceDocumentId`） |
-| **新增** `com.demo.chat.rag.event.EtlCompletedEvent` | ETL 完成事件 |
+| **新增** `event.rag.com.smart.rag.DocumentCreatedEvent` | 文档创建事件（含 `replaceDocumentId`） |
+| **新增** `event.rag.com.smart.rag.EtlCompletedEvent` | ETL 完成事件 |
 
 ### 4.3 服务层
 

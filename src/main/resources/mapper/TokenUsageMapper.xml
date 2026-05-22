@@ -1,24 +1,24 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
-<mapper namespace="com.demo.chat.chat.mapper.TokenUsageMapper">
+<mapper namespace="com.smart.rag.chat.mapper.TokenUsageMapper">
 
     <!-- 按对话 ID 查询（倒序） -->
-    <select id="selectByConversationId" resultType="com.demo.chat.chat.entity.TokenUsage">
+    <select id="selectByConversationId" resultType="com.smart.rag.chat.entity.TokenUsage">
         SELECT * FROM token_usage
         WHERE conversation_id = #{conversationId}
         ORDER BY created_at DESC
     </select>
 
     <!-- 按模型 ID + 对话前缀查询（用户隔离，倒序） -->
-    <select id="selectByModelAndUserPrefix" resultType="com.demo.chat.chat.entity.TokenUsage">
+    <select id="selectByModelAndUserPrefix" resultType="com.smart.rag.chat.entity.TokenUsage">
         SELECT * FROM token_usage
         WHERE model_id = #{modelId}
           AND conversation_id LIKE CONCAT(#{userPrefix}, '%')
         ORDER BY created_at DESC
     </select>
 
-    <select id="aggregateByModel" resultType="com.demo.chat.chat.dto.UsageStats">
+    <select id="aggregateByModel" resultType="com.smart.rag.chat.dto.UsageStats">
         SELECT model_id AS groupKey,
                COUNT(*) AS requestCount,
                COALESCE(SUM(prompt_tokens), 0) AS totalPromptTokens,
@@ -32,7 +32,7 @@
         GROUP BY model_id
     </select>
 
-    <select id="aggregateByConversation" resultType="com.demo.chat.chat.dto.UsageStats">
+    <select id="aggregateByConversation" resultType="com.smart.rag.chat.dto.UsageStats">
         SELECT conversation_id AS groupKey,
                COUNT(*) AS requestCount,
                COALESCE(SUM(prompt_tokens), 0) AS totalPromptTokens,
@@ -47,7 +47,7 @@
     </select>
 
     <!-- 用户隔离：按模型聚合，仅统计当前用户的记录 -->
-    <select id="aggregateByModelForUser" resultType="com.demo.chat.chat.dto.UsageStats">
+    <select id="aggregateByModelForUser" resultType="com.smart.rag.chat.dto.UsageStats">
         SELECT model_id AS groupKey,
                COUNT(*) AS requestCount,
                COALESCE(SUM(prompt_tokens), 0) AS totalPromptTokens,
@@ -63,7 +63,7 @@
     </select>
 
     <!-- 用户隔离：按对话聚合，仅统计当前用户的记录 -->
-    <select id="aggregateByUserConversations" resultType="com.demo.chat.chat.dto.UsageStats">
+    <select id="aggregateByUserConversations" resultType="com.smart.rag.chat.dto.UsageStats">
         SELECT conversation_id AS groupKey,
                COUNT(*) AS requestCount,
                COALESCE(SUM(prompt_tokens), 0) AS totalPromptTokens,

@@ -6,7 +6,7 @@
 ## 实现清单
 
 ### 1. EtlRouteStrategy 接口
-- 路径: `com.demo.chat.rag.etl.EtlRouteStrategy`
+- 路径: `etl.rag.com.smart.rag.EtlRouteStrategy`
 - 方法:
   - `boolean shouldApply(List<EtlCandidate> candidates)` — 判断是否使用该策略
   - `List<EtlResult> execute(List<EtlCandidate> candidates)` — 执行 ETL
@@ -14,7 +14,7 @@
 - EtlResult: record(documentId, status, chunkCount, errorMessage)
 
 ### 2. FastTrackStrategy
-- 路径: `com.demo.chat.rag.etl.FastTrackStrategy`
+- 路径: `etl.rag.com.smart.rag.FastTrackStrategy`
 - shouldApply: docCount ≤ maxDocCount && totalSize ≤ maxTotalSize
 - execute:
   1. IO池并行 Extract 所有文档
@@ -23,7 +23,7 @@
   4. 异步提交后续 Transform + Load（CPU池分块 → IO池向量化）
 
 ### 3. StandardStrategy
-- 路径: `com.demo.chat.rag.etl.StandardStrategy`
+- 路径: `etl.rag.com.smart.rag.StandardStrategy`
 - shouldApply: 总是 true（兜底策略）
 - execute:
   1. IO池并行 Extract
@@ -32,7 +32,7 @@
   4. 同步等待全部完成，返回结果
 
 ### 4. EtlRouteStrategyFactory
-- 路径: `com.demo.chat.rag.etl.EtlRouteStrategyFactory`
+- 路径: `etl.rag.com.smart.rag.EtlRouteStrategyFactory`
 - 构造器注入 `List<EtlRouteStrategy>`
 - `resolve(candidates)` → 遍历策略，第一个 shouldApply=true 的胜出
 - OCP: 新增策略只需新增实现类，不改 Factory

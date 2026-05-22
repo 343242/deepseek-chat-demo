@@ -81,7 +81,7 @@ com.demo.chat.rag.parser/
 ### 修改文件
 
 ```
-com.demo.chat.rag.config.DocumentProperties.java   ← 补全 MIME 类型 + 新增配置项
+config.rag.com.smart.rag.DocumentProperties.java   ← 补全 MIME 类型 + 新增配置项
 ```
 
 ### 不变文件

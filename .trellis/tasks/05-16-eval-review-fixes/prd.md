@@ -90,7 +90,7 @@ RAG 评估系统（05-16-rag-evaluation）已完成 5 个 Phase 的开发和初�
 **问题**: `extractJson()` 方法在 5 个类中重复实现。
 
 **修复方案**:
-- 创建 `com.demo.chat.common.util.JsonExtractor` 工具类
+- 创建 `util.common.com.smart.rag.JsonExtractor` 工具类
 - 统一实现（含三层容错：raw → markdown code block → `[...]` → 正则）
 - 所有消费者（`LlmJudgeImpl`、`DatasetGenerator`、4 个 Scorer）改为调用工具类
 

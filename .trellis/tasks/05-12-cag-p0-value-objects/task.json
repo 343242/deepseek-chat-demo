@@ -1,9 +1,0 @@
-{
-  "id": "05-12-cag-p0-value-objects",
-  "name": "p0-value-objects",
-  "title": "P0: 创建 context 包、RequestContext 值对象、CagProperties",
-  "description": "创建 com.demo.chat.chat.context 包，实现 RequestContext/UserContext/SessionContext/PolicyContext record 和 CagProperties 配置类",
-  "status": "pending",
-  "parent": "05-12-cag-context-manager",
-  "createdAt": "2026-05-12"
-}

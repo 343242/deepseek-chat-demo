@@ -1,9 +1,0 @@
-{
-  "id": "05-12-cag-p7-config",
-  "name": "p7-config",
-  "title": "P7: yml 配置 + Bean 注册验证",
-  "description": "application.yml 添加 app.cag 配置段，验证所有 Bean 正确注册和注入",
-  "status": "pending",
-  "parent": "05-12-cag-context-manager",
-  "createdAt": "2026-05-12"
-}

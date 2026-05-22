@@ -1,9 +1,0 @@
-{
-  "id": "05-12-cag-p4-policy-resolver",
-  "name": "p4-policy-resolver",
-  "title": "P4: PolicyConstraintResolver 接口 + DefaultPolicyConstraintResolver",
-  "description": "策略约束解析策略：接口定义 + 默认实现（基于角色生成回答约束文本，v1 硬编码，v2 配置驱动）",
-  "status": "pending",
-  "parent": "05-12-cag-context-manager",
-  "createdAt": "2026-05-12"
-}

@@ -124,7 +124,7 @@ export SNOWFLAKE_WORKER_ID=0
 
 ```bash
 mvn clean package -DskipTests
-java -jar target/chat-demo-0.0.1-SNAPSHOT.jar
+java -jar target/smart-rag-0.0.1-SNAPSHOT.jar
 ```
 
 ### 4. 验证
@@ -175,7 +175,7 @@ curl -X POST http://localhost:8080/api/teams/1/documents/multipart \
 ## 项目结构
 
 ```
-src/main/java/com/demo/chat/
+src/main/java/com/smart/rag/
 ├── common/              # 公共模块（错误码、分页、雪花ID、UUIDv7、工具类）
 ├── config/              # 基础配置（多厂商、Advisor、MyBatis-Plus、Redis）
 ├── security/            # 安全模块（JWT 双Token、验证码、Spring Security）

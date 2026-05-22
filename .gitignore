@@ -19,3 +19,7 @@ graphify-out/
 .codex/
 .trellis/
 logs/
+CLAUDE.md
+AGENTS.md
+.code-review-graphignore
+.factorypath

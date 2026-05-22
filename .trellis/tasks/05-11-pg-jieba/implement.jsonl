@@ -1,5 +1,0 @@
-{"file": ".trellis/spec/backend/index.md", "reason": "项目技术栈概览和开发前检查清单"}
-{"file": ".trellis/spec/backend/directory-structure.md", "reason": "确认 Dockerfile 放置位置符合项目规范"}
-{"file": ".trellis/spec/backend/error-handling.md", "reason": "确认异常处理规范不被破坏"}
-{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "OCP 验证、配置外提、禁止硬编码"}
-{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Schema 管理、迁移脚本规范"}

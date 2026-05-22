@@ -1,9 +1,0 @@
-{
-  "id": "05-12-cag-p1-mapper-batch",
-  "name": "p1-mapper-batch",
-  "title": "P1: SysRoleMapper 新增 selectByIds 批量方法",
-  "description": "在 SysRoleMapper 中新增 List<SysRole> selectByIds(List<Long> ids) 批量查询方法，避免 N+1",
-  "status": "pending",
-  "parent": "05-12-cag-context-manager",
-  "createdAt": "2026-05-12"
-}

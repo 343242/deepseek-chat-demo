@@ -1,9 +1,0 @@
-{
-  "id": "05-12-cag-p3-session-resolver",
-  "name": "p3-session-resolver",
-  "title": "P3: SessionContextResolver 接口 + DefaultSessionContextResolver",
-  "description": "会话上下文解析策略：接口定义 + 默认实现（推断对话阶段：首次/初期/深入/长对话）",
-  "status": "pending",
-  "parent": "05-12-cag-context-manager",
-  "createdAt": "2026-05-12"
-}

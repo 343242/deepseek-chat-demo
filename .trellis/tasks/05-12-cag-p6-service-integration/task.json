@@ -1,9 +1,0 @@
-{
-  "id": "05-12-cag-p6-service-integration",
-  "name": "p6-service-integration",
-  "title": "P6: ChatServiceImpl + ChatRequestSpecFactory 集成 CAG",
-  "description": "修改 ChatServiceImpl（新增 buildCagContext + ChatContext 扩展 userId）和 ChatRequestSpecFactory（createSpec 接收 RequestContext）",
-  "status": "pending",
-  "parent": "05-12-cag-context-manager",
-  "createdAt": "2026-05-12"
-}

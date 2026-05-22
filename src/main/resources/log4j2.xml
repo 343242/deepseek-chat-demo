@@ -150,7 +150,7 @@
         </AsyncLogger>
 
         <!-- ===== 业务模块日志（开发时可单独调为 DEBUG） ===== -->
-        <AsyncLogger name="com.demo.chat" level="${sys:LOG_APP_LEVEL:-INFO}" additivity="false">
+        <AsyncLogger name="com.smart.rag" level="${sys:LOG_APP_LEVEL:-INFO}" additivity="false">
             <AppenderRef ref="Console"/>
             <AppenderRef ref="ErrorFile"/>
             <AppenderRef ref="WarnFile"/>

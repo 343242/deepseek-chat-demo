@@ -1,8 +1,21 @@
 # Smart RAG
 
-基于 **Spring Boot 3.5 + Spring AI 1.1 + MyBatis-Plus 3.5** 的多厂商 AI 聊天助手后端。支持 **DeepSeek、智谱 AI (Zhipu)、MiniMax** 三家模型厂商，通过 Provider 抽象层实现统一路由与自动降级。提供动态模型加载、SSE 流式响应、JDBC 对话记忆、**Tool Calling 工具调用**、RBAC 权限系统、滑块验证码、自研雪花 ID 与 UUIDv7，并通过 Advisor 链实现限流与内容安全过滤。
+基于 **Spring Boot 3.5 + Spring AI 1.1 + MyBatis-Plus 3.5** 的生产级 RAG 系统。核心能力包括：**多厂商模型路由**（DeepSeek / 智谱 / MiniMax，统一 Provider 抽象 + 自动降级）、**六阶段 RAG Pipeline**（查询改写 → 混合检索 → MMR 去冗余 → Rerank 精排 → 父文档回查 → LLM 生成）、**Tool Calling 代码沙箱执行**、RBAC 权限、团队协作与文档增量更新。
 
-## RAG 检索增强生成
+## 功能概览
+
+### 多厂商 AI 聊天
+
+- **Provider 抽象层**：DeepSeek、智谱 AI (Zhipu)、MiniMax 三家厂商统一封装，通过 `ModelRouter` + `ProviderRegistry` 实现路由与降级
+- **复合格式指定模型**：`deepseek/deepseek-chat`、`zhipu/glm-4.7`，一键切换
+- **Advisor 链**：限流（令牌桶）→ 内容安全过滤 → 会话上下文注入 → RAG 增强
+- **SSE 流式响应**：原生 Server-Sent Events，支持 Fallback 重试链
+- **JDBC + Redis 对话记忆**：Spring AI Chat Memory 双层持久化
+- **Tool Calling**：沙箱隔离执行 Python / Node.js / Java 代码，安全数学表达式求值，日期时间工具
+- **聊天模式策略**：Simple（单轮） / MultiTurn（多轮上下文），`ModeRouter` 自动路由
+- **CAG 上下文注入**：基于用户画像 / 会话策略 / 策略约束的 Prompt 动态组装
+
+### RAG 检索增强生成
 
 支持完整的 RAG Pipeline：文档上传（含 GBK/GB2312/GB18030 编码自动检测转码）→ Apache Tika 解析 → Parent-Child 分块 → DashScope Embedding 向量化 → PGvector 存储。
 
@@ -26,19 +39,27 @@
 - **HNSW 参数调优**：m=32, ef_construction=128, ef_search=64, iterative_scan=relaxed_order
 - **ETL 双线程池**：IO 池（Extract/Load）+ CPU 池（Transform），多文档并行处理
 - **快速通道**：小文档走 BM25 即搜即用（异步向量化补齐）
+- **文档增量更新**：replaceDocumentId 方案，版本关联 + 旧向量即时清理 + 启动补偿
 - **MinIO BucketResolver**：个人/团队文档 bucket 隔离
 - **编码自动检测**：文本/Markdown 上传自动识别 GBK/GB2312/GB18030 编码并转码为 UTF-8
 
-## 评估系统
+### 评估系统
 
 独立的 RAG 评估框架（`@Profile("evaluation")`，dev 环境零侵入）：
 - **检索侧**：召回率 (Recall@K)、准确率 (Precision@K)、MRR、NDCG
 - **生成侧**：忠实度 (Faithfulness)、答案相关性、上下文相关性、上下文召回率
 - **Judge 模型**：独立于 Provider 路由，通过 `application-evaluation.yml` 直连厂商 API
 
-## 团队协作
+### 团队协作
 
 团队创建与解散、成员管理（邀请/移除/角色变更）、上传审批流、额度控制、文档权限隔离、团队分片上传。
+
+### 安全
+
+- **JWT 双 Token 认证**：Access Token（15min）+ Refresh Token（24h），JJWT 0.13.0
+- **RBAC 权限模型**：8 个细粒度权限，Spring Security `@PreAuthorize` 注解保护
+- **滑块验证码**：Caffeine 缓存存储
+- **敏感词过滤**：DFA 算法（sensitive-word）
 
 ## 技术栈
 
@@ -50,15 +71,15 @@
 | MyBatis-Plus | 3.5.16 | ORM 框架 |
 | PostgreSQL | 18 | 主数据库 |
 | PGvector | 0.8.2 | 向量数据库（HNSW 索引） |
-| pg_jieba | - | 中文分词（BM25 全文检索） |
-| Redis | 8.2 | 缓存 / Token 存储 / 权限缓存 |
+| pg_jieba | — | 中文分词（BM25 全文检索） |
+| Redis | 8.2 | 缓存 / Token 存储 / 权限缓存 / 会话记忆 |
 | MinIO | 9.0.0 | 对象存储（文档管理） |
-| Flyway | 随 Boot | 数据库版本化迁移 |
+| Flyway | 随 Boot | 数据库版本化迁移（14 个版本） |
 | Spring Security | 随 Boot | JWT 双 Token 认证 + RBAC 授权 |
-| JJWT | 0.13.0 | JWT 双 Token（Access 15min + Refresh 24h） |
+| JJWT | 0.13.0 | JWT 生成与解析 |
 | Apache Tika | 随 Spring AI | 多格式文档解析（PDF/DOCX/PPTX/HTML 等） |
 | juniversalchardet | 2.5.0 | 文本编码自动检测（GBK/GB2312/GB18030） |
-| DashScope text-embedding-v4 | - | 阿里千问 Embedding 模型（1024 维） |
+| DashScope text-embedding-v4 | — | 阿里千问 Embedding 模型（1024 维） |
 | Caffeine | 3.x | 本地缓存（SystemPrompt / ModelParams / 验证码） |
 | sensitive-word | 0.29.5 | DFA 敏感词过滤 |
 | Log4j 2 + Disruptor | 4.0.0 | 全异步日志，按级别分目录 |
@@ -74,7 +95,7 @@
 cp .env.example .env   # 编辑 POSTGRES_PASSWORD 等配置
 docker compose up -d
 
-# Flyway 自动执行数据库迁移（共 13 个版本）：
+# Flyway 自动执行数据库迁移（共 14 个版本）：
 #   V1  初始表结构（用户/权限/RBAC/聊天）
 #   V2  BM25 全文检索支持（tsvector + 触发器）
 #   V3  初始角色与权限种子数据
@@ -88,6 +109,7 @@ docker compose up -d
 #   V11 RAG 评估表
 #   V12 评估状态 CHECK 约束 + 权限
 #   V13 HNSW 参数调优 + iterative scan
+#   V14 文档增量更新（version/superseded_by/document_group_id）
 # 初始管理员：admin / admin123（生产环境请立即修改）
 ```
 
@@ -176,12 +198,27 @@ curl -X POST http://localhost:8080/api/teams/1/documents/multipart \
 
 ```
 src/main/java/com/smart/rag/
+├── SmartRagApplication.java
 ├── common/              # 公共模块（错误码、分页、雪花ID、UUIDv7、工具类）
 ├── config/              # 基础配置（多厂商、Advisor、MyBatis-Plus、Redis）
 ├── security/            # 安全模块（JWT 双Token、验证码、Spring Security）
 ├── user/                # RBAC 用户模块（用户/角色/权限 CRUD、BCrypt）
 ├── conversation/        # 会话管理（独立于 chat，双写架构）
-├── chat/                # 聊天核心（Provider 抽象、模型路由、Advisor 链、Tool Calling、自动降级）
+├── chat/                # 聊天核心
+│   ├── advisor/         #   Advisor 链（限流、内容过滤、会话上下文）
+│   ├── client/          #   ChatClientRegistry（ChatClient 统一管理）
+│   ├── content/         #   内容安全（敏感词过滤服务）
+│   ├── context/         #   CAG 上下文注入（用户画像/会话策略/策略约束）
+│   ├── controller/      #   REST 接口
+│   ├── dto/             #   数据传输对象
+│   ├── entity/          #   实体（SystemPrompt、ModelParams、TokenUsage）
+│   ├── fallback/        #   Fallback 自动降级（重试链 + 资格判定）
+│   ├── mapper/          #   MyBatis-Plus Mapper
+│   ├── memory/          #   Redis 会话记忆
+│   ├── mode/            #   聊天模式策略（Simple / MultiTurn）
+│   ├── provider/        #   多厂商 Provider（DeepSeek / Zhipu / MiniMax + ModelRouter）
+│   ├── service/         #   业务服务（ChatService、ModelService、UsageService 等）
+│   └── tool/            #   Tool Calling（Calculator / DateTime / CodeExecution + 沙箱）
 ├── rag/                 # RAG 模块
 │   ├── config/          #   RAG 配置（RagRetrievalProperties record、RagAdvisorFactory）
 │   ├── retrieval/       #   检索（HybridDocumentRetriever、Rerank、MMR、QueryNormalizer）
@@ -190,7 +227,9 @@ src/main/java/com/smart/rag/
 │   ├── etl/             #   ETL Pipeline（双线程池、Standard/FastTrack 策略路由）
 │   ├── mapper/          #   数据访问（VectorStoreMapper: BM25/ParentChild/Cosine距离）
 │   ├── evaluation/      #   评估系统（@Profile("evaluation"), Judge/LlmScorer/指标计算）
+│   ├── event/           #   文档事件（增量更新、版本替换）
 │   ├── parser/          #   文档解析（Apache Tika + 编码自动检测）
+│   ├── service/         #   RAG 业务服务（文档管理、增量更新）
 │   ├── upload/          #   上传策略（个人上传）
 │   └── entity/          #   RAG 实体
 ├── team/                # 团队协作（团队/成员/审批/额度/权限隔离/团队上传）
@@ -209,6 +248,9 @@ src/main/java/com/smart/rag/
 | [安全设计](docs/SECURITY.md) | 双 Token 认证、滑块验证码、RBAC 权限模型 |
 | [会话与 ID 设计](docs/CONVERSATION-DESIGN.md) | 雪花 ID、UUIDv7、Conversation 双写架构 |
 | [RAG 检索增强](docs/RAG-DESIGN.md) | ETL Pipeline、六阶段检索管道、多租户隔离 |
+| [Agentic RAG 设计](docs/AGENTIC-RAG-DESIGN.md) | 意图识别驱动的 Agentic RAG 架构设计 |
+| [Agentic RAG 实施](docs/AGENTIC-RAG-IMPLEMENTATION-NOTES.md) | 实施笔记与关键技术决策 |
+| [Agentic RAG POC](docs/AGENTIC-RAG-POC-RESULTS.md) | POC 验证结果 |
 | [环境配置](docs/CONFIGURATION.md) | Profile 说明、环境变量、完整配置项 |
 | [项目结构](docs/PROJECT-STRUCTURE.md) | 完整的源码目录树（文件级） |
 | [API 接口文档](docs/API-DOCS.md) | 所有接口的完整说明 |

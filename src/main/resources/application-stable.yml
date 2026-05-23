@@ -3,7 +3,7 @@ server:
 
 spring:
   datasource:
-    url: jdbc:postgresql://${DB_HOST:localhost}:5432/${DB_NAME:chat_demo}
+    url: jdbc:postgresql://${DB_HOST:localhost}:5432/${DB_NAME:smart_rag}
     username: ${POSTGRES_USER}
     password: ${POSTGRES_PASSWORD}
     driver-class-name: org.postgresql.Driver
@@ -40,7 +40,7 @@ app:
     secret: ${JWT_SECRET}
     access-expiration: ${JWT_ACCESS_EXPIRATION:900}
     refresh-expiration: ${JWT_REFRESH_EXPIRATION:86400}
-    issuer: chat-demo
+    issuer: smart-rag
     redis-prefix: "auth:token:"
   snowflake:
     epoch: ${SNOWFLAKE_EPOCH:2026-01-01T00:00:00+08:00}

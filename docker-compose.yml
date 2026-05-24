@@ -1,29 +1,29 @@
-# chat-demo Docker Compose
+# Smart RAG Docker Compose
 # 用法: docker compose up -d
 
 services:
   postgres:
     build: ./docker/postgres
-    container_name: chat-demo-db
+    container_name: smart-rag-db
     restart: unless-stopped
     ports:
       - "${PG_PORT:-5432}:5432"
     environment:
-      POSTGRES_DB: ${POSTGRES_DB:-chat_demo}
+      POSTGRES_DB: ${POSTGRES_DB:-smart_rag}
       POSTGRES_USER: ${POSTGRES_USER:-postgres}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?请在 .env 中设置 POSTGRES_PASSWORD}
     volumes:
       - pgdata:/var/lib/postgresql
       # schema.sql 已废弃，改由 Flyway (db/migration/) 管理数据库迁移
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-chat_demo}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-smart_rag}"]
       interval: 5s
       timeout: 3s
       retries: 10
 
   redis:
     image: redis:8.2.6-bookworm
-    container_name: chat-demo-redis
+    container_name: smart-rag-redis
     restart: unless-stopped
     ports:
       - "${REDIS_PORT:-6379}:6379"
@@ -38,7 +38,7 @@ services:
 
   minio:
     image: pgsty/minio:latest
-    container_name: chat-demo-minio
+    container_name: smart-rag-minio
     restart: unless-stopped
     ports:
       - "${MINIO_API_PORT:-9000}:9000"

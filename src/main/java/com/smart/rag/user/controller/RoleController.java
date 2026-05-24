@@ -47,12 +47,12 @@ public class RoleController {
         return GlobalResponse.ok(roleService.createRole(request.roleName(), request.roleDesc()));
     }
 
-    @PutMapping("/{id}")
+    @PostMapping("/{id}/update")
     public GlobalResponse<SysRole> updateRole(@PathVariable Long id, @Valid @RequestBody UpdateRoleRequest request) {
         return GlobalResponse.ok(roleService.updateRole(id, request.roleDesc()));
     }
 
-    @DeleteMapping("/{id}")
+    @PostMapping("/{id}/delete")
     public GlobalResponse<Void> deleteRole(@PathVariable Long id) {
         roleService.deleteRole(id);
         return GlobalResponse.ok("角色已删除");
@@ -63,7 +63,7 @@ public class RoleController {
         return GlobalResponse.ok(roleService.getRolePermissions(id));
     }
 
-    @PatchMapping("/{id}/permissions")
+    @PostMapping("/{id}/permissions/update")
     public GlobalResponse<Map<String, Object>> assignPermissions(@PathVariable Long id,
                                                                    @Valid @RequestBody AssignPermissionsRequest request) {
         roleService.assignPermissions(id, request.permissionIds());

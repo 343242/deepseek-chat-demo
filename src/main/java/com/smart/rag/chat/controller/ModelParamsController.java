@@ -33,13 +33,13 @@ public class ModelParamsController {
         return GlobalResponse.ok(modelParamsService.getParamsDTO(modelId).orElse(null));
     }
 
-    @PutMapping("/{modelId}/params")
+    @PostMapping("/{modelId}/params")
     public GlobalResponse<ModelParamsDTO> saveOrUpdate(@PathVariable String modelId,
                                                         @Valid @RequestBody ModelParamsDTO dto) {
         return GlobalResponse.ok(modelParamsService.saveOrUpdate(modelId, dto));
     }
 
-    @DeleteMapping("/{modelId}/params")
+    @PostMapping("/{modelId}/params/delete")
     public GlobalResponse<Void> delete(@PathVariable String modelId) {
         boolean deleted = modelParamsService.delete(modelId);
         if (deleted) {

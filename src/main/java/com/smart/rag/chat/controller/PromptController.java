@@ -34,13 +34,13 @@ public class PromptController {
         return GlobalResponse.ok(promptService.getPromptDTO(modelId).orElse(null));
     }
 
-    @PutMapping("/{modelId}")
+    @PostMapping("/{modelId}/update")
     public GlobalResponse<SystemPromptDTO> saveOrUpdate(@PathVariable String modelId,
                                                          @Valid @RequestBody SystemPromptUpdateRequest request) {
         return GlobalResponse.ok(promptService.saveOrUpdate(modelId, request.promptText()));
     }
 
-    @DeleteMapping("/{modelId}")
+    @PostMapping("/{modelId}/delete")
     public GlobalResponse<Void> delete(@PathVariable String modelId) {
         boolean deleted = promptService.delete(modelId);
         if (deleted) {

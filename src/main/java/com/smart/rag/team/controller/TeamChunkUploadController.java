@@ -78,7 +78,7 @@ public class TeamChunkUploadController {
      * <p>
      * 分片上传不感知 teamId——uploadId 已经绑定了 bucket（在 init 阶段确定）。
      */
-    @PutMapping("/{uploadId}/chunks/{chunkIndex}")
+    @PostMapping("/{uploadId}/chunks/{chunkIndex}")
     public GlobalResponse<ChunkUploadResponse> uploadChunk(
             @PathVariable Long teamId,
             @PathVariable String uploadId,
@@ -119,7 +119,7 @@ public class TeamChunkUploadController {
     /**
      * 取消上传，清理已上传分片。
      */
-    @DeleteMapping("/{uploadId}")
+    @PostMapping("/{uploadId}/delete")
     public GlobalResponse<Void> abort(
             @PathVariable Long teamId,
             @PathVariable String uploadId) {

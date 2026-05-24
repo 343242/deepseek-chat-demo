@@ -31,7 +31,7 @@ public class TeamMemberController {
         return GlobalResponse.ok(teamMemberService.addMember(teamId, userId));
     }
 
-    @DeleteMapping("/{userId}")
+    @PostMapping("/{userId}/delete")
     public GlobalResponse<Void> removeMember(@PathVariable Long teamId,
                                               @PathVariable Long userId) {
         teamMemberService.removeMember(teamId, userId);
@@ -44,7 +44,7 @@ public class TeamMemberController {
         return GlobalResponse.ok(null);
     }
 
-    @PutMapping("/{userId}/role")
+    @PostMapping("/{userId}/role")
     public GlobalResponse<Void> updateMemberRole(@PathVariable Long teamId,
                                                   @PathVariable Long userId,
                                                   @Valid @RequestBody MemberRoleUpdateRequest request) {
@@ -52,7 +52,7 @@ public class TeamMemberController {
         return GlobalResponse.ok(null);
     }
 
-    @PutMapping("/{userId}/upload-limit")
+    @PostMapping("/{userId}/upload-limit")
     public GlobalResponse<Void> setMemberUploadLimit(@PathVariable Long teamId,
                                                       @PathVariable Long userId,
                                                       @Valid @RequestBody MemberUploadLimitRequest request) {

@@ -35,22 +35,22 @@ public class UserController {
         return GlobalResponse.ok(sysUserService.getUser(id));
     }
 
-    @PatchMapping("/{id}")
+    @PostMapping("/{id}/update")
     public GlobalResponse<LoginResponse.UserInfo> updateUser(@PathVariable Long id, @Valid @RequestBody UserUpdateRequest request) {
         return GlobalResponse.ok(sysUserService.updateUser(id, request));
     }
 
-    @PatchMapping("/{id}/status")
+    @PostMapping("/{id}/status")
     public GlobalResponse<UserStatusUpdateResult> updateUserStatus(@PathVariable Long id, @RequestParam Integer status) {
         return GlobalResponse.ok(sysUserService.updateUserStatus(id, status));
     }
 
-    @PatchMapping("/{id}/roles")
+    @PostMapping("/{id}/roles")
     public GlobalResponse<RoleAssignResult> assignRoles(@PathVariable Long id, @Valid @RequestBody AssignRolesRequest request) {
         return GlobalResponse.ok(sysUserService.assignRoles(id, request));
     }
 
-    @DeleteMapping("/{id}")
+    @PostMapping("/{id}/delete")
     public GlobalResponse<UserDeleteResult> deleteUser(@PathVariable Long id) {
         return GlobalResponse.ok(sysUserService.deleteUser(id));
     }

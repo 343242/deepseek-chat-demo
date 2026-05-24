@@ -71,7 +71,7 @@ class RoleControllerTest {
     void assignPermissions_emptyList() throws Exception {
         AssignPermissionsRequest req = new AssignPermissionsRequest(List.of());
 
-        mockMvc.perform(patch("/api/roles/1/permissions")
+        mockMvc.perform(post("/api/roles/1/permissions/update")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(req)))
                 .andExpect(status().isBadRequest());
@@ -82,7 +82,7 @@ class RoleControllerTest {
     void assignPermissions_valid() throws Exception {
         AssignPermissionsRequest req = new AssignPermissionsRequest(List.of(1L, 2L));
 
-        mockMvc.perform(patch("/api/roles/1/permissions")
+        mockMvc.perform(post("/api/roles/1/permissions/update")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(req)))
                 .andExpect(status().isOk())

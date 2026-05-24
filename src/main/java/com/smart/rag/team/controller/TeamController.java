@@ -38,19 +38,19 @@ public class TeamController {
         return GlobalResponse.ok(teamService.listMyTeams());
     }
 
-    @PutMapping("/{teamId}")
+    @PostMapping("/{teamId}/update")
     public GlobalResponse<TeamVO> updateTeam(@PathVariable Long teamId,
                                              @Valid @RequestBody TeamUpdateRequest request) {
         return GlobalResponse.ok(teamService.updateTeam(teamId, request));
     }
 
-    @DeleteMapping("/{teamId}")
+    @PostMapping("/{teamId}/delete")
     public GlobalResponse<Void> dissolveTeam(@PathVariable Long teamId) {
         teamService.dissolveTeam(teamId);
         return GlobalResponse.ok(null);
     }
 
-    @PutMapping("/{teamId}/creator-quota")
+    @PostMapping("/{teamId}/creator-quota")
     @PreAuthorize("hasAuthority('team:manage')")
     public GlobalResponse<Void> setCreatorQuota(@PathVariable Long teamId,
                                                 @Valid @RequestBody CreatorQuotaRequest request) {

@@ -72,7 +72,7 @@ class UserControllerTest {
     void updateUser_invalidEmail() throws Exception {
         UserUpdateRequest req = new UserUpdateRequest(null, "not-an-email", null, null);
 
-        mockMvc.perform(patch("/api/users/1")
+        mockMvc.perform(post("/api/users/1/update")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(req)))
                 .andExpect(status().isBadRequest());
@@ -84,7 +84,7 @@ class UserControllerTest {
         when(sysUserService.updateUserStatus(1L, 2)).thenThrow(
                 new BusinessException("无效的用户状态，仅支持 0(禁用) 和 1(启用)"));
 
-        mockMvc.perform(patch("/api/users/1/status?status=2"))
+        mockMvc.perform(post("/api/users/1/status?status=2"))
                 .andExpect(status().isBadRequest());
     }
 
@@ -94,7 +94,7 @@ class UserControllerTest {
         when(sysUserService.updateUserStatus(1L, 0)).thenReturn(
                 new UserStatusUpdateResult(1L, 0, "已禁用"));
 
-        mockMvc.perform(patch("/api/users/1/status?status=0"))
+        mockMvc.perform(post("/api/users/1/status?status=0"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.message").value("已禁用"));
     }
@@ -104,7 +104,7 @@ class UserControllerTest {
     void assignRoles_emptyList() throws Exception {
         AssignRolesRequest req = new AssignRolesRequest(List.of());
 
-        mockMvc.perform(patch("/api/users/1/roles")
+        mockMvc.perform(post("/api/users/1/roles")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(req)))
                 .andExpect(status().isBadRequest());
@@ -115,7 +115,7 @@ class UserControllerTest {
     void deleteUser_success() throws Exception {
         when(sysUserService.deleteUser(1L)).thenReturn(new UserDeleteResult(1L, "用户已删除"));
 
-        mockMvc.perform(delete("/api/users/1"))
+        mockMvc.perform(post("/api/users/1/delete"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.message").value("用户已删除"));
     }

@@ -63,7 +63,7 @@ public class DocumentController {
         return GlobalResponse.ok(documentService.getHistory(id));
     }
 
-    @DeleteMapping("/{id}")
+    @PostMapping("/{id}/delete")
     public GlobalResponse<Void> delete(@PathVariable Long id) {
         documentService.delete(id);
         return GlobalResponse.ok("文档已删除");

@@ -57,7 +57,7 @@ public class ChunkUploadController {
      * <p>
      * 请求头 X-Chunk-MD5 携带前端计算的分片 MD5，后端独立校验。
      */
-    @PutMapping("/{uploadId}/chunks/{chunkIndex}")
+    @PostMapping("/{uploadId}/chunks/{chunkIndex}")
     public GlobalResponse<ChunkUploadResponse> uploadChunk(
             @PathVariable String uploadId,
             @PathVariable int chunkIndex,
@@ -94,7 +94,7 @@ public class ChunkUploadController {
     /**
      * 取消上传，清理已上传分片。
      */
-    @DeleteMapping("/{uploadId}")
+    @PostMapping("/{uploadId}/delete")
     public GlobalResponse<Void> abort(@PathVariable String uploadId) {
         chunkUploadService.abort(uploadId);
         return GlobalResponse.ok("上传已取消");

@@ -64,7 +64,7 @@ public class ConversationController {
         return GlobalResponse.ok(conversationService.listMessages(userId, isolatedId));
     }
 
-    @PutMapping("/{conversationId}")
+    @PostMapping("/{conversationId}/update")
     public GlobalResponse<Void> update(
             @PathVariable String conversationId,
             @Valid @RequestBody ConversationUpdateRequest request) {
@@ -74,7 +74,7 @@ public class ConversationController {
         return GlobalResponse.ok("会话已更新");
     }
 
-    @DeleteMapping("/{conversationId}")
+    @PostMapping("/{conversationId}/delete")
     public GlobalResponse<Void> delete(@PathVariable String conversationId) {
         Long userId = SecurityUtils.getCurrentUserId();
         String isolatedId = ConversationIdUtil.buildIsolatedId(userId, conversationId);

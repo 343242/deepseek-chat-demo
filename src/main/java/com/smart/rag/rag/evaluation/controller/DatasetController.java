@@ -106,7 +106,7 @@ public class DatasetController {
     /**
      * 更新单条数据项（审核修正）
      */
-    @PutMapping("/{datasetId}/items/{itemId}")
+    @PostMapping("/{datasetId}/items/{itemId}")
     public ResponseEntity<?> updateItem(
             @PathVariable long datasetId,
             @PathVariable long itemId,

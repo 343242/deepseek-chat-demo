@@ -93,14 +93,14 @@ public class AuthController {
         return GlobalResponse.ok(authService.getCurrentUser(userId));
     }
 
-    @PatchMapping("/me/password")
+    @PostMapping("/me/password")
     public GlobalResponse<Void> changePassword(@Valid @RequestBody ChangePasswordRequest request) {
         Long userId = SecurityUtils.getCurrentUserId();
         authService.changePassword(userId, request.oldPassword(), request.newPassword());
         return GlobalResponse.ok("密码已修改");
     }
 
-    @PatchMapping("/me/profile")
+    @PostMapping("/me/profile")
     public GlobalResponse<LoginResponse.UserInfo> updateProfile(@Valid @RequestBody UserUpdateRequest request) {
         Long userId = SecurityUtils.getCurrentUserId();
         return GlobalResponse.ok(authService.updateProfile(userId, request));

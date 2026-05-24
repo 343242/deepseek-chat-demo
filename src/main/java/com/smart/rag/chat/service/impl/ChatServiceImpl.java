@@ -166,15 +166,14 @@ public class ChatServiceImpl implements ChatService {
 
         org.springframework.ai.chat.model.ChatResponse aiResponse = requestSpec.call().chatResponse();
 
-        usageTracker.recordUsage(ctx.conversationId, ctx.route.toCompositeId(), aiResponse, ctx.elapsed());
-
-        Generation generation = null;
         if (aiResponse != null) {
-            generation = aiResponse.getResult();
+            usageTracker.recordUsage(ctx.conversationId, ctx.route.toCompositeId(), aiResponse, ctx.elapsed());
+        } else {
+            usageTracker.recordUsage(ctx.conversationId, ctx.route.toCompositeId(), ctx.elapsed());
         }
-        String content = generation != null
-                ? generation.getOutput().getText()
-                : "";
+
+        Generation generation = (aiResponse != null) ? aiResponse.getResult() : null;
+        String content = generation != null ? generation.getOutput().getText() : "";
 
         conversationHelper.saveMessagesAndNotify(ctx.conversationId, request.message(), content,
                 ctx.route.toCompositeId(), aiResponse, ctx.elapsed());
@@ -226,13 +225,13 @@ public class ChatServiceImpl implements ChatService {
                                         collectedContent.toString(), ctx.route.toCompositeId(),
                                         lastAiResponse.get(), ctx.elapsed());
                             }
-                            // ON_SUBSCRIBE, ON_NEXT — 无需处理
+                            default -> {}
                         }
                     }
                     if (usageRecorded.compareAndSet(false, true)) {
                         long duration = ctx.elapsed();
                         org.springframework.ai.chat.model.ChatResponse last = lastAiResponse.get();
-                        if (last != null && last.getMetadata().getUsage() != null) {
+                        if (last != null && last.getMetadata() != null && last.getMetadata().getUsage() != null) {
                             usageTracker.recordUsage(ctx.conversationId, ctx.route.toCompositeId(),
                                     last, duration);
                         } else {

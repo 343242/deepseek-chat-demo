@@ -35,6 +35,9 @@ public class FallbackEligibility {
      */
     public boolean isEligible(Throwable e) {
         return !(e instanceof ContentFilteredException
-                || e instanceof BusinessException);
+                || e instanceof BusinessException
+                || e instanceof NullPointerException
+                || e instanceof IllegalArgumentException
+                || e instanceof IllegalStateException);
     }
 }

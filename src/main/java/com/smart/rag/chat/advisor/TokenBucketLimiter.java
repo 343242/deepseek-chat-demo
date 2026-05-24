@@ -51,6 +51,10 @@ public class TokenBucketLimiter implements RateLimiter {
 
     @Override
     public boolean tryAcquire(String key) {
+        Bucket existing = buckets.get(key);
+        if (existing != null) {
+            return existing.tryConsume(1);
+        }
         if (buckets.size() >= MAX_BUCKETS) {
             String displayKey = key.length() > 20 ? key.substring(0, 20) + "..." : key;
             log.warn("Token bucket limit reached ({}), rejecting new key: {}", MAX_BUCKETS, displayKey);

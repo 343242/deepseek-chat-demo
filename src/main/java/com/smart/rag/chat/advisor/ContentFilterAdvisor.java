@@ -76,16 +76,21 @@ public class ContentFilterAdvisor implements BaseAdvisor {
         List<Generation> filteredGenerations = new ArrayList<>();
         for (Generation generation : chatResponse.getResults()) {
             String content = generation.getOutput().getText();
-            if (content != null && contentFilterService.containsSensitiveContent(content)) {
-                String filtered = contentFilterService.replace(content);
-                log.debug("Filtered sensitive words in model output");
-                AssistantMessage newMessage = new AssistantMessage(filtered);
-                // 保留原始 finishReason，添加 contentFiltered 标记
-                ChatGenerationMetadata newMetadata = ChatGenerationMetadata.builder()
-                        .finishReason(generation.getMetadata().getFinishReason())
-                        .metadata("contentFiltered", true)
-                        .build();
-                filteredGenerations.add(new Generation(newMessage, newMetadata));
+            if (content != null) {
+                List<String> found = contentFilterService.findAll(content);
+                if (!found.isEmpty()) {
+                    String filtered = contentFilterService.replace(content);
+                    log.debug("Filtered {} sensitive words in model output", found.size());
+                    AssistantMessage newMessage = new AssistantMessage(filtered);
+                    // 保留原始 finishReason，添加 contentFiltered 标记
+                    ChatGenerationMetadata newMetadata = ChatGenerationMetadata.builder()
+                            .finishReason(generation.getMetadata().getFinishReason())
+                            .metadata("contentFiltered", true)
+                            .build();
+                    filteredGenerations.add(new Generation(newMessage, newMetadata));
+                } else {
+                    filteredGenerations.add(generation);
+                }
             } else {
                 filteredGenerations.add(generation);
             }

@@ -24,7 +24,7 @@ import java.util.concurrent.*;
  *   <li>超时控制：双重保障（timeout 命令 + Java Future 超时）</li>
  * </ul>
  */
-public class SandboxService {
+public class SandboxService implements AutoCloseable {
 
     private static final Logger log = LoggerFactory.getLogger(SandboxService.class);
 
@@ -206,12 +206,16 @@ public class SandboxService {
                 .redirectErrorStream(true)
                 .start();
 
-        String output = truncateOutput(startProcess.getInputStream().readAllBytes());
-        int exitCode = startProcess.waitFor();
-        long duration = System.currentTimeMillis() - startTime;
+        try {
+            String output = truncateOutput(startProcess.getInputStream().readAllBytes());
+            int exitCode = startProcess.waitFor();
+            long duration = System.currentTimeMillis() - startTime;
 
-        return new SandboxResult(exitCode, output, "",
-                exitCode == 124 || exitCode == 137, duration);
+            return new SandboxResult(exitCode, output, "",
+                    exitCode == 124 || exitCode == 137, duration);
+        } finally {
+            startProcess.destroyForcibly();
+        }
     }
 
     /**
@@ -232,8 +236,10 @@ public class SandboxService {
      */
     private void killContainer(String containerId) {
         try {
-            new ProcessBuilder("docker", "kill", containerId)
-                    .start().waitFor(5, TimeUnit.SECONDS);
+            Process process = new ProcessBuilder("docker", "kill", containerId)
+                    .redirectErrorStream(true)
+                    .start();
+            drainAndAwait(process, 5);
         } catch (Exception e) {
             log.warn("Failed to kill container {}: {}", containerId, e.getMessage());
         }
@@ -244,8 +250,10 @@ public class SandboxService {
      */
     private void forceRemoveContainer(String containerId) {
         try {
-            new ProcessBuilder("docker", "rm", "-f", containerId)
-                    .start().waitFor(5, TimeUnit.SECONDS);
+            Process process = new ProcessBuilder("docker", "rm", "-f", containerId)
+                    .redirectErrorStream(true)
+                    .start();
+            drainAndAwait(process, 5);
         } catch (Exception ignored) {
         }
     }
@@ -258,9 +266,33 @@ public class SandboxService {
             Process process = new ProcessBuilder("docker", "info")
                     .redirectErrorStream(true)
                     .start();
-            return process.waitFor(10, TimeUnit.SECONDS) && process.exitValue() == 0;
+            boolean exited = drainAndAwait(process, 10);
+            return exited && process.exitValue() == 0;
         } catch (Exception e) {
             return false;
         }
+    }
+
+    /**
+     * 清空进程输出流（防止缓冲区满导致死锁），然后等待退出。
+     *
+     * @param process        子进程（必须已设置 redirectErrorStream(true)）
+     * @param timeoutSeconds 等待超时秒数
+     * @return true 表示进程在超时内退出
+     */
+    private boolean drainAndAwait(Process process, long timeoutSeconds) {
+        try {
+            process.getInputStream().readAllBytes();
+            return process.waitFor(timeoutSeconds, TimeUnit.SECONDS);
+        } catch (Exception e) {
+            return false;
+        } finally {
+            process.destroyForcibly();
+        }
+    }
+
+    @Override
+    public void close() {
+        executor.close();
     }
 }

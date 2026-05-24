@@ -55,6 +55,10 @@ public class FallbackChainResolver implements FallbackChainProvider {
      * @return 有序候选模型列表，至少包含请求模型本身
      */
     public List<String> resolve(String requestedModel) {
+        if (requestedModel == null || requestedModel.isBlank()) {
+            return properties.defaultChain();
+        }
+
         Set<String> seen = new LinkedHashSet<>();
         seen.add(requestedModel);
 

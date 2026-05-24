@@ -88,7 +88,6 @@ public class RedisChatMemoryRepository implements ChatMemoryRepository {
     @Override
     public @NonNull List<String> findConversationIds() {
         List<String> ids = new ArrayList<>();
-        Set<String> keys = redisTemplate.keys(keyPrefix + "*");
         // 使用 Redis SCAN 替代 KEYS，避免 O(N) 全库阻塞
         redisTemplate.execute((org.springframework.data.redis.core.RedisCallback<Void>) connection -> {
             try (var cursor = connection.keyCommands().scan(
@@ -125,10 +124,9 @@ public class RedisChatMemoryRepository implements ChatMemoryRepository {
                 MessageDocument doc = objectMapper.readValue(json, MessageDocument.class);
                 messages.add(toMessage(doc));
             } catch (JsonProcessingException e) {
-                log.error("Failed to deserialize message in conversation {}: {}",
-                        conversationId, e.getMessage(), e);
-                throw new RuntimeException(
-                        "Corrupted message data in conversation " + conversationId, e);
+                log.error("Failed to deserialize message in conversation {}, skipping: {}",
+                        conversationId, e.getMessage());
+                // Skip corrupted message instead of failing entire list
             }
         }
         return messages;

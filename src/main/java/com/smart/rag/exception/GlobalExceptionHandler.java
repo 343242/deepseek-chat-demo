@@ -86,7 +86,8 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(Exception.class)
     public ResponseEntity<GlobalResponse<Void>> handleGeneric(Exception e) {
-        log.error("Unhandled exception", e);
+        log.error("Unhandled exception: {}", e.getClass().getName());
+        log.debug("Unhandled exception details", e);
         return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
                 .body(GlobalResponse.error(ErrorCode.INTERNAL_ERROR));
     }

@@ -29,6 +29,9 @@ public class TokenBucketLimiter implements RateLimiter {
     /** 桶数量硬上限，防止 key 爆炸致 OOM */
     static final int MAX_BUCKETS = 10_000;
 
+    /** 触发即时清理的阈值比例 */
+    private static final double CLEANUP_THRESHOLD_RATIO = 0.8;
+
     private final long maxTokens;
     private final double refillRate;
     private final Duration maxIdle;
@@ -51,10 +54,20 @@ public class TokenBucketLimiter implements RateLimiter {
 
     @Override
     public boolean tryAcquire(String key) {
+        // 已有桶直接消费，不受上限限制
         Bucket existing = buckets.get(key);
         if (existing != null) {
             return existing.tryConsume(1);
         }
+
+        // 接近上限时同步清理空闲桶，防止孤儿桶累积
+        if (buckets.size() > (int)(MAX_BUCKETS * CLEANUP_THRESHOLD_RATIO)) {
+            int cleaned = cleanIdleBuckets();
+            if (cleaned > 0) {
+                log.info("Eager cleanup: removed {} idle buckets, {} remaining", cleaned, buckets.size());
+            }
+        }
+
         if (buckets.size() >= MAX_BUCKETS) {
             String displayKey = key.length() > 20 ? key.substring(0, 20) + "..." : key;
             log.warn("Token bucket limit reached ({}), rejecting new key: {}", MAX_BUCKETS, displayKey);

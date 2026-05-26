@@ -33,6 +33,17 @@ app:
           - zhipu/glm-4.7-flash
   rag:
     fts-config: ${RAG_FTS_CONFIG:jiebacfg}
+  agent:
+    enabled: ${AGENT_ENABLED:true}
+    intent-model: ${AGENT_INTENT_MODEL:deepseek/deepseek-chat}
+    intent-temperature: ${AGENT_INTENT_TEMPERATURE:0.1}
+    intent-retries: ${AGENT_INTENT_RETRIES:2}
+    intent-timeout-ms: ${AGENT_INTENT_TIMEOUT_MS:5000}
+    max-tool-iterations: ${AGENT_MAX_TOOL_ITERATIONS:10}
+    max-consecutive-same-tool: ${AGENT_MAX_CONSECUTIVE_SAME_TOOL:3}
+    context-window-ratio: ${AGENT_CONTEXT_WINDOW_RATIO:0.8}
+    tool-timeout-ms: ${AGENT_TOOL_TIMEOUT_MS:10000}
+    degrade-on-failure: ${AGENT_DEGRADE_ON_FAILURE:true}
   sandbox:
     enabled: ${SANDBOX_ENABLED:true}
     max-concurrency: ${SANDBOX_MAX_CONCURRENCY:3}

@@ -696,13 +696,13 @@ public enum ChatMode {
 | `docDetailTool` | 文档详情获取（P0） | `VectorStoreMapper` + `ts_headline` | docIds + query | 无（直接返回摘要片段） | P0 按需获取 |
 | `agentEventLookupTool` | 历史事件回溯（P2） | `AgentEventStore.searchEvents()` | query + sessionId + userId | 无（直接返回匹配事件） | P2 会话连续性 |
 
-> **优化说明**：
-> - **P0 检索结果两层分离**：检索类 Tool（vectorSearch/bm25Search/hybridSearch）返回摘要，完整文档存储在 PostgreSQL
-> - **P1 Tool 输出沙盒化**：所有 Tool 返回统一 JSON 格式，控制在 200 token 以内
-> - **P1 自省重检去重**：hybridSearchTool 集成去重逻辑，避免重复文档
-> - **P2 会话连续性**：agentEventLookupTool 支持按需检索历史事件
-> - **P2 上下文预算管理**：所有 Tool 输出根据上下文预算动态调整详细程度
-> - **P3 智能缓存**：检索类 Tool 集成缓存，避免重复检索
+> **优化说明**（详细实现见 `AGENTIC-RAG-OPTIMIZATIONS.md`）：
+> - **P0 检索结果两层分离**：检索类 Tool 返回摘要，完整文档存 PostgreSQL，上下文占用降低 ~87% → 详见 [OPTIMIZATIONS.md §优化一](AGENTIC-RAG-OPTIMIZATIONS.md#优化一检索结果两层分离p0)
+> - **P1 自省重检去重**：`ToolWorkspace` 增加 `seenDocIds`，检索 SQL 排除已见文档 → 详见 [OPTIMIZATIONS.md §优化二](AGENTIC-RAG-OPTIMIZATIONS.md#优化二自省重检去重p1)
+> - **P2 会话连续性**：`agent_session_event` 表 + `agentEventLookupTool` + compaction 恢复 → 详见 [OPTIMIZATIONS.md §优化三](AGENTIC-RAG-OPTIMIZATIONS.md#优化三会话连续性p2)
+> - **P1 Tool 输出沙盒化**：所有 Tool 返回统一 JSON 格式（`status`/`action`/`summary`/`data`/`metadata`/`nextSteps`），控制在 200 token 以内 → 详见 [OPTIMIZATIONS.md §优化四](AGENTIC-RAG-OPTIMIZATIONS.md#优化四tool-输出沙盒化p1)
+> - **P2 上下文预算管理**：`ContextBudgetManager` 按比例分配上下文窗口（System 15% / Tool 50% / 对话 25% / 预留 10%），动态调整 Tool 输出详细程度 → 详见 [OPTIMIZATIONS.md §优化五](AGENTIC-RAG-OPTIMIZATIONS.md#优化五上下文预算管理p2)
+> - **P3 智能缓存**：`AgentCacheManager` 基于 Caffeine 缓存查询结果/文档详情/意图分类 → 详见 [OPTIMIZATIONS.md §优化六](AGENTIC-RAG-OPTIMIZATIONS.md#优化六智能缓存p3)
 
 ### 3.2 包结构
 
@@ -938,7 +938,7 @@ buildAgentChain() 创建 workspace（局部变量）
 
 > **上下文优化**：原 §4.3.1 三层渐进压缩方案已被优化文档的 P0（检索结果两层分离）取代 —
 > 检索结果返回摘要而非全量内容，从源头消除上下文爆炸风险，不再需要运行时压缩。
-> 详见 `AGENTIC-RAG-OPTIMIZATIONS.md` 优化一。
+> 详见 [OPTIMIZATIONS.md §优化一](AGENTIC-RAG-OPTIMIZATIONS.md#优化一检索结果两层分离p0)（含 §1.4 删除原设计 §4.3.1 的说明）。
 
 ### 4.4 配置设计
 
@@ -1117,6 +1117,78 @@ IntentClassifier（新增）
 | P6: 响应结构 | 🟢 增强 | AgentChatResponse 包装 | `ChatServiceImpl.java` + 新增 DTO |
 
 **关键约束**：所有修复均通过 **if-else 分支隔离**，SIMPLE 和 MULTI_TURN 的代码路径完全不变。
+
+---
+
+### 5.5 代码库验证结果（2026-05-25 审查）
+
+> 基于对现有代码库的逐文件验证，确认 §5.4 的 6 个集成冲突点全部属实，
+> 并补充 5 个设计-实现不一致点（需在实施前对齐）。
+
+#### 已验证兼容的设计假设（7/12 通过）
+
+| # | 设计假设 | 验证文件 | 结果 |
+|---|---------|---------|------|
+| 1 | `ChatMode` 枚举可扩展 `AGENT` | `ChatMode.java` — 纯枚举，`fromString()` 自动处理 | ✅ |
+| 2 | `ModeRouter` 自动发现新策略 | `ModeRouter.java` — 构造器注入 `List<ChatModeStrategy>`，新增 `@Component` Bean 即注册 | ✅ |
+| 3 | `ToolCallAdvisor` + `FunctionToolCallback` API 可用 | `ToolAutoConfiguration.java` 已导入并使用，PoC 测试已验证 builder 签名 | ✅ |
+| 4 | `BaseAdvisor` 接口可用于自定义 Advisor | `RateLimitAdvisor`/`ContentFilterAdvisor`/`ConversationContextAdvisor` 均实现 `BaseAdvisor` | ✅ |
+| 5 | `StaticToolCallbackResolver` + `DefaultToolCallingManager` 可独立创建 | `ToolAutoConfiguration.java` 已有完整示例 | ✅ |
+| 6 | `VectorStoreMapper` 提供 BM25/父文档/余弦距离查询 | `bm25Search()`/`batchFetchParents()`/`pairwiseCosineDistance()` 方法均存在且签名匹配 | ✅ |
+| 7 | Advisor 链可按模式差异化构建 | `ChatAdvisorChainFactory.buildChain()` 已按 `modeStrategy` 分支 | ✅ |
+
+#### 硬性阻塞（3 个，不修复无法实施）
+
+| # | 阻塞项 | 验证文件 | 现状 | 修复方案 |
+|---|--------|---------|------|---------|
+| B1 | `ChatRequest.mode()` 正则不允许 AGENT | `ChatRequest.java:35` | `@Pattern(regexp = "^(SIMPLE\|MULTI_TURN)$")` | 改为 `"^(SIMPLE\|MULTI_TURN\|AGENT)$"`（1 行） |
+| B2 | `ChatModeStrategy` 接口缺少 AGENT 感知方法 | `ChatModeStrategy.java` | 只有 `getMode()`/`isMemoryEnabled()`/`isContextEnabled()`/`isThinkingEnabled()` | 新增 `default boolean isAgentMode() { return false; }`，`AgentModeStrategy` 覆写返回 `true` |
+| B3 | `ChatRequestSpecFactory.createSpec()` 未预留 Agent 分支 | `ChatRequestSpecFactory.java:78-81` | 无条件挂载全局 Tool：`if (hasTools()) { spec = spec.tools(...) }` | Agent 分支跳过 `spec.tools()` + DB Prompt + DB ModelParams |
+
+> **B3 是最关键的改动点**：Agent 模式下 LLM 会同时看到全局 Tool（Calculator/DateTime/CodeExecution）和 Agent 动态 Tool 子集，
+> 导致 Tool 冲突和意图混乱。`ChatRequestSpecFactory.createSpec()` 需要完整的 Agent 分支逻辑。
+
+#### 设计-实现不一致（5 个，需对齐）
+
+| # | 不一致点 | 设计假设 | 实际现状 | 对齐方案 |
+|---|---------|---------|---------|---------|
+| M1 | `HybridSearchService` 提取难度 | 设计假设"提取核心逻辑"为简单操作 | `HybridDocumentRetriever` 构造函数绑定 `userId`+`teamId`（第 47-60 行），核心逻辑直接引用这些字段 | 需**重构**为委托模式：将 `userId`/`teamId` 从构造参数改为方法参数，向量检索的 `FilterExpression` 和 BM25 的 `isolationField`/`isolationValue` 需参数化。工作量中等（~2h） |
+| M2 | `ToolCallAdvisor` 单例 vs 独立实例 | Agent 创建独立 `ToolCallAdvisor` | `ToolAutoConfiguration` 创建全局单例 `ToolCallAdvisor`（order=2），`buildAgentChain()` 的步骤 2 调用 `getGlobalAdvisors()` 会引入全局 `ToolCallAdvisor` | `buildAgentChain()` **不应调用 `getGlobalAdvisors()`**，手动组装：`ConversationContextAdvisor → RateLimit → ContentFilter → AgentToolCallAdvisor → AgentSystemPromptAdvisor → Memory` |
+| M3 | `ChatServiceImpl.doChat()` 返回类型 | 设计需要 `AgentChatResponse` 携带 Agent 元数据 | 当前返回 `ChatResponse`，只包含文本内容 | `ChatResponse` 扩展 `Map<String, Object> metadata` 字段，或 sealed interface 分支 |
+| M4 | `RagAdvisorFactory.create()` 的 Agent 模式 | Agent 模式不走 `RetrievalAugmentationAdvisor` | `buildChain()` 第 128-133 行：`if (request.isRagEnabled()) { ragAdvisorFactory.create() }` | Agent 模式下 `buildAgentChain()` 跳过 `ragAdvisorFactory.create()`，RAG 能力通过 Agent Tool 提供。`ragEnabled` 在 Agent 模式下语义变为"是否暴露 RAG Tool 给 Agent" |
+| M5 | `AgentSystemPromptAdvisor` 的 System Prompt 修改方式 | 设计假设 `before()` 可修改 System Prompt | 需验证 `BaseAdvisor.before()` 是否允许通过 `request.mutate().prompt()` 修改 prompt 内容 | 需 PoC 验证：`request.mutate().prompt().getInstructions()` 添加 `SystemMessage` 是否生效 |
+
+#### 对 §5.4 集成风险的补充
+
+| §5.4 问题 | 补充发现 |
+|-----------|---------|
+| P2: ToolCallAdvisor 单例 | M2 补充：`buildAgentChain()` 必须避免引入全局 `ToolCallAdvisor`，否则出现双重 Tool 调用处理 |
+| P3: 全量 Tool 绑定 | M4 补充：`ragEnabled` 在 Agent 模式下的语义需明确定义 |
+| P5: Strategy 接口 | B2 确认：`isAgentMode()` 是阻塞项，不是可选增强 |
+| P6: 响应结构 | M3 补充：需要决定扩展 `ChatResponse` 还是新建 `AgentChatResponse` |
+
+---
+
+### 5.6 OPTIMIZATIONS.md 与 DESIGN.md 覆盖度审查
+
+> `AGENTIC-RAG-OPTIMIZATIONS.md` 包含 6 个优化项（P0-P3），以下检查其在 DESIGN.md 中的体现程度。
+
+| 优化项 | DESIGN.md 体现位置 | 覆盖度 | 缺失内容 |
+|--------|-------------------|--------|---------|
+| **P0 检索结果两层分离** | §3.1 Tool 清单（P0 摘要输出）、§4.3 注释（取代 §4.3.1）、§7 Phase 5.5 | 🟡 引用级 | 缺少 `ts_headline` SQL 实现细节、摘要返回格式 JSON 示例、上下文节省估算（87% reduction） |
+| **P1 自省重检去重** | §3.1 Tool 清单（P1 去重）、§7 Phase 5.5 | 🟡 引用级 | 缺少 `seenDocIds` 去重字段设计、SQL 层 `WHERE id NOT IN (:seenDocIds)` 实现、`addRetrievedDocsDeduplicated()` 方法 |
+| **P2 会话连续性** | §3.1 Tool 清单（P2 会话连续性）、§3.2 包结构（AgentEventStore/AgentEventMapper）、§4.1 改动清单（17c-17e）、§7 Phase 5.5 | 🟢 较完整 | 缺少 `agent_session_event` 表 DDL、事件类型与优先级定义、`buildResumeSnapshot()` 优先级分层恢复逻辑、compaction 检测机制 |
+| **P1 Tool 输出沙盒化** | §3.1 Tool 清单（P1 统一输出）、§7 Phase 5.5 | 🟡 引用级 | 缺少统一 JSON 输出格式定义（`status`/`action`/`summary`/`data`/`metadata`/`nextSteps`）、200 token 预算约束、裁剪策略 |
+| **P2 上下文预算管理** | §7 Phase 5.5 | 🔴 仅提及 | 缺少 `ContextBudgetManager` 设计（预算分配比例、`OutputVerbosity` 枚举、动态调整逻辑） |
+| **P3 智能缓存** | §7 Phase 5.5 | 🔴 仅提及 | 缺少 `AgentCacheManager` 设计（缓存键策略、TTL、失效条件、Caffeine 配置） |
+
+**结论**：OPTIMIZATIONS.md 的 6 个优化项在 DESIGN.md 中**均有引用**，但只有 P2 会话连续性覆盖较完整，其余 5 项仅以一句话或列表形式提及。实施时需要同时参考两份文档。
+
+**已补充的交叉引用**（2026-05-25）：
+- §3.1 Tool 清单 — 每个优化项标注了对应的 OPTIMIZATIONS.md 章节链接
+- §4.3 AgentSystemPromptAdvisor — P0 取代 §4.3.1 的说明已补充链接
+- §7 Phase 5.5 — 每个优化步骤标注了对应的 OPTIMIZATIONS.md 章节链接和缺失内容
+- §9 Context Mode 思想应用总结 — 表格新增"详细实现"列，每行链接到 OPTIMIZATIONS.md 对应章节
 
 ---
 
@@ -1380,37 +1452,43 @@ public record ToolCallRecord(
 
 ### Phase 5.5: Context Mode 优化（3-4h）
 
-> 基于 context-mode 开源项目的优化思想，详见 `AGENTIC-RAG-OPTIMIZATIONS.md`
+> 基于 context-mode 开源项目的优化思想，详细实现方案见 `AGENTIC-RAG-OPTIMIZATIONS.md`。
 
 1. **P0 检索结果两层分离**（已在 Phase 3 集成）
    - 检索 Tool 返回摘要，完整文档存储在 PostgreSQL
    - 新增 `docDetailTool` 按需获取完整内容
    - 上下文占用降低 ~87%
+   - → 详见 [OPTIMIZATIONS.md §优化一](AGENTIC-RAG-OPTIMIZATIONS.md#优化一检索结果两层分离p0)（含 `ts_headline` SQL、摘要 JSON 格式、节省估算）
 
-2. **P1 Tool 输出沙盒化**（已在 Phase 3 集成）
-   - 所有 Tool 返回统一 JSON 格式
-   - 控制在 200 token 以内
-   - 包含摘要、详细信息引用、状态信息
-
-3. **P1 自省重检去重**（已在 Phase 3 集成）
+2. **P1 自省重检去重**（已在 Phase 3 集成）
    - `ToolWorkspace` 增加 `seenDocIds` 去重字段
    - 检索 Tool SQL 层排除已见文档
    - 避免重复文档浪费上下文
+   - → 详见 [OPTIMIZATIONS.md §优化二](AGENTIC-RAG-OPTIMIZATIONS.md#优化二自省重检去重p1)（含 `addRetrievedDocsDeduplicated()` 实现、SQL `WHERE id NOT IN` 过滤）
 
-4. **P2 会话连续性**（已在 Phase 5 集成）
+3. **P2 会话连续性**（已在 Phase 5 集成）
    - `agent_session_event` 表存储事件
    - `agentEventLookupTool` 按需检索历史
    - Compaction 恢复注入
+   - → 详见 [OPTIMIZATIONS.md §优化三](AGENTIC-RAG-OPTIMIZATIONS.md#优化三会话连续性p2)（含 `agent_session_event` DDL、事件类型与优先级、`buildResumeSnapshot()` 优先级分层恢复、compaction 检测机制）
+
+4. **P1 Tool 输出沙盒化**（已在 Phase 3 集成）
+   - 所有 Tool 返回统一 JSON 格式
+   - 控制在 200 token 以内
+   - 包含摘要、详细信息引用、状态信息
+   - → 详见 [OPTIMIZATIONS.md §优化四](AGENTIC-RAG-OPTIMIZATIONS.md#优化四tool-输出沙盒化p1)（含统一 JSON 结构定义、裁剪策略、token 预算约束）
 
 5. **P2 上下文预算管理**
    - `ContextBudgetManager` 动态管理上下文窗口
    - 根据预算调整 Tool 输出详细程度
    - 优先保留高优先级信息
+   - → 详见 [OPTIMIZATIONS.md §优化五](AGENTIC-RAG-OPTIMIZATIONS.md#优化五上下文预算管理p2)（含预算分配比例、`OutputVerbosity` 枚举、动态调整逻辑）
 
 6. **P3 智能缓存**
    - `AgentCacheManager` 查询结果、文档详情、意图分类缓存
    - Caffeine 本地缓存，避免 Redis 网络开销
    - 相同查询直接返回缓存结果
+   - → 详见 [OPTIMIZATIONS.md §优化六](AGENTIC-RAG-OPTIMIZATIONS.md#优化六智能缓存p3)（含缓存键策略、TTL 配置、失效条件、Caffeine 配置）
 
 ### Phase 6: 编排层集成（2-3h）
 
@@ -1474,15 +1552,15 @@ public record ToolCallRecord(
 
 本设计文档深度借鉴了 [context-mode](https://github.com/mksglu/context-mode) 开源项目的核心思想：
 
-| Context Mode 核心思想 | Agentic RAG 应用 | 优化项 |
-|----------------------|------------------|--------|
-| **Context Saving** — 沙盒工具将原始数据移出上下文窗口 | 检索 Tool 返回摘要，完整文档存储在 PostgreSQL | P0 检索结果两层分离 |
-| **Session Continuity** — 事件索引到 FTS5，通过 BM25 搜索只检索相关内容 | agent_session_event 表 + agentEventLookupTool | P2 会话连续性 |
-| **Sandbox Tools** — 代码在沙盒中执行，只有输出进入上下文 | 所有 Tool 输出统一 JSON 格式，控制在 200 token 以内 | P1 Tool 输出沙盒化 |
-| **FTS5 + BM25 搜索** — 按需检索 | PostgreSQL JSONB + 全文搜索，按需获取详细信息 | P2 会话连续性 |
-| **98% 节省** — 315 KB → 5.4 KB | 检索结果从 ~20KB 降至 ~2.7KB（87% reduction） | P0 检索结果两层分离 |
-| **按需检索** — 不灌回全量数据 | docDetailTool 按需获取文档片段 | P0 检索结果两层分离 |
-| **主动管理** — 不是被动压缩 | 上下文预算管理，动态调整 Tool 输出详细程度 | P2 上下文预算管理 |
-| **智能缓存** — 避免重复处理 | 查询结果、文档详情、意图分类缓存 | P3 智能缓存 |
+| Context Mode 核心思想 | Agentic RAG 应用 | 优化项 | 详细实现 |
+|----------------------|------------------|--------|---------|
+| **Context Saving** — 沙盒工具将原始数据移出上下文窗口 | 检索 Tool 返回摘要，完整文档存储在 PostgreSQL | P0 检索结果两层分离 | [OPTIMIZATIONS.md §优化一](AGENTIC-RAG-OPTIMIZATIONS.md#优化一检索结果两层分离p0) |
+| **Session Continuity** — 事件索引到 FTS5，通过 BM25 搜索只检索相关内容 | agent_session_event 表 + agentEventLookupTool | P2 会话连续性 | [OPTIMIZATIONS.md §优化三](AGENTIC-RAG-OPTIMIZATIONS.md#优化三会话连续性p2) |
+| **Sandbox Tools** — 代码在沙盒中执行，只有输出进入上下文 | 所有 Tool 输出统一 JSON 格式，控制在 200 token 以内 | P1 Tool 输出沙盒化 | [OPTIMIZATIONS.md §优化四](AGENTIC-RAG-OPTIMIZATIONS.md#优化四tool-输出沙盒化p1) |
+| **FTS5 + BM25 搜索** — 按需检索 | PostgreSQL JSONB + 全文搜索，按需获取详细信息 | P2 会话连续性 | [OPTIMIZATIONS.md §优化三](AGENTIC-RAG-OPTIMIZATIONS.md#优化三会话连续性p2) |
+| **98% 节省** — 315 KB → 5.4 KB | 检索结果从 ~20KB 降至 ~2.7KB（87% reduction） | P0 检索结果两层分离 | [OPTIMIZATIONS.md §优化一](AGENTIC-RAG-OPTIMIZATIONS.md#优化一检索结果两层分离p0) |
+| **按需检索** — 不灌回全量数据 | docDetailTool 按需获取文档片段 | P0 检索结果两层分离 | [OPTIMIZATIONS.md §优化一](AGENTIC-RAG-OPTIMIZATIONS.md#优化一检索结果两层分离p0) |
+| **主动管理** — 不是被动压缩 | 上下文预算管理，动态调整 Tool 输出详细程度 | P2 上下文预算管理 | [OPTIMIZATIONS.md §优化五](AGENTIC-RAG-OPTIMIZATIONS.md#优化五上下文预算管理p2) |
+| **智能缓存** — 避免重复处理 | 查询结果、文档详情、意图分类缓存 | P3 智能缓存 | [OPTIMIZATIONS.md §优化六](AGENTIC-RAG-OPTIMIZATIONS.md#优化六智能缓存p3) |
 
-> 详细优化方案见 `AGENTIC-RAG-OPTIMIZATIONS.md`
+> 完整优化方案（含 SQL、JSON 格式、类设计、工时估算）见 [`AGENTIC-RAG-OPTIMIZATIONS.md`](AGENTIC-RAG-OPTIMIZATIONS.md)。

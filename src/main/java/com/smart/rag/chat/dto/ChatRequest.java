@@ -15,6 +15,7 @@ import jakarta.validation.constraints.Size;
  * @param mode           对话模式（可选，默认 SIMPLE）。
  *                       SIMPLE: 单轮直接调用，无上下文记忆
  *                       MULTI_TURN: 多轮对话，自动维护会话记忆
+ *                       AGENT: Agent 模式，意图识别驱动动态 Tool 子集
  * @param enableThinking 是否启用思考过程输出（可选，默认 false，仅 MULTI_TURN 模式生效）
  */
 public record ChatRequest(
@@ -32,7 +33,7 @@ public record ChatRequest(
 
     Boolean ragEnabled,
 
-    @Pattern(regexp = "^(SIMPLE|MULTI_TURN)$", message = "对话模式仅支持 SIMPLE 或 MULTI_TURN")
+    @Pattern(regexp = "^(SIMPLE|MULTI_TURN|AGENT)$", message = "对话模式仅支持 SIMPLE、MULTI_TURN 或 AGENT")
     String mode,
 
     Boolean enableThinking,

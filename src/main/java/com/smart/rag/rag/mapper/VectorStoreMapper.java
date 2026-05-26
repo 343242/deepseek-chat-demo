@@ -214,6 +214,62 @@ public class VectorStoreMapper {
         return result;
     }
 
+    // ======================== 文档详情（ts_headline 高亮）========================
+
+    /**
+     * 按文档 ID 获取内容片段，使用 ts_headline 高亮查询关键词
+     *
+     * @param docIds       文档 ID 列表
+     * @param queryText    查询文本（用于 ts_headline 高亮）
+     * @param ftsConfig    全文检索配置名（如 "jiebacfg"）
+     * @return 文档 ID -> 高亮内容片段的映射
+     */
+    public Map<String, String> fetchDocHighlights(List<String> docIds, String queryText, String ftsConfig) {
+        if (docIds == null || docIds.isEmpty()) {
+            return Map.of();
+        }
+
+        String placeholders = String.join(",", Collections.nCopies(docIds.size(), "?"));
+        String sql = """
+                WITH tsq AS (SELECT plainto_tsquery(?::regconfig, ?) AS q)
+                SELECT v.id,
+                       ts_headline(v.content, tsq.q, 'StartSel=<mark> StopSel=</mark> MaxWords=50 MinWords=10') AS highlight
+                FROM vector_store v, tsq
+                WHERE v.id IN (%s)
+                """.formatted(placeholders);
+
+        Object[] params = new Object[docIds.size() + 2];
+        params[0] = ftsConfig;
+        params[1] = queryText;
+        for (int i = 0; i < docIds.size(); i++) {
+            params[i + 2] = docIds.get(i);
+        }
+
+        Map<String, String> result = new LinkedHashMap<>();
+        jdbcTemplate.query(sql, rs -> {
+            result.put(rs.getString("id"), rs.getString("highlight"));
+        }, params);
+
+        log.debug("Fetched highlights for {} docIds, got {} results", docIds.size(), result.size());
+        return result;
+    }
+
+    // ======================== 知识库统计 ========================
+
+    /**
+     * 统计指定用户/团队的向量文档数量
+     *
+     * @param isolationField 隔离字段名（"userId" 或 "teamId"）
+     * @param isolationValue 隔离字段值
+     * @return 文档总数
+     */
+    public int countDocs(String isolationField, String isolationValue) {
+        String sql = "SELECT COUNT(*) FROM vector_store WHERE metadata->> ? = ?";
+        Integer count = jdbcTemplate.queryForObject(sql, Integer.class,
+            isolationField, isolationValue);
+        return count != null ? count : 0;
+    }
+
     // ======================== 工具方法 ========================
 
     private Map<String, Object> parseMetadata(String json) {

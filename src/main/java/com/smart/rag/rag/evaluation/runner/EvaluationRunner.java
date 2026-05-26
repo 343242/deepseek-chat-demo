@@ -1,5 +1,6 @@
 package com.smart.rag.rag.evaluation.runner;
 
+import com.smart.rag.rag.agent.service.HybridSearchService;
 import com.smart.rag.rag.chunk.ParentDocumentPostProcessor;
 import com.smart.rag.rag.evaluation.config.EvaluationProperties;
 import com.smart.rag.rag.evaluation.dataset.DatasetRepository;
@@ -190,9 +191,10 @@ public class EvaluationRunner {
         RagRetrievalProperties evalProps = copyWithOverride(properties, config);
         Long userId = config.getTestUserId() != null
                 ? config.getTestUserId() : this.evalProps.getTestUserId();
-        return new HybridDocumentRetriever(
-                vectorStore, vectorStoreMapper, evalProps,
-                queryNormalizer, userId, null);
+        // 创建使用覆盖配置的临时 HybridSearchService
+        HybridSearchService evalSearchService = new HybridSearchService(
+                vectorStore, vectorStoreMapper, evalProps, queryNormalizer);
+        return new HybridDocumentRetriever(evalSearchService, userId, null);
     }
 
     private RagRetrievalProperties copyWithOverride(RagRetrievalProperties original, EvalConfig config) {

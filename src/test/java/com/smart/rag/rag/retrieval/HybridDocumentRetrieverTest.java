@@ -1,5 +1,6 @@
 package com.smart.rag.rag.retrieval;
 
+import com.smart.rag.rag.agent.service.HybridSearchService;
 import com.smart.rag.rag.config.RagRetrievalProperties;
 import com.smart.rag.rag.mapper.VectorStoreMapper;
 import org.junit.jupiter.api.BeforeEach;
@@ -25,6 +26,9 @@ import static org.mockito.Mockito.*;
 
 /**
  * HybridDocumentRetriever 单元测试
+ * <p>
+ * 核心检索逻辑现在在 HybridSearchService 中，
+ * HybridDocumentRetriever 只是一个薄适配器。
  */
 @ExtendWith(MockitoExtension.class)
 class HybridDocumentRetrieverTest {
@@ -81,7 +85,8 @@ class HybridDocumentRetrieverTest {
     }
 
     private HybridDocumentRetriever createRetriever(RagRetrievalProperties props, Long userId, Long teamId) {
-        return new HybridDocumentRetriever(vectorStore, vectorStoreMapper, props, queryNormalizer, userId, teamId);
+        HybridSearchService service = new HybridSearchService(vectorStore, vectorStoreMapper, props, queryNormalizer);
+        return new HybridDocumentRetriever(service, userId, teamId);
     }
 
     private Document doc(String id, String content) {
@@ -263,17 +268,16 @@ class HybridDocumentRetrieverTest {
             var retriever = createRetriever(props, 1L, null);
 
             when(vectorStore.similaritySearch(any(SearchRequest.class))).thenReturn(List.of());
-            // \u201C\u201D → each replaced with space, so "\u201Chello\u201D \u201Cworld\u201D" → " hello   world " → trim → "hello   world"
             when(vectorStoreMapper.bm25Search(eq("jiebacfg"), eq("hello   world"), eq("userId"), eq("1"), eq(10)))
                     .thenReturn(List.of());
 
-            retriever.retrieve(query("\u201Chello\u201D \u201Cworld\u201D"));
+            retriever.retrieve(query("“hello” “world”"));
 
             verify(vectorStoreMapper).bm25Search(eq("jiebacfg"), eq("hello   world"), any(), any(), anyInt());
         }
 
         @Test
-        @DisplayName("纯特殊字符查询 → sanitize 后为空 → BM25 不被调用")
+        @DisplayName("纯特殊字符查询 -> sanitize 后为空 -> BM25 不被调用")
         void only_special_chars_no_bm25() {
             var props = defaultProperties();
             var retriever = createRetriever(props, 1L, null);

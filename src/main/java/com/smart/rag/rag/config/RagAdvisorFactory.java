@@ -1,11 +1,11 @@
 package com.smart.rag.rag.config;
 
+import com.smart.rag.rag.agent.service.HybridSearchService;
 import com.smart.rag.rag.chunk.ParentDocumentPostProcessor;
 import com.smart.rag.rag.mapper.VectorStoreMapper;
 import com.smart.rag.rag.retrieval.BailianRerankPostProcessor;
 import com.smart.rag.rag.retrieval.HybridDocumentRetriever;
 import com.smart.rag.rag.retrieval.MmrDocumentPostProcessor;
-import com.smart.rag.rag.retrieval.QueryNormalizer;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
@@ -46,9 +46,9 @@ public class RagAdvisorFactory {
     private final VectorStoreMapper vectorStoreMapper;
     private final JdbcTemplate jdbcTemplate;
     private final RagRetrievalProperties properties;
+    private final HybridSearchService hybridSearchService;
     private final ParentDocumentPostProcessor parentDocumentPostProcessor;
     private final QueryTransformer rewriteQueryTransformer;
-    private final QueryNormalizer queryNormalizer;
     private final ObjectMapper objectMapper;
 
     private final AtomicReference<List<org.springframework.ai.rag.postretrieval.document.DocumentPostProcessor>> cachedPostProcessors = new AtomicReference<>();
@@ -58,18 +58,18 @@ public class RagAdvisorFactory {
                              VectorStoreMapper vectorStoreMapper,
                              JdbcTemplate jdbcTemplate,
                              RagRetrievalProperties properties,
+                             HybridSearchService hybridSearchService,
                              ParentDocumentPostProcessor parentDocumentPostProcessor,
                              QueryTransformer rewriteQueryTransformer,
-                             QueryNormalizer queryNormalizer,
                              ObjectMapper objectMapper) {
         this.chatClientBuilder = chatClientBuilder;
         this.vectorStore = vectorStore;
         this.vectorStoreMapper = vectorStoreMapper;
         this.jdbcTemplate = jdbcTemplate;
         this.properties = properties;
+        this.hybridSearchService = hybridSearchService;
         this.parentDocumentPostProcessor = parentDocumentPostProcessor;
         this.rewriteQueryTransformer = rewriteQueryTransformer;
-        this.queryNormalizer = queryNormalizer;
         this.objectMapper = objectMapper;
     }
 
@@ -113,7 +113,7 @@ public class RagAdvisorFactory {
         if (teamId != null) {
             // 团队检索：按 teamId 隔离
             if (properties.hybridRetrievalEnabled()) {
-                return new HybridDocumentRetriever(vectorStore, vectorStoreMapper, properties, queryNormalizer, userId, teamId);
+                return new HybridDocumentRetriever(hybridSearchService, userId, teamId);
             }
             FilterExpressionBuilder filterBuilder = new FilterExpressionBuilder();
             var teamIdFilter = filterBuilder.eq("teamId", String.valueOf(teamId)).build();
@@ -127,7 +127,7 @@ public class RagAdvisorFactory {
 
         // 个人检索：按 userId 隔离
         if (properties.hybridRetrievalEnabled()) {
-            return new HybridDocumentRetriever(vectorStore, vectorStoreMapper, properties, queryNormalizer, userId, null);
+            return new HybridDocumentRetriever(hybridSearchService, userId, null);
         }
         FilterExpressionBuilder filterBuilder = new FilterExpressionBuilder();
         var userIdFilter = filterBuilder.eq("userId", String.valueOf(userId)).build();

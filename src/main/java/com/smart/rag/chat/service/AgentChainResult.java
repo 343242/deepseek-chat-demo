@@ -1,0 +1,20 @@
+package com.smart.rag.chat.service;
+
+import com.smart.rag.rag.agent.intent.IntentResult;
+import com.smart.rag.rag.agent.workspace.ToolWorkspace;
+import org.springframework.ai.chat.client.advisor.api.Advisor;
+
+import java.util.List;
+
+/**
+ * Agent 编排链构建结果
+ *
+ * @param chain        组装好的 Advisor 链
+ * @param intentResult 意图分类结果
+ * @param workspace    请求级 ToolWorkspace
+ */
+public record AgentChainResult(
+    List<Advisor> chain,
+    IntentResult intentResult,
+    ToolWorkspace workspace
+) {}

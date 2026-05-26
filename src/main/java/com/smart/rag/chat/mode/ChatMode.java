@@ -4,9 +4,10 @@ package com.smart.rag.chat.mode;
  * 对话模式枚举
  * <p>
  * SIMPLE: 单轮直接调用 LLM，无上下文记忆，适合 FAQ、简单问答场景。<br>
- * MULTI_TURN: 多轮对话模式，自动维护会话上下文与记忆系统，支持思考过程输出（enableThinking）。
+ * MULTI_TURN: 多轮对话模式，自动维护会话上下文与记忆系统，支持思考过程输出（enableThinking）。<br>
+ * AGENT: Agent 模式，通过意图识别动态选择 Tool 子集，LLM 自主编排检索策略。
  * <p>
- * 默认模式为 SIMPLE，多轮需显式指定。
+ * 默认模式为 SIMPLE，多轮或 Agent 需显式指定。
  */
 public enum ChatMode {
 
@@ -14,7 +15,10 @@ public enum ChatMode {
     SIMPLE,
 
     /** 多轮对话 — 自动维护会话记忆，支持 enableThinking */
-    MULTI_TURN;
+    MULTI_TURN,
+
+    /** Agent 模式 — 意图识别 → 动态 Tool 子集 → ReAct 循环 */
+    AGENT;
 
     /**
      * 从字符串安全解析，无法识别时返回默认值 SIMPLE。

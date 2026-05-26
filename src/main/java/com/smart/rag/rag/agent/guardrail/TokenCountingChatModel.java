@@ -8,10 +8,7 @@ import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.metadata.Usage;
 import org.springframework.ai.chat.prompt.ChatOptions;
 import org.springframework.ai.chat.prompt.Prompt;
-import org.jspecify.annotations.Nullable;
 import reactor.core.publisher.Flux;
-
-import java.util.List;
 
 /**
  * ChatModel 装饰器 -- 累计每轮 Token 用量
@@ -74,7 +71,7 @@ public class TokenCountingChatModel implements ChatModel {
         Usage usage = response.getMetadata().getUsage();
         if (usage != null && usage.getPromptTokens() != null && usage.getPromptTokens() > 0) {
             // 精确计数：模型返回了真实 usage
-            int promptTokens = usage.getPromptTokens() != null ? usage.getPromptTokens() : 0;
+            int promptTokens = usage.getPromptTokens();
             int completionTokens = usage.getCompletionTokens() != null ? usage.getCompletionTokens() : 0;
             totalPromptTokens += promptTokens;
             totalCompletionTokens += completionTokens;

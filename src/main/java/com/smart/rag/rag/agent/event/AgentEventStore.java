@@ -54,6 +54,9 @@ public class AgentEventStore {
     /** Normal -- Tool 调用记录 */
     public static final int PRIORITY_NORMAL = 3;
 
+    /** 恢复快照最大加载事件条数 */
+    private static final int MAX_SNAPSHOT_EVENTS = 200;
+
     /**
      * 记录事件
      *
@@ -104,6 +107,7 @@ public class AgentEventStore {
      * 构建恢复快照 -- 优先级分层恢复
      * <p>
      * 当 ChatMemory compaction 截断早期消息时，用此方法构建恢复快照注入到 System Prompt。
+     * 限制最大加载条数，避免长会话一次性加载过多事件。
      *
      * @param sessionId 会话 ID
      * @param userId    用户 ID
@@ -111,7 +115,8 @@ public class AgentEventStore {
      * @return 恢复快照文本，供注入到 System Prompt
      */
     public String buildResumeSnapshot(String sessionId, Long userId, int maxBytes) {
-        List<AgentSessionEvent> events = mapper.selectBySessionIdOrderByPriority(sessionId, userId);
+        List<AgentSessionEvent> events = mapper.selectBySessionIdOrderByPriorityLimited(
+            sessionId, userId, MAX_SNAPSHOT_EVENTS);
 
         if (events.isEmpty()) {
             return "";

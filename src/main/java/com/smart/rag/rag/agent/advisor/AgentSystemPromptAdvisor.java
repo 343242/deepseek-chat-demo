@@ -26,6 +26,8 @@ import java.util.List;
  * 3. order=1，在 ToolCallAdvisor(order=2) 之前执行
  * 4. 护栏检查：每轮调用 AgentGuardrails，STOP 时注入停止指令，WARN 时注入提醒
  * <p>
+ * 容量控制：中间答案注入受字符预算约束，超出时截断低优先级内容。
+ * <p>
  * 构造时接收 ToolWorkspace 引用（与 Tool 闭包共享同一个对象引用），
  * before() 每轮从 workspace 读取中间答案，追加到 System Prompt 末尾。
  * 每次请求创建新实例（非单例 Bean），因为 intent/mergedSystemPrompt/workspace 都是请求级别的。
@@ -33,6 +35,9 @@ import java.util.List;
 public class AgentSystemPromptAdvisor implements BaseAdvisor {
 
     private static final Logger log = LoggerFactory.getLogger(AgentSystemPromptAdvisor.class);
+
+    /** 中间答案注入到 system prompt 的最大字符数预算 */
+    private static final int INTERMEDIATE_ANSWERS_BUDGET = 20_000;
 
     private final AgentIntent intent;
     private final String mergedSystemPrompt;  // Agent Prompt + CAG Context 已合并
@@ -64,9 +69,9 @@ public class AgentSystemPromptAdvisor implements BaseAdvisor {
         // 护栏检查
         String guardrailMessage = checkGuardrails();
 
-        // 构建最终 System Prompt = 基础 Prompt + 中间答案（如有）+ 护栏消息（如有）
+        // 构建最终 System Prompt = 基础 Prompt + 中间答案（如有，受预算约束）+ 护栏消息（如有）
         String finalPrompt = mergedSystemPrompt;
-        String intermediateSummary = workspace.getIntermediateAnswersSummary();
+        String intermediateSummary = workspace.getIntermediateAnswersSummaryBounded(INTERMEDIATE_ANSWERS_BUDGET);
         if (intermediateSummary != null && !intermediateSummary.isBlank()) {
             finalPrompt += "\n\n## 已收集的信息\n" + intermediateSummary;
         }

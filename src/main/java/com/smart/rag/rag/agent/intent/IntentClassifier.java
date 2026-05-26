@@ -1,5 +1,7 @@
 package com.smart.rag.rag.agent.intent;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smart.rag.chat.client.ChatClientRegistry;
 import com.smart.rag.rag.agent.config.AgentRagProperties;
 import org.slf4j.Logger;
@@ -9,8 +11,6 @@ import org.springframework.stereotype.Component;
 
 import java.util.Collections;
 import java.util.List;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
  * 意图分类器 -- 独立 LLM 调用，对用户查询做意图分类
@@ -36,6 +36,7 @@ public class IntentClassifier {
     );
 
     private final ChatClient intentChatClient;
+    private final ObjectMapper objectMapper;
 
     /**
      * 分类意图 + 分解查询
@@ -89,37 +90,60 @@ public class IntentClassifier {
     }
 
     private IntentResult parseResponse(String response) {
-        // 简单 JSON 解析：提取 intent 和 confidence 字段
-        String intentStr = extractJsonField(response, "intent");
-        String confidenceStr = extractJsonField(response, "confidence");
-
-        AgentIntent intent;
+        String json = extractJson(response);
         try {
-            intent = AgentIntent.valueOf(intentStr);
-        } catch (IllegalArgumentException e) {
-            log.warn("Unknown intent '{}', falling back to DEEP_RETRIEVAL", intentStr);
-            intent = AgentIntent.DEEP_RETRIEVAL;
-        }
+            JsonNode node = objectMapper.readTree(json);
+            String intentStr = node.has("intent") ? node.get("intent").asText() : "";
+            double confidence = node.has("confidence") ? node.get("confidence").asDouble(0.0) : 0.0;
 
-        double confidence = 0.0;
-        try {
-            confidence = Double.parseDouble(confidenceStr);
-        } catch (NumberFormatException e) {
-            log.debug("Could not parse confidence '{}', defaulting to 0.0", confidenceStr);
+            AgentIntent intent = parseIntent(intentStr);
+            return new IntentResult(intent, confidence, List.of());
+        } catch (Exception e) {
+            log.warn("Failed to parse intent response as JSON, falling back: {}", e.getMessage());
+            return SAFE_FALLBACK;
         }
-
-        // 第一版 subQueries 始终为空列表
-        return new IntentResult(intent, confidence, List.of());
     }
 
-    private String extractJsonField(String json, String field) {
-        // 使用正则匹配 "field"\s*:\s*"value" 或 "field"\s*:\s*value
-        Pattern pattern = Pattern.compile("\"" + Pattern.quote(field) + "\"\\s*:\\s*\"?([^\",\\}]+)\"?");
-        Matcher matcher = pattern.matcher(json);
-        if (matcher.find()) {
-            return matcher.group(1).trim();
+    /**
+     * 从 LLM 响应中提取 JSON 对象文本。
+     * <p>
+     * 处理常见 LLM 输出变体：fenced code block（```json ... ```）、
+     * 前后多余文本、空白字符等。
+     */
+    private String extractJson(String response) {
+        String trimmed = response.trim();
+        // Strip fenced code blocks (```json ... ``` or ``` ... ```)
+        if (trimmed.startsWith("```")) {
+            int firstNewline = trimmed.indexOf('\n');
+            int lastBacktick = trimmed.lastIndexOf("```");
+            if (firstNewline > 0 && lastBacktick > firstNewline) {
+                trimmed = trimmed.substring(firstNewline + 1, lastBacktick).trim();
+            }
         }
-        return "";
+        // Find JSON object boundaries
+        int start = trimmed.indexOf('{');
+        int end = trimmed.lastIndexOf('}');
+        if (start >= 0 && end > start) {
+            return trimmed.substring(start, end + 1);
+        }
+        return trimmed;
+    }
+
+    /**
+     * 将字符串转换为 AgentIntent，大小写不敏感。
+     * <p>
+     * 未知值降级为 DEEP_RETRIEVAL（宁可多检不漏检）。
+     */
+    private AgentIntent parseIntent(String value) {
+        if (value == null || value.isBlank()) {
+            return AgentIntent.DEEP_RETRIEVAL;
+        }
+        try {
+            return AgentIntent.valueOf(value.trim().toUpperCase());
+        } catch (IllegalArgumentException e) {
+            log.warn("Unknown intent '{}', falling back to DEEP_RETRIEVAL", value);
+            return AgentIntent.DEEP_RETRIEVAL;
+        }
     }
 
     private IntentResult validate(IntentResult result) {
@@ -163,7 +187,9 @@ public class IntentClassifier {
     }
 
     public IntentClassifier(ChatClientRegistry chatClientRegistry,
-                            AgentRagProperties properties) {
+                            AgentRagProperties properties,
+                            ObjectMapper objectMapper) {
         this.intentChatClient = chatClientRegistry.get(properties.intentModel());
+        this.objectMapper = objectMapper;
     }
 }

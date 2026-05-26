@@ -3,6 +3,9 @@ package com.smart.rag.rag.agent.tool.callback;
 import com.smart.rag.chat.tool.ToolRegistry;
 import com.smart.rag.rag.agent.intent.AgentIntent;
 import com.smart.rag.rag.agent.tool.*;
+import com.smart.rag.rag.agent.tool.dto.AgentEventLookupRequest;
+import com.smart.rag.rag.agent.tool.dto.DocDetailRequest;
+import com.smart.rag.rag.agent.tool.dto.NoInput;
 import com.smart.rag.rag.agent.workspace.ToolWorkspace;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -166,32 +169,32 @@ public class AgentToolCallbackFactory {
     }
 
     private ToolCallback buildParentDocLookup(ToolWorkspace workspace) {
-        return FunctionToolCallback.<String, String>builder(
+        return FunctionToolCallback.<NoInput, String>builder(
                 "parentDocLookup",
                 (request, ctx) -> parentDocLookupTool.execute(workspace)
             )
             .description("将检索到的文档片段替换为其所属的完整父文档。无需输入参数。前提：workspace 中必须有含父子关系的文档。")
-            .inputType(String.class)
+            .inputType(NoInput.class)
             .build();
     }
 
     private ToolCallback buildDocDetail(ToolWorkspace workspace) {
-        return FunctionToolCallback.<String, String>builder(
+        return FunctionToolCallback.<DocDetailRequest, String>builder(
                 "docDetail",
-                (request, ctx) -> docDetailTool.execute(request, null, workspace)
+                (request, ctx) -> docDetailTool.execute(request.docIds(), request.queryText(), workspace)
             )
-            .description("按需获取文档详情片段。输入文档 ID（逗号分隔）。")
-            .inputType(String.class)
+            .description("按需获取文档详情片段。输入 JSON: {\"docIds\": \"文档ID逗号分隔\", \"queryText\": \"查询文本(可选,用于高亮)\"}")
+            .inputType(DocDetailRequest.class)
             .build();
     }
 
     private ToolCallback buildAgentEventLookup(ToolWorkspace workspace) {
-        return FunctionToolCallback.<String, String>builder(
+        return FunctionToolCallback.<AgentEventLookupRequest, String>builder(
                 "agentEventLookup",
-                (request, ctx) -> agentEventLookupTool.execute(request, null, workspace)
+                (request, ctx) -> agentEventLookupTool.execute(request.queryText(), request.sessionId(), workspace)
             )
-            .description("查找 Agent 历史事件，用于会话连续性。输入查询文本。")
-            .inputType(String.class)
+            .description("查找 Agent 历史事件，用于会话连续性。输入 JSON: {\"queryText\": \"查询文本\", \"sessionId\": \"会话ID(可选)\"}")
+            .inputType(AgentEventLookupRequest.class)
             .build();
     }
 
@@ -206,12 +209,12 @@ public class AgentToolCallbackFactory {
     }
 
     private ToolCallback buildKnowledgeBaseInfo(ToolWorkspace workspace) {
-        return FunctionToolCallback.<String, String>builder(
+        return FunctionToolCallback.<NoInput, String>builder(
                 "knowledgeBaseInfo",
-                (request, ctx) -> knowledgeBaseInfoTool.execute(request, workspace)
+                (request, ctx) -> knowledgeBaseInfoTool.execute(null, workspace)
             )
             .description("查询知识库元信息（文档数量等），帮助判断知识库规模。无需输入参数。")
-            .inputType(String.class)
+            .inputType(NoInput.class)
             .build();
     }
 }

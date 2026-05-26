@@ -50,8 +50,7 @@ public class AgentEventLookupTool implements RagTool {
                 ? sessionId
                 : "unknown";
 
-            log.debug("Agent event lookup: query='{}', session={}, userId={}",
-                queryText, sid, userId);
+            log.debug("Agent event lookup: queryLen={}, sessionId={}, userId={}", queryText.length(), sid, userId);
 
             List<?> events = eventStore.searchEvents(sid, userId, queryText, MAX_RESULTS);
 
@@ -67,7 +66,7 @@ public class AgentEventLookupTool implements RagTool {
             long duration = System.currentTimeMillis() - start;
             log.error("Agent event lookup error", e);
             return ToolResult.failure("agentEventLookup",
-                "历史事件查找发生错误：" + e.getMessage(),
+                ToolErrorMessages.eventLookupUnavailable(),
                 "DB_ERROR", duration).toJson();
         }
     }

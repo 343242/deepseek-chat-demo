@@ -62,7 +62,7 @@ public class HybridSearchTool implements RagTool {
             long duration = System.currentTimeMillis() - start;
             log.error("Hybrid search error", e);
             return ToolResult.failure("hybridSearch",
-                "检索发生错误：" + e.getMessage(),
+                ToolErrorMessages.searchUnavailable("混合"),
                 "INTERNAL_ERROR", duration).toJson();
         }
     }

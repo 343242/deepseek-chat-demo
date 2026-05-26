@@ -86,7 +86,8 @@ public class QueryRewriteTool implements RagTool {
             workspace.addRewrittenQuery(rewrittenQuery);
 
             long duration = System.currentTimeMillis() - start;
-            log.debug("Query rewrite: '{}' -> '{}' in {}ms", queryText, rewrittenQuery, duration);
+            log.debug("Query rewrite: inputLen={}, outputLen={}, duration={}ms",
+                queryText.length(), rewrittenQuery.length(), duration);
 
             return ToolResult.success("queryRewrite",
                 "查询改写完成：\"" + queryText + "\" -> \"" + rewrittenQuery + "\"。请使用改写后的查询进行检索。",
@@ -94,9 +95,9 @@ public class QueryRewriteTool implements RagTool {
 
         } catch (Exception e) {
             long duration = System.currentTimeMillis() - start;
-            log.error("Query rewrite error: {}", e.getMessage(), e);
+            log.error("Query rewrite error", e);
             return ToolResult.failure("queryRewrite",
-                "查询改写发生错误：" + e.getMessage() + "。建议使用原始查询直接检索。",
+                ToolErrorMessages.rewriteFailed(),
                 "API_ERROR", duration).toJson();
         }
     }

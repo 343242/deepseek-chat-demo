@@ -113,6 +113,11 @@ public class AgentGuardrails {
         return tokenCountingModel.getTotalTokens();
     }
 
+    /** 获取 TokenCountingChatModel 实例（供外部接入 ChatClient） */
+    public TokenCountingChatModel getTokenCountingModel() {
+        return tokenCountingModel;
+    }
+
     // === 内部类型 ===
 
     /**

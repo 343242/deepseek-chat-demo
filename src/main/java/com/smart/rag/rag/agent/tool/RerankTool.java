@@ -117,9 +117,9 @@ public class RerankTool implements RagTool {
 
         } catch (Exception e) {
             long duration = System.currentTimeMillis() - start;
-            log.error("Rerank error: {}", e.getMessage(), e);
+            log.error("Rerank error", e);
             return ToolResult.failure("rerank",
-                "精排发生错误：" + e.getMessage() + "。建议直接使用原始检索结果生成回答。",
+                ToolErrorMessages.rerankUnavailable(),
                 "API_ERROR", duration).toJson();
         }
     }

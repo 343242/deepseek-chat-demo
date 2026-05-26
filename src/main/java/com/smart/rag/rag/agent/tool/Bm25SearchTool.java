@@ -92,7 +92,7 @@ public class Bm25SearchTool implements RagTool {
             workspace.addRetrievedDocsDeduplicated(retrieved);
 
             long duration = System.currentTimeMillis() - start;
-            log.debug("BM25 search: query='{}', {} results in {}ms", sanitized, docs.size(), duration);
+            log.debug("BM25 search: queryLen={}, {} results in {}ms", sanitized.length(), docs.size(), duration);
 
             return ToolResult.success("bm25Search",
                 "BM25 检索到 " + docs.size() + " 个相关文档片段",
@@ -100,9 +100,9 @@ public class Bm25SearchTool implements RagTool {
 
         } catch (Exception e) {
             long duration = System.currentTimeMillis() - start;
-            log.error("BM25 search error: {}", e.getMessage(), e);
+            log.error("BM25 search error", e);
             return ToolResult.failure("bm25Search",
-                "BM25 检索发生错误：" + e.getMessage() + "。建议尝试向量检索（vectorSearch）或混合检索（hybridSearch）。",
+                ToolErrorMessages.searchUnavailable("BM25"),
                 "DB_ERROR", duration).toJson();
         }
     }

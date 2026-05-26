@@ -206,8 +206,8 @@ public class ChatAdvisorChainFactory {
 
         // Step 3: 意图分类（阻塞式 LLM 调用）
         IntentResult intentResult = intentClassifier.classify(request.message());
-        log.info("Agent intent classified: intent={}, confidence={}, query='{}'",
-            intentResult.intent(), intentResult.confidence(), request.message());
+        log.info("Agent intent classified: intent={}, confidence={}, queryLength={}",
+            intentResult.intent(), intentResult.confidence(), request.message().length());
 
         // Step 4: 创建请求级 Workspace
         ToolWorkspace workspace = workspaceFactory.create(userId, request.teamId());
@@ -243,7 +243,7 @@ public class ChatAdvisorChainFactory {
             chain.add(MessageChatMemoryAdvisor.builder(chatMemory).build());
         }
 
-        return new AgentChainResult(chain, intentResult, workspace);
+        return new AgentChainResult(chain, intentResult, workspace, guardrails.getTokenCountingModel());
     }
 
     /**

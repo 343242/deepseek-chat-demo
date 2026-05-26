@@ -171,9 +171,9 @@ public class ParentDocLookupTool implements RagTool {
 
         } catch (Exception e) {
             long duration = System.currentTimeMillis() - start;
-            log.error("Parent doc lookup error: {}", e.getMessage(), e);
+            log.error("Parent doc lookup error", e);
             return ToolResult.failure("parentDocLookup",
-                "父文档查找发生错误：" + e.getMessage() + "。建议使用原始检索结果生成回答。",
+                ToolErrorMessages.parentDocUnavailable(),
                 "DB_ERROR", duration).toJson();
         }
     }

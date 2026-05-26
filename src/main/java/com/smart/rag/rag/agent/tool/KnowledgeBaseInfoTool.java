@@ -54,9 +54,9 @@ public class KnowledgeBaseInfoTool implements RagTool {
 
         } catch (Exception e) {
             long duration = System.currentTimeMillis() - start;
-            log.error("Knowledge base info error: {}", e.getMessage(), e);
+            log.error("Knowledge base info error", e);
             return ToolResult.failure("knowledgeBaseInfo",
-                "知识库信息查询发生错误：" + e.getMessage(),
+                ToolErrorMessages.knowledgeBaseUnavailable(),
                 "DB_ERROR", duration).toJson();
         }
     }

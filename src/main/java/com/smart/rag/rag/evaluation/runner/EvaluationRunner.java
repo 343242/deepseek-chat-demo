@@ -193,7 +193,7 @@ public class EvaluationRunner {
                 ? config.getTestUserId() : this.evalProps.getTestUserId();
         // 创建使用覆盖配置的临时 HybridSearchService
         HybridSearchService evalSearchService = new HybridSearchService(
-                vectorStore, vectorStoreMapper, evalProps, queryNormalizer);
+                vectorStore, vectorStoreMapper, evalProps, queryNormalizer, null);
         return new HybridDocumentRetriever(evalSearchService, userId, null);
     }
 

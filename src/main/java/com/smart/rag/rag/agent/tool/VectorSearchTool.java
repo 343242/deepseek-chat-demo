@@ -86,7 +86,7 @@ public class VectorSearchTool implements RagTool {
             long duration = System.currentTimeMillis() - start;
             log.error("Vector search error", e);
             return ToolResult.failure("vectorSearch",
-                "向量检索发生错误：" + e.getMessage(),
+                ToolErrorMessages.searchUnavailable("向量"),
                 "INTERNAL_ERROR", duration).toJson();
         }
     }

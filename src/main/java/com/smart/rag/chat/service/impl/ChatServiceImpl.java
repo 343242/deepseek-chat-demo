@@ -209,8 +209,10 @@ public class ChatServiceImpl implements ChatService {
             AgentChainResult agentResult = advisorChainFactory.buildAgentChain(
                 ctx.conversationId, request, ctx.modeStrategy, cagCtx, ctx.userId);
 
-            // 2. 构建 ChatClient 请求（跳过 spec.tools()、DB System Prompt、DB ModelParams）
-            ChatClient.ChatClientRequestSpec spec = ctx.chatClient.prompt()
+            // 2. 构建 ChatClient 请求 — 使用 TokenCountingChatModel 包装真实 ChatModel
+            //    这样每轮 LLM 调用都会经过 token 计数装饰器，护栏才能正确触发 TOKEN_LIMIT
+            ChatClient agentChatClient = ChatClient.builder(agentResult.tokenCountingModel()).build();
+            ChatClient.ChatClientRequestSpec spec = agentChatClient.prompt()
                 .user(request.message())
                 .advisors(a -> a.advisors(agentResult.chain())
                     .param(org.springframework.ai.chat.memory.ChatMemory.CONVERSATION_ID,

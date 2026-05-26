@@ -100,9 +100,9 @@ public class DocDetailTool implements RagTool {
 
         } catch (Exception e) {
             long duration = System.currentTimeMillis() - start;
-            log.error("Doc detail error: {}", e.getMessage(), e);
+            log.error("Doc detail error", e);
             return ToolResult.failure("docDetail",
-                "文档详情获取发生错误：" + e.getMessage(),
+                ToolErrorMessages.docDetailUnavailable(),
                 "DB_ERROR", duration).toJson();
         }
     }

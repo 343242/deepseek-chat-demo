@@ -1,10 +1,12 @@
 package com.smart.rag.rag.agent.event;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
+import org.apache.ibatis.annotations.Delete;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 
+import java.time.Instant;
 import java.util.List;
 
 /**
@@ -17,6 +19,23 @@ public interface AgentEventMapper extends BaseMapper<AgentSessionEvent> {
 
     /**
      * 按会话 ID 查询事件（按优先级升序、创建时间升序排列）
+     * <p>
+     * 优先级 1 (Critical) 排在最前，保证恢复时优先读取关键事件。
+     * <p>
+     * 限制最多返回 {@code limit} 条事件，避免长会话一次性加载过多数据。
+     */
+    @Select("SELECT * FROM agent_session_event " +
+            "WHERE session_id = #{sessionId} AND user_id = #{userId} " +
+            "ORDER BY priority ASC, created_at ASC " +
+            "LIMIT #{limit}")
+    List<AgentSessionEvent> selectBySessionIdOrderByPriorityLimited(
+        @Param("sessionId") String sessionId,
+        @Param("userId") Long userId,
+        @Param("limit") int limit
+    );
+
+    /**
+     * 按会话 ID 查询事件（无条数限制，仅用于向后兼容）
      * <p>
      * 优先级 1 (Critical) 排在最前，保证恢复时优先读取关键事件。
      */
@@ -50,4 +69,13 @@ public interface AgentEventMapper extends BaseMapper<AgentSessionEvent> {
         @Param("query") String query,
         @Param("limit") int limit
     );
+
+    /**
+     * 删除早于指定时间的事件（TTL 清理）
+     *
+     * @param cutoff 截止时间，早于此时间的事件将被删除
+     * @return 删除的行数
+     */
+    @Delete("DELETE FROM agent_session_event WHERE created_at < #{cutoff}")
+    int deleteOlderThan(@Param("cutoff") Instant cutoff);
 }

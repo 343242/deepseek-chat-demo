@@ -1,5 +1,6 @@
 package com.smart.rag.rag.agent.service;
 
+import com.smart.rag.exception.BusinessException;
 import com.smart.rag.rag.config.RagRetrievalProperties;
 import com.smart.rag.rag.mapper.VectorStoreMapper;
 import com.smart.rag.rag.retrieval.QueryNormalizer;
@@ -100,7 +101,7 @@ public class HybridSearchService {
         // Both branches failed -> throw to signal failure to caller (HybridSearchTool)
         if (vectorFailed && bm25Failed) {
             log.error("Both vector and BM25 search failed for queryLen={}", normalized.length());
-            throw new RuntimeException("向量检索和 BM25 检索均不可用");
+            throw new BusinessException("向量检索和 BM25 检索均不可用");
         }
 
         if (vectorFailed || bm25Failed) {
@@ -157,7 +158,7 @@ public class HybridSearchService {
 
     private List<ScoredDocument> bm25Search(String queryText, int topK,
                                             long userId, @Nullable Long teamId) {
-        String sanitized = sanitizeQuery(queryText);
+        String sanitized = queryNormalizer.sanitizeForTsQuery(queryText);
         if (sanitized.isBlank()) {
             return List.of();
         }
@@ -221,19 +222,6 @@ public class HybridSearchService {
     }
 
     // === 工具方法 ===
-
-    /**
-     * 净化查询文本：只去掉 PostgreSQL tsquery 运算符，保留完整中文文本交给 pg_jieba 分词。
-     */
-    private String sanitizeQuery(String query) {
-        if (query == null || query.isBlank()) return "";
-        return query
-                .replace('“', ' ').replace('”', ' ')
-                .replace('‘', ' ').replace('’', ' ')
-                .replace('«', ' ').replace('»', ' ')
-                .replaceAll("[&|!()\\[\\]{}:*\\\\\"']", " ")
-                .trim();
-    }
 
     private record ScoredDocument(Document doc, int rank, double score) {}
 }

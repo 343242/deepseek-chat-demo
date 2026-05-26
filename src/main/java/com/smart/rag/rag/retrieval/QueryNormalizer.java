@@ -119,4 +119,30 @@ public class QueryNormalizer {
     private String compressWhitespace(String text) {
         return text.replaceAll("\\s+", " ").trim();
     }
+
+    // ======================== BM25 / tsquery 净化 ========================
+
+    /**
+     * 净化查询文本，去掉 PostgreSQL tsquery 运算符。
+     * <p>
+     * 保留完整中文文本交给 pg_jieba 分词，只剥离会干扰 tsquery 解析的特殊字符：
+     * <ul>
+     *   <li>中文引号（左右双引号、单引号、书名号）替换为空格</li>
+     *   <li>tsquery 运算符：{@code & | ! ( ) [ ] { } : * \ " '}替换为空格</li>
+     * </ul>
+     * <p>
+     * 应在 {@link #normalize(String)} 之后调用，确保输入已是归一化文本。
+     *
+     * @param query 已归一化的查询文本
+     * @return 去除 tsquery 运算符后的文本；输入为 null/空白时返回空字符串
+     */
+    public String sanitizeForTsQuery(String query) {
+        if (query == null || query.isBlank()) return "";
+        return query
+                .replace('“', ' ').replace('”', ' ')   // left/right double quotation
+                .replace('‘', ' ').replace('’', ' ')   // left/right single quotation
+                .replace('«', ' ').replace('»', ' ')   // << >>
+                .replaceAll("[&|!()\\[\\]{}:*\\\\\"']", " ")
+                .trim();
+    }
 }

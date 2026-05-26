@@ -3,6 +3,7 @@ package com.smart.rag.rag.agent.intent;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smart.rag.chat.client.ChatClientRegistry;
+import com.smart.rag.exception.BusinessException;
 import com.smart.rag.rag.agent.config.AgentRagProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -85,7 +86,7 @@ public class IntentClassifier {
 
             return parseResponse(response);
         } catch (Exception e) {
-            throw new RuntimeException("Intent classification LLM call failed", e);
+            throw new BusinessException("Intent classification LLM call failed", e);
         }
     }
 

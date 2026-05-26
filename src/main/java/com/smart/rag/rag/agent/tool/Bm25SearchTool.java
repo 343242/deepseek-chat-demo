@@ -5,6 +5,7 @@ import com.smart.rag.rag.agent.workspace.RetrievedDocument;
 import com.smart.rag.rag.agent.workspace.ToolWorkspace;
 import com.smart.rag.rag.config.RagRetrievalProperties;
 import com.smart.rag.rag.mapper.VectorStoreMapper;
+import com.smart.rag.rag.retrieval.QueryNormalizer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.document.Document;
@@ -29,10 +30,13 @@ public class Bm25SearchTool implements RagTool {
 
     private final VectorStoreMapper vectorStoreMapper;
     private final RagRetrievalProperties properties;
+    private final QueryNormalizer queryNormalizer;
 
-    public Bm25SearchTool(VectorStoreMapper vectorStoreMapper, RagRetrievalProperties properties) {
+    public Bm25SearchTool(VectorStoreMapper vectorStoreMapper, RagRetrievalProperties properties,
+                          QueryNormalizer queryNormalizer) {
         this.vectorStoreMapper = vectorStoreMapper;
         this.properties = properties;
+        this.queryNormalizer = queryNormalizer;
     }
 
     /**
@@ -51,7 +55,7 @@ public class Bm25SearchTool implements RagTool {
             }
 
             // 净化查询文本
-            String sanitized = sanitizeQuery(queryText);
+            String sanitized = queryNormalizer.sanitizeForTsQuery(queryText);
             if (sanitized.isBlank()) {
                 return ToolResult.failure("bm25Search",
                     "查询文本经净化后为空，请提供包含有效关键词的查询。",
@@ -105,18 +109,5 @@ public class Bm25SearchTool implements RagTool {
                 ToolErrorMessages.searchUnavailable("BM25"),
                 "DB_ERROR", duration).toJson();
         }
-    }
-
-    /**
-     * 净化查询文本：只去掉 PostgreSQL tsquery 运算符，保留完整中文文本交给 pg_jieba 分词。
-     */
-    private String sanitizeQuery(String query) {
-        if (query == null || query.isBlank()) return "";
-        return query
-            .replace('“', ' ').replace('”', ' ')
-            .replace('‘', ' ').replace('’', ' ')
-            .replace('«', ' ').replace('»', ' ')
-            .replaceAll("[&|!()\\[\\]{}:*\\\\\"']", " ")
-            .trim();
     }
 }

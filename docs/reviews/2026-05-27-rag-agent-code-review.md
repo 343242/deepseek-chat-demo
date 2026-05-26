@@ -239,3 +239,229 @@ public record AgentEventLookupRequest(String queryText, String sessionId) {}
 - 工作树审查前为干净状态。
 - 本报告为只读审查结果沉淀，未修改生产代码。
 - 未运行测试；本报告不声明行为已修复。
+
+---
+
+## 六维专项审查补充
+
+**审查时间**: 2026-05-27  
+**审查范围**: `src/main/java/com/smart/rag/rag/agent/**`  
+**审查维度**: 资源关闭 / 边界条件 / 并发安全 / 性能陷阱 / 异常处理 / 内存泄漏  
+**审查方式**: 只读源码审查，未修改生产代码，未运行测试  
+**专项结论**: REQUEST CHANGES
+
+### 专项总览
+
+| 级别 | 数量 | 主要风险 |
+|------|------|----------|
+| HIGH | 2 | 异步检索线程池/超时风险，token 护栏未实际接入 |
+| MEDIUM | 4 | Workspace 并发可变状态、事件表增长、异常消息泄漏、结果/prompt 膨胀 |
+| LOW | 1 | Rerank 资源关闭路径存在但生命周期偏重 |
+
+### HIGH
+
+#### H3: HybridSearchService 使用公共 ForkJoinPool 执行阻塞检索且无超时
+
+**文件**: `src/main/java/com/smart/rag/rag/agent/service/HybridSearchService.java:71`
+
+**维度**: 并发安全 / 性能陷阱
+
+**问题**:
+
+`hybridSearch()` 使用 `CompletableFuture.supplyAsync()` 同时执行向量检索和 BM25 检索，但未传入专用 `Executor`，默认使用 JVM 公共 `ForkJoinPool`。两路任务都是阻塞型外部/DB 调用，并且没有 timeout、cancel 或隔离队列。
+
+同时，代码先 `vectorFuture.join()`，再 `bm25Future.join()`。如果 vector 分支长时间卡住，即使 BM25 已完成，当前请求仍会阻塞。
+
+**风险**:
+
+- 高并发下阻塞任务占满 common pool，影响进程内其他异步任务。
+- 单个检索分支卡住会拖住整个 agent 请求。
+- 无超时会让 Servlet 请求线程持续等待，放大下游 DB/向量服务故障。
+
+**建议修复**:
+
+- 注入 RAG 检索专用 `Executor`，配置线程数、队列上限和拒绝策略。
+- 对每个 future 使用 `orTimeout` / `completeOnTimeout`。
+- 任一分支超时或失败时取消对应 future，并在结果 metadata 中标记降级状态。
+
+#### H4: TokenCountingChatModel 未接入实际模型调用，token 护栏大概率失效
+
+**文件**:
+
+- `src/main/java/com/smart/rag/chat/service/ChatAdvisorChainFactory.java:285`
+- `src/main/java/com/smart/rag/rag/agent/guardrail/AgentGuardrails.java:69`
+- `src/main/java/com/smart/rag/rag/agent/guardrail/TokenCountingChatModel.java:50`
+
+**维度**: 边界条件 / 内存泄漏防线
+
+**问题**:
+
+`createGuardrails()` 创建了 `TokenCountingChatModel`，但该 wrapper 没有被接入实际 `ChatClient` / `ToolCallAdvisor` 模型调用路径。`AgentGuardrails.check()` 读取 `tokenCountingModel.getTotalTokens()`，但如果 wrapper 的 `call()` 未被实际调用，累计 token 将一直为 0。
+
+**风险**:
+
+- `TOKEN_LIMIT` 护栏不会触发。
+- 长 ReAct 循环只能依赖 `maxToolIterations` 兜底。
+- system prompt、workspace 文档和中间答案持续增长时，缺少上下文窗口级别的真实保护。
+
+**建议修复**:
+
+- 将 `TokenCountingChatModel` 真正注入 agent 模型调用链。
+- 或改为从每轮 `ChatResponse` metadata / advisor context 读取 usage 并累加。
+- 增加回归测试：模拟多轮调用后 token 超限必须触发 STOP。
+
+### MEDIUM
+
+#### M4: ToolWorkspace 是请求内共享可变状态，缺少并发契约
+
+**文件**:
+
+- `src/main/java/com/smart/rag/rag/agent/workspace/ToolWorkspace.java:30`
+- `src/main/java/com/smart/rag/rag/agent/tool/callback/AgentToolCallbackFactory.java:128`
+
+**维度**: 并发安全
+
+**问题**:
+
+`ToolWorkspace` 使用多个 `ArrayList` / `HashSet` 保存请求状态，所有 agent tool callback 闭包捕获同一个 workspace 实例。当前类没有同步、锁、线程安全集合或不可变状态合并机制。
+
+如果 Spring AI 当前或未来配置允许一次模型响应触发多个 tool call 并行执行，workspace mutation 会产生竞态。
+
+**风险**:
+
+- `seenDocIds` 去重失效，重复文档进入上下文。
+- `retrievedDocs`、`rewrittenQueries`、`intermediateAnswers` 出现 lost update。
+- 读写交错时可能出现 `ConcurrentModificationException` 或导出状态不一致。
+
+**建议修复**:
+
+- 明确工具调用串行契约，并在注释/测试中固化。
+- 如果无法保证串行，给 workspace mutation 加锁，或改成每个 tool 返回 delta，再由单线程合并。
+
+#### M5: Agent 事件表和恢复快照缺少实际容量/TTL 控制
+
+**文件**:
+
+- `src/main/java/com/smart/rag/rag/agent/event/AgentEventStore.java:113`
+- `src/main/java/com/smart/rag/rag/agent/event/AgentEventMapper.java:23`
+- `src/main/resources/db/migration/V15__agent_session_event.sql:5`
+
+**维度**: 内存泄漏 / 性能陷阱
+
+**问题**:
+
+`buildResumeSnapshot()` 一次性加载某会话全部事件；SQL 无 `LIMIT`、无时间窗。迁移只创建 `agent_session_event` 表和索引，没有落地注释中提到的 14 天 TTL 清理任务。
+
+**风险**:
+
+- 长会话恢复时一次性加载大量事件，占用内存并拖慢响应。
+- 表长期增长，影响搜索、恢复快照和索引维护成本。
+- `maxBytes` 预算只在 Java 拼接阶段生效，不能限制 DB 返回规模。
+
+**建议修复**:
+
+- 在 SQL 层增加时间窗和条数上限。
+- 增加 Flyway 清理策略或应用启动定期清理任务。
+- 恢复快照优先取 Critical/High 事件时也应在查询层分批或限量。
+
+#### M6: Tool failure 直接回显底层异常消息
+
+**文件**:
+
+- `src/main/java/com/smart/rag/rag/agent/tool/VectorSearchTool.java:88`
+- `src/main/java/com/smart/rag/rag/agent/tool/Bm25SearchTool.java:104`
+- `src/main/java/com/smart/rag/rag/agent/tool/DocDetailTool.java:104`
+- `src/main/java/com/smart/rag/rag/agent/tool/KnowledgeBaseInfoTool.java:58`
+
+**维度**: 异常处理
+
+**问题**:
+
+多个工具将 `e.getMessage()` 拼进 `ToolResult.failure()`。该 JSON 会返回给 LLM 阅读，属于用户/模型可见错误面。
+
+**风险**:
+
+底层异常可能包含 SQL、表名、连接信息、供应商错误、内部类名或其他部署细节。该问题也与本报告 H1 属同类风险。
+
+**建议修复**:
+
+- 对外返回固定中文错误文案和换策略建议。
+- 内部日志保留异常堆栈，但避免敏感信息。
+- 建议抽取统一工具错误文案工厂，避免每个 Tool 自行拼接。
+
+#### M7: Workspace 和 system prompt 缺少容量上限，长轮次会膨胀
+
+**文件**:
+
+- `src/main/java/com/smart/rag/rag/agent/workspace/ToolWorkspace.java:90`
+- `src/main/java/com/smart/rag/rag/agent/tool/HybridSearchTool.java:55`
+- `src/main/java/com/smart/rag/rag/agent/advisor/AgentSystemPromptAdvisor.java:69`
+
+**维度**: 边界条件 / 内存泄漏
+
+**问题**:
+
+`addRetrievedDocs()` 直接追加文档，不去重、不限量。多轮检索、改写、rerank、parent lookup 可能让 workspace 文档不断增长。`AgentSystemPromptAdvisor.before()` 每轮从 workspace 读取中间答案并拼入 system prompt，缺少 token/字符预算裁剪。
+
+**风险**:
+
+- 请求内内存和 JSON 输出持续增长。
+- prompt 变长导致模型费用和延迟上升。
+- token 护栏未实际接入时，超上下文风险进一步放大。
+
+**建议修复**:
+
+- workspace 层统一设置最大文档数、最大内容字符数、最大中间答案数。
+- 检索结果默认走去重追加。
+- prompt 注入层按 token/字符预算裁剪低优先级内容。
+
+### LOW
+
+#### L2: RerankTool 每次调用创建并关闭 reranker，资源关闭正确但生命周期偏重
+
+**文件**: `src/main/java/com/smart/rag/rag/agent/tool/RerankTool.java:76`
+
+**维度**: 资源关闭 / 性能陷阱
+
+**问题**:
+
+`RerankTool` 每次执行都会创建 `BailianRerankPostProcessor`，并在 `finally` 中调用 `shutdown()`。资源关闭路径存在，但如果底层包含 HTTP client / 线程池，频繁创建和销毁会带来额外开销。
+
+**风险**:
+
+- 高并发 rerank 时对象和连接生命周期抖动。
+- 如果 `shutdown()` 非幂等或内部关闭异常处理不充分，可能影响原始 rerank 异常定位。
+
+**建议修复**:
+
+- 如果 `BailianRerankPostProcessor` 线程安全，改为 Spring 单例 bean 并随 bean 生命周期关闭。
+- 如果不线程安全，保留当前模式，但明确 `shutdown()` 幂等性并补测试。
+
+### 六维归纳
+
+| 维度 | 当前结论 |
+|------|----------|
+| 资源关闭 | `RerankTool` 有 `finally shutdown()`，但每次创建/销毁偏重 |
+| 边界条件 | token 护栏未实际接入；workspace、prompt、事件恢复缺少上限 |
+| 并发安全 | `HybridSearchService` 使用 common pool；`ToolWorkspace` 共享可变状态无并发契约 |
+| 性能陷阱 | 阻塞检索跑公共线程池；事件全量加载；reranker 反复创建 |
+| 异常处理 | 多个 Tool failure 对 LLM 暴露底层异常消息 |
+| 内存泄漏 | `agent_session_event` 无实际 TTL；workspace/prompt 随轮次增长 |
+
+### 专项修复优先级
+
+**P0**:
+
+1. 为 `HybridSearchService` 配置专用 executor + 超时 + 降级标记。
+2. 修正 token 统计接入路径，让 `TOKEN_LIMIT` 护栏真实生效。
+
+**P1**:
+
+1. 为 `ToolWorkspace` 明确串行契约或加并发保护。
+2. 给 `agent_session_event` 增加清理机制和恢复查询上限。
+3. 统一 Tool failure 安全文案，禁止 `e.getMessage()` 进入 ToolResult。
+4. 为 workspace/prompt 增加容量预算。
+
+**P2**:
+
+1. 评估 reranker 生命周期，决定单例复用或保留短生命周期并补充关闭测试。

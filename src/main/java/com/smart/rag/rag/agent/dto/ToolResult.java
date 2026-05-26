@@ -98,8 +98,10 @@ public record ToolResult(
             return OBJECT_MAPPER.writeValueAsString(map);
         } catch (JsonProcessingException e) {
             log.error("Failed to serialize ToolResult to JSON", e);
-            // 降级：手动拼装最简 JSON
-            return "{\"success\":" + success + ",\"action\":\"" + action + "\"}";
+            // 降级：手动拼装最简 JSON（action 做 JSON 转义防注入）
+            String escapedAction = action == null ? ""
+                : action.replace("\\", "\\\\").replace("\"", "\\\"");
+            return "{\"success\":" + success + ",\"action\":\"" + escapedAction + "\"}";
         }
     }
 }

@@ -126,6 +126,30 @@ public class MiniMaxModelProvider implements ModelProvider {
     }
 
     /**
+     * 创建 ChatClient 并复用已构建的 MiniMaxChatModel，避免重复构建
+     */
+    @Override
+    public ClientAndModel createClientWithModel(String modelId, Double temperature) {
+        MiniMaxChatOptions.Builder optionsBuilder = MiniMaxChatOptions.builder()
+                .model(modelId);
+
+        Double temp = temperature != null ? temperature : properties.chat().temperature();
+        if (temp != null) {
+            optionsBuilder.temperature(temp);
+        }
+        if (properties.chat().topP() != null) {
+            optionsBuilder.topP(properties.chat().topP());
+        }
+        if (properties.chat().maxTokens() != null) {
+            optionsBuilder.maxTokens(properties.chat().maxTokens());
+        }
+
+        MiniMaxChatModel chatModel = new MiniMaxChatModel(sharedApi, optionsBuilder.build());
+        ChatClient client = ChatClient.builder(chatModel).build();
+        return new ClientAndModel(client, chatModel);
+    }
+
+    /**
      * 将统一 ModelParams 转换为 MiniMaxChatOptions
      * <p>
      * 映射参数：temperature, maxTokens, topP, frequencyPenalty, presencePenalty。

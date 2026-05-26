@@ -3,6 +3,7 @@ package com.smart.rag.chat.provider;
 import com.smart.rag.chat.dto.ModelInfo;
 import com.smart.rag.chat.entity.ModelParams;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.prompt.ChatOptions;
 
 import java.util.List;
@@ -79,6 +80,29 @@ public interface ModelProvider {
      * @return 可用的 ChatClient 实例
      */
     ChatClient createClient(String modelId, Double temperature);
+
+    /**
+     * 为指定模型创建 ChatClient 及其底层 ChatModel（工厂方法）
+     * <p>
+     * 默认实现通过 {@link #createClient} 创建 ChatClient 后，再单独创建一次 ChatModel。
+     * 各厂商实现可以覆写此方法以避免重复构建（复用同一个 ChatModel 实例）。
+     *
+     * @param modelId     模型 ID
+     * @param temperature 可选温度参数，null 使用厂商默认值
+     * @return 包含 ChatClient 和 ChatModel 的载体，ChatModel 可为 null（降级为字符估算）
+     */
+    default ClientAndModel createClientWithModel(String modelId, Double temperature) {
+        ChatClient client = createClient(modelId, temperature);
+        return new ClientAndModel(client, null);
+    }
+
+    /**
+     * ChatClient + ChatModel 载体
+     *
+     * @param client    ChatClient 实例（不为 null）
+     * @param chatModel 底层 ChatModel 实例（可为 null，降级为字符估算）
+     */
+    record ClientAndModel(ChatClient client, ChatModel chatModel) {}
 
     /**
      * 将统一的 ModelParams 转换为厂商特定的 ChatOptions

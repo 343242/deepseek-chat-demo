@@ -7,6 +7,7 @@ import com.smart.rag.chat.provider.ProviderRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.stereotype.Component;
 
 import java.util.*;
@@ -81,6 +82,7 @@ public class ModelRegistryRefresher {
 
         // ====== 阶段2: 串行创建 ChatClient 并注册（CPU 密集，需要原子性） ======
         Map<String, ChatClient> newClients = new LinkedHashMap<>();
+        Map<String, ChatModel> newChatModels = new LinkedHashMap<>();
         List<ModelInfo> allModels = new ArrayList<>();
         Map<String, String> newIndex = new HashMap<>();
         int successCount = 0;
@@ -96,9 +98,14 @@ public class ModelRegistryRefresher {
 
             for (ModelInfo model : result.models()) {
                 try {
-                    ChatClient client = result.provider().createClient(model.id(), null);
+                    ModelProvider.ClientAndModel cam = result.provider().createClientWithModel(model.id(), null);
+                    ChatClient client = cam.client();
+                    ChatModel chatModel = cam.chatModel();
                     String compositeKey = result.provider().getProviderId() + "/" + model.id();
                     newClients.put(compositeKey, client);
+                    if (chatModel != null) {
+                        newChatModels.put(compositeKey, chatModel);
+                    }
                     if (newClients.containsKey(model.id())) {
                         log.warn("Model '{}' already registered by provider '{}', skipping registration from '{}' (use composite key '{}' instead)",
                                 model.id(),
@@ -107,6 +114,9 @@ public class ModelRegistryRefresher {
                                 compositeKey);
                     } else {
                         newClients.put(model.id(), client);
+                        if (chatModel != null) {
+                            newChatModels.put(model.id(), chatModel);
+                        }
                     }
                     allModels.add(model);
                     newIndex.putIfAbsent(model.id(), result.provider().getProviderId());
@@ -124,9 +134,9 @@ public class ModelRegistryRefresher {
         if (hasClients) {
             // 原子更新：先更新 provider 索引（降级可接受），再更新 registry
             // modelToProvider 是查询辅助索引，中间态影响有限（查询返回 null）
-            // ChatClientRegistry.replaceAll 是最终一致性，volatile 保证可见性
+            // ChatClientRegistry.replaceAll 使用 3-arg 版本同时写入 ChatClient + ChatModel
             modelToProvider = Collections.unmodifiableMap(newIndex);
-            chatClientRegistry.replaceAll(newClients, allModels);
+            chatClientRegistry.replaceAll(newClients, newChatModels, allModels);
         }
 
         log.info("Refresh complete: {} clients, {} models from {}/{} providers",

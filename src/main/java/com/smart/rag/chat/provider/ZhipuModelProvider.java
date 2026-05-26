@@ -3,8 +3,6 @@ package com.smart.rag.chat.provider;
 import com.smart.rag.chat.dto.ModelInfo;
 import com.smart.rag.chat.entity.ModelParams;
 import com.smart.rag.config.ZhipuProperties;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.prompt.ChatOptions;
 import org.springframework.ai.zhipuai.ZhiPuAiChatModel;
@@ -27,8 +25,6 @@ import java.util.List;
  */
 @Component
 public class ZhipuModelProvider implements ModelProvider {
-
-    private static final Logger log = LoggerFactory.getLogger(ZhipuModelProvider.class);
 
     /** 智谱 AI 可用模型列表（硬编码，因智谱无 /models API） */
     private static final List<ModelInfo> MODELS = List.of(
@@ -113,6 +109,30 @@ public class ZhipuModelProvider implements ModelProvider {
         ZhiPuAiChatModel chatModel = new ZhiPuAiChatModel(sharedApi, optionsBuilder.build());
 
         return ChatClient.builder(chatModel).build();
+    }
+
+    /**
+     * 创建 ChatClient 并复用已构建的 ZhiPuAiChatModel，避免重复构建
+     */
+    @Override
+    public ClientAndModel createClientWithModel(String modelId, Double temperature) {
+        ZhiPuAiChatOptions.Builder optionsBuilder = ZhiPuAiChatOptions.builder()
+                .model(modelId);
+
+        Double temp = temperature != null ? temperature : properties.chat().temperature();
+        if (temp != null) {
+            optionsBuilder.temperature(temp);
+        }
+        if (properties.chat().topP() != null) {
+            optionsBuilder.topP(properties.chat().topP());
+        }
+        if (properties.chat().maxTokens() != null) {
+            optionsBuilder.maxTokens(properties.chat().maxTokens());
+        }
+
+        ZhiPuAiChatModel chatModel = new ZhiPuAiChatModel(sharedApi, optionsBuilder.build());
+        ChatClient client = ChatClient.builder(chatModel).build();
+        return new ClientAndModel(client, chatModel);
     }
 
     /**

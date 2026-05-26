@@ -70,10 +70,13 @@ public class ToolWorkspace {
 
     /** 获取未完成的子问题索引 */
     public List<Integer> getPendingSubQueryIndices() {
-        return subQueries.stream()
-            .filter(i -> !completedSubQueries.contains(subQueries.indexOf(i)))
-            .map(subQueries::indexOf)
-            .collect(Collectors.toList());
+        List<Integer> pending = new ArrayList<>();
+        for (int i = 0; i < subQueries.size(); i++) {
+            if (!completedSubQueries.contains(i)) {
+                pending.add(i);
+            }
+        }
+        return pending;
     }
 
     // ── 检索结果 ──────────────────────────────────────────

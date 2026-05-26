@@ -45,7 +45,7 @@ public class DocDetailTool implements RagTool {
         try {
             if (docIds == null || docIds.isBlank()) {
                 return ToolResult.failure("docDetail",
-                    "文档 ID 不能为空", "INVALID_INPUT", 0).toString();
+                    "文档 ID 不能为空", "INVALID_INPUT", 0).toJson();
             }
 
             // 解析逗号分隔的文档 ID
@@ -56,7 +56,7 @@ public class DocDetailTool implements RagTool {
 
             if (idList.isEmpty()) {
                 return ToolResult.failure("docDetail",
-                    "解析后无有效文档 ID", "INVALID_INPUT", 0).toString();
+                    "解析后无有效文档 ID", "INVALID_INPUT", 0).toJson();
             }
 
             // 限制查询数量防止过载
@@ -75,7 +75,7 @@ public class DocDetailTool implements RagTool {
                 long duration = System.currentTimeMillis() - start;
                 return ToolResult.failure("docDetail",
                     "未找到指定 ID 的文档片段。请检查文档 ID 是否正确。",
-                    "DB_ERROR", duration).toString();
+                    "DB_ERROR", duration).toJson();
             }
 
             // 构建摘要文本
@@ -96,14 +96,14 @@ public class DocDetailTool implements RagTool {
                 highlights.size(), idList.size(), duration);
 
             return ToolResult.success("docDetail",
-                summary.toString(), null, duration).toString();
+                summary.toString(), null, duration).toJson();
 
         } catch (Exception e) {
             long duration = System.currentTimeMillis() - start;
             log.error("Doc detail error: {}", e.getMessage(), e);
             return ToolResult.failure("docDetail",
                 "文档详情获取发生错误：" + e.getMessage(),
-                "DB_ERROR", duration).toString();
+                "DB_ERROR", duration).toJson();
         }
     }
 }

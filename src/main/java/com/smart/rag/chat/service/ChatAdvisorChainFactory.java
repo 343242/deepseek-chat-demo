@@ -1,6 +1,7 @@
 package com.smart.rag.chat.service;
 
 import com.smart.rag.chat.advisor.ConversationContextAdvisor;
+import com.smart.rag.chat.client.ChatClientRegistry;
 import com.smart.rag.chat.context.ContextPromptInjector;
 import com.smart.rag.chat.context.RequestContext;
 import com.smart.rag.chat.dto.ChatRequest;
@@ -8,6 +9,8 @@ import com.smart.rag.chat.mode.ChatModeStrategy;
 import com.smart.rag.chat.tool.ToolRegistry;
 import com.smart.rag.rag.agent.advisor.AgentSystemPromptAdvisor;
 import com.smart.rag.rag.agent.config.AgentRagProperties;
+import com.smart.rag.rag.agent.guardrail.AgentGuardrails;
+import com.smart.rag.rag.agent.guardrail.TokenCountingChatModel;
 import com.smart.rag.rag.agent.intent.AgentIntent;
 import com.smart.rag.rag.agent.intent.IntentClassifier;
 import com.smart.rag.rag.agent.intent.IntentResult;
@@ -21,6 +24,7 @@ import org.springframework.ai.chat.client.advisor.ToolCallAdvisor;
 import org.springframework.ai.chat.client.advisor.api.Advisor;
 import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
 import org.springframework.ai.chat.memory.ChatMemory;
+import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.model.tool.DefaultToolCallingManager;
 import org.springframework.ai.rag.advisor.RetrievalAugmentationAdvisor;
 import org.springframework.ai.tool.ToolCallback;
@@ -59,6 +63,7 @@ public class ChatAdvisorChainFactory {
     private final AgentToolCallbackFactory agentToolCallbackFactory;
     private final AgentRagProperties agentProperties;
     private final ContextPromptInjector contextPromptInjector;
+    private final ChatClientRegistry chatClientRegistry;
 
     /** 缓存的全局 Advisor 列表（不可变，初始化后不再变化） */
     private volatile List<Advisor> cachedGlobalAdvisors;
@@ -76,7 +81,8 @@ public class ChatAdvisorChainFactory {
                                    ToolWorkspaceFactory workspaceFactory,
                                    AgentToolCallbackFactory agentToolCallbackFactory,
                                    AgentRagProperties agentProperties,
-                                   ContextPromptInjector contextPromptInjector) {
+                                   ContextPromptInjector contextPromptInjector,
+                                   ChatClientRegistry chatClientRegistry) {
         this.chatMemory = chatMemory;
         this.globalAdvisorsProvider = globalAdvisors;
         this.toolCallAdvisorProvider = toolCallAdvisor;
@@ -87,6 +93,7 @@ public class ChatAdvisorChainFactory {
         this.agentToolCallbackFactory = agentToolCallbackFactory;
         this.agentProperties = agentProperties;
         this.contextPromptInjector = contextPromptInjector;
+        this.chatClientRegistry = chatClientRegistry;
     }
 
     public boolean hasTools() {
@@ -226,9 +233,10 @@ public class ChatAdvisorChainFactory {
                 toolCallbacks.length, intentResult.intent());
         }
 
-        // Step 7: AgentSystemPromptAdvisor — 动态 System Prompt + 每轮中间答案注入
+        // Step 7: AgentSystemPromptAdvisor — 动态 System Prompt + 每轮中间答案注入 + 护栏检查
         String mergedPrompt = resolveAgentPrompt(intentResult.intent(), cagContext);
-        chain.add(new AgentSystemPromptAdvisor(intentResult.intent(), mergedPrompt, workspace));
+        AgentGuardrails guardrails = createGuardrails();
+        chain.add(new AgentSystemPromptAdvisor(intentResult.intent(), mergedPrompt, workspace, guardrails));
 
         // Step 8: 对话记忆
         if (modeStrategy.isMemoryEnabled()) {
@@ -258,5 +266,57 @@ public class ChatAdvisorChainFactory {
 
     private Long extractUserId() {
         return com.smart.rag.security.util.SecurityUtils.getCurrentUserId();
+    }
+
+    /**
+     * 创建请求级 AgentGuardrails 实例
+     * <p>
+     * TokenCountingChatModel 包装真实 ChatModel（如果可获取），否则创建仅支持字符估算的版本。
+     * token 上限 = 模型上下文窗口 x contextWindowRatio。
+     */
+    private AgentGuardrails createGuardrails() {
+        // 尝试从注册中心获取第一个可用的 ChatModel
+        ChatModel chatModel = null;
+        for (String modelId : chatClientRegistry.getAvailableModelIds()) {
+            chatModel = chatClientRegistry.getChatModel(modelId);
+            if (chatModel != null) break;
+        }
+
+        TokenCountingChatModel tokenCountingModel;
+        if (chatModel != null) {
+            tokenCountingModel = new TokenCountingChatModel(chatModel);
+        } else {
+            // 无法获取 ChatModel，创建一个仅用字符估算的兜底计数器
+            // 传入 null delegate，TokenCountingChatModel.call() 会返回 null response
+            // 但 guardrails 只调用 getTotalTokens()，字符估算仍然生效
+            tokenCountingModel = new TokenCountingChatModel(new NoOpChatModel());
+        }
+
+        // token 上限估算：128K 默认上下文窗口 x contextWindowRatio
+        long tokenLimit = (long) (128_000 * agentProperties.contextWindowRatio());
+
+        return new AgentGuardrails(agentProperties, tokenCountingModel, tokenLimit);
+    }
+
+    /**
+     * 兜底 ChatModel 实现 — 仅用于 TokenCountingChatModel 字符估算场景
+     */
+    private static class NoOpChatModel implements ChatModel {
+        @Override
+        public org.springframework.ai.chat.model.ChatResponse call(
+            org.springframework.ai.chat.prompt.Prompt prompt) {
+            return null;
+        }
+
+        @Override
+        public reactor.core.publisher.Flux<org.springframework.ai.chat.model.ChatResponse> stream(
+            org.springframework.ai.chat.prompt.Prompt prompt) {
+            return reactor.core.publisher.Flux.empty();
+        }
+
+        @Override
+        public org.springframework.ai.chat.prompt.ChatOptions getDefaultOptions() {
+            return null;
+        }
     }
 }

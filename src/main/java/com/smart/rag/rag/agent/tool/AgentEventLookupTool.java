@@ -42,7 +42,7 @@ public class AgentEventLookupTool implements RagTool {
         try {
             if (queryText == null || queryText.isBlank()) {
                 return ToolResult.failure("agentEventLookup",
-                    "查询文本不能为空", "INVALID_INPUT", 0).toString();
+                    "查询文本不能为空", "INVALID_INPUT", 0).toJson();
             }
 
             Long userId = workspace.getUserId();
@@ -61,14 +61,14 @@ public class AgentEventLookupTool implements RagTool {
                 : "找到 %d 条匹配的历史事件".formatted(events.size());
 
             return ToolResult.success("agentEventLookup",
-                summary, null, duration).toString();
+                summary, null, duration).toJson();
 
         } catch (Exception e) {
             long duration = System.currentTimeMillis() - start;
             log.error("Agent event lookup error", e);
             return ToolResult.failure("agentEventLookup",
                 "历史事件查找发生错误：" + e.getMessage(),
-                "DB_ERROR", duration).toString();
+                "DB_ERROR", duration).toJson();
         }
     }
 }

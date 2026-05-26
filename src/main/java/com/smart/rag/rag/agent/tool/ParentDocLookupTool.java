@@ -11,7 +11,6 @@ import org.springframework.ai.document.Document;
 import org.springframework.stereotype.Component;
 
 import java.util.*;
-import java.util.stream.Collectors;
 
 /**
  * 父文档查找 Tool -- 将检索到的文档片段替换为其所属的完整父文档
@@ -50,7 +49,7 @@ public class ParentDocLookupTool implements RagTool {
             if (docs.isEmpty()) {
                 return ToolResult.failure("parentDocLookup",
                     "没有可查找父文档的子块。请先调用检索工具获取文档。",
-                    "PRECONDITION_FAILED", System.currentTimeMillis() - start).toString();
+                    "PRECONDITION_FAILED", System.currentTimeMillis() - start).toJson();
             }
 
             // 收集所有需要回查的 parentId
@@ -82,7 +81,7 @@ public class ParentDocLookupTool implements RagTool {
             if (parentIdsToFetch.isEmpty()) {
                 return ToolResult.failure("parentDocLookup",
                     "当前文档无父子关系，无需父文档查找。",
-                    "PRECONDITION_FAILED", System.currentTimeMillis() - start).toString();
+                    "PRECONDITION_FAILED", System.currentTimeMillis() - start).toJson();
             }
 
             // 批量回查父文档
@@ -108,6 +107,8 @@ public class ParentDocLookupTool implements RagTool {
                     Map<String, Object> parentMetadata = parentDoc.getMetadata() != null
                         ? new HashMap<>(parentDoc.getMetadata()) : new HashMap<>();
                     parentMetadata.put("sourceDocId", doc.docId());
+                    // Fix H4: parentId 必须写入 metadata，否则后续排序读不到
+                    parentMetadata.put(ParentChildChunkStrategy.META_PARENT_ID, parentId);
 
                     resolvedParents.put(parentId, new RetrievedDocument(
                         parentDoc.getId(),
@@ -166,14 +167,14 @@ public class ParentDocLookupTool implements RagTool {
             return ToolResult.success("parentDocLookup",
                 "父文档查找完成：" + docs.size() + " 个文档片段替换为 " + resolvedParents.size()
                     + " 个父文档" + (nonChildDocs.isEmpty() ? "" : "，保留 " + nonChildDocs.size() + " 个非子块文档"),
-                result, duration).toString();
+                result, duration).toJson();
 
         } catch (Exception e) {
             long duration = System.currentTimeMillis() - start;
             log.error("Parent doc lookup error: {}", e.getMessage(), e);
             return ToolResult.failure("parentDocLookup",
                 "父文档查找发生错误：" + e.getMessage() + "。建议使用原始检索结果生成回答。",
-                "DB_ERROR", duration).toString();
+                "DB_ERROR", duration).toJson();
         }
     }
 

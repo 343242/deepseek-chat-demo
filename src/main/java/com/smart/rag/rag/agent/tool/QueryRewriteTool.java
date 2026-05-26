@@ -51,7 +51,7 @@ public class QueryRewriteTool implements RagTool {
         try {
             if (queryText == null || queryText.isBlank()) {
                 return ToolResult.failure("queryRewrite",
-                    "查询文本不能为空", "INVALID_INPUT", 0).toString();
+                    "查询文本不能为空", "INVALID_INPUT", 0).toJson();
             }
 
             // 使用 PromptTemplate 渲染改写提示
@@ -90,14 +90,14 @@ public class QueryRewriteTool implements RagTool {
 
             return ToolResult.success("queryRewrite",
                 "查询改写完成：\"" + queryText + "\" -> \"" + rewrittenQuery + "\"。请使用改写后的查询进行检索。",
-                null, duration).toString();
+                null, duration).toJson();
 
         } catch (Exception e) {
             long duration = System.currentTimeMillis() - start;
             log.error("Query rewrite error: {}", e.getMessage(), e);
             return ToolResult.failure("queryRewrite",
                 "查询改写发生错误：" + e.getMessage() + "。建议使用原始查询直接检索。",
-                "API_ERROR", duration).toString();
+                "API_ERROR", duration).toJson();
         }
     }
 }

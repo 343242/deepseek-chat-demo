@@ -47,7 +47,7 @@ public class VectorSearchTool implements RagTool {
         try {
             if (queryText == null || queryText.isBlank()) {
                 return ToolResult.failure("vectorSearch",
-                    "查询文本不能为空", "INVALID_INPUT", 0).toString();
+                    "查询文本不能为空", "INVALID_INPUT", 0).toJson();
             }
 
             FilterExpressionBuilder filterBuilder = new FilterExpressionBuilder();
@@ -80,14 +80,14 @@ public class VectorSearchTool implements RagTool {
 
             return ToolResult.success("vectorSearch",
                 "检索到 " + docs.size() + " 个相关文档片段",
-                retrieved, duration).toString();
+                retrieved, duration).toJson();
 
         } catch (Exception e) {
             long duration = System.currentTimeMillis() - start;
             log.error("Vector search error", e);
             return ToolResult.failure("vectorSearch",
                 "向量检索发生错误：" + e.getMessage(),
-                "INTERNAL_ERROR", duration).toString();
+                "INTERNAL_ERROR", duration).toJson();
         }
     }
 }

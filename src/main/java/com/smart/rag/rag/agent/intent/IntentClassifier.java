@@ -9,6 +9,8 @@ import org.springframework.stereotype.Component;
 
 import java.util.Collections;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * 意图分类器 -- 独立 LLM 调用，对用户查询做意图分类
@@ -34,7 +36,6 @@ public class IntentClassifier {
     );
 
     private final ChatClient intentChatClient;
-    private final AgentRagProperties properties;
 
     /**
      * 分类意图 + 分解查询
@@ -51,13 +52,11 @@ public class IntentClassifier {
         }
 
         // 2. 带重试的 LLM 调用
-        Exception lastError = null;
         for (int attempt = 0; attempt <= MAX_RETRIES; attempt++) {
             try {
                 IntentResult result = doClassify(query);
                 return validate(result);
             } catch (Exception e) {
-                lastError = e;
                 log.warn("Intent classification failed (attempt {}): {}", attempt, e.getMessage());
             }
         }
@@ -114,32 +113,13 @@ public class IntentClassifier {
     }
 
     private String extractJsonField(String json, String field) {
-        // 查找 "field": "value" 或 "field": value 模式
-        String pattern = "\"" + field + "\"\\s*:\\s*";
-        int start = json.indexOf(pattern);
-        if (start < 0) {
-            return "";
+        // 使用正则匹配 "field"\s*:\s*"value" 或 "field"\s*:\s*value
+        Pattern pattern = Pattern.compile("\"" + Pattern.quote(field) + "\"\\s*:\\s*\"?([^\",\\}]+)\"?");
+        Matcher matcher = pattern.matcher(json);
+        if (matcher.find()) {
+            return matcher.group(1).trim();
         }
-        start += pattern.length();
-
-        // 跳过开头的引号（如果有）
-        boolean quoted = json.charAt(start) == '"';
-        if (quoted) start++;
-
-        int end = start;
-        if (quoted) {
-            // 找到结束引号
-            while (end < json.length() && json.charAt(end) != '"') {
-                end++;
-            }
-        } else {
-            // 找到逗号、右花括号或结尾
-            while (end < json.length() && json.charAt(end) != ',' && json.charAt(end) != '}') {
-                end++;
-            }
-        }
-
-        return json.substring(start, end).trim();
+        return "";
     }
 
     private IntentResult validate(IntentResult result) {
@@ -184,9 +164,6 @@ public class IntentClassifier {
 
     public IntentClassifier(ChatClientRegistry chatClientRegistry,
                             AgentRagProperties properties) {
-        this.properties = properties;
-        // 通过 ChatClientRegistry 获取意图识别模型对应的 ChatClient
-        // 意图识别使用独立轻量模型（配置: app.agent.intent-model）
         this.intentChatClient = chatClientRegistry.get(properties.intentModel());
     }
 }

@@ -47,7 +47,7 @@ public class Bm25SearchTool implements RagTool {
         try {
             if (queryText == null || queryText.isBlank()) {
                 return ToolResult.failure("bm25Search",
-                    "查询文本不能为空", "INVALID_INPUT", 0).toString();
+                    "查询文本不能为空", "INVALID_INPUT", 0).toJson();
             }
 
             // 净化查询文本
@@ -55,7 +55,7 @@ public class Bm25SearchTool implements RagTool {
             if (sanitized.isBlank()) {
                 return ToolResult.failure("bm25Search",
                     "查询文本经净化后为空，请提供包含有效关键词的查询。",
-                    "INVALID_INPUT", 0).toString();
+                    "INVALID_INPUT", 0).toJson();
             }
 
             // 从 workspace 获取隔离参数
@@ -96,14 +96,14 @@ public class Bm25SearchTool implements RagTool {
 
             return ToolResult.success("bm25Search",
                 "BM25 检索到 " + docs.size() + " 个相关文档片段",
-                retrieved, duration).toString();
+                retrieved, duration).toJson();
 
         } catch (Exception e) {
             long duration = System.currentTimeMillis() - start;
             log.error("BM25 search error: {}", e.getMessage(), e);
             return ToolResult.failure("bm25Search",
                 "BM25 检索发生错误：" + e.getMessage() + "。建议尝试向量检索（vectorSearch）或混合检索（hybridSearch）。",
-                "DB_ERROR", duration).toString();
+                "DB_ERROR", duration).toJson();
         }
     }
 

@@ -5,6 +5,7 @@ import com.smart.rag.chat.dto.ModelInfo;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.stereotype.Component;
 
 import java.util.*;
@@ -12,7 +13,7 @@ import java.util.*;
 /**
  * ChatClient 注册中心
  * <p>
- * 管理所有已注册的 ChatClient 实例。
+ * 管理所有已注册的 ChatClient 实例及其对应的 ChatModel。
  * 单一职责：只负责存储和查询，不管创建。
  * <p>
  * 线程安全策略：
@@ -36,10 +37,26 @@ public class ChatClientRegistry {
     private static final Logger log = LoggerFactory.getLogger(ChatClientRegistry.class);
 
     private volatile Map<String, ChatClient> registry = Collections.emptyMap();
+    private volatile Map<String, ChatModel> modelRegistry = Collections.emptyMap();
     private volatile List<ModelInfo> cachedModels = Collections.emptyList();
 
     /**
-     * 注册一个 ChatClient（单个追加，线程安全）
+     * 注册一个 ChatClient 及其对应的 ChatModel（单个追加，线程安全）
+     */
+    public synchronized void register(String modelId, ChatClient chatClient, ChatModel chatModel) {
+        Map<String, ChatClient> newMap = new LinkedHashMap<>(registry);
+        newMap.put(modelId, chatClient);
+        this.registry = Collections.unmodifiableMap(newMap);
+
+        Map<String, ChatModel> newModelMap = new LinkedHashMap<>(modelRegistry);
+        newModelMap.put(modelId, chatModel);
+        this.modelRegistry = Collections.unmodifiableMap(newModelMap);
+
+        log.debug("Registered ChatClient for model: {}", modelId);
+    }
+
+    /**
+     * 注册一个 ChatClient（不含 ChatModel 引用，向后兼容）
      */
     public synchronized void register(String modelId, ChatClient chatClient) {
         Map<String, ChatClient> newMap = new LinkedHashMap<>(registry);
@@ -63,6 +80,18 @@ public class ChatClientRegistry {
     }
 
     /**
+     * 原子替换所有注册（含 ChatModel 引用）
+     */
+    public synchronized void replaceAll(Map<String, ChatClient> newClients,
+                                        Map<String, ChatModel> newChatModels,
+                                        List<ModelInfo> newModels) {
+        this.registry = Collections.unmodifiableMap(new LinkedHashMap<>(newClients));
+        this.modelRegistry = Collections.unmodifiableMap(new LinkedHashMap<>(newChatModels));
+        this.cachedModels = List.copyOf(newModels);
+        log.info("Registry replaced: {} models", registry.size());
+    }
+
+    /**
      * 获取指定模型的 ChatClient，不存在则抛异常
      */
     public ChatClient get(String modelId) {
@@ -72,6 +101,13 @@ public class ChatClientRegistry {
                     "Model not found: " + modelId + ". Available: " + registry.keySet());
         }
         return client;
+    }
+
+    /**
+     * 获取指定模型的 ChatModel（用于 Token 计数等需要底层模型的场景）
+     */
+    public ChatModel getChatModel(String modelId) {
+        return modelRegistry.get(modelId);
     }
 
     /**

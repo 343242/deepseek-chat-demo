@@ -47,13 +47,13 @@ public class RerankTool implements RagTool {
             if (docs.isEmpty()) {
                 return ToolResult.failure("rerank",
                     "没有可精排的文档。请先调用检索工具（hybridSearch 或 vectorSearch）获取文档。",
-                    "PRECONDITION_FAILED", System.currentTimeMillis() - start).toString();
+                    "PRECONDITION_FAILED", System.currentTimeMillis() - start).toJson();
             }
 
             if (queryText == null || queryText.isBlank()) {
                 return ToolResult.failure("rerank",
                     "查询文本不能为空，请提供用于精排的查询文本。",
-                    "INVALID_INPUT", 0).toString();
+                    "INVALID_INPUT", 0).toJson();
             }
 
             // 检查 Rerank 是否启用且 API Key 已配置
@@ -61,7 +61,7 @@ public class RerankTool implements RagTool {
                 || properties.rerankApiKey().isBlank()) {
                 return ToolResult.failure("rerank",
                     "Rerank 未启用或 API Key 未配置。跳过精排步骤。",
-                    "PRECONDITION_FAILED", System.currentTimeMillis() - start).toString();
+                    "PRECONDITION_FAILED", System.currentTimeMillis() - start).toJson();
             }
 
             // 将 RetrievedDocument 转为 Spring AI Document
@@ -109,7 +109,7 @@ public class RerankTool implements RagTool {
 
                 return ToolResult.success("rerank",
                     "精排完成：从 " + docs.size() + " 个文档中精选出 " + rerankedDocs.size() + " 个高相关文档",
-                    rerankedDocs, duration).toString();
+                    rerankedDocs, duration).toJson();
 
             } finally {
                 reranker.shutdown();
@@ -120,7 +120,7 @@ public class RerankTool implements RagTool {
             log.error("Rerank error: {}", e.getMessage(), e);
             return ToolResult.failure("rerank",
                 "精排发生错误：" + e.getMessage() + "。建议直接使用原始检索结果生成回答。",
-                "API_ERROR", duration).toString();
+                "API_ERROR", duration).toJson();
         }
     }
 }

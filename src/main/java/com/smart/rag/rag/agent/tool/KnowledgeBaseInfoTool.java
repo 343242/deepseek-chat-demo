@@ -50,14 +50,14 @@ public class KnowledgeBaseInfoTool implements RagTool {
                 docCount, isolationField, isolationValue, duration);
 
             return ToolResult.success("knowledgeBaseInfo",
-                summary, null, duration).toString();
+                summary, null, duration).toJson();
 
         } catch (Exception e) {
             long duration = System.currentTimeMillis() - start;
             log.error("Knowledge base info error: {}", e.getMessage(), e);
             return ToolResult.failure("knowledgeBaseInfo",
                 "知识库信息查询发生错误：" + e.getMessage(),
-                "DB_ERROR", duration).toString();
+                "DB_ERROR", duration).toJson();
         }
     }
 }

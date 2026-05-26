@@ -1,9 +1,15 @@
 package com.smart.rag.rag.agent.dto;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smart.rag.rag.agent.workspace.RetrievedDocument;
 import org.jspecify.annotations.Nullable;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Tool 调用统一结果 record
@@ -28,6 +34,10 @@ public record ToolResult(
     @Nullable List<RetrievedDocument> documents,
     long durationMs
 ) {
+
+    private static final Logger log = LoggerFactory.getLogger(ToolResult.class);
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+
     /**
      * 创建成功结果
      */
@@ -42,5 +52,54 @@ public record ToolResult(
     public static ToolResult failure(String action, String errorMessage,
                                      String errorCategory, long durationMs) {
         return new ToolResult(false, action, null, errorMessage, errorCategory, null, durationMs);
+    }
+
+    /**
+     * 将 ToolResult 序列化为 JSON 字符串，供 LLM 解析。
+     * <p>
+     * Java record 默认 toString() 产出 {@code ToolResult[success=true, ...]} 格式，
+     * LLM 无法解析。此方法返回标准 JSON。
+     * <p>
+     * 检索到的文档（documents）只保留摘要字段（docId、score、content 截断），
+     * 避免 JSON 过长。
+     */
+    public String toJson() {
+        Map<String, Object> map = new LinkedHashMap<>();
+        map.put("success", success);
+        map.put("action", action);
+        if (summary != null) {
+            map.put("summary", summary);
+        }
+        if (errorMessage != null) {
+            map.put("errorMessage", errorMessage);
+        }
+        if (errorCategory != null) {
+            map.put("errorCategory", errorCategory);
+        }
+        if (documents != null && !documents.isEmpty()) {
+            List<Map<String, Object>> docSummaries = documents.stream().map(doc -> {
+                Map<String, Object> d = new LinkedHashMap<>();
+                d.put("docId", doc.docId());
+                d.put("score", doc.score());
+                // 截断内容，避免 JSON 过长
+                String content = doc.content();
+                if (content != null && content.length() > 500) {
+                    content = content.substring(0, 500) + "...";
+                }
+                d.put("content", content);
+                d.put("source", doc.source());
+                return d;
+            }).toList();
+            map.put("documentCount", docSummaries.size());
+            map.put("documents", docSummaries);
+        }
+        map.put("durationMs", durationMs);
+        try {
+            return OBJECT_MAPPER.writeValueAsString(map);
+        } catch (JsonProcessingException e) {
+            log.error("Failed to serialize ToolResult to JSON", e);
+            // 降级：手动拼装最简 JSON
+            return "{\"success\":" + success + ",\"action\":\"" + action + "\"}";
+        }
     }
 }

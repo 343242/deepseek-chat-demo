@@ -59,6 +59,34 @@ app:
     datacenter-id: ${SNOWFLAKE_DATACENTER_ID:0}
     worker-id: ${SNOWFLAKE_WORKER_ID:0}
 
+  # ETL 线程池 + 快速通道配置
+  etl:
+    executor:
+      io:
+        core-pool-size: 8
+        max-pool-size: 16
+        queue-capacity: 100
+        thread-name-prefix: "etl-io-"
+        keep-alive-seconds: 60
+      cpu:
+        core-pool-size: 4
+        max-pool-size: 8
+        queue-capacity: 50
+        thread-name-prefix: "etl-cpu-"
+        keep-alive-seconds: 60
+      merge:
+        core-pool-size: 4
+        max-pool-size: 8
+        queue-capacity: 50
+        thread-name-prefix: "merge-"
+        keep-alive-seconds: 120
+      search:
+        core-pool-size: 4
+        max-pool-size: 8
+        queue-capacity: 50
+        thread-name-prefix: "rag-search-"
+        keep-alive-seconds: 60
+
 mybatis-plus:
   mapper-locations: classpath*:/mapper/**/*.xml
   configuration:

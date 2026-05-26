@@ -14,7 +14,9 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
-import java.util.concurrent.*;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
+import java.util.concurrent.TimeUnit;
 
 /**
  * 混合检索服务 -- 提取 HybridDocumentRetriever 核心逻辑为独立 Service
@@ -46,17 +48,12 @@ public class HybridSearchService {
                                VectorStoreMapper vectorStoreMapper,
                                RagRetrievalProperties properties,
                                QueryNormalizer queryNormalizer,
-                               @Nullable @Qualifier("ragSearchExecutor") Executor searchExecutor) {
+                               @Qualifier("ragSearchExecutor") Executor searchExecutor) {
         this.vectorStore = vectorStore;
         this.vectorStoreMapper = vectorStoreMapper;
         this.properties = properties;
         this.queryNormalizer = queryNormalizer;
-        this.searchExecutor = searchExecutor != null ? searchExecutor
-            : Executors.newFixedThreadPool(2, r -> {
-                Thread t = new Thread(r, "hybrid-search");
-                t.setDaemon(true);
-                return t;
-            });
+        this.searchExecutor = searchExecutor;
     }
 
     /**

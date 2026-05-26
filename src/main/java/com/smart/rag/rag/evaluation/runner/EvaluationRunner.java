@@ -30,6 +30,7 @@ import org.springframework.context.annotation.Profile;
 
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.Executors;
 
 /**
  * 评估执行引擎（核心）
@@ -193,7 +194,8 @@ public class EvaluationRunner {
                 ? config.getTestUserId() : this.evalProps.getTestUserId();
         // 创建使用覆盖配置的临时 HybridSearchService
         HybridSearchService evalSearchService = new HybridSearchService(
-                vectorStore, vectorStoreMapper, evalProps, queryNormalizer, null);
+                vectorStore, vectorStoreMapper, evalProps, queryNormalizer,
+                Executors.newFixedThreadPool(2));
         return new HybridDocumentRetriever(evalSearchService, userId, null);
     }
 

@@ -24,11 +24,12 @@ import java.util.concurrent.*;
  *   <li>所有参数从 {@link EtlExecutorProperties} 读取，不硬编码</li>
  * </ul>
  * <p>
- * 注册三个线程池 Bean：
+ * 注册四个线程池 Bean：
  * <ol>
  *   <li>{@code etlIoExecutor} — IO 密集型：文件读取、MinIO、Embedding API、PGvector</li>
  *   <li>{@code etlCpuExecutor} — CPU 密集型：文本分块、文档解析</li>
  *   <li>{@code mergeExecutor} — 分片上传异步合并</li>
+ *   <li>{@code ragSearchExecutor} — RAG 混合检索：向量检索与 BM25 并行执行</li>
  * </ol>
  */
 @Configuration
@@ -79,6 +80,18 @@ public class EtlExecutorConfig {
         EtlExecutorProperties.PoolConfig cfg = properties.getMerge();
         ThreadPoolTaskExecutor executor = buildExecutor(cfg);
         log.info("Merge executor: core={}, max={}, queue={}, prefix={}",
+                cfg.getCorePoolSize(), cfg.getMaxPoolSize(), cfg.getQueueCapacity(), cfg.getThreadNamePrefix());
+        return executor;
+    }
+
+    /**
+     * RAG 混合检索线程池 — 向量检索与 BM25 并行执行
+     */
+    @Bean("ragSearchExecutor")
+    public ThreadPoolTaskExecutor ragSearchExecutor(EtlExecutorProperties properties) {
+        EtlExecutorProperties.PoolConfig cfg = properties.getSearch();
+        ThreadPoolTaskExecutor executor = buildExecutor(cfg);
+        log.info("RAG search executor: core={}, max={}, queue={}, prefix={}",
                 cfg.getCorePoolSize(), cfg.getMaxPoolSize(), cfg.getQueueCapacity(), cfg.getThreadNamePrefix());
         return executor;
     }

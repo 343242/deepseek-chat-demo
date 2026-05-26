@@ -17,6 +17,7 @@ import org.springframework.ai.vectorstore.VectorStore;
 
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.Executors;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -85,7 +86,8 @@ class HybridDocumentRetrieverTest {
     }
 
     private HybridDocumentRetriever createRetriever(RagRetrievalProperties props, Long userId, Long teamId) {
-        HybridSearchService service = new HybridSearchService(vectorStore, vectorStoreMapper, props, queryNormalizer, null);
+        HybridSearchService service = new HybridSearchService(vectorStore, vectorStoreMapper, props, queryNormalizer,
+                Executors.newFixedThreadPool(2));
         return new HybridDocumentRetriever(service, userId, teamId);
     }
 

@@ -17,17 +17,15 @@ import org.springframework.ai.rag.retrieval.search.DocumentRetriever;
 import org.springframework.ai.rag.retrieval.search.VectorStoreDocumentRetriever;
 import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.ai.vectorstore.filter.FilterExpressionBuilder;
-import jakarta.annotation.PreDestroy;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
-import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * RAG Advisor 工厂 — 按请求动态创建带用户/团队隔离的 RetrievalAugmentationAdvisor
+ * RAG Advisor 工厂 -- 按请求动态创建带用户/团队隔离的 RetrievalAugmentationAdvisor
  * <p>
  * 核心设计：
  * <ul>
@@ -51,7 +49,11 @@ public class RagAdvisorFactory {
     private final QueryTransformer rewriteQueryTransformer;
     private final ObjectMapper objectMapper;
 
-    private final AtomicReference<List<org.springframework.ai.rag.postretrieval.document.DocumentPostProcessor>> cachedPostProcessors = new AtomicReference<>();
+    /** Rerank 单例 Bean（null when rerank-enabled=false），生命周期由 Spring 容器管理 */
+    private final BailianRerankPostProcessor rerankPostProcessor;
+
+    /** 缓存的 PostProcessor 列表，避免每次请求重建 */
+    private volatile List<org.springframework.ai.rag.postretrieval.document.DocumentPostProcessor> cachedPostProcessors;
 
     public RagAdvisorFactory(ChatClient.Builder chatClientBuilder,
                              VectorStore vectorStore,
@@ -61,7 +63,8 @@ public class RagAdvisorFactory {
                              HybridSearchService hybridSearchService,
                              ParentDocumentPostProcessor parentDocumentPostProcessor,
                              QueryTransformer rewriteQueryTransformer,
-                             ObjectMapper objectMapper) {
+                             ObjectMapper objectMapper,
+                             @Nullable BailianRerankPostProcessor rerankPostProcessor) {
         this.chatClientBuilder = chatClientBuilder;
         this.vectorStore = vectorStore;
         this.vectorStoreMapper = vectorStoreMapper;
@@ -71,6 +74,7 @@ public class RagAdvisorFactory {
         this.parentDocumentPostProcessor = parentDocumentPostProcessor;
         this.rewriteQueryTransformer = rewriteQueryTransformer;
         this.objectMapper = objectMapper;
+        this.rerankPostProcessor = rerankPostProcessor;
     }
 
     /**
@@ -140,8 +144,16 @@ public class RagAdvisorFactory {
     }
 
     private List<org.springframework.ai.rag.postretrieval.document.DocumentPostProcessor> getPostProcessors() {
-        return cachedPostProcessors.updateAndGet(existing ->
-                existing != null ? existing : List.copyOf(buildPostProcessors()));
+        if (cachedPostProcessors != null) {
+            return cachedPostProcessors;
+        }
+        synchronized (this) {
+            if (cachedPostProcessors != null) {
+                return cachedPostProcessors;
+            }
+            cachedPostProcessors = List.copyOf(buildPostProcessors());
+            return cachedPostProcessors;
+        }
     }
 
     private List<org.springframework.ai.rag.postretrieval.document.DocumentPostProcessor> buildPostProcessors() {
@@ -157,32 +169,14 @@ public class RagAdvisorFactory {
         }
 
         // 2. Rerank 语义精排（去冗余后 → 精排，聚焦有效候选）
-        if (properties.rerankEnabled() && properties.rerankApiKey() != null) {
-            postProcessors.add(new BailianRerankPostProcessor(
-                    properties.rerankBaseUrl(),
-                    properties.rerankApiKey(),
-                    properties.rerankModel(),
-                    properties.rerankTopN()
-            ));
+        //    使用注入的单例 Bean，生命周期由 Spring 容器管理
+        if (rerankPostProcessor != null) {
+            postProcessors.add(rerankPostProcessor);
         }
 
         // 3. Parent-Child 子块→父文档替换
         postProcessors.add(parentDocumentPostProcessor);
 
         return postProcessors;
-    }
-
-    /**
-     * 优雅停机：关闭 Rerank PostProcessor 内部线程池
-     */
-    @PreDestroy
-    public void destroy() {
-        List<org.springframework.ai.rag.postretrieval.document.DocumentPostProcessor> processors = cachedPostProcessors.get();
-        if (processors != null) {
-            processors.stream()
-                    .filter(p -> p instanceof BailianRerankPostProcessor)
-                    .map(p -> (BailianRerankPostProcessor) p)
-                    .forEach(BailianRerankPostProcessor::shutdown);
-        }
     }
 }

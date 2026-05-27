@@ -3,12 +3,12 @@ package com.smart.rag.rag.agent.tool;
 import com.smart.rag.rag.agent.dto.ToolResult;
 import com.smart.rag.rag.agent.workspace.RetrievedDocument;
 import com.smart.rag.rag.agent.workspace.ToolWorkspace;
-import com.smart.rag.rag.config.RagRetrievalProperties;
 import com.smart.rag.rag.retrieval.BailianRerankPostProcessor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.rag.Query;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -19,7 +19,7 @@ import java.util.Map;
 /**
  * Rerank Tool -- 对已检索文档进行语义精排
  * <p>
- * 委托 BailianRerankPostProcessor 核心逻辑（百炼 qwen3-rerank 模型）。
+ * 委托 {@link BailianRerankPostProcessor} 单例 Bean 执行精排（百炼 qwen3-rerank 模型）。
  * 从 workspace 获取已检索文档，调用 Rerank API 后替换 workspace 中的文档列表。
  */
 @Component
@@ -27,10 +27,16 @@ public class RerankTool implements RagTool {
 
     private static final Logger log = LoggerFactory.getLogger(RerankTool.class);
 
-    private final RagRetrievalProperties properties;
+    private final BailianRerankPostProcessor reranker;
 
-    public RerankTool(RagRetrievalProperties properties) {
-        this.properties = properties;
+    /**
+     * 构造注入 Rerank 单例 Bean。
+     * <p>
+     * 使用 required=false 因为 Bean 仅在 rerank-enabled=true 时存在。
+     * {@link #execute} 内部会检查 reranker 是否可用。
+     */
+    public RerankTool(@Autowired(required = false) BailianRerankPostProcessor reranker) {
+        this.reranker = reranker;
     }
 
     /**
@@ -56,9 +62,8 @@ public class RerankTool implements RagTool {
                     "INVALID_INPUT", 0).toJson();
             }
 
-            // 检查 Rerank 是否启用且 API Key 已配置
-            if (!properties.rerankEnabled() || properties.rerankApiKey() == null
-                || properties.rerankApiKey().isBlank()) {
+            // Rerank Bean 未注入说明 rerank 未启用
+            if (reranker == null) {
                 return ToolResult.failure("rerank",
                     "Rerank 未启用或 API Key 未配置。跳过精排步骤。",
                     "PRECONDITION_FAILED", System.currentTimeMillis() - start).toJson();
@@ -72,48 +77,36 @@ public class RerankTool implements RagTool {
                 springDocs.add(new Document(rd.docId(), rd.content(), metadata));
             }
 
-            // 创建 BailianRerankPostProcessor 实例执行精排
-            BailianRerankPostProcessor reranker = new BailianRerankPostProcessor(
-                properties.rerankBaseUrl(),
-                properties.rerankApiKey(),
-                properties.rerankModel(),
-                properties.rerankTopN()
-            );
+            // 使用注入的单例 Bean 执行精排（无需 try/finally shutdown，生命周期由 Spring 管理）
+            List<Document> reranked = reranker.process(new Query(queryText), springDocs);
 
-            try {
-                List<Document> reranked = reranker.process(new Query(queryText), springDocs);
-
-                // 转回 RetrievedDocument 并替换 workspace
-                List<RetrievedDocument> rerankedDocs = new ArrayList<>(reranked.size());
-                for (Document doc : reranked) {
-                    Map<String, Object> metadata = doc.getMetadata() != null
-                        ? new HashMap<>(doc.getMetadata()) : Map.of();
-                    // 保留 rerankScore
-                    double score = metadata.containsKey("rerankScore")
-                        ? ((Number) metadata.get("rerankScore")).doubleValue()
-                        : 0.0;
-                    rerankedDocs.add(new RetrievedDocument(
-                        doc.getId(),
-                        doc.getText(),
-                        score,
-                        "rerank",
-                        -1,
-                        metadata
-                    ));
-                }
-                workspace.replaceRetrievedDocs(rerankedDocs);
-
-                long duration = System.currentTimeMillis() - start;
-                log.debug("Rerank completed: {} docs -> {} docs in {}ms",
-                    docs.size(), rerankedDocs.size(), duration);
-
-                return ToolResult.success("rerank",
-                    "精排完成：从 " + docs.size() + " 个文档中精选出 " + rerankedDocs.size() + " 个高相关文档",
-                    rerankedDocs, duration).toJson();
-
-            } finally {
-                reranker.shutdown();
+            // 转回 RetrievedDocument 并替换 workspace
+            List<RetrievedDocument> rerankedDocs = new ArrayList<>(reranked.size());
+            for (Document doc : reranked) {
+                Map<String, Object> metadata = doc.getMetadata() != null
+                    ? new HashMap<>(doc.getMetadata()) : Map.of();
+                // 保留 rerankScore
+                double score = metadata.containsKey("rerankScore")
+                    ? ((Number) metadata.get("rerankScore")).doubleValue()
+                    : 0.0;
+                rerankedDocs.add(new RetrievedDocument(
+                    doc.getId(),
+                    doc.getText(),
+                    score,
+                    "rerank",
+                    -1,
+                    metadata
+                ));
             }
+            workspace.replaceRetrievedDocs(rerankedDocs);
+
+            long duration = System.currentTimeMillis() - start;
+            log.debug("Rerank completed: {} docs -> {} docs in {}ms",
+                docs.size(), rerankedDocs.size(), duration);
+
+            return ToolResult.success("rerank",
+                "精排完成：从 " + docs.size() + " 个文档中精选出 " + rerankedDocs.size() + " 个高相关文档",
+                rerankedDocs, duration).toJson();
 
         } catch (Exception e) {
             long duration = System.currentTimeMillis() - start;

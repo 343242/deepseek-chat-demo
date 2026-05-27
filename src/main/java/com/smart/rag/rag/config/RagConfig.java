@@ -2,6 +2,7 @@ package com.smart.rag.rag.config;
 
 import com.smart.rag.rag.chunk.ParentDocumentPostProcessor;
 import com.smart.rag.rag.mapper.VectorStoreMapper;
+import com.smart.rag.rag.retrieval.BailianRerankPostProcessor;
 import com.smart.rag.chat.provider.ModelProvider;
 import com.smart.rag.chat.provider.ProviderRegistry;
 import com.smart.rag.chat.service.ModelRegistryRefresher;
@@ -10,6 +11,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.prompt.PromptTemplate;
 import org.springframework.ai.rag.preretrieval.query.transformation.RewriteQueryTransformer;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -131,6 +133,28 @@ public class RagConfig {
     public ParentDocumentPostProcessor parentDocumentPostProcessor(VectorStoreMapper vectorStoreMapper) {
         log.info("ParentDocumentPostProcessor registered");
         return new ParentDocumentPostProcessor(vectorStoreMapper);
+    }
+
+    /**
+     * 百炼 Rerank 精排处理器（Spring 单例 Bean）
+     * <p>
+     * 仅在 rerank 启用且 API Key 已配置时创建。Spring 容器负责生命周期管理：
+     * Bean 销毁时自动调用 {@link BailianRerankPostProcessor#destroy()} 关闭内部线程池。
+     * <p>
+     * 代替原先在 RerankTool / RagAdvisorFactory / EvaluationRunner 中 ad-hoc 创建实例的方式，
+     * 统一为一个共享 Bean，避免重复创建/销毁 WebClient 和线程池。
+     */
+    @Bean
+    @ConditionalOnProperty(name = "app.rag.rerank-enabled", havingValue = "true")
+    public BailianRerankPostProcessor bailianRerankPostProcessor(RagRetrievalProperties properties) {
+        log.info("BailianRerankPostProcessor bean registered: model={}, topN={}",
+                properties.rerankModel(), properties.rerankTopN());
+        return new BailianRerankPostProcessor(
+                properties.rerankBaseUrl(),
+                properties.rerankApiKey(),
+                properties.rerankModel(),
+                properties.rerankTopN()
+        );
     }
 
     // ======================== RAG Advisor 集成 ========================

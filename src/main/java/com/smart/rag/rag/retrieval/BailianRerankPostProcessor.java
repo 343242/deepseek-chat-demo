@@ -1,13 +1,13 @@
 package com.smart.rag.rag.retrieval;
 
 import com.smart.rag.config.NamedThreadFactory;
-import com.smart.rag.rag.config.RagAdvisorFactory;
 import io.netty.channel.ChannelOption;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.rag.Query;
 import org.springframework.ai.rag.postretrieval.document.DocumentPostProcessor;
+import org.springframework.beans.factory.DisposableBean;
 import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.netty.http.client.HttpClient;
@@ -42,7 +42,7 @@ import java.util.stream.Collectors;
  * }
  * </pre>
  */
-public class BailianRerankPostProcessor implements DocumentPostProcessor {
+public class BailianRerankPostProcessor implements DocumentPostProcessor, DisposableBean {
 
     private static final Logger log = LoggerFactory.getLogger(BailianRerankPostProcessor.class);
     private static final Duration TIMEOUT = Duration.ofSeconds(30);
@@ -202,10 +202,13 @@ public class BailianRerankPostProcessor implements DocumentPostProcessor {
     }
 
     /**
-     * 关闭 Rerank 线程池，等待进行中的任务完成。
-     * 由 {@link RagAdvisorFactory} 在销毁时调用。
+     * Spring 容器销毁回调 — 关闭 Rerank 线程池，等待进行中的任务完成。
+     * <p>
+     * 由 {@link com.smart.rag.rag.config.RagConfig} 中声明的 Bean 生命周期管理，
+     * 不再需要调用方手动 shutdown。
      */
-    public void shutdown() {
+    @Override
+    public void destroy() {
         rerankExecutor.shutdown();
         try {
             if (!rerankExecutor.awaitTermination(30, TimeUnit.SECONDS)) {

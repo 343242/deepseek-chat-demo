@@ -17,6 +17,7 @@ import com.smart.rag.rag.retrieval.HybridDocumentRetriever;
 import com.smart.rag.rag.retrieval.MmrDocumentPostProcessor;
 import com.smart.rag.rag.retrieval.QueryNormalizer;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
@@ -59,6 +60,9 @@ public class EvaluationRunner {
     private final ObjectMapper objectMapper;
     private final DatasetRepository datasetRepo;
 
+    /** Rerank 单例 Bean（null when rerank-enabled=false），生命周期由 Spring 容器管理 */
+    private final BailianRerankPostProcessor rerankPostProcessor;
+
     public EvaluationRunner(VectorStore vectorStore,
                             VectorStoreMapper vectorStoreMapper,
                             JdbcTemplate jdbcTemplate,
@@ -71,7 +75,8 @@ public class EvaluationRunner {
                             RetrievalMetricsCalculator metricsCalculator,
                             GenerationMetricsCalculator generationMetricsCalculator,
                             ObjectMapper objectMapper,
-                            DatasetRepository datasetRepo) {
+                            DatasetRepository datasetRepo,
+                            @Nullable BailianRerankPostProcessor rerankPostProcessor) {
         this.vectorStore = vectorStore;
         this.vectorStoreMapper = vectorStoreMapper;
         this.jdbcTemplate = jdbcTemplate;
@@ -85,6 +90,7 @@ public class EvaluationRunner {
         this.generationMetricsCalculator = generationMetricsCalculator;
         this.objectMapper = objectMapper;
         this.datasetRepo = datasetRepo;
+        this.rerankPostProcessor = rerankPostProcessor;
     }
 
     /**
@@ -132,11 +138,10 @@ public class EvaluationRunner {
             }
             inst.capture("after_mmr", extractedDocIds(afterMmr));
 
-            // 5. Rerank 阶段（可选） — 去冗余后精排
+            // 5. Rerank 阶段（可选） -- 去冗余后精排，使用注入的单例 Bean
             List<Document> afterRerank = afterMmr;
-            if (config.isRerankEnabled()) {
-                BailianRerankPostProcessor reranker = createReranker();
-                afterRerank = reranker.process(query, afterMmr);
+            if (config.isRerankEnabled() && rerankPostProcessor != null) {
+                afterRerank = rerankPostProcessor.process(query, afterMmr);
             }
             inst.capture("after_rerank", extractedDocIds(afterRerank));
 
@@ -177,15 +182,6 @@ public class EvaluationRunner {
                 queryRewritten, retrievedDocIds, generatedAnswer,
                 inst.getSnapshots(), retrievalMetrics, generationMetrics,
                 error, (int) (System.currentTimeMillis() - start));
-    }
-
-    private BailianRerankPostProcessor createReranker() {
-        return new BailianRerankPostProcessor(
-                properties.rerankBaseUrl(),
-                properties.rerankApiKey(),
-                properties.rerankModel(),
-                properties.rerankTopN()
-        );
     }
 
     private HybridDocumentRetriever createEvalRetriever(EvalConfig config) {

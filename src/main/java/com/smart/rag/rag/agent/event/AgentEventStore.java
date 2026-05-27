@@ -1,5 +1,11 @@
 package com.smart.rag.rag.agent.event;
 
+import com.smart.rag.rag.agent.event.payload.GuardrailTriggeredPayload;
+import com.smart.rag.rag.agent.event.payload.IntentClassifiedPayload;
+import com.smart.rag.rag.agent.event.payload.IntermediateAnswerPayload;
+import com.smart.rag.rag.agent.event.payload.RetrievalStrategyPayload;
+import com.smart.rag.rag.agent.event.payload.SelfReflectionPayload;
+import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -25,9 +31,11 @@ public class AgentEventStore {
     private static final Logger log = LoggerFactory.getLogger(AgentEventStore.class);
 
     private final AgentEventMapper mapper;
+    private final EventPayloadMapper payloadMapper;
 
-    public AgentEventStore(AgentEventMapper mapper) {
+    public AgentEventStore(AgentEventMapper mapper, EventPayloadMapper payloadMapper) {
         this.mapper = mapper;
+        this.payloadMapper = payloadMapper;
     }
 
     // === 事件类型常量 ===
@@ -57,6 +65,55 @@ public class AgentEventStore {
     /** 恢复快照最大加载事件条数 */
     private static final int MAX_SNAPSHOT_EVENTS = 200;
 
+    // === 类型安全的 payload 记录方法 ===
+
+    /**
+     * 记录意图分类事件
+     */
+    public void recordIntentClassified(String sessionId, Long userId, IntentClassifiedPayload payload) {
+        String data = payloadMapper.toJson(payload);
+        record(sessionId, userId, EVENT_INTENT_CLASSIFIED, PRIORITY_CRITICAL,
+            data, null, null, null);
+    }
+
+    /**
+     * 记录中间答案事件
+     */
+    public void recordIntermediateAnswer(String sessionId, Long userId, IntermediateAnswerPayload payload) {
+        String data = payloadMapper.toJson(payload);
+        record(sessionId, userId, EVENT_INTERMEDIATE_ANSWER, PRIORITY_CRITICAL,
+            data, null, null, null);
+    }
+
+    /**
+     * 记录护栏触发事件
+     */
+    public void recordGuardrailTriggered(String sessionId, Long userId, GuardrailTriggeredPayload payload) {
+        String data = payloadMapper.toJson(payload);
+        record(sessionId, userId, EVENT_GUARDRAIL_TRIGGERED, PRIORITY_CRITICAL,
+            data, null, null, null);
+    }
+
+    /**
+     * 记录自省结果事件
+     */
+    public void recordSelfReflection(String sessionId, Long userId, SelfReflectionPayload payload) {
+        String data = payloadMapper.toJson(payload);
+        record(sessionId, userId, EVENT_SELF_REFLECTION, PRIORITY_HIGH,
+            data, null, null, null);
+    }
+
+    /**
+     * 记录检索策略变更事件
+     */
+    public void recordRetrievalStrategy(String sessionId, Long userId, RetrievalStrategyPayload payload) {
+        String data = payloadMapper.toJson(payload);
+        record(sessionId, userId, EVENT_RETRIEVAL_STRATEGY, PRIORITY_HIGH,
+            data, null, null, null);
+    }
+
+    // === 向后兼容的便捷方法 ===
+
     /**
      * 记录事件
      *
@@ -70,7 +127,8 @@ public class AgentEventStore {
      * @param durationMs 耗时 ms（可空）
      */
     public void record(String sessionId, Long userId, String eventType, int priority,
-                       String data, String toolName, Boolean success, Long durationMs) {
+                       String data, @Nullable String toolName, @Nullable Boolean success,
+                       @Nullable Long durationMs) {
         try {
             AgentSessionEvent event = new AgentSessionEvent(
                 sessionId, userId, eventType, priority, data,
@@ -96,7 +154,7 @@ public class AgentEventStore {
     }
 
     /**
-     * 记录护栏触发事件
+     * 记录护栏触发事件（便捷方法，向后兼容）
      */
     public void recordGuardrail(String sessionId, Long userId, String reason, String data) {
         record(sessionId, userId, EVENT_GUARDRAIL_TRIGGERED, PRIORITY_CRITICAL,
@@ -177,18 +235,47 @@ public class AgentEventStore {
             .collect(Collectors.toList());
     }
 
+    /**
+     * 格式化事件为可读文本，用于恢复快照。
+     * <p>
+     * 优先使用 {@link EventPayloadMapper} 反序列化 payload 获得结构化信息；
+     * 反序列化失败时 fallback 到原始字符串拼接，保持向后兼容。
+     */
     private String formatEvent(AgentSessionEvent event) {
         return switch (event.getEventType()) {
-            case EVENT_INTENT_CLASSIFIED ->
-                "- Intent: " + event.getData();
-            case EVENT_INTERMEDIATE_ANSWER ->
-                "- Answer: " + event.getData();
-            case EVENT_GUARDRAIL_TRIGGERED ->
-                "- Guardrail: " + event.getData();
-            case EVENT_SELF_REFLECTION ->
-                "- Reflection: " + event.getData();
-            case EVENT_RETRIEVAL_STRATEGY ->
-                "- Strategy: " + event.getData();
+            case EVENT_INTENT_CLASSIFIED -> {
+                IntentClassifiedPayload p = payloadMapper.toIntentClassified(event.getData());
+                yield (p != null)
+                    ? "- Intent: %s (confidence=%.2f)".formatted(p.intent(), p.confidence())
+                    : "- Intent: " + event.getData();
+            }
+            case EVENT_INTERMEDIATE_ANSWER -> {
+                IntermediateAnswerPayload p = payloadMapper.toIntermediateAnswer(event.getData());
+                yield (p != null)
+                    ? "- Answer: source=%s, subQuery=%s, docs=%d".formatted(
+                        p.source(), truncate(p.subQuery(), 40), p.citedDocIds().size())
+                    : "- Answer: " + event.getData();
+            }
+            case EVENT_GUARDRAIL_TRIGGERED -> {
+                GuardrailTriggeredPayload p = payloadMapper.toGuardrailTriggered(event.getData());
+                yield (p != null)
+                    ? "- Guardrail: %s (%s) -> %s".formatted(p.guardrailName(), p.reason(), p.action())
+                    : "- Guardrail: " + event.getData();
+            }
+            case EVENT_SELF_REFLECTION -> {
+                SelfReflectionPayload p = payloadMapper.toSelfReflection(event.getData());
+                yield (p != null)
+                    ? "- Reflection: relevance=%.2f, completeness=%.2f, suggestion=%s".formatted(
+                        p.relevanceScore(), p.completenessScore(), p.suggestion())
+                    : "- Reflection: " + event.getData();
+            }
+            case EVENT_RETRIEVAL_STRATEGY -> {
+                RetrievalStrategyPayload p = payloadMapper.toRetrievalStrategy(event.getData());
+                yield (p != null)
+                    ? "- Strategy: %s (round=%d, subQueries=%d)".formatted(
+                        p.strategy(), p.targetRound(), p.subQueries().size())
+                    : "- Strategy: " + event.getData();
+            }
             case EVENT_TOOL_CALLED ->
                 "- Tool[" + event.getToolName() + "]: "
                     + (Boolean.TRUE.equals(event.getSuccess()) ? "ok" : "failed")
@@ -196,5 +283,12 @@ public class AgentEventStore {
             default ->
                 "- " + event.getEventType() + ": " + event.getData();
         };
+    }
+
+    private static String truncate(String text, int maxLength) {
+        if (text == null) {
+            return "null";
+        }
+        return text.length() <= maxLength ? text : text.substring(0, maxLength) + "...";
     }
 }

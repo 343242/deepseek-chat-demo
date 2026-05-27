@@ -24,7 +24,16 @@ spring:
     clean-disabled: true
   redis:
     redisson:
-      file: classpath:redisson.yml
+      config: |
+        codec: !<org.redisson.codec.JsonJacksonCodec> {}
+        singleServerConfig:
+          address: "redis://${REDIS_HOST:localhost}:${REDIS_PORT:6379}"
+          password: "${REDIS_PASSWORD:}"
+          connectionPoolSize: 16
+          connectionMinimumIdleSize: 4
+          timeout: 3000
+          retryAttempts: 2
+          retryInterval: 500
   data:
     redis:
       host: ${REDIS_HOST:localhost}

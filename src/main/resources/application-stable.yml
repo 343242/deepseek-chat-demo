@@ -51,7 +51,7 @@ spring:
       base-url: https://api.deepseek.com
       api-key: ${DEEPSEEK_API_KEY}
       chat:
-        model: deepseek-chat
+        model: ${DEEPSEEK_CHAT_MODEL:deepseek-chat}
         temperature: 0.7
     chat:
       memory:

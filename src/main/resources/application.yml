@@ -35,7 +35,7 @@ app:
     fts-config: ${RAG_FTS_CONFIG:jiebacfg}
   agent:
     enabled: ${AGENT_ENABLED:true}
-    intent-model: ${AGENT_INTENT_MODEL:deepseek/deepseek-chat}
+    intent-model: ${AGENT_INTENT_MODEL:deepseek/deepseek-v4-flash}
     intent-temperature: ${AGENT_INTENT_TEMPERATURE:0.1}
     intent-retries: ${AGENT_INTENT_RETRIES:2}
     intent-timeout-ms: ${AGENT_INTENT_TIMEOUT_MS:5000}

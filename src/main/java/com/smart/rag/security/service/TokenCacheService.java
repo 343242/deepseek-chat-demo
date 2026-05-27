@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.data.redis.core.Cursor;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ScanOptions;
+import org.springframework.data.redis.core.script.DefaultRedisScript;
 import org.springframework.stereotype.Service;
 
 import java.nio.charset.StandardCharsets;
@@ -18,6 +19,22 @@ import java.util.HexFormat;
 
 @Service
 public class TokenCacheService {
+
+    /** 原子化 INCR + 首次 EXPIRE，修复两步 TTL 窗口问题 */
+    private static final DefaultRedisScript<Long> INCR_WITH_EXPIRE_SCRIPT =
+            new DefaultRedisScript<>(
+                    "local count = redis.call('INCR', KEYS[1]) " +
+                    "if count == 1 then redis.call('EXPIRE', KEYS[1], ARGV[1]) end " +
+                    "return count", Long.class);
+
+    /** 原子化 refresh token 旋转：GET userId + DEL old token + SREM index */
+    private static final DefaultRedisScript<String> ROTATE_REFRESH_SCRIPT =
+            new DefaultRedisScript<>(
+                    "local val = redis.call('GET', KEYS[1]) " +
+                    "if val == false then return nil end " +
+                    "redis.call('DEL', KEYS[1]) " +
+                    "redis.call('SREM', 'auth:user_refresh:' .. val, ARGV[1]) " +
+                    "return val", String.class);
 
     private final StringRedisTemplate redisTemplate;
     private final JwtProperties jwtProperties;
@@ -95,22 +112,12 @@ public class TokenCacheService {
         String hash = sha256Hex(refreshToken);
         String key = "auth:refresh:" + hash;
 
-        String script = """
-            local val = redis.call('GET', KEYS[1])
-            if val == false then
-                return nil
-            end
-            redis.call('DEL', KEYS[1])
-            redis.call('SREM', 'auth:user_refresh:' .. val, ARGV[1])
-            return val
-            """;
-
         String result = redisTemplate.execute(
-                new org.springframework.data.redis.core.script.DefaultRedisScript<>(script, String.class),
+                ROTATE_REFRESH_SCRIPT,
                 List.of(key),
                 hash
         );
-        return Long.parseLong(result);
+        return result != null ? Long.parseLong(result) : null;
     }
 
     // --- Revoke All (SCAN-based) ---
@@ -183,10 +190,9 @@ public class TokenCacheService {
 
     public long incrementLoginAttempts(String ip) {
         String key = "ratelimit:login:" + ip;
-        Long count = redisTemplate.opsForValue().increment(key);
-        if (count != null && count == 1) {
-            redisTemplate.expire(key, 300, TimeUnit.SECONDS);
-        }
+        Long count = redisTemplate.execute(INCR_WITH_EXPIRE_SCRIPT,
+                List.of(key),
+                String.valueOf(300));
         return count != null ? count : 0;
     }
 

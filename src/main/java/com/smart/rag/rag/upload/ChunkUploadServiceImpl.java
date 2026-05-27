@@ -408,12 +408,17 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         }
     }
 
+    /** 原子化 INCR + 首次 EXPIRE，修复两步 TTL 窗口问题 */
+    private static final DefaultRedisScript<Long> INCR_WITH_EXPIRE_SCRIPT = new DefaultRedisScript<>(
+            "local count = redis.call('INCR', KEYS[1]) " +
+            "if count == 1 then redis.call('EXPIRE', KEYS[1], ARGV[1]) end " +
+            "return count", Long.class);
+
     private void checkRateLimit(Long userId) {
         String rateKey = UploadRedisConstants.rateKey(userId);
-        Long count = redisTemplate.opsForValue().increment(rateKey);
-        if (count != null && count == 1) {
-            redisTemplate.expire(rateKey, UploadRedisConstants.RATE_WINDOW);
-        }
+        Long count = redisTemplate.execute(INCR_WITH_EXPIRE_SCRIPT,
+                List.of(rateKey),
+                String.valueOf(UploadRedisConstants.RATE_WINDOW.getSeconds()));
         if (count != null && count > UploadRedisConstants.RATE_LIMIT) {
             throw new BusinessException(ErrorCode.RATE_LIMITED, "上传初始化请求过于频繁");
         }

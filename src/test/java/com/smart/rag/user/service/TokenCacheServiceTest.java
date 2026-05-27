@@ -82,15 +82,23 @@ class TokenCacheServiceTest {
         }
 
         @Test
-        @DisplayName("incrementLoginAttempts_firstRequest: 首次请求 count=1，设置 TTL")
+        @DisplayName("incrementLoginAttempts_firstRequest: 首次请求 count=1（Lua 原子脚本）")
+        @SuppressWarnings("unchecked")
         void incrementLoginAttempts_firstRequest() {
-            when(redisTemplate.opsForValue()).thenReturn(valueOperations);
-            when(valueOperations.increment("ratelimit:login:127.0.0.1")).thenReturn(1L);
+            doReturn(1L).when(redisTemplate).execute(
+                    any(org.springframework.data.redis.core.script.RedisScript.class),
+                    anyList(),
+                    any(Object[].class)
+            );
 
             long count = tokenCacheService.incrementLoginAttempts("127.0.0.1");
 
             assertEquals(1L, count);
-            verify(redisTemplate).expire(eq("ratelimit:login:127.0.0.1"), anyLong(), any());
+            verify(redisTemplate).execute(
+                    any(org.springframework.data.redis.core.script.RedisScript.class),
+                    eq(java.util.List.of("ratelimit:login:127.0.0.1")),
+                    eq("300")
+            );
         }
 
         @Test

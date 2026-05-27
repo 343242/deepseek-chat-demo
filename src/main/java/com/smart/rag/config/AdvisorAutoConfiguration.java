@@ -75,10 +75,10 @@ public class AdvisorAutoConfiguration {
     }
 
     /**
-     * 每小时清理一次空闲令牌桶，防止内存无限增长。
+     * 每 10 分钟清理一次空闲令牌桶，防止内存无限增长。
      * 同时尝试从 Redis 降级模式恢复。
      */
-    @Scheduled(fixedRate = 3600000)
+    @Scheduled(fixedRate = 600000)
     public void cleanupIdleBuckets() {
         int removed = tokenBucketLimiter.cleanIdleBuckets();
         if (removed > 0) {

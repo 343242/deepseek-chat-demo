@@ -117,9 +117,9 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         if (documentDedupService != null && !documentDedupService.mayExist(request.fileMd5())) {
             log.debug("BloomFilter miss for fileMd5={}, skipping quick-upload check", request.fileMd5());
         } else {
-            RagDocument existing = findExistingForQuickUpload(request.fileMd5(), userId);
+            RagDocument existing = findExistingForQuickUpload(request.fileMd5(), userId, request.teamId());
             if (existing != null) {
-                log.info("Quick upload hit: fileMd5={}, userId={}, docId={}", request.fileMd5(), userId, existing.getId());
+                log.info("Quick upload hit: fileMd5={}, userId={}, teamId={}, docId={}", request.fileMd5(), userId, request.teamId(), existing.getId());
                 return ChunkUploadResult.quickUploaded(existing.getId(), existing.getFileName());
             }
         }
@@ -247,7 +247,9 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         Map<Object, Object> rawSession = redisTemplate.opsForHash().entries(sessionKey);
 
         if (rawSession.isEmpty()) {
-            RagDocument doc = findExistingForQuickUpload(fileMd5, userId);
+            // Session already cleaned — merge was done. Look up by userId without teamId
+            // since we no longer have session data to determine the team scope.
+            RagDocument doc = findExistingForQuickUpload(fileMd5, userId, null);
             if (doc != null) {
                 log.info("Complete idempotent: uploadId={} already merged as docId={}", uploadId, doc.getId());
                 return doc.getId();
@@ -257,6 +259,9 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
 
         Map<String, String> session = toStringMap(rawSession);
         validateOwner(session, userId);
+
+        // Extract teamId from session for team-scoped quick-upload lookup
+        Long teamId = session.get("teamId") != null ? Long.parseLong(session.get("teamId")) : null;
 
         if (!fileMd5.equalsIgnoreCase(session.get("fileMd5"))) {
             throw new BusinessException(ErrorCode.UPLOAD_FILE_MD5_MISMATCH, "声明的文件MD5与会话不匹配");
@@ -268,7 +273,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         if (Boolean.TRUE.equals(merging)) {
             // autoMerge 正在进行中，等待完成后再查结果
             log.info("Complete deferred: auto-merge in progress, uploadId={}", uploadId);
-            RagDocument existing = findExistingForQuickUpload(fileMd5, userId);
+            RagDocument existing = findExistingForQuickUpload(fileMd5, userId, teamId);
             if (existing != null) {
                 return existing.getId();
             }
@@ -277,7 +282,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
 
         performMerge(uploadId);
 
-        RagDocument doc = findExistingForQuickUpload(fileMd5, userId);
+        RagDocument doc = findExistingForQuickUpload(fileMd5, userId, teamId);
         return doc != null ? doc.getId() : null;
     }
 
@@ -437,15 +442,26 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         }
     }
 
-    private RagDocument findExistingForQuickUpload(String fileMd5, Long userId) {
-        return ragDocumentMapper.selectOne(
-                new LambdaQueryWrapper<RagDocument>()
-                        .eq(RagDocument::getFileMd5, fileMd5)
-                        .eq(RagDocument::getUserId, userId)
-                        .in(RagDocument::getStatus, EtlStatus.COMPLETED, EtlStatus.PROCESSING)
-                        .eq(RagDocument::getDeleted, 0)
-                        .last("LIMIT 1")
-        );
+    /**
+     * 秒传查找：按 fileMd5 查找已入库文档。
+     * <p>
+     * teamId 隔离规则：
+     * - teamId != null → 查 teamId + fileMd5（团队空间）
+     * - teamId == null → 查 userId + fileMd5（个人空间）
+     * 避免跨团队或个人/团队之间的秒传误命中。
+     */
+    private RagDocument findExistingForQuickUpload(String fileMd5, Long userId, @Nullable Long teamId) {
+        LambdaQueryWrapper<RagDocument> wrapper = new LambdaQueryWrapper<RagDocument>()
+                .eq(RagDocument::getFileMd5, fileMd5)
+                .in(RagDocument::getStatus, EtlStatus.COMPLETED, EtlStatus.PROCESSING)
+                .eq(RagDocument::getDeleted, 0);
+        if (teamId != null) {
+            wrapper.eq(RagDocument::getTeamId, teamId);
+        } else {
+            wrapper.eq(RagDocument::getUserId, userId)
+                   .isNull(RagDocument::getTeamId);
+        }
+        return ragDocumentMapper.selectOne(wrapper.last("LIMIT 1"));
     }
 
     private ChunkUploadResult tryResume(String uploadId, ChunkUploadInitRequest request, Long userId) {

@@ -38,8 +38,6 @@ public class EtlDispatchServiceImpl implements EtlDispatchService {
     private static final String ETL_LOCK_PREFIX = "smart-rag:etl:lock:";
     /** 等待获取锁的最大时间 */
     private static final long LOCK_WAIT_SECONDS = 30;
-    /** 锁自动释放时间（watchdog 会续期） */
-    private static final long LOCK_LEASE_SECONDS = 300;
 
     private final EtlRouteStrategyFactory strategyFactory;
     private final ThreadPoolTaskExecutor etlIoExecutor;
@@ -79,9 +77,11 @@ public class EtlDispatchServiceImpl implements EtlDispatchService {
             .toList();
 
         try {
-            // Try to acquire all locks sequentially
+            // Try to acquire all locks sequentially.
+            // leaseTime=-1 triggers Redisson watchdog auto-renewal (default 30s interval),
+            // preventing lock expiry during long-running ETL jobs.
             for (RLock lock : locks) {
-                if (!lock.tryLock(LOCK_WAIT_SECONDS, LOCK_LEASE_SECONDS, TimeUnit.SECONDS)) {
+                if (!lock.tryLock(LOCK_WAIT_SECONDS, -1, TimeUnit.SECONDS)) {
                     log.warn("ETL lock acquisition failed for document, skipping: {}", lock.getName());
                     // Release any already-acquired locks
                     locks.forEach(l -> { if (l.isHeldByCurrentThread()) l.unlock(); });

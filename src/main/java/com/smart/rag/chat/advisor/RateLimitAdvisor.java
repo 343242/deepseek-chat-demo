@@ -8,20 +8,23 @@ import org.springframework.ai.chat.client.ChatClientRequest;
 import org.springframework.ai.chat.client.ChatClientResponse;
 import org.springframework.ai.chat.client.advisor.api.AdvisorChain;
 import org.springframework.ai.chat.client.advisor.api.BaseAdvisor;
-import org.springframework.ai.chat.memory.ChatMemory;
-
-import java.util.Map;
-import java.util.UUID;
+import org.springframework.security.core.Authentication;
+import org.springframework.security.core.context.SecurityContextHolder;
 
 /**
  * 限流 Advisor
  * <p>
- * 基于 RateLimiter 接口实现按 conversationId 的限流。
- * 纯内存操作，耗时 < 1ms。
+ * 基于 RateLimiter 接口实现按用户维度的限流。
+ * 限流 key 策略：认证用户 → userId，未认证 → 固定前缀 "anon"。
+ * 这样避免无 conversationId 时生成随机 UUID 绕过限流的问题。
+ * 纯限流器操作，耗时 < 1ms。
  */
 public class RateLimitAdvisor implements BaseAdvisor {
 
     private static final Logger log = LoggerFactory.getLogger(RateLimitAdvisor.class);
+
+    /** 未认证用户的限流 key 前缀（所有匿名请求共享一个桶） */
+    private static final String ANONYMOUS_KEY = "anon";
 
     private final RateLimiter rateLimiter;
 
@@ -46,14 +49,14 @@ public class RateLimitAdvisor implements BaseAdvisor {
     @Override
     @NonNull
     public ChatClientRequest before(@NonNull ChatClientRequest request, @NonNull AdvisorChain chain) {
-        String conversationId = extractConversationId(request);
+        String rateLimitKey = extractRateLimitKey();
 
-        if (!rateLimiter.tryAcquire(conversationId)) {
-            log.warn("Rate limit exceeded for conversation: {}", conversationId);
+        if (!rateLimiter.tryAcquire(rateLimitKey)) {
+            log.warn("Rate limit exceeded for key: {}", rateLimitKey);
             throw new RateLimitExceededException("请求过于频繁，请稍后再试");
         }
 
-        log.debug("Rate limit check passed for conversation: {}", conversationId);
+        log.debug("Rate limit check passed for key: {}", rateLimitKey);
         return request;
     }
 
@@ -63,14 +66,18 @@ public class RateLimitAdvisor implements BaseAdvisor {
         return response;
     }
 
-    private String extractConversationId(ChatClientRequest request) {
-        Map<String, Object> context = request.context();
-        Object convId = context.get(ChatMemory.CONVERSATION_ID);
-        if (convId != null && !convId.toString().isBlank()) {
-            return convId.toString();
+    /**
+     * 提取限流 key：认证用户用 userId，未认证用户用固定 "anon" 前缀。
+     * <p>
+     * SecurityContextHolder 由 Spring Security FilterChain 在 servlet 线程中设置，
+     * 即使在 advisor 链中也能通过 ThreadLocal 访问。
+     */
+    private String extractRateLimitKey() {
+        Authentication auth = SecurityContextHolder.getContext().getAuthentication();
+        if (auth != null && auth.getPrincipal() != null
+                && !"anonymousUser".equals(auth.getPrincipal())) {
+            return "user:" + auth.getPrincipal();
         }
-        // 无 conversationId 时用随机 key，避免不同请求共享桶导致互相限流
-        log.debug("No conversationId in context, using isolated rate-limit bucket");
-        return UUID.randomUUID().toString();
+        return ANONYMOUS_KEY;
     }
 }

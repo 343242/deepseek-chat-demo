@@ -68,19 +68,23 @@ public class DocumentDedupService {
      *
      * @param fileMd5 文件 MD5
      * @param userId  用户 ID（租户隔离）
+     * @param teamId  团队 ID（null = 个人空间，非 null = 团队空间）
      * @return 已存在的文档，或 null
      */
-    public RagDocument confirmExisting(String fileMd5, Long userId) {
-        return documentMapper.selectOne(
-            new LambdaQueryWrapper<RagDocument>()
-                .eq(RagDocument::getFileMd5, fileMd5)
-                .eq(RagDocument::getUserId, userId)
-                .in(RagDocument::getStatus,
-                    com.smart.rag.rag.etl.EtlStatus.COMPLETED,
-                    com.smart.rag.rag.etl.EtlStatus.PROCESSING)
-                .eq(RagDocument::getDeleted, 0)
-                .last("LIMIT 1")
-        );
+    public RagDocument confirmExisting(String fileMd5, Long userId, @org.jspecify.annotations.Nullable Long teamId) {
+        LambdaQueryWrapper<RagDocument> wrapper = new LambdaQueryWrapper<RagDocument>()
+            .eq(RagDocument::getFileMd5, fileMd5)
+            .in(RagDocument::getStatus,
+                com.smart.rag.rag.etl.EtlStatus.COMPLETED,
+                com.smart.rag.rag.etl.EtlStatus.PROCESSING)
+            .eq(RagDocument::getDeleted, 0);
+        if (teamId != null) {
+            wrapper.eq(RagDocument::getTeamId, teamId);
+        } else {
+            wrapper.eq(RagDocument::getUserId, userId)
+                   .isNull(RagDocument::getTeamId);
+        }
+        return documentMapper.selectOne(wrapper.last("LIMIT 1"));
     }
 
     /**

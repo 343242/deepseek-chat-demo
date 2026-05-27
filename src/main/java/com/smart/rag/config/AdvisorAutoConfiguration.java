@@ -11,7 +11,6 @@ import com.smart.rag.chat.mode.ModeRouter;
 import com.smart.rag.chat.mode.ChatModeStrategy;
 import com.smart.rag.chat.mode.SimpleModeStrategy;
 import com.smart.rag.chat.mode.MultiTurnModeStrategy;
-import org.jspecify.annotations.Nullable;
 import org.redisson.api.RedissonClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,10 +21,11 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.scheduling.annotation.Scheduled;
-import org.springframework.context.annotation.Lazy;
 
 import java.time.Duration;
 import java.util.List;
@@ -48,15 +48,13 @@ public class AdvisorAutoConfiguration {
     @Lazy
     private final TokenBucketLimiter tokenBucketLimiter;
 
-    @Nullable
-    @Lazy
-    private final FallbackRateLimiter fallbackRateLimiter;
+    private final ObjectProvider<FallbackRateLimiter> fallbackRateLimiterProvider;
 
     public AdvisorAutoConfiguration(
             @Lazy TokenBucketLimiter tokenBucketLimiter,
-            @Nullable @Lazy FallbackRateLimiter fallbackRateLimiter) {
+            ObjectProvider<FallbackRateLimiter> fallbackRateLimiterProvider) {
         this.tokenBucketLimiter = tokenBucketLimiter;
-        this.fallbackRateLimiter = fallbackRateLimiter;
+        this.fallbackRateLimiterProvider = fallbackRateLimiterProvider;
     }
 
     // ==================== 限流 ====================
@@ -89,8 +87,9 @@ public class AdvisorAutoConfiguration {
             log.info("Cleaned up {} idle token buckets, remaining: {}", removed, tokenBucketLimiter.bucketCount());
         }
         // Attempt Redis recovery if in fallback mode
-        if (fallbackRateLimiter != null) {
-            fallbackRateLimiter.attemptRecovery();
+        FallbackRateLimiter limiter = fallbackRateLimiterProvider.getIfAvailable();
+        if (limiter != null) {
+            limiter.attemptRecovery();
         }
     }
 

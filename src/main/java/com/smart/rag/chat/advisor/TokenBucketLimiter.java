@@ -1,9 +1,8 @@
 package com.smart.rag.chat.advisor;
 
-import com.smart.rag.config.AdvisorAutoConfiguration;
+import com.smart.rag.exception.BusinessException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.util.Assert;
 
 import java.time.Duration;
 import java.time.Instant;
@@ -44,9 +43,9 @@ public class TokenBucketLimiter implements RateLimiter {
      * @param maxIdle   桶最大空闲时间，超时清理
      */
     public TokenBucketLimiter(long maxTokens, double refillRate, Duration maxIdle) {
-        if (maxTokens <= 0) throw new IllegalArgumentException("maxTokens must be > 0, got: " + maxTokens);
-        if (refillRate <= 0) throw new IllegalArgumentException("refillRate must be > 0, got: " + refillRate);
-        Assert.notNull(maxIdle, "maxIdle must not be null");
+        if (maxTokens <= 0) throw new BusinessException("令牌桶容量必须大于 0，当前值: " + maxTokens);
+        if (refillRate <= 0) throw new BusinessException("令牌补充速率必须大于 0，当前值: " + refillRate);
+        if (maxIdle == null) throw new BusinessException("令牌桶最大空闲时间不能为空");
         this.maxTokens = maxTokens;
         this.refillRate = refillRate;
         this.maxIdle = maxIdle;

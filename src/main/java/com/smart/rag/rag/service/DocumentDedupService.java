@@ -3,6 +3,7 @@ package com.smart.rag.rag.service;
 import com.smart.rag.rag.entity.RagDocument;
 import com.smart.rag.rag.mapper.RagDocumentMapper;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import org.jspecify.annotations.Nullable;
 import org.redisson.api.RBloomFilter;
 import org.redisson.api.RedissonClient;
 import org.slf4j.Logger;
@@ -71,7 +72,7 @@ public class DocumentDedupService {
      * @param teamId  团队 ID（null = 个人空间，非 null = 团队空间）
      * @return 已存在的文档，或 null
      */
-    public RagDocument confirmExisting(String fileMd5, Long userId, @org.jspecify.annotations.Nullable Long teamId) {
+    public RagDocument confirmExisting(String fileMd5, Long userId, @Nullable Long teamId) {
         LambdaQueryWrapper<RagDocument> wrapper = new LambdaQueryWrapper<RagDocument>()
             .eq(RagDocument::getFileMd5, fileMd5)
             .in(RagDocument::getStatus,

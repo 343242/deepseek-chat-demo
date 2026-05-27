@@ -13,6 +13,8 @@ import com.smart.rag.chat.mode.SimpleModeStrategy;
 import com.smart.rag.chat.mode.MultiTurnModeStrategy;
 import org.jspecify.annotations.Nullable;
 import org.redisson.api.RedissonClient;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.chat.memory.ChatMemoryRepository;
 import org.springframework.ai.chat.memory.MessageWindowChatMemory;
@@ -40,6 +42,8 @@ import java.util.List;
 @Configuration
 @EnableScheduling
 public class AdvisorAutoConfiguration {
+
+    private static final Logger log = LoggerFactory.getLogger(AdvisorAutoConfiguration.class);
 
     @Lazy
     private final TokenBucketLimiter tokenBucketLimiter;
@@ -82,8 +86,7 @@ public class AdvisorAutoConfiguration {
     public void cleanupIdleBuckets() {
         int removed = tokenBucketLimiter.cleanIdleBuckets();
         if (removed > 0) {
-            org.slf4j.LoggerFactory.getLogger(AdvisorAutoConfiguration.class)
-                    .info("Cleaned up {} idle token buckets, remaining: {}", removed, tokenBucketLimiter.bucketCount());
+            log.info("Cleaned up {} idle token buckets, remaining: {}", removed, tokenBucketLimiter.bucketCount());
         }
         // Attempt Redis recovery if in fallback mode
         if (fallbackRateLimiter != null) {

@@ -85,7 +85,7 @@ public class FallbackRateLimiter implements RateLimiter {
     public void attemptRecovery() {
         if (usingFallback) {
             try {
-                // 用轻量级 Redis 操作检测连通性
+                // 轻量级连通性探测（等同 Redis DBSIZE，O(1)）
                 redissonClient.getKeys().countExists();
                 usingFallback = false;
                 log.info("Redis recovered, switching back to distributed rate limiter");

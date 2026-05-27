@@ -164,7 +164,7 @@ public class PersonalUploadStrategy implements UploadStrategy {
             return "unnamed";
         }
         // 保留原始文件名（含扩展名），仅去除路径分隔符等危险字符
-        return fileName.replace("/", "_").replace("\\\\", "_").replace("\0", "_");
+        return fileName.replace("/", "_").replace("\\", "_").replace("\0", "_");
     }
 
     /**
@@ -181,6 +181,7 @@ public class PersonalUploadStrategy implements UploadStrategy {
         ragDoc.setUserId(userId);
         ragDoc.setFileMd5(fileMd5);
         ragDoc.setStatus(EtlStatus.UPLOADED);
+        ragDoc.setDeleted(0);
         ragDoc.setCreateTime(OffsetDateTime.now());
         ragDoc.setUpdateTime(OffsetDateTime.now());
         ragDocumentMapper.insert(ragDoc);

@@ -8,7 +8,6 @@ import org.redisson.api.RBloomFilter;
 import org.redisson.api.RedissonClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -22,9 +21,11 @@ import java.util.List;
  * <p>
  * 生命周期：应用启动时从 DB 初始化（全量加载已有 fileMd5），
  * 新文档入库后 add，文档删除后不删除（假阳性可接受，假阴性不可接受）。
+ * <p>
+ * 当 RedissonClient 不可用时（如 Redis 未连接），bloomFilter 为 null，
+ * mayExist() 始终返回 false（不拦截），退化为纯 DB 去重。
  */
 @Service
-@ConditionalOnBean(RedissonClient.class)
 public class DocumentDedupService {
 
     private static final Logger log = LoggerFactory.getLogger(DocumentDedupService.class);
@@ -35,22 +36,25 @@ public class DocumentDedupService {
     /** 误判率 1% */
     private static final double FALSE_PROBABILITY = 0.01;
 
-    private final RBloomFilter<String> bloomFilter;
+    private final @Nullable RBloomFilter<String> bloomFilter;
     private final RagDocumentMapper documentMapper;
 
-    public DocumentDedupService(RedissonClient redissonClient, RagDocumentMapper documentMapper) {
+    public DocumentDedupService(@Nullable RedissonClient redissonClient, RagDocumentMapper documentMapper) {
         this.documentMapper = documentMapper;
-        this.bloomFilter = redissonClient.getBloomFilter(BLOOM_FILTER_NAME);
-
-        // tryInit 只在首次创建时初始化，已存在则跳过
-        if (bloomFilter.tryInit(EXPECTED_CAPACITY, FALSE_PROBABILITY)) {
-            log.info("BloomFilter initialized: name={}, capacity={}, falseProbability={}",
-                BLOOM_FILTER_NAME, EXPECTED_CAPACITY, FALSE_PROBABILITY);
-            // 首次初始化时从 DB 加载已有数据
-            loadExistingFileMd5s();
+        if (redissonClient != null) {
+            this.bloomFilter = redissonClient.getBloomFilter(BLOOM_FILTER_NAME);
+            // tryInit 只在首次创建时初始化，已存在则跳过
+            if (bloomFilter.tryInit(EXPECTED_CAPACITY, FALSE_PROBABILITY)) {
+                log.info("BloomFilter initialized: name={}, capacity={}, falseProbability={}",
+                    BLOOM_FILTER_NAME, EXPECTED_CAPACITY, FALSE_PROBABILITY);
+                loadExistingFileMd5s();
+            } else {
+                log.info("BloomFilter already exists: name={}, size={}",
+                    BLOOM_FILTER_NAME, bloomFilter.count());
+            }
         } else {
-            log.info("BloomFilter already exists: name={}, size={}",
-                BLOOM_FILTER_NAME, bloomFilter.count());
+            this.bloomFilter = null;
+            log.warn("RedissonClient not available, BloomFilter dedup disabled");
         }
     }
 
@@ -61,7 +65,7 @@ public class DocumentDedupService {
      * @return true=可能存在（需查 DB 确认），false=确定不存在
      */
     public boolean mayExist(String fileMd5) {
-        return bloomFilter.contains(fileMd5);
+        return bloomFilter != null && bloomFilter.contains(fileMd5);
     }
 
     /**
@@ -92,7 +96,9 @@ public class DocumentDedupService {
      * 新文档入库后添加到 BloomFilter
      */
     public void add(String fileMd5) {
-        bloomFilter.add(fileMd5);
+        if (bloomFilter != null) {
+            bloomFilter.add(fileMd5);
+        }
     }
 
     private void loadExistingFileMd5s() {

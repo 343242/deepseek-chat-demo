@@ -22,6 +22,9 @@ spring:
     baseline-version: "0"
     validate-on-migrate: true
     clean-disabled: true
+  redis:
+    redisson:
+      file: classpath:redisson.yml
   data:
     redis:
       host: ${REDIS_HOST:localhost}

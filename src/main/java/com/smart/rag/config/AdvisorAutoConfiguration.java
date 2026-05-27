@@ -1,6 +1,7 @@
 package com.smart.rag.config;
 
 import com.smart.rag.chat.advisor.ContentFilterAdvisor;
+import com.smart.rag.chat.advisor.FallbackRateLimiter;
 import com.smart.rag.chat.advisor.RateLimitAdvisor;
 import com.smart.rag.chat.advisor.RateLimiter;
 import com.smart.rag.chat.advisor.TokenBucketLimiter;
@@ -10,11 +11,15 @@ import com.smart.rag.chat.mode.ModeRouter;
 import com.smart.rag.chat.mode.ChatModeStrategy;
 import com.smart.rag.chat.mode.SimpleModeStrategy;
 import com.smart.rag.chat.mode.MultiTurnModeStrategy;
+import org.jspecify.annotations.Nullable;
+import org.redisson.api.RedissonClient;
 import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.chat.memory.ChatMemoryRepository;
 import org.springframework.ai.chat.memory.MessageWindowChatMemory;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Primary;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -36,6 +41,20 @@ import java.util.List;
 @EnableScheduling
 public class AdvisorAutoConfiguration {
 
+    @Lazy
+    private final TokenBucketLimiter tokenBucketLimiter;
+
+    @Nullable
+    @Lazy
+    private final FallbackRateLimiter fallbackRateLimiter;
+
+    public AdvisorAutoConfiguration(
+            @Lazy TokenBucketLimiter tokenBucketLimiter,
+            @Nullable @Lazy FallbackRateLimiter fallbackRateLimiter) {
+        this.tokenBucketLimiter = tokenBucketLimiter;
+        this.fallbackRateLimiter = fallbackRateLimiter;
+    }
+
     // ==================== 限流 ====================
 
     @Bean
@@ -44,19 +63,20 @@ public class AdvisorAutoConfiguration {
     }
 
     @Bean
+    @Primary
+    @ConditionalOnBean(RedissonClient.class)
+    public FallbackRateLimiter fallbackRateLimiter(RedissonClient redissonClient) {
+        return new FallbackRateLimiter(redissonClient, tokenBucketLimiter(), 2.0);
+    }
+
+    @Bean
     public RateLimitAdvisor rateLimitAdvisor(RateLimiter rateLimiter) {
         return new RateLimitAdvisor(rateLimiter);
     }
 
-    @Lazy
-    private final TokenBucketLimiter tokenBucketLimiter;
-
-    public AdvisorAutoConfiguration(@Lazy TokenBucketLimiter tokenBucketLimiter) {
-        this.tokenBucketLimiter = tokenBucketLimiter;
-    }
-
     /**
-     * 每小时清理一次空闲令牌桶，防止内存无限增长
+     * 每小时清理一次空闲令牌桶，防止内存无限增长。
+     * 同时尝试从 Redis 降级模式恢复。
      */
     @Scheduled(fixedRate = 3600000)
     public void cleanupIdleBuckets() {
@@ -64,6 +84,10 @@ public class AdvisorAutoConfiguration {
         if (removed > 0) {
             org.slf4j.LoggerFactory.getLogger(AdvisorAutoConfiguration.class)
                     .info("Cleaned up {} idle token buckets, remaining: {}", removed, tokenBucketLimiter.bucketCount());
+        }
+        // Attempt Redis recovery if in fallback mode
+        if (fallbackRateLimiter != null) {
+            fallbackRateLimiter.attemptRecovery();
         }
     }
 

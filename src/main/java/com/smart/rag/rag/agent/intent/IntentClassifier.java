@@ -36,8 +36,12 @@ public class IntentClassifier {
         AgentIntent.DEEP_RETRIEVAL, 0.0, Collections.emptyList()
     );
 
-    private final ChatClient intentChatClient;
+    private final ChatClientRegistry chatClientRegistry;
+    private final String intentModelId;
     private final ObjectMapper objectMapper;
+
+    /** 懒解析的 ChatClient，首次 classify() 时从 Registry 获取 */
+    private volatile ChatClient intentChatClient;
 
     /**
      * 分类意图 + 分解查询
@@ -75,7 +79,7 @@ public class IntentClassifier {
         // 使用 ChatClient 的 Structured Output 功能映射到 IntentResult
         // Spring AI 会自动将 LLM 返回的 JSON 反序列化为 IntentResult record
         try {
-            String response = intentChatClient.prompt()
+            String response = resolveChatClient().prompt()
                 .user(prompt)
                 .call()
                 .content();
@@ -190,7 +194,22 @@ public class IntentClassifier {
     public IntentClassifier(ChatClientRegistry chatClientRegistry,
                             AgentRagProperties properties,
                             ObjectMapper objectMapper) {
-        this.intentChatClient = chatClientRegistry.get(properties.intentModel());
+        this.chatClientRegistry = chatClientRegistry;
+        this.intentModelId = properties.intentModel();
         this.objectMapper = objectMapper;
+    }
+
+    private ChatClient resolveChatClient() {
+        ChatClient client = intentChatClient;
+        if (client == null) {
+            synchronized (this) {
+                client = intentChatClient;
+                if (client == null) {
+                    client = chatClientRegistry.get(intentModelId);
+                    intentChatClient = client;
+                }
+            }
+        }
+        return client;
     }
 }

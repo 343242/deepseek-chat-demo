@@ -1,5 +1,6 @@
 package com.smart.rag.rag.agent.guardrail;
 
+import com.smart.rag.exception.BusinessException;
 import com.smart.rag.rag.agent.config.AgentRagProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -55,6 +56,10 @@ public class AgentDegradationStrategy {
      * 判断异常是否不可恢复（降级也无法解决）
      */
     private boolean isNonRecoverable(Exception e) {
+        // 业务异常 -- 统一业务校验失败，降级后同样会失败
+        if (e instanceof BusinessException) {
+            return true;
+        }
         // 参数校验异常 -- 降级后同样会失败
         if (e instanceof IllegalArgumentException) {
             return true;

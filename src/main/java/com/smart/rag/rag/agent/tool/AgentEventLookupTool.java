@@ -2,6 +2,7 @@ package com.smart.rag.rag.agent.tool;
 
 import com.smart.rag.rag.agent.dto.ToolResult;
 import com.smart.rag.rag.agent.event.AgentEventStore;
+import com.smart.rag.rag.agent.event.AgentSessionEvent;
 import com.smart.rag.rag.agent.workspace.ToolWorkspace;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -48,16 +49,14 @@ public class AgentEventLookupTool implements RagTool {
             Long userId = workspace.getUserId();
             String sid = (sessionId != null && !sessionId.isBlank())
                 ? sessionId
-                : "unknown";
+                : null;
 
             log.debug("Agent event lookup: queryLen={}, sessionId={}, userId={}", queryText.length(), sid, userId);
 
-            List<?> events = eventStore.searchEvents(sid, userId, queryText, MAX_RESULTS);
+            List<AgentSessionEvent> events = eventStore.searchEvents(sid, userId, queryText, MAX_RESULTS);
 
             long duration = System.currentTimeMillis() - start;
-            String summary = events.isEmpty()
-                ? "未找到匹配的历史事件"
-                : "找到 %d 条匹配的历史事件".formatted(events.size());
+            String summary = formatEventSummary(events);
 
             return ToolResult.success("agentEventLookup",
                 summary, null, duration).toJson();
@@ -69,5 +68,26 @@ public class AgentEventLookupTool implements RagTool {
                 ToolErrorMessages.eventLookupUnavailable(),
                 "DB_ERROR", duration).toJson();
         }
+    }
+
+    /**
+     * 将事件列表格式化为可读摘要文本，供 LLM 理解实际内容
+     */
+    private String formatEventSummary(List<AgentSessionEvent> events) {
+        if (events.isEmpty()) {
+            return "未找到匹配的历史事件";
+        }
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("找到 ").append(events.size()).append(" 条匹配事件:\n");
+        for (AgentSessionEvent e : events) {
+            String dataPreview = e.getData() != null && e.getData().length() > 200
+                ? e.getData().substring(0, 200) + "..."
+                : (e.getData() != null ? e.getData() : "");
+            sb.append("- [").append(e.getEventType()).append("] ")
+                .append(e.getCreatedAt() != null ? e.getCreatedAt().toString() : "N/A")
+                .append(": ").append(dataPreview).append("\n");
+        }
+        return sb.toString().trim();
     }
 }

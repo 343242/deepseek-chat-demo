@@ -54,15 +54,18 @@ public interface AgentEventMapper extends BaseMapper<AgentSessionEvent> {
      * <ol>
      *   <li>PostgreSQL JSONB text 模式搜索（ILIKE）</li>
      *   <li>按创建时间倒序，最多返回 limit 条</li>
+     *   <li>sessionId 为 null 时不按 session 过滤，仅按 userId + queryText 检索</li>
      * </ol>
      */
-    @Select("SELECT * FROM agent_session_event " +
-            "WHERE session_id = #{sessionId} " +
-            "AND user_id = #{userId} " +
+    @Select("<script>" +
+            "SELECT * FROM agent_session_event " +
+            "WHERE user_id = #{userId} " +
+            "<if test='sessionId != null'>AND session_id = #{sessionId} </if>" +
             "AND (data::text ILIKE '%' || #{query} || '%' " +
             "     OR event_type ILIKE '%' || #{query} || '%') " +
             "ORDER BY created_at DESC " +
-            "LIMIT #{limit}")
+            "LIMIT #{limit}" +
+            "</script>")
     List<AgentSessionEvent> searchBySessionAndUserAndQuery(
         @Param("sessionId") String sessionId,
         @Param("userId") Long userId,

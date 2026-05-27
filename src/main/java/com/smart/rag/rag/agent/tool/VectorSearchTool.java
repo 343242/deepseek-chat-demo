@@ -1,5 +1,6 @@
 package com.smart.rag.rag.agent.tool;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smart.rag.rag.agent.workspace.RetrievedDocument;
 import com.smart.rag.rag.agent.workspace.ToolWorkspace;
 import com.smart.rag.rag.agent.dto.ToolResult;
@@ -29,10 +30,13 @@ public class VectorSearchTool implements RagTool {
 
     private final VectorStore vectorStore;
     private final RagRetrievalProperties properties;
+    private final ObjectMapper objectMapper;
 
-    public VectorSearchTool(VectorStore vectorStore, RagRetrievalProperties properties) {
+    public VectorSearchTool(VectorStore vectorStore, RagRetrievalProperties properties,
+                            ObjectMapper objectMapper) {
         this.vectorStore = vectorStore;
         this.properties = properties;
+        this.objectMapper = objectMapper;
     }
 
     /**
@@ -47,7 +51,7 @@ public class VectorSearchTool implements RagTool {
         try {
             if (queryText == null || queryText.isBlank()) {
                 return ToolResult.failure("vectorSearch",
-                    "查询文本不能为空", "INVALID_INPUT", 0).toJson();
+                    "查询文本不能为空", "INVALID_INPUT", 0).toJson(objectMapper);
             }
 
             FilterExpressionBuilder filterBuilder = new FilterExpressionBuilder();
@@ -80,14 +84,14 @@ public class VectorSearchTool implements RagTool {
 
             return ToolResult.success("vectorSearch",
                 "检索到 " + docs.size() + " 个相关文档片段",
-                retrieved, duration).toJson();
+                retrieved, duration).toJson(objectMapper);
 
         } catch (Exception e) {
             long duration = System.currentTimeMillis() - start;
             log.error("Vector search error", e);
             return ToolResult.failure("vectorSearch",
                 ToolErrorMessages.searchUnavailable("向量"),
-                "INTERNAL_ERROR", duration).toJson();
+                "INTERNAL_ERROR", duration).toJson(objectMapper);
         }
     }
 }

@@ -1,5 +1,6 @@
 package com.smart.rag.rag.agent.tool;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smart.rag.rag.agent.service.HybridSearchService;
 import com.smart.rag.rag.agent.workspace.RetrievedDocument;
 import com.smart.rag.rag.agent.workspace.ToolWorkspace;
@@ -26,9 +27,11 @@ public class HybridSearchTool implements RagTool {
     private static final Logger log = LoggerFactory.getLogger(HybridSearchTool.class);
 
     private final HybridSearchService hybridSearchService;
+    private final ObjectMapper objectMapper;
 
-    public HybridSearchTool(HybridSearchService hybridSearchService) {
+    public HybridSearchTool(HybridSearchService hybridSearchService, ObjectMapper objectMapper) {
         this.hybridSearchService = hybridSearchService;
+        this.objectMapper = objectMapper;
     }
 
     /**
@@ -44,7 +47,7 @@ public class HybridSearchTool implements RagTool {
         try {
             if (queryText == null || queryText.isBlank()) {
                 return ToolResult.failure("hybridSearch",
-                    "查询文本不能为空", "INVALID_INPUT", 0).toJson();
+                    "查询文本不能为空", "INVALID_INPUT", 0).toJson(objectMapper);
             }
 
             List<Document> docs = hybridSearchService.hybridSearch(
@@ -56,14 +59,14 @@ public class HybridSearchTool implements RagTool {
 
             return ToolResult.success("hybridSearch",
                 "检索到 " + docs.size() + " 个相关文档片段",
-                retrieved, duration).toJson();
+                retrieved, duration).toJson(objectMapper);
 
         } catch (Exception e) {
             long duration = System.currentTimeMillis() - start;
             log.error("Hybrid search error", e);
             return ToolResult.failure("hybridSearch",
                 ToolErrorMessages.searchUnavailable("混合"),
-                "INTERNAL_ERROR", duration).toJson();
+                "INTERNAL_ERROR", duration).toJson(objectMapper);
         }
     }
 

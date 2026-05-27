@@ -1,5 +1,6 @@
 package com.smart.rag.rag.agent.tool;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smart.rag.rag.agent.dto.ToolResult;
 import com.smart.rag.rag.agent.workspace.ToolWorkspace;
 import com.smart.rag.rag.mapper.VectorStoreMapper;
@@ -19,9 +20,11 @@ public class KnowledgeBaseInfoTool implements RagTool {
     private static final Logger log = LoggerFactory.getLogger(KnowledgeBaseInfoTool.class);
 
     private final VectorStoreMapper vectorStoreMapper;
+    private final ObjectMapper objectMapper;
 
-    public KnowledgeBaseInfoTool(VectorStoreMapper vectorStoreMapper) {
+    public KnowledgeBaseInfoTool(VectorStoreMapper vectorStoreMapper, ObjectMapper objectMapper) {
         this.vectorStoreMapper = vectorStoreMapper;
+        this.objectMapper = objectMapper;
     }
 
     /**
@@ -50,14 +53,14 @@ public class KnowledgeBaseInfoTool implements RagTool {
                 docCount, isolationField, isolationValue, duration);
 
             return ToolResult.success("knowledgeBaseInfo",
-                summary, null, duration).toJson();
+                summary, null, duration).toJson(objectMapper);
 
         } catch (Exception e) {
             long duration = System.currentTimeMillis() - start;
             log.error("Knowledge base info error", e);
             return ToolResult.failure("knowledgeBaseInfo",
                 ToolErrorMessages.knowledgeBaseUnavailable(),
-                "DB_ERROR", duration).toJson();
+                "DB_ERROR", duration).toJson(objectMapper);
         }
     }
 }

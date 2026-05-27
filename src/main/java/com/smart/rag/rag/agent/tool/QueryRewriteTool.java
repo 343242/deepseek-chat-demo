@@ -1,5 +1,6 @@
 package com.smart.rag.rag.agent.tool;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smart.rag.rag.agent.dto.ToolResult;
 import com.smart.rag.rag.agent.workspace.ToolWorkspace;
 import org.slf4j.Logger;
@@ -34,9 +35,11 @@ public class QueryRewriteTool implements RagTool {
             Rewritten search query:""";
 
     private final ChatClient chatClient;
+    private final ObjectMapper objectMapper;
 
-    public QueryRewriteTool(ChatClient.Builder chatClientBuilder) {
+    public QueryRewriteTool(ChatClient.Builder chatClientBuilder, ObjectMapper objectMapper) {
         this.chatClient = chatClientBuilder.build();
+        this.objectMapper = objectMapper;
     }
 
     /**
@@ -51,7 +54,7 @@ public class QueryRewriteTool implements RagTool {
         try {
             if (queryText == null || queryText.isBlank()) {
                 return ToolResult.failure("queryRewrite",
-                    "查询文本不能为空", "INVALID_INPUT", 0).toJson();
+                    "查询文本不能为空", "INVALID_INPUT", 0).toJson(objectMapper);
             }
 
             // 使用 PromptTemplate 渲染改写提示
@@ -91,14 +94,14 @@ public class QueryRewriteTool implements RagTool {
 
             return ToolResult.success("queryRewrite",
                 "查询改写完成：\"" + queryText + "\" -> \"" + rewrittenQuery + "\"。请使用改写后的查询进行检索。",
-                null, duration).toJson();
+                null, duration).toJson(objectMapper);
 
         } catch (Exception e) {
             long duration = System.currentTimeMillis() - start;
             log.error("Query rewrite error", e);
             return ToolResult.failure("queryRewrite",
                 ToolErrorMessages.rewriteFailed(),
-                "API_ERROR", duration).toJson();
+                "API_ERROR", duration).toJson(objectMapper);
         }
     }
 }

@@ -36,7 +36,7 @@ public record ToolResult(
 ) {
 
     private static final Logger log = LoggerFactory.getLogger(ToolResult.class);
-    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+    private static final ObjectMapper FALLBACK_MAPPER = new ObjectMapper();
 
     /**
      * 创建成功结果
@@ -62,8 +62,22 @@ public record ToolResult(
      * <p>
      * 检索到的文档（documents）只保留摘要字段（docId、score、content 截断），
      * 避免 JSON 过长。
+     *
+     * @deprecated 降级用，调用方应使用 {@link #toJson(ObjectMapper)}
      */
+    @Deprecated
     public String toJson() {
+        return toJson(FALLBACK_MAPPER);
+    }
+
+    /**
+     * 将 ToolResult 序列化为 JSON 字符串，供 LLM 解析。
+     * <p>
+     * 使用外部注入的共享 ObjectMapper，与同模块其他组件保持一致。
+     *
+     * @param objectMapper 外部注入的共享 ObjectMapper
+     */
+    public String toJson(ObjectMapper objectMapper) {
         Map<String, Object> map = new LinkedHashMap<>();
         map.put("success", success);
         map.put("action", action);
@@ -95,7 +109,7 @@ public record ToolResult(
         }
         map.put("durationMs", durationMs);
         try {
-            return OBJECT_MAPPER.writeValueAsString(map);
+            return objectMapper.writeValueAsString(map);
         } catch (JsonProcessingException e) {
             log.error("Failed to serialize ToolResult to JSON", e);
             // 降级：手动拼装最简 JSON（action 做 JSON 转义防注入）

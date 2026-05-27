@@ -1,5 +1,6 @@
 package com.smart.rag.rag.agent.tool;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smart.rag.rag.agent.dto.ToolResult;
 import com.smart.rag.rag.agent.workspace.ToolWorkspace;
 import com.smart.rag.rag.config.RagRetrievalProperties;
@@ -26,10 +27,13 @@ public class DocDetailTool implements RagTool {
 
     private final VectorStoreMapper vectorStoreMapper;
     private final RagRetrievalProperties properties;
+    private final ObjectMapper objectMapper;
 
-    public DocDetailTool(VectorStoreMapper vectorStoreMapper, RagRetrievalProperties properties) {
+    public DocDetailTool(VectorStoreMapper vectorStoreMapper, RagRetrievalProperties properties,
+                         ObjectMapper objectMapper) {
         this.vectorStoreMapper = vectorStoreMapper;
         this.properties = properties;
+        this.objectMapper = objectMapper;
     }
 
     /**
@@ -45,7 +49,7 @@ public class DocDetailTool implements RagTool {
         try {
             if (docIds == null || docIds.isBlank()) {
                 return ToolResult.failure("docDetail",
-                    "文档 ID 不能为空", "INVALID_INPUT", 0).toJson();
+                    "文档 ID 不能为空", "INVALID_INPUT", 0).toJson(objectMapper);
             }
 
             // 解析逗号分隔的文档 ID
@@ -56,7 +60,7 @@ public class DocDetailTool implements RagTool {
 
             if (idList.isEmpty()) {
                 return ToolResult.failure("docDetail",
-                    "解析后无有效文档 ID", "INVALID_INPUT", 0).toJson();
+                    "解析后无有效文档 ID", "INVALID_INPUT", 0).toJson(objectMapper);
             }
 
             // 限制查询数量防止过载
@@ -75,7 +79,7 @@ public class DocDetailTool implements RagTool {
                 long duration = System.currentTimeMillis() - start;
                 return ToolResult.failure("docDetail",
                     "未找到指定 ID 的文档片段。请检查文档 ID 是否正确。",
-                    "DB_ERROR", duration).toJson();
+                    "DB_ERROR", duration).toJson(objectMapper);
             }
 
             // 构建摘要文本
@@ -96,14 +100,14 @@ public class DocDetailTool implements RagTool {
                 highlights.size(), idList.size(), duration);
 
             return ToolResult.success("docDetail",
-                summary.toString(), null, duration).toJson();
+                summary.toString(), null, duration).toJson(objectMapper);
 
         } catch (Exception e) {
             long duration = System.currentTimeMillis() - start;
             log.error("Doc detail error", e);
             return ToolResult.failure("docDetail",
                 ToolErrorMessages.docDetailUnavailable(),
-                "DB_ERROR", duration).toJson();
+                "DB_ERROR", duration).toJson(objectMapper);
         }
     }
 }

@@ -1,5 +1,6 @@
 package com.smart.rag.rag.agent.tool;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smart.rag.rag.agent.dto.ToolResult;
 import com.smart.rag.rag.agent.workspace.RetrievedDocument;
 import com.smart.rag.rag.agent.workspace.ToolWorkspace;
@@ -31,9 +32,11 @@ public class ParentDocLookupTool implements RagTool {
     private static final double DEFAULT_SCORE = 0.5;
 
     private final VectorStoreMapper vectorStoreMapper;
+    private final ObjectMapper objectMapper;
 
-    public ParentDocLookupTool(VectorStoreMapper vectorStoreMapper) {
+    public ParentDocLookupTool(VectorStoreMapper vectorStoreMapper, ObjectMapper objectMapper) {
         this.vectorStoreMapper = vectorStoreMapper;
+        this.objectMapper = objectMapper;
     }
 
     /**
@@ -49,7 +52,7 @@ public class ParentDocLookupTool implements RagTool {
             if (docs.isEmpty()) {
                 return ToolResult.failure("parentDocLookup",
                     "没有可查找父文档的子块。请先调用检索工具获取文档。",
-                    "PRECONDITION_FAILED", System.currentTimeMillis() - start).toJson();
+                    "PRECONDITION_FAILED", System.currentTimeMillis() - start).toJson(objectMapper);
             }
 
             // 收集所有需要回查的 parentId
@@ -81,7 +84,7 @@ public class ParentDocLookupTool implements RagTool {
             if (parentIdsToFetch.isEmpty()) {
                 return ToolResult.failure("parentDocLookup",
                     "当前文档无父子关系，无需父文档查找。",
-                    "PRECONDITION_FAILED", System.currentTimeMillis() - start).toJson();
+                    "PRECONDITION_FAILED", System.currentTimeMillis() - start).toJson(objectMapper);
             }
 
             // 批量回查父文档
@@ -167,14 +170,14 @@ public class ParentDocLookupTool implements RagTool {
             return ToolResult.success("parentDocLookup",
                 "父文档查找完成：" + docs.size() + " 个文档片段替换为 " + resolvedParents.size()
                     + " 个父文档" + (nonChildDocs.isEmpty() ? "" : "，保留 " + nonChildDocs.size() + " 个非子块文档"),
-                result, duration).toJson();
+                result, duration).toJson(objectMapper);
 
         } catch (Exception e) {
             long duration = System.currentTimeMillis() - start;
             log.error("Parent doc lookup error", e);
             return ToolResult.failure("parentDocLookup",
                 ToolErrorMessages.parentDocUnavailable(),
-                "DB_ERROR", duration).toJson();
+                "DB_ERROR", duration).toJson(objectMapper);
         }
     }
 

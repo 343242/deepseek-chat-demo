@@ -1,5 +1,6 @@
 package com.smart.rag.rag.agent.tool;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smart.rag.rag.agent.dto.ToolResult;
 import com.smart.rag.rag.agent.event.AgentEventStore;
 import com.smart.rag.rag.agent.event.AgentSessionEvent;
@@ -25,9 +26,11 @@ public class AgentEventLookupTool implements RagTool {
     private static final int MAX_RESULTS = 5;
 
     private final AgentEventStore eventStore;
+    private final ObjectMapper objectMapper;
 
-    public AgentEventLookupTool(AgentEventStore eventStore) {
+    public AgentEventLookupTool(AgentEventStore eventStore, ObjectMapper objectMapper) {
         this.eventStore = eventStore;
+        this.objectMapper = objectMapper;
     }
 
     /**
@@ -43,7 +46,7 @@ public class AgentEventLookupTool implements RagTool {
         try {
             if (queryText == null || queryText.isBlank()) {
                 return ToolResult.failure("agentEventLookup",
-                    "查询文本不能为空", "INVALID_INPUT", 0).toJson();
+                    "查询文本不能为空", "INVALID_INPUT", 0).toJson(objectMapper);
             }
 
             Long userId = workspace.getUserId();
@@ -59,14 +62,14 @@ public class AgentEventLookupTool implements RagTool {
             String summary = formatEventSummary(events);
 
             return ToolResult.success("agentEventLookup",
-                summary, null, duration).toJson();
+                summary, null, duration).toJson(objectMapper);
 
         } catch (Exception e) {
             long duration = System.currentTimeMillis() - start;
             log.error("Agent event lookup error", e);
             return ToolResult.failure("agentEventLookup",
                 ToolErrorMessages.eventLookupUnavailable(),
-                "DB_ERROR", duration).toJson();
+                "DB_ERROR", duration).toJson(objectMapper);
         }
     }
 

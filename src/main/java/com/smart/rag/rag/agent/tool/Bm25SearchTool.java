@@ -1,5 +1,6 @@
 package com.smart.rag.rag.agent.tool;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smart.rag.rag.agent.dto.ToolResult;
 import com.smart.rag.rag.agent.workspace.RetrievedDocument;
 import com.smart.rag.rag.agent.workspace.ToolWorkspace;
@@ -31,12 +32,14 @@ public class Bm25SearchTool implements RagTool {
     private final VectorStoreMapper vectorStoreMapper;
     private final RagRetrievalProperties properties;
     private final QueryNormalizer queryNormalizer;
+    private final ObjectMapper objectMapper;
 
     public Bm25SearchTool(VectorStoreMapper vectorStoreMapper, RagRetrievalProperties properties,
-                          QueryNormalizer queryNormalizer) {
+                          QueryNormalizer queryNormalizer, ObjectMapper objectMapper) {
         this.vectorStoreMapper = vectorStoreMapper;
         this.properties = properties;
         this.queryNormalizer = queryNormalizer;
+        this.objectMapper = objectMapper;
     }
 
     /**
@@ -51,7 +54,7 @@ public class Bm25SearchTool implements RagTool {
         try {
             if (queryText == null || queryText.isBlank()) {
                 return ToolResult.failure("bm25Search",
-                    "查询文本不能为空", "INVALID_INPUT", 0).toJson();
+                    "查询文本不能为空", "INVALID_INPUT", 0).toJson(objectMapper);
             }
 
             // 净化查询文本
@@ -59,7 +62,7 @@ public class Bm25SearchTool implements RagTool {
             if (sanitized.isBlank()) {
                 return ToolResult.failure("bm25Search",
                     "查询文本经净化后为空，请提供包含有效关键词的查询。",
-                    "INVALID_INPUT", 0).toJson();
+                    "INVALID_INPUT", 0).toJson(objectMapper);
             }
 
             // 从 workspace 获取隔离参数
@@ -100,14 +103,14 @@ public class Bm25SearchTool implements RagTool {
 
             return ToolResult.success("bm25Search",
                 "BM25 检索到 " + docs.size() + " 个相关文档片段",
-                retrieved, duration).toJson();
+                retrieved, duration).toJson(objectMapper);
 
         } catch (Exception e) {
             long duration = System.currentTimeMillis() - start;
             log.error("BM25 search error", e);
             return ToolResult.failure("bm25Search",
                 ToolErrorMessages.searchUnavailable("BM25"),
-                "DB_ERROR", duration).toJson();
+                "DB_ERROR", duration).toJson(objectMapper);
         }
     }
 }

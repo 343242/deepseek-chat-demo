@@ -1,5 +1,6 @@
 package com.smart.rag.rag.agent.tool;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smart.rag.rag.agent.dto.ToolResult;
 import com.smart.rag.rag.agent.workspace.RetrievedDocument;
 import com.smart.rag.rag.agent.workspace.ToolWorkspace;
@@ -28,6 +29,7 @@ public class RerankTool implements RagTool {
     private static final Logger log = LoggerFactory.getLogger(RerankTool.class);
 
     private final BailianRerankPostProcessor reranker;
+    private final ObjectMapper objectMapper;
 
     /**
      * 构造注入 Rerank 单例 Bean。
@@ -35,8 +37,10 @@ public class RerankTool implements RagTool {
      * 使用 required=false 因为 Bean 仅在 rerank-enabled=true 时存在。
      * {@link #execute} 内部会检查 reranker 是否可用。
      */
-    public RerankTool(@Autowired(required = false) BailianRerankPostProcessor reranker) {
+    public RerankTool(@Autowired(required = false) BailianRerankPostProcessor reranker,
+                      ObjectMapper objectMapper) {
         this.reranker = reranker;
+        this.objectMapper = objectMapper;
     }
 
     /**
@@ -53,20 +57,20 @@ public class RerankTool implements RagTool {
             if (docs.isEmpty()) {
                 return ToolResult.failure("rerank",
                     "没有可精排的文档。请先调用检索工具（hybridSearch 或 vectorSearch）获取文档。",
-                    "PRECONDITION_FAILED", System.currentTimeMillis() - start).toJson();
+                    "PRECONDITION_FAILED", System.currentTimeMillis() - start).toJson(objectMapper);
             }
 
             if (queryText == null || queryText.isBlank()) {
                 return ToolResult.failure("rerank",
                     "查询文本不能为空，请提供用于精排的查询文本。",
-                    "INVALID_INPUT", 0).toJson();
+                    "INVALID_INPUT", 0).toJson(objectMapper);
             }
 
             // Rerank Bean 未注入说明 rerank 未启用
             if (reranker == null) {
                 return ToolResult.failure("rerank",
                     "Rerank 未启用或 API Key 未配置。跳过精排步骤。",
-                    "PRECONDITION_FAILED", System.currentTimeMillis() - start).toJson();
+                    "PRECONDITION_FAILED", System.currentTimeMillis() - start).toJson(objectMapper);
             }
 
             // 将 RetrievedDocument 转为 Spring AI Document
@@ -106,14 +110,14 @@ public class RerankTool implements RagTool {
 
             return ToolResult.success("rerank",
                 "精排完成：从 " + docs.size() + " 个文档中精选出 " + rerankedDocs.size() + " 个高相关文档",
-                rerankedDocs, duration).toJson();
+                rerankedDocs, duration).toJson(objectMapper);
 
         } catch (Exception e) {
             long duration = System.currentTimeMillis() - start;
             log.error("Rerank error", e);
             return ToolResult.failure("rerank",
                 ToolErrorMessages.rerankUnavailable(),
-                "API_ERROR", duration).toJson();
+                "API_ERROR", duration).toJson(objectMapper);
         }
     }
 }

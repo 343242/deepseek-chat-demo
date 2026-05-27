@@ -15,15 +15,15 @@ import java.time.Instant;
  * <p>
  * 事件类型及优先级：
  * <ul>
- *   <li>INTENT_CLASSIFIED (priority=1) -- 意图分类结果</li>
- *   <li>INTERMEDIATE_ANSWER (priority=1) -- 子问题中间答案</li>
- *   <li>SELF_REFLECTION (priority=2) -- 自省结果</li>
- *   <li>RETRIEVAL_STRATEGY (priority=2) -- 检索策略变更</li>
- *   <li>TOOL_CALLED (priority=3) -- Tool 调用记录</li>
- *   <li>GUARDRAIL_TRIGGERED (priority=1) -- 护栏触发</li>
+ *   <li>INTENT_CLASSIFIED (CRITICAL) -- 意图分类结果</li>
+ *   <li>INTERMEDIATE_ANSWER (CRITICAL) -- 子问题中间答案</li>
+ *   <li>SELF_REFLECTION (HIGH) -- 自省结果</li>
+ *   <li>RETRIEVAL_STRATEGY (HIGH) -- 检索策略变更</li>
+ *   <li>TOOL_CALLED (NORMAL) -- Tool 调用记录</li>
+ *   <li>GUARDRAIL_TRIGGERED (CRITICAL) -- 护栏触发</li>
  * </ul>
  */
-@TableName("agent_session_event")
+@TableName(value = "agent_session_event", autoResultMap = true)
 public class AgentSessionEvent {
 
     @TableId(type = IdType.AUTO)
@@ -35,11 +35,11 @@ public class AgentSessionEvent {
     @TableField("user_id")
     private Long userId;
 
-    @TableField("event_type")
-    private String eventType;
+    @TableField(value = "event_type", typeHandler = AgentEventTypeHandler.class)
+    private AgentEventType eventType;
 
-    @TableField("priority")
-    private int priority;
+    @TableField(value = "priority", typeHandler = AgentEventPriorityHandler.class)
+    private AgentEventPriority priority;
 
     @TableField("data")
     private String data;
@@ -59,8 +59,8 @@ public class AgentSessionEvent {
     public AgentSessionEvent() {
     }
 
-    public AgentSessionEvent(String sessionId, Long userId, String eventType,
-                             int priority, String data,
+    public AgentSessionEvent(String sessionId, Long userId, AgentEventType eventType,
+                             AgentEventPriority priority, String data,
                              String toolName, Boolean success, Long durationMs,
                              Instant createdAt) {
         this.sessionId = sessionId;
@@ -79,8 +79,8 @@ public class AgentSessionEvent {
     public Long getId() { return id; }
     public String getSessionId() { return sessionId; }
     public Long getUserId() { return userId; }
-    public String getEventType() { return eventType; }
-    public int getPriority() { return priority; }
+    public AgentEventType getEventType() { return eventType; }
+    public AgentEventPriority getPriority() { return priority; }
     public String getData() { return data; }
     public String getToolName() { return toolName; }
     public Boolean getSuccess() { return success; }
@@ -92,8 +92,8 @@ public class AgentSessionEvent {
     public void setId(Long id) { this.id = id; }
     public void setSessionId(String sessionId) { this.sessionId = sessionId; }
     public void setUserId(Long userId) { this.userId = userId; }
-    public void setEventType(String eventType) { this.eventType = eventType; }
-    public void setPriority(int priority) { this.priority = priority; }
+    public void setEventType(AgentEventType eventType) { this.eventType = eventType; }
+    public void setPriority(AgentEventPriority priority) { this.priority = priority; }
     public void setData(String data) { this.data = data; }
     public void setToolName(String toolName) { this.toolName = toolName; }
     public void setSuccess(Boolean success) { this.success = success; }

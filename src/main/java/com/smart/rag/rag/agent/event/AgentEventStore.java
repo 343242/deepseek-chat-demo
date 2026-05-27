@@ -38,30 +38,6 @@ public class AgentEventStore {
         this.payloadMapper = payloadMapper;
     }
 
-    // === 事件类型常量 ===
-
-    /** 意图分类结果 */
-    public static final String EVENT_INTENT_CLASSIFIED = "INTENT_CLASSIFIED";
-    /** 子问题中间答案 */
-    public static final String EVENT_INTERMEDIATE_ANSWER = "INTERMEDIATE_ANSWER";
-    /** 自省结果 */
-    public static final String EVENT_SELF_REFLECTION = "SELF_REFLECTION";
-    /** 检索策略变更 */
-    public static final String EVENT_RETRIEVAL_STRATEGY = "RETRIEVAL_STRATEGY";
-    /** Tool 调用记录 */
-    public static final String EVENT_TOOL_CALLED = "TOOL_CALLED";
-    /** 护栏触发 */
-    public static final String EVENT_GUARDRAIL_TRIGGERED = "GUARDRAIL_TRIGGERED";
-
-    // === 优先级常量 ===
-
-    /** Critical -- 意图分类、中间答案、护栏触发 */
-    public static final int PRIORITY_CRITICAL = 1;
-    /** High -- 自省结果、检索策略变更 */
-    public static final int PRIORITY_HIGH = 2;
-    /** Normal -- Tool 调用记录 */
-    public static final int PRIORITY_NORMAL = 3;
-
     /** 恢复快照最大加载事件条数 */
     private static final int MAX_SNAPSHOT_EVENTS = 200;
 
@@ -72,7 +48,7 @@ public class AgentEventStore {
      */
     public void recordIntentClassified(String sessionId, Long userId, IntentClassifiedPayload payload) {
         String data = payloadMapper.toJson(payload);
-        record(sessionId, userId, EVENT_INTENT_CLASSIFIED, PRIORITY_CRITICAL,
+        record(sessionId, userId, AgentEventType.INTENT_CLASSIFIED, AgentEventPriority.CRITICAL,
             data, null, null, null);
     }
 
@@ -81,7 +57,7 @@ public class AgentEventStore {
      */
     public void recordIntermediateAnswer(String sessionId, Long userId, IntermediateAnswerPayload payload) {
         String data = payloadMapper.toJson(payload);
-        record(sessionId, userId, EVENT_INTERMEDIATE_ANSWER, PRIORITY_CRITICAL,
+        record(sessionId, userId, AgentEventType.INTERMEDIATE_ANSWER, AgentEventPriority.CRITICAL,
             data, null, null, null);
     }
 
@@ -90,7 +66,7 @@ public class AgentEventStore {
      */
     public void recordGuardrailTriggered(String sessionId, Long userId, GuardrailTriggeredPayload payload) {
         String data = payloadMapper.toJson(payload);
-        record(sessionId, userId, EVENT_GUARDRAIL_TRIGGERED, PRIORITY_CRITICAL,
+        record(sessionId, userId, AgentEventType.GUARDRAIL_TRIGGERED, AgentEventPriority.CRITICAL,
             data, null, null, null);
     }
 
@@ -99,7 +75,7 @@ public class AgentEventStore {
      */
     public void recordSelfReflection(String sessionId, Long userId, SelfReflectionPayload payload) {
         String data = payloadMapper.toJson(payload);
-        record(sessionId, userId, EVENT_SELF_REFLECTION, PRIORITY_HIGH,
+        record(sessionId, userId, AgentEventType.SELF_REFLECTION, AgentEventPriority.HIGH,
             data, null, null, null);
     }
 
@@ -108,7 +84,7 @@ public class AgentEventStore {
      */
     public void recordRetrievalStrategy(String sessionId, Long userId, RetrievalStrategyPayload payload) {
         String data = payloadMapper.toJson(payload);
-        record(sessionId, userId, EVENT_RETRIEVAL_STRATEGY, PRIORITY_HIGH,
+        record(sessionId, userId, AgentEventType.RETRIEVAL_STRATEGY, AgentEventPriority.HIGH,
             data, null, null, null);
     }
 
@@ -120,13 +96,13 @@ public class AgentEventStore {
      * @param sessionId  会话 ID
      * @param userId     用户 ID
      * @param eventType  事件类型
-     * @param priority   优先级 (1=Critical, 2=High, 3=Normal)
+     * @param priority   优先级
      * @param data       事件数据 JSON
      * @param toolName   Tool 名称（可空）
      * @param success    是否成功（可空）
      * @param durationMs 耗时 ms（可空）
      */
-    public void record(String sessionId, Long userId, String eventType, int priority,
+    public void record(String sessionId, Long userId, AgentEventType eventType, AgentEventPriority priority,
                        String data, @Nullable String toolName, @Nullable Boolean success,
                        @Nullable Long durationMs) {
         try {
@@ -149,7 +125,7 @@ public class AgentEventStore {
      */
     public void recordToolCall(String sessionId, Long userId, String toolName,
                                boolean success, String data, long durationMs) {
-        record(sessionId, userId, EVENT_TOOL_CALLED, PRIORITY_NORMAL,
+        record(sessionId, userId, AgentEventType.TOOL_CALLED, AgentEventPriority.NORMAL,
             data, toolName, success, durationMs);
     }
 
@@ -157,7 +133,7 @@ public class AgentEventStore {
      * 记录护栏触发事件（便捷方法，向后兼容）
      */
     public void recordGuardrail(String sessionId, Long userId, String reason, String data) {
-        record(sessionId, userId, EVENT_GUARDRAIL_TRIGGERED, PRIORITY_CRITICAL,
+        record(sessionId, userId, AgentEventType.GUARDRAIL_TRIGGERED, AgentEventPriority.CRITICAL,
             data, null, null, null);
     }
 
@@ -184,7 +160,7 @@ public class AgentEventStore {
         int budget = maxBytes;
 
         // P1: 意图分类 + 中间答案 + 护栏触发 -- 永远保留
-        for (AgentSessionEvent e : filterByPriority(events, PRIORITY_CRITICAL)) {
+        for (AgentSessionEvent e : filterByPriority(events, AgentEventPriority.CRITICAL)) {
             if (budget < 50) break;
             String line = formatEvent(e);
             sb.append(line).append("\n");
@@ -192,7 +168,7 @@ public class AgentEventStore {
         }
 
         // P2: 自省结果 + 检索策略历史
-        for (AgentSessionEvent e : filterByPriority(events, PRIORITY_HIGH)) {
+        for (AgentSessionEvent e : filterByPriority(events, AgentEventPriority.HIGH)) {
             if (budget < 50) break;
             String line = formatEvent(e);
             sb.append(line).append("\n");
@@ -202,7 +178,7 @@ public class AgentEventStore {
         // P3: Tool 调用统计（一行摘要）
         if (budget > 50) {
             long toolCount = events.stream()
-                .filter(e -> EVENT_TOOL_CALLED.equals(e.getEventType()))
+                .filter(e -> e.getEventType() == AgentEventType.TOOL_CALLED)
                 .count();
             sb.append("Tools used: ").append(toolCount).append(" calls total\n");
         }
@@ -229,7 +205,7 @@ public class AgentEventStore {
 
     // === 内部辅助 ===
 
-    private List<AgentSessionEvent> filterByPriority(List<AgentSessionEvent> events, int priority) {
+    private List<AgentSessionEvent> filterByPriority(List<AgentSessionEvent> events, AgentEventPriority priority) {
         return events.stream()
             .filter(e -> e.getPriority() == priority)
             .collect(Collectors.toList());
@@ -243,45 +219,43 @@ public class AgentEventStore {
      */
     private String formatEvent(AgentSessionEvent event) {
         return switch (event.getEventType()) {
-            case EVENT_INTENT_CLASSIFIED -> {
+            case INTENT_CLASSIFIED -> {
                 IntentClassifiedPayload p = payloadMapper.toIntentClassified(event.getData());
                 yield (p != null)
                     ? "- Intent: %s (confidence=%.2f)".formatted(p.intent(), p.confidence())
                     : "- Intent: " + event.getData();
             }
-            case EVENT_INTERMEDIATE_ANSWER -> {
+            case INTERMEDIATE_ANSWER -> {
                 IntermediateAnswerPayload p = payloadMapper.toIntermediateAnswer(event.getData());
                 yield (p != null)
                     ? "- Answer: source=%s, subQuery=%s, docs=%d".formatted(
                         p.source(), truncate(p.subQuery(), 40), p.citedDocIds().size())
                     : "- Answer: " + event.getData();
             }
-            case EVENT_GUARDRAIL_TRIGGERED -> {
+            case GUARDRAIL_TRIGGERED -> {
                 GuardrailTriggeredPayload p = payloadMapper.toGuardrailTriggered(event.getData());
                 yield (p != null)
                     ? "- Guardrail: %s (%s) -> %s".formatted(p.guardrailName(), p.reason(), p.action())
                     : "- Guardrail: " + event.getData();
             }
-            case EVENT_SELF_REFLECTION -> {
+            case SELF_REFLECTION -> {
                 SelfReflectionPayload p = payloadMapper.toSelfReflection(event.getData());
                 yield (p != null)
                     ? "- Reflection: relevance=%.2f, completeness=%.2f, suggestion=%s".formatted(
                         p.relevanceScore(), p.completenessScore(), p.suggestion())
                     : "- Reflection: " + event.getData();
             }
-            case EVENT_RETRIEVAL_STRATEGY -> {
+            case RETRIEVAL_STRATEGY -> {
                 RetrievalStrategyPayload p = payloadMapper.toRetrievalStrategy(event.getData());
                 yield (p != null)
                     ? "- Strategy: %s (round=%d, subQueries=%d)".formatted(
                         p.strategy(), p.targetRound(), p.subQueries().size())
                     : "- Strategy: " + event.getData();
             }
-            case EVENT_TOOL_CALLED ->
+            case TOOL_CALLED ->
                 "- Tool[" + event.getToolName() + "]: "
                     + (Boolean.TRUE.equals(event.getSuccess()) ? "ok" : "failed")
                     + " (" + event.getDurationMs() + "ms)";
-            default ->
-                "- " + event.getEventType() + ": " + event.getData();
         };
     }
 

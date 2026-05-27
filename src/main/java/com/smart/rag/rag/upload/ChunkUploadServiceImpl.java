@@ -9,6 +9,7 @@ import com.smart.rag.rag.etl.EtlStatus;
 import com.smart.rag.rag.mapper.RagDocumentMapper;
 import com.smart.rag.rag.service.FileStorageService;
 import com.smart.rag.rag.service.EtlDispatchService;
+import com.smart.rag.rag.service.DocumentDedupService;
 import com.smart.rag.rag.service.impl.DocumentValidator;
 import com.smart.rag.security.util.SecurityUtils;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
@@ -64,6 +65,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
     private final DefaultRedisScript<List> atomicChunkUploadScript;
     private final ThreadPoolTaskExecutor mergeExecutor;
     private final ApplicationEventPublisher eventPublisher;
+    private final @Nullable DocumentDedupService documentDedupService;
 
     public ChunkUploadServiceImpl(
             StringRedisTemplate redisTemplate,
@@ -77,7 +79,8 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
             EtlDispatchService etlDispatchService,
             TeamStatusService teamStatusService,
             ThreadPoolTaskExecutor mergeExecutor,
-            ApplicationEventPublisher eventPublisher
+            ApplicationEventPublisher eventPublisher,
+            @Nullable DocumentDedupService documentDedupService
     ) {
         this.redisTemplate = redisTemplate;
         this.minioClient = minioClient;
@@ -91,6 +94,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         this.teamStatusService = teamStatusService;
         this.mergeExecutor = mergeExecutor;
         this.eventPublisher = eventPublisher;
+        this.documentDedupService = documentDedupService;
 
         this.atomicChunkUploadScript = new DefaultRedisScript<>();
         this.atomicChunkUploadScript.setLocation(new ClassPathResource("scripts/atomic_chunk_upload.lua"));
@@ -109,11 +113,15 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         // init 端点速率限制
         checkRateLimit(userId);
 
-        // 秒传检查
-        RagDocument existing = findExistingForQuickUpload(request.fileMd5(), userId);
-        if (existing != null) {
-            log.info("Quick upload hit: fileMd5={}, userId={}, docId={}", request.fileMd5(), userId, existing.getId());
-            return ChunkUploadResult.quickUploaded(existing.getId(), existing.getFileName());
+        // 秒传检查：BloomFilter 预筛 + DB 确认
+        if (documentDedupService != null && !documentDedupService.mayExist(request.fileMd5())) {
+            log.debug("BloomFilter miss for fileMd5={}, skipping quick-upload check", request.fileMd5());
+        } else {
+            RagDocument existing = findExistingForQuickUpload(request.fileMd5(), userId);
+            if (existing != null) {
+                log.info("Quick upload hit: fileMd5={}, userId={}, docId={}", request.fileMd5(), userId, existing.getId());
+                return ChunkUploadResult.quickUploaded(existing.getId(), existing.getFileName());
+            }
         }
 
         // 续传检查
@@ -370,6 +378,11 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         Long userId = Long.parseLong(session.get("userId"));
         Long docId = persistDocument(session, targetObjectKey, actualMd5, userId, teamId);
         log.info("Chunk upload merged: uploadId={}, docId={}, md5={}", uploadId, docId, actualMd5);
+
+        // 5.1 将文件 MD5 加入 BloomFilter 去重
+        if (documentDedupService != null && actualMd5 != null) {
+            documentDedupService.add(actualMd5);
+        }
 
         // 6. 清理临时分片
         cleanupTempChunks(bucket, basePath, totalChunks);

@@ -11,6 +11,7 @@ import com.smart.rag.rag.entity.RagDocument;
 import com.smart.rag.rag.mapper.RagDocumentMapper;
 import com.smart.rag.rag.service.EtlDispatchService;
 import com.smart.rag.rag.service.FileStorageService;
+import com.smart.rag.rag.service.DocumentDedupService;
 import com.smart.rag.rag.service.impl.DocumentValidator;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
@@ -50,19 +51,22 @@ public class PersonalUploadStrategy implements UploadStrategy {
     private final BucketResolver bucketResolver;
     private final DocumentValidator documentValidator;
     private final ApplicationEventPublisher eventPublisher;
+    private final @Nullable DocumentDedupService documentDedupService;
 
     public PersonalUploadStrategy(FileStorageService fileStorageService,
                                    EtlDispatchService etlDispatchService,
                                    RagDocumentMapper ragDocumentMapper,
                                    BucketResolver bucketResolver,
                                    DocumentValidator documentValidator,
-                                   ApplicationEventPublisher eventPublisher) {
+                                   ApplicationEventPublisher eventPublisher,
+                                   @Nullable DocumentDedupService documentDedupService) {
         this.fileStorageService = fileStorageService;
         this.etlDispatchService = etlDispatchService;
         this.ragDocumentMapper = ragDocumentMapper;
         this.bucketResolver = bucketResolver;
         this.documentValidator = documentValidator;
         this.eventPublisher = eventPublisher;
+        this.documentDedupService = documentDedupService;
     }
 
     @Override
@@ -79,6 +83,9 @@ public class PersonalUploadStrategy implements UploadStrategy {
 
         String fileMd5 = computeMd5(file);
         RagDocument ragDoc = persistDocument(originalFilename, file.getSize(), mimeType, storageKey, bucket, userId, fileMd5);
+        if (documentDedupService != null && ragDoc.getFileMd5() != null) {
+            documentDedupService.add(ragDoc.getFileMd5());
+        }
         eventPublisher.publishEvent(new DocumentCreatedEvent(ragDoc.getId(), replaceDocumentId, userId, ragDoc.getTeamId()));
         log.info("Document uploaded: id={}, file={}, size={}, userId={}", ragDoc.getId(), originalFilename, file.getSize(), userId);
 
@@ -112,6 +119,9 @@ public class PersonalUploadStrategy implements UploadStrategy {
 
             String fileMd5 = computeMd5(file);
             RagDocument ragDoc = persistDocument(originalFilename, file.getSize(), mimeType, storageKey, bucket, userId, fileMd5);
+            if (documentDedupService != null && ragDoc.getFileMd5() != null) {
+                documentDedupService.add(ragDoc.getFileMd5());
+            }
             eventPublisher.publishEvent(new DocumentCreatedEvent(ragDoc.getId(), null, userId, ragDoc.getTeamId()));
             log.debug("Document uploaded (batch): id={}, file={}, size={}, userId={}", ragDoc.getId(), originalFilename, file.getSize(), userId);
 

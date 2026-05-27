@@ -11,6 +11,8 @@ import com.smart.rag.rag.etl.EtlStatus;
 import com.smart.rag.rag.event.EtlCompletedEvent;
 import com.smart.rag.rag.service.EtlDispatchService;
 import org.jspecify.annotations.Nullable;
+import org.redisson.api.RLock;
+import org.redisson.api.RedissonClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationEventPublisher;
@@ -20,6 +22,7 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 
 /**
  * ETL 调度服务实现
@@ -32,19 +35,28 @@ public class EtlDispatchServiceImpl implements EtlDispatchService {
 
     private static final Logger log = LoggerFactory.getLogger(EtlDispatchServiceImpl.class);
 
+    private static final String ETL_LOCK_PREFIX = "smart-rag:etl:lock:";
+    /** 等待获取锁的最大时间 */
+    private static final long LOCK_WAIT_SECONDS = 30;
+    /** 锁自动释放时间（watchdog 会续期） */
+    private static final long LOCK_LEASE_SECONDS = 300;
+
     private final EtlRouteStrategyFactory strategyFactory;
     private final ThreadPoolTaskExecutor etlIoExecutor;
     private final Loader loader;
     private final ApplicationEventPublisher eventPublisher;
+    private final @Nullable RedissonClient redissonClient;
 
     public EtlDispatchServiceImpl(EtlRouteStrategyFactory strategyFactory,
                                   @Qualifier("etlIoExecutor") ThreadPoolTaskExecutor etlIoExecutor,
                                   Loader loader,
-                                  ApplicationEventPublisher eventPublisher) {
+                                  ApplicationEventPublisher eventPublisher,
+                                  @Nullable RedissonClient redissonClient) {
         this.strategyFactory = strategyFactory;
         this.etlIoExecutor = etlIoExecutor;
         this.loader = loader;
         this.eventPublisher = eventPublisher;
+        this.redissonClient = redissonClient;
     }
 
     @Override
@@ -56,7 +68,33 @@ public class EtlDispatchServiceImpl implements EtlDispatchService {
         EtlRouteStrategy strategy = strategyFactory.resolve(candidates);
         log.info("ETL dispatch: {} candidates → strategy={}", candidates.size(), strategy.getClass().getSimpleName());
 
-        return strategy.execute(candidates);
+        if (redissonClient == null) {
+            // No Redisson (test profile), execute without lock
+            return strategy.execute(candidates);
+        }
+
+        // Acquire distributed locks for all candidates
+        List<RLock> locks = candidates.stream()
+            .map(c -> redissonClient.getLock(ETL_LOCK_PREFIX + c.documentId()))
+            .toList();
+
+        try {
+            // Try to acquire all locks sequentially
+            for (RLock lock : locks) {
+                if (!lock.tryLock(LOCK_WAIT_SECONDS, LOCK_LEASE_SECONDS, TimeUnit.SECONDS)) {
+                    log.warn("ETL lock acquisition failed for document, skipping: {}", lock.getName());
+                    // Release any already-acquired locks
+                    locks.forEach(l -> { if (l.isHeldByCurrentThread()) l.unlock(); });
+                    throw new BusinessException(ErrorCode.ETL_FAILED, "文档正在被其他实例处理，请稍后重试");
+                }
+            }
+            return strategy.execute(candidates);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new BusinessException(ErrorCode.ETL_FAILED, "ETL 处理被中断");
+        } finally {
+            locks.forEach(l -> { if (l.isHeldByCurrentThread()) l.unlock(); });
+        }
     }
 
     @Override

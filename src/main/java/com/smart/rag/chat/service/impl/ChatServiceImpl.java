@@ -14,11 +14,12 @@ import com.smart.rag.chat.fallback.StreamRetryHandler;
 import com.smart.rag.chat.mode.ChatModeStrategy;
 import com.smart.rag.chat.mode.ModeRouter;
 import com.smart.rag.chat.provider.ModelRouter;
-import com.smart.rag.chat.service.AgentChainResult;
+import com.smart.rag.chat.service.AdvisorChainContext;
 import com.smart.rag.chat.service.ChatConversationHelper;
 import com.smart.rag.chat.service.ChatRequestSpecFactory;
 import com.smart.rag.chat.service.ChatService;
 import com.smart.rag.chat.service.ChatUsageTracker;
+import com.smart.rag.chat.service.ModeChainResult;
 import com.smart.rag.common.errorcode.ErrorCode;
 import com.smart.rag.common.uuid.UuidV7;
 import com.smart.rag.conversation.util.ConversationIdUtil;
@@ -40,7 +41,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * 聊天服务（编排层）— 请求预处理 → 委托工厂构建请求 → 调用并处理响应。
+ * 聊天服务（编排层）-- 请求预处理 -> 委托工厂构建请求 -> 调用并处理响应。
  * 集成兜底策略：阻塞式全链路降级，流式同模型重试后降级。
  */
 @Service
@@ -123,7 +124,7 @@ public class ChatServiceImpl implements ChatService {
                 ChatResponse response = doChat(candidateRequest, meta);
 
                 if (isFallback) {
-                    log.info("Fallback succeeded: '{}' → '{}' (attempt {}/{})",
+                    log.info("Fallback succeeded: '{}' -> '{}' (attempt {}/{})",
                             requestedModel, candidateModel, i + 1, chain.size());
                 }
                 return response;
@@ -160,7 +161,7 @@ public class ChatServiceImpl implements ChatService {
                     : request;
 
             if (isFallback) {
-                log.info("Stream fallback: '{}' → '{}'", requestedModel, modelId);
+                log.info("Stream fallback: '{}' -> '{}'", requestedModel, modelId);
             }
 
             return doStream(modelId, candidateRequest);
@@ -181,7 +182,7 @@ public class ChatServiceImpl implements ChatService {
         }
 
         ChatClient.ChatClientRequestSpec requestSpec = requestSpecFactory.createSpec(
-                ctx.chatClient, ctx.route, request, ctx.conversationId, ctx.modeStrategy, cagCtx);
+                ctx.chatClient, ctx.route, request, ctx.conversationId, ctx.modeStrategy, cagCtx, ctx.userId);
 
         org.springframework.ai.chat.model.ChatResponse aiResponse = requestSpec.call().chatResponse();
 
@@ -205,47 +206,49 @@ public class ChatServiceImpl implements ChatService {
         long agentStart = System.currentTimeMillis();
 
         try {
-            // 1. 构建 Agent Advisor 链（含意图分类）
-            AgentChainResult agentResult = advisorChainFactory.buildAgentChain(
-                ctx.conversationId, request, ctx.modeStrategy, cagCtx, ctx.userId);
+            // 1. 构建链 -- 统一走策略，返回 ModeChainResult
+            AdvisorChainContext chainCtx = new AdvisorChainContext(
+                ctx.conversationId, request, ctx.userId, cagCtx, ctx.route);
+            ModeChainResult result = ctx.modeStrategy.buildAdvisorChain(chainCtx);
 
-            // 2. 构建 ChatClient 请求 — 使用 TokenCountingChatModel 包装真实 ChatModel
+            // 2. 从 ModeChainResult 提取 Agent 元数据
+            // 3. 构建 ChatClient 请求（使用 tokenCountingModel）
             //    这样每轮 LLM 调用都会经过 token 计数装饰器，护栏才能正确触发 TOKEN_LIMIT
-            ChatClient agentChatClient = ChatClient.builder(agentResult.tokenCountingModel()).build();
+            ChatClient agentChatClient = ChatClient.builder(result.tokenCountingModel()).build();
             ChatClient.ChatClientRequestSpec spec = agentChatClient.prompt()
                 .user(request.message())
-                .advisors(a -> a.advisors(agentResult.chain())
+                .advisors(a -> a.advisors(result.chain())
                     .param(org.springframework.ai.chat.memory.ChatMemory.CONVERSATION_ID,
                         ctx.conversationId));
 
-            // 3. 执行 Agent 调用（ReAct 循环在 ToolCallAdvisor 内部完成）
+            // 4. 执行 Agent 调用（ReAct 循环在 ToolCallAdvisor 内部完成）
             org.springframework.ai.chat.model.ChatResponse aiResponse = spec.call().chatResponse();
 
-            // 4. 提取结果
+            // 5. 提取结果
             Generation generation = (aiResponse != null) ? aiResponse.getResult() : null;
             String content = generation != null ? generation.getOutput().getText() : "";
             long durationMs = System.currentTimeMillis() - agentStart;
 
-            // 5. 记录 usage
+            // 6. 记录 usage
             if (aiResponse != null) {
                 usageTracker.recordUsage(ctx.conversationId, ctx.route.toCompositeId(), aiResponse, ctx.elapsed());
             } else {
                 usageTracker.recordUsage(ctx.conversationId, ctx.route.toCompositeId(), ctx.elapsed());
             }
 
-            // 6. 保存消息
+            // 7. 保存消息
             conversationHelper.saveMessagesAndNotify(ctx.conversationId, request.message(), content,
                 ctx.route.toCompositeId(), aiResponse, ctx.elapsed());
 
-            // 7. 构建 Agent 元数据
+            // 8. 构建 Agent 元数据
             Map<String, Object> agentMetadata = new LinkedHashMap<>();
-            agentMetadata.put("intent", agentResult.intentResult().intent().name());
-            agentMetadata.put("confidence", agentResult.intentResult().confidence());
-            agentMetadata.put("retrievalRounds", agentResult.workspace().getRetrievalRound());
+            agentMetadata.put("intent", result.intentResult().intent().name());
+            agentMetadata.put("confidence", result.intentResult().confidence());
+            agentMetadata.put("retrievalRounds", result.workspace().getRetrievalRound());
             agentMetadata.put("durationMs", durationMs);
 
             log.info("Agent chat completed: intent={}, rounds={}, duration={}ms, conversation={}",
-                agentResult.intentResult().intent(), agentResult.workspace().getRetrievalRound(),
+                result.intentResult().intent(), result.workspace().getRetrievalRound(),
                 durationMs, ctx.conversationId);
 
             return new ChatResponse(ctx.route.toCompositeId(), content, ctx.rawConversationId,
@@ -271,7 +274,7 @@ public class ChatServiceImpl implements ChatService {
         ChatModeStrategy multiTurnStrategy = modeRouter.route("MULTI_TURN");
 
         ChatClient.ChatClientRequestSpec requestSpec = requestSpecFactory.createSpec(
-            ctx.chatClient, ctx.route, request, ctx.conversationId, multiTurnStrategy, cagCtx);
+            ctx.chatClient, ctx.route, request, ctx.conversationId, multiTurnStrategy, cagCtx, ctx.userId);
 
         org.springframework.ai.chat.model.ChatResponse aiResponse = requestSpec.call().chatResponse();
 
@@ -290,8 +293,16 @@ public class ChatServiceImpl implements ChatService {
         conversationHelper.ensureConversationExists(ctx.userId, ctx.conversationId, request.model());
         RequestContext cagCtx = buildCagContext(ctx, request);
 
+        // Step 1: Agent 模式暂不支持流式 -- ReAct 循环的多轮工具调用在流式中需特殊处理
+        // 使用 BusinessException 而非 UnsupportedOperationException，
+        // 后者不在 FallbackEligibility 不可降级列表中，会被流式 fallback 误判为可降级并重试
+        if (ctx.modeStrategy.isAgentMode()) {
+            throw new BusinessException(ErrorCode.UNSUPPORTED_OPERATION,
+                "Agent mode does not support streaming in this version. Use blocking call instead.");
+        }
+
         ChatClient.ChatClientRequestSpec requestSpec = requestSpecFactory.createSpec(
-                ctx.chatClient, ctx.route, request, ctx.conversationId, ctx.modeStrategy, cagCtx);
+                ctx.chatClient, ctx.route, request, ctx.conversationId, ctx.modeStrategy, cagCtx, ctx.userId);
 
         StringBuilder collectedContent = new StringBuilder();
         final int maxContentLength = 1 << 20; // 1 MB
@@ -373,7 +384,7 @@ public class ChatServiceImpl implements ChatService {
                 ctx.userId, ctx.conversationId, request.isRagEnabled(), msgCount);
     }
 
-    /** 请求上下文 — 封装预处理结果 */
+    /** 请求上下文 -- 封装预处理结果 */
     private static class ChatContext {
         final ChatClient chatClient;
         final ModelRouter.Route route;

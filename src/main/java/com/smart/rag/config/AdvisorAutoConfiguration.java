@@ -7,10 +7,7 @@ import com.smart.rag.chat.advisor.RateLimiter;
 import com.smart.rag.chat.advisor.TokenBucketLimiter;
 import com.smart.rag.chat.content.ContentFilterService;
 import com.smart.rag.chat.content.SensitiveWordFilterService;
-import com.smart.rag.chat.mode.ModeRouter;
-import com.smart.rag.chat.mode.ChatModeStrategy;
-import com.smart.rag.chat.mode.SimpleModeStrategy;
-import com.smart.rag.chat.mode.MultiTurnModeStrategy;
+
 import org.redisson.api.RedissonClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -28,7 +25,6 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.scheduling.annotation.Scheduled;
 
 import java.time.Duration;
-import java.util.List;
 
 /**
  * Advisor 编排配置
@@ -123,19 +119,6 @@ public class AdvisorAutoConfiguration {
     }
 
     // ==================== 对话模式路由 ====================
-
-    @Bean
-    public ChatModeStrategy simpleModeStrategy() {
-        return new SimpleModeStrategy();
-    }
-
-    @Bean
-    public ChatModeStrategy multiTurnModeStrategy() {
-        return new MultiTurnModeStrategy();
-    }
-
-    @Bean
-    public ModeRouter modeRouter(List<ChatModeStrategy> strategies) {
-        return new ModeRouter(strategies);
-    }
+    // SimpleModeStrategy / MultiTurnModeStrategy / AgentModeStrategy 已改为 @Component 自动注册
+    // ModeRouter 已改为 @Component，构造时 fail-fast 校验全部 ChatMode
 }

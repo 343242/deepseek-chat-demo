@@ -64,6 +64,7 @@ public enum ErrorCode {
     PROVIDER_NOT_FOUND(40003, "厂商未配置"),
     CONTENT_FILTERED(40004, "内容包含敏感词"),
     USAGE_PARAM_MISSING(40005, "请指定 model 或 conversation 参数"),
+    UNSUPPORTED_OPERATION(40006, "当前版本不支持此操作"),
 
     // ==================== RAG 50xxx ====================
     UPLOAD_FILE_EMPTY(50001, "上传文件不能为空"),

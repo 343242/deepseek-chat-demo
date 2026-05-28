@@ -1,9 +1,24 @@
 package com.smart.rag.chat.mode;
 
+import com.smart.rag.chat.service.AdvisorChainContext;
+import com.smart.rag.chat.service.AdvisorInfrastructure;
+import com.smart.rag.chat.service.ModeChainResult;
+import org.springframework.stereotype.Component;
+
+import java.util.ArrayList;
+import java.util.List;
+
 /**
- * SIMPLE 模式策略 — 单轮对话，无记忆、无上下文、无思考
+ * SIMPLE 模式策略 -- 单轮对话，无记忆、无上下文
  */
+@Component
 public class SimpleModeStrategy implements ChatModeStrategy {
+
+    private final AdvisorInfrastructure infra;
+
+    public SimpleModeStrategy(AdvisorInfrastructure infra) {
+        this.infra = infra;
+    }
 
     @Override
     public ChatMode getMode() {
@@ -11,17 +26,25 @@ public class SimpleModeStrategy implements ChatModeStrategy {
     }
 
     @Override
-    public boolean isMemoryEnabled() {
-        return false;
+    public ModeChainResult buildAdvisorChain(AdvisorChainContext ctx) {
+        List<org.springframework.ai.chat.client.advisor.api.Advisor> chain = new ArrayList<>();
+
+        // SIMPLE: 无上下文注入、无记忆
+        chain.addAll(infra.getGlobalAdvisors());
+
+        if (ctx.request().isRagEnabled()) {
+            chain.add(infra.getRagAdvisorFactory()
+                .create(ctx.userId(), ctx.request().teamId()));
+        }
+
+        if (infra.hasTools()) {
+            chain.add(infra.getToolCallAdvisor());
+        }
+
+        return ModeChainResult.standard(chain);
     }
 
     @Override
-    public boolean isContextEnabled() {
-        return false;
-    }
-
-    @Override
-    public boolean isThinkingEnabled() {
-        return false;
-    }
+    @Deprecated
+    public boolean isMemoryEnabled() { return false; }
 }

@@ -12,8 +12,6 @@ import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.prompt.ChatOptions;
 import org.springframework.stereotype.Component;
 
-import java.util.List;
-
 /**
  * ChatClient 请求规格构建工厂
  * <p>
@@ -21,9 +19,9 @@ import java.util.List;
  * <ul>
  *   <li>用户消息设置</li>
  *   <li>Advisor 链挂载</li>
- *   <li>Tool Calling 绑定</li>
- *   <li>System Prompt 解析（复合格式 → 纯 modelId 降级）</li>
- *   <li>模型参数热调整（复合格式 → 纯 modelId 降级）</li>
+ *   <li>Tool Calling 绑定（尊重 ModeChainResult.skipGlobalTools）</li>
+ *   <li>System Prompt 解析（复合格式 -> 纯 modelId 降级，尊重 ModeChainResult.skipDbSystemPrompt）</li>
+ *   <li>模型参数热调整（复合格式 -> 纯 modelId 降级，尊重 ModeChainResult.skipDbModelOptions）</li>
  * </ul>
  * <p>
  * 单一职责：只负责将请求参数转换为 ChatClientRequestSpec，不关心调用方式和结果处理。
@@ -50,7 +48,7 @@ public class ChatRequestSpecFactory {
     }
 
     /**
-     * 构建 ChatClientRequestSpec
+     * 构建 ChatClientRequestSpec（Phase 2 新签名 -- 含 userId 和 route）
      *
      * @param chatClient      目标 ChatClient
      * @param route           模型路由结果
@@ -58,6 +56,7 @@ public class ChatRequestSpecFactory {
      * @param conversationId  隔离后的对话 ID
      * @param modeStrategy    对话模式策略
      * @param cagContext      CAG 请求上下文（可能为 null，表示 CAG 未启用）
+     * @param userId          用户 ID
      * @return 已配置好的请求规格
      */
     public ChatClient.ChatClientRequestSpec createSpec(ChatClient chatClient,
@@ -65,35 +64,56 @@ public class ChatRequestSpecFactory {
                                                        ChatRequest request,
                                                        String conversationId,
                                                        ChatModeStrategy modeStrategy,
-                                                       RequestContext cagContext) {
-        List<org.springframework.ai.chat.client.advisor.api.Advisor> advisors =
-                advisorChainFactory.buildChain(conversationId, request, modeStrategy);
+                                                       RequestContext cagContext,
+                                                       Long userId) {
+        ModeChainResult result = advisorChainFactory.buildChain(
+            conversationId, request, modeStrategy, cagContext, userId, route);
 
         ChatClient.ChatClientRequestSpec spec = chatClient.prompt()
                 .user(request.message())
-                .advisors(a -> a.advisors(advisors)
+                .advisors(a -> a.advisors(result.chain())
                         .param(org.springframework.ai.chat.memory.ChatMemory.CONVERSATION_ID,
                                 conversationId));
 
-        // Tool Calling
-        if (advisorChainFactory.hasTools()) {
+        // Tool Calling -- Agent 模式跳过（有自建 ToolCallAdvisor）
+        if (!result.skipGlobalTools() && advisorChainFactory.hasTools()) {
             spec = spec.tools((Object) advisorChainFactory.getToolCallbacks());
         }
 
-        // System Prompt（CAG 增强）
-        String systemPrompt = resolveSystemPrompt(route);
-        systemPrompt = contextPromptInjector.inject(systemPrompt, cagContext);
-        if (systemPrompt != null && !systemPrompt.isBlank()) {
-            spec = spec.system(systemPrompt);
+        // System Prompt（CAG 增强）-- Agent 模式跳过（有 AgentSystemPromptAdvisor）
+        if (!result.skipDbSystemPrompt()) {
+            String systemPrompt = resolveSystemPrompt(route);
+            systemPrompt = contextPromptInjector.inject(systemPrompt, cagContext);
+            if (systemPrompt != null && !systemPrompt.isBlank()) {
+                spec = spec.system(systemPrompt);
+            }
         }
 
-        // 模型参数
-        ChatOptions options = resolveChatOptions(route);
-        if (options != null) {
-            spec = spec.options(options);
+        // 模型参数 -- Agent 模式跳过（使用自有模型配置）
+        if (!result.skipDbModelOptions()) {
+            ChatOptions options = resolveChatOptions(route);
+            if (options != null) {
+                spec = spec.options(options);
+            }
         }
 
         return spec;
+    }
+
+    /**
+     * 构建 ChatClientRequestSpec（旧签名 -- 向后兼容，内部提取 userId）
+     *
+     * @deprecated 使用 {@link #createSpec(ChatClient, ModelRouter.Route, ChatRequest, String, ChatModeStrategy, RequestContext, Long)} 代替
+     */
+    @Deprecated
+    public ChatClient.ChatClientRequestSpec createSpec(ChatClient chatClient,
+                                                       ModelRouter.Route route,
+                                                       ChatRequest request,
+                                                       String conversationId,
+                                                       ChatModeStrategy modeStrategy,
+                                                       RequestContext cagContext) {
+        return createSpec(chatClient, route, request, conversationId, modeStrategy,
+            cagContext, com.smart.rag.security.util.SecurityUtils.getCurrentUserId());
     }
 
     /**

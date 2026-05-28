@@ -2,10 +2,14 @@ package com.smart.rag.chat.mode;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.stereotype.Component;
 
+import java.util.Arrays;
 import java.util.EnumMap;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * 对话模式路由器
@@ -14,7 +18,10 @@ import java.util.Map;
  * 通过 Spring 构造器注入自动发现所有 ChatModeStrategy 实现（OCP）。
  * <p>
  * 新增模式只需新增 ChatModeStrategy 实现类，无需修改本类。
+ * <p>
+ * 构造时 fail-fast 校验：所有 ChatMode 枚举值必须有对应策略注册，且无重复。
  */
+@Component
 public class ModeRouter {
 
     private static final Logger log = LoggerFactory.getLogger(ModeRouter.class);
@@ -23,15 +30,24 @@ public class ModeRouter {
 
     public ModeRouter(List<ChatModeStrategy> strategies) {
         this.strategyMap = new EnumMap<>(ChatMode.class);
-        for (ChatModeStrategy strategy : strategies) {
-            strategyMap.put(strategy.getMode(), strategy);
-            log.info("Registered chat mode strategy: {}", strategy.getMode());
+        Set<ChatMode> seen = EnumSet.noneOf(ChatMode.class);
+        for (ChatModeStrategy s : strategies) {
+            ChatMode mode = s.getMode();
+            if (!seen.add(mode)) {
+                throw new IllegalStateException(
+                    "Duplicate ChatModeStrategy for mode: " + mode);
+            }
+            strategyMap.put(mode, s);
+            log.info("Registered chat mode strategy: {}", mode);
         }
 
-        // 确保默认策略存在
-        if (!strategyMap.containsKey(ChatMode.SIMPLE)) {
-            strategyMap.put(ChatMode.SIMPLE, new SimpleModeStrategy());
-            log.info("Fallback: registered default SimpleModeStrategy");
+        // fail-fast: 所有 ChatMode 必须有对应策略注册
+        for (ChatMode required : ChatMode.values()) {
+            if (!strategyMap.containsKey(required)) {
+                throw new IllegalStateException(
+                    "No ChatModeStrategy registered for mode: " + required
+                    + ". Required modes: " + Arrays.toString(ChatMode.values()));
+            }
         }
     }
 

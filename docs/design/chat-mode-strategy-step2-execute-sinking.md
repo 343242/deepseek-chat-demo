@@ -629,13 +629,13 @@ protected void onStreamComplete(StrategyExecutionContext ctx, String content,
 
 ### 7.18 仍待落地的问题
 
-> 以下问题不是设计思路上的残留，而是按当前项目代码和接口形状，真正落地时仍会碰到的实现缺口。
+> 以下问题是当前文档里仍会卡真实落地的实现缺口，不是概念上的残留。
 
 | # | 等级 | 问题 | 说明 | 建议 |
 |---|------|------|------|------|
-| 31 | HIGH | `StrategyExecutionContext` 仍缺少显式耗时语义 | 文档已加入 `rawConversationId`，但 `processResult()` 和 `executeStream()` 仍需要稳定的耗时来源；当前项目用 `ChatContext.elapsed()`，而新 record 只是数据容器，没有统一耗时接口 | 在 `StrategyExecutionContext` 中加入 `startTimeMs` + `elapsed()`，或直接携带 `durationMs`，让 `processResult()` / `executeStream()` 不再依赖外部隐式计时 |
-| 32 | HIGH | `processResult()` 仍需要和现有 `ChatUsageTracker` / `ChatConversationHelper` 的真实签名逐项对齐 | 当前项目里 `recordUsage(...)` 和 `saveMessagesAndNotify(...)` 都明确需要 `durationMs`；如果实现时只按伪代码搬迁，容易漏传耗时或保留错误方法名 | 把 `processResult()` 的伪代码改成和当前服务签名一致的最终形态，显式传 `ctx.elapsed()`，并避免出现不存在的 `recordUsage(...)` / `saveMessages(...)` 简写 |
-| 33 | MEDIUM | `onStreamComplete()` 里写入消息的依赖形状仍与当前项目不一致 | 当前项目可直接复用的是 `ChatConversationHelper.saveMessagesAndNotify()` 和 `savePartialResponse()`；如果策略直接持有 `messageService`，还要额外拆出一层持久化 API | 统一用 `ChatConversationHelper` 做流式收尾，或者在设计里明确新增一个专门的 stream persistence facade |
-| 34 | MEDIUM | Phase A 迁移步骤与正文仍存在局部不一致 | 正文已改为 `ObjectProvider<MultiTurnModeStrategy>`，但迁移步骤里仍保留过旧表达，容易让实现者回到 `ModeRouter` 方案 | 同步清理 Phase A、风险表和代码示例中的过时措辞，只保留一种实现路径 |
-| 35 | MEDIUM | `executeWithFallback()` 仍然只是示意，不足以直接指导实现 | 文档已经说明外层 fallback loop 保留，但正文仍放了一个 catch `ModelException` 的示例，和当前 `FallbackEligibility` 机制不是同一层次 | 把这段改成纯说明性文字，或者直接删除示意代码，避免实现时误把模型 fallback 缩窄成异常类型分支 |
-| 36 | LOW | `Agent` 流式章节仍属于 Phase C 预研，不是可落地主路径 | 当前文档已经把它拆出主路径，但实现者如果直接按章节执行，仍会碰到缺少完整验证的组合风险 | 在章节标题或开头再强调一次“仅预研，不纳入 Step 2 落地范围”，避免误读 |
+| 31 | HIGH | `StrategyExecutionContext` 没有 `elapsed()` / `startTimeMs` | 文档里 `StrategyExecutionContext` 只有数据字段，但后面 `executeStream()` / `processResult()` 仍在调用 `ctx.elapsed()`；按当前形状实现会直接编译失败 | 给 `StrategyExecutionContext` 增加 `long startTimeMs` 和 `elapsed()`，或直接携带 `durationMs`，避免依赖外部隐式计时 |
+| 32 | HIGH | `processResult()` 的 `recordUsage(...)` / `saveMessages(...)` 调用不匹配当前项目 API | 当前项目的 `ChatUsageTracker.recordUsage` 和 `ChatConversationHelper.saveMessagesAndNotify` 都需要 `durationMs`；如果照文档落地，容易漏参或写出不存在的方法名 | 把文档里的伪代码改成真实签名：`usageTracker.recordUsage(..., aiResponse, ctx.elapsed())` 和 `conversationHelper.saveMessagesAndNotify(..., aiResponse, ctx.elapsed())` |
+| 33 | HIGH | `onStreamComplete()` 使用 `messageService.save(...)` / `savePartialResponse(...)`，但当前项目没有这个策略层依赖形状 | 现有可复用的实现是 `ChatConversationHelper.saveMessagesAndNotify()` 和 `savePartialResponse()`；如果策略自己做流式收尾，应直接注入 `ChatConversationHelper` | 把流式收尾依赖改成 `ChatConversationHelper`，不要引入文档中不存在的 `messageService` 形状 |
+| 34 | MEDIUM | 文档内部仍有 `AgentModeStrategy` 注入 `ModeRouter` 的旧表达 | 你已经把实现路径改成 `ObjectProvider<MultiTurnModeStrategy>`，但正文或风险表里仍可能残留旧说法，容易让实现者重新写出循环依赖 | 全文统一成一种说法，只保留 `ObjectProvider<MultiTurnModeStrategy>` 方案，并同步删除旧的 `ModeRouter` 表述 |
+| 35 | MEDIUM | `executeWithFallback()` 还是伪代码，仍可能误导实现者收窄 fallback 语义 | 真实项目里模型 fallback 依赖外层 `chat()` / `chatStream()` 的候选链和 `FallbackEligibility`，不是这里的 `catch (ModelException)` 示意 | 把这段改成纯说明性文字，明确“外层 fallback loop 不变，`doChat()` 内只替换为 `strategy.execute(execCtx)`” |
+| 36 | LOW | `Agent` 流式章节仍属于 Phase C 预研 | 这部分不是 Step 2 主路径，但如果标题和说明不够明确，容易被误当成可直接实施的主体设计 | 在章节开头再次强调“仅预研，不纳入 Step 2 落地范围” |

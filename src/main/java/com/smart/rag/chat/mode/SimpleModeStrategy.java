@@ -101,7 +101,8 @@ public class SimpleModeStrategy implements ChatModeStrategy {
             }
             String text = gen.getOutput().getText();
             if (text != null && collectedContent.length() < maxContentLength) {
-                collectedContent.append(text);
+                int remaining = maxContentLength - collectedContent.length();
+                collectedContent.append(text, 0, Math.min(text.length(), remaining));
             }
             return text;
         })

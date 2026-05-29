@@ -115,7 +115,8 @@ public class MultiTurnModeStrategy implements ChatModeStrategy {
             }
             String text = gen.getOutput().getText();
             if (text != null && collectedContent.length() < maxContentLength) {
-                collectedContent.append(text);
+                int remaining = maxContentLength - collectedContent.length();
+                collectedContent.append(text, 0, Math.min(text.length(), remaining));
             }
             return text;
         })
@@ -138,6 +139,12 @@ public class MultiTurnModeStrategy implements ChatModeStrategy {
                     conversationHelper.saveMessagesAndNotify(ctx.conversationId(),
                         ctx.request().message(), content,
                         ctx.route().toCompositeId(), lastResp, ctx.elapsed());
+                } else {
+                    log.warn("Stream completed without usable ChatResponse for conversation: {}",
+                        ctx.conversationId());
+                    conversationHelper.saveMessagesAndNotify(ctx.conversationId(),
+                        ctx.request().message(), content,
+                        ctx.route().toCompositeId(), null, ctx.elapsed());
                 }
             }
             case ON_ERROR, CANCEL -> {

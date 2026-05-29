@@ -3,6 +3,8 @@ package com.smart.rag.rag.agent.mode;
 import com.smart.rag.chat.advisor.ConversationContextAdvisor;
 import com.smart.rag.chat.client.ChatClientRegistry;
 import com.smart.rag.chat.context.ContextPromptInjector;
+import com.smart.rag.common.errorcode.ErrorCode;
+import com.smart.rag.exception.BusinessException;
 import com.smart.rag.chat.mode.ChatMode;
 import com.smart.rag.chat.mode.ChatModeStrategy;
 import com.smart.rag.chat.mode.MultiTurnModeStrategy;
@@ -37,6 +39,7 @@ import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.tool.resolution.StaticToolCallbackResolver;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
+import reactor.core.publisher.Flux;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -253,7 +256,17 @@ public class AgentModeStrategy implements ChatModeStrategy {
         if (multiTurnStrategy == null) {
             throw new IllegalStateException("MultiTurnModeStrategy not available for agent fallback");
         }
-        return multiTurnStrategy.execute(ctx);
+        StrategyExecuteResult result = multiTurnStrategy.execute(ctx);
+        Map<String, Object> degradedMeta = new LinkedHashMap<>();
+        degradedMeta.put("agentDegraded", true);
+        degradedMeta.put("degradedTo", "MULTI_TURN");
+        return new StrategyExecuteResult(result.springAiResponse(), result.content(), degradedMeta);
+    }
+
+    @Override
+    public Flux<String> executeStream(StrategyExecutionContext ctx) {
+        throw new BusinessException(ErrorCode.UNSUPPORTED_OPERATION,
+            "Agent mode does not support streaming in this version. Use blocking call instead.");
     }
 
     private static Map<String, Object> buildAgentMetadata(ModeChainResult result) {

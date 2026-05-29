@@ -1,10 +1,8 @@
 package com.smart.rag.agent.event;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
-import org.apache.ibatis.annotations.Delete;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
-import org.apache.ibatis.annotations.Select;
 
 import java.time.Instant;
 import java.util.List;
@@ -24,10 +22,6 @@ public interface AgentEventMapper extends BaseMapper<AgentSessionEvent> {
      * <p>
      * 限制最多返回 {@code limit} 条事件，避免长会话一次性加载过多数据。
      */
-    @Select("SELECT * FROM agent_session_event " +
-            "WHERE session_id = #{sessionId} AND user_id = #{userId} " +
-            "ORDER BY priority ASC, created_at ASC " +
-            "LIMIT #{limit}")
     List<AgentSessionEvent> selectBySessionIdOrderByPriorityLimited(
         @Param("sessionId") String sessionId,
         @Param("userId") Long userId,
@@ -39,9 +33,6 @@ public interface AgentEventMapper extends BaseMapper<AgentSessionEvent> {
      * <p>
      * 优先级 1 (Critical) 排在最前，保证恢复时优先读取关键事件。
      */
-    @Select("SELECT * FROM agent_session_event " +
-            "WHERE session_id = #{sessionId} AND user_id = #{userId} " +
-            "ORDER BY priority ASC, created_at ASC")
     List<AgentSessionEvent> selectBySessionIdOrderByPriority(
         @Param("sessionId") String sessionId,
         @Param("userId") Long userId
@@ -57,15 +48,6 @@ public interface AgentEventMapper extends BaseMapper<AgentSessionEvent> {
      *   <li>sessionId 为 null 时不按 session 过滤，仅按 userId + queryText 检索</li>
      * </ol>
      */
-    @Select("<script>" +
-            "SELECT * FROM agent_session_event " +
-            "WHERE user_id = #{userId} " +
-            "<if test='sessionId != null'>AND session_id = #{sessionId} </if>" +
-            "AND (data::text ILIKE '%' || #{query} || '%' " +
-            "     OR event_type ILIKE '%' || #{query} || '%') " +
-            "ORDER BY created_at DESC " +
-            "LIMIT #{limit}" +
-            "</script>")
     List<AgentSessionEvent> searchBySessionAndUserAndQuery(
         @Param("sessionId") String sessionId,
         @Param("userId") Long userId,
@@ -79,6 +61,5 @@ public interface AgentEventMapper extends BaseMapper<AgentSessionEvent> {
      * @param cutoff 截止时间，早于此时间的事件将被删除
      * @return 删除的行数
      */
-    @Delete("DELETE FROM agent_session_event WHERE created_at < #{cutoff}")
     int deleteOlderThan(@Param("cutoff") Instant cutoff);
 }

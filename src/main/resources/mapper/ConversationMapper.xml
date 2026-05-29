@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.smart.rag.conversation.mapper.ConversationMapper">
+
+    <update id="incrementMessageCount">
+        UPDATE conversation SET message_count = message_count + #{delta},
+        last_message_at = #{lastMessageAt}, updated_at = NOW()
+        WHERE conversation_id = #{conversationId} AND status != 'DELETED'
+    </update>
+
+    <update id="updateTitleIfFirst">
+        UPDATE conversation SET title = #{title}, title_source = #{titleSource},
+        updated_at = NOW()
+        WHERE id = #{id} AND message_count = 0 AND title_source = 'SYSTEM'
+    </update>
+
+    <update id="updateTitle">
+        UPDATE conversation SET title = #{title}, title_source = #{titleSource},
+        updated_at = NOW() WHERE id = #{id}
+    </update>
+
+    <update id="updateStatus">
+        UPDATE conversation SET status = #{status}, updated_at = NOW() WHERE id = #{id}
+    </update>
+
+    <update id="updatePinned">
+        UPDATE conversation SET pinned = #{pinned}, updated_at = NOW() WHERE id = #{id}
+    </update>
+
+</mapper>

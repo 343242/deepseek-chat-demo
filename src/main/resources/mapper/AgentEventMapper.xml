@@ -1,4 +1,32 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.smart.rag.agent.event.AgentEventMapper">
+
+    <select id="selectBySessionIdOrderByPriorityLimited" resultType="com.smart.rag.agent.event.AgentSessionEvent">
+        SELECT * FROM agent_session_event
+        WHERE session_id = #{sessionId} AND user_id = #{userId}
+        ORDER BY priority ASC, created_at ASC
+        LIMIT #{limit}
+    </select>
+
+    <select id="selectBySessionIdOrderByPriority" resultType="com.smart.rag.agent.event.AgentSessionEvent">
+        SELECT * FROM agent_session_event
+        WHERE session_id = #{sessionId} AND user_id = #{userId}
+        ORDER BY priority ASC, created_at ASC
+    </select>
+
+    <select id="searchBySessionAndUserAndQuery" resultType="com.smart.rag.agent.event.AgentSessionEvent">
+        SELECT * FROM agent_session_event
+        WHERE user_id = #{userId}
+        <if test="sessionId != null">AND session_id = #{sessionId} </if>
+        AND (data::text ILIKE '%' || #{query} || '%'
+             OR event_type ILIKE '%' || #{query} || '%')
+        ORDER BY created_at DESC
+        LIMIT #{limit}
+    </select>
+
+    <delete id="deleteOlderThan">
+        DELETE FROM agent_session_event WHERE created_at &lt; #{cutoff}
+    </delete>
+
 </mapper>

@@ -13,6 +13,12 @@
         AND p.status = 1 AND p.deleted = 0
     </select>
 
+    <select id="selectPermissionsByRoleId" resultType="com.smart.rag.user.entity.SysPermission">
+        SELECT p.* FROM sys_permission p
+        INNER JOIN sys_role_permission rp ON p.id = rp.permission_id
+        WHERE rp.role_id = #{roleId} AND p.status = 1 AND p.deleted = 0
+    </select>
+
     <delete id="deleteByRoleId">
         DELETE FROM sys_role_permission WHERE role_id = #{roleId}
     </delete>

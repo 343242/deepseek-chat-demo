@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.smart.rag.team.mapper.TeamMemberMapper">
+
+    <select id="selectByTeamAndUser" resultType="com.smart.rag.team.entity.TeamMember">
+        SELECT * FROM team_member WHERE team_id = #{teamId} AND user_id = #{userId} AND status = 1 LIMIT 1
+    </select>
+
+    <select id="selectLatestByTeamAndUser" resultType="com.smart.rag.team.entity.TeamMember">
+        SELECT * FROM team_member WHERE team_id = #{teamId} AND user_id = #{userId} ORDER BY id DESC LIMIT 1
+    </select>
+
+    <select id="selectMemberCountByTeamIds" resultType="java.util.Map">
+        SELECT team_id AS team_id, COUNT(*) AS cnt FROM team_member WHERE status = 1 AND team_id IN
+        <foreach collection="teamIds" item="id" open="(" separator="," close=")">
+            #{id}
+        </foreach>
+        GROUP BY team_id
+    </select>
+
+</mapper>

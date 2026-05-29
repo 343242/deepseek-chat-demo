@@ -67,8 +67,8 @@ public class ContentFilterAdvisor implements BaseAdvisor {
 
     @Override
     @NonNull
-    public ChatClientResponse after(ChatClientResponse response, @NonNull AdvisorChain chain) {
-        if (response == null || response.chatResponse() == null) {
+    public ChatClientResponse after(@NonNull ChatClientResponse response, @NonNull AdvisorChain chain) {
+        if (response.chatResponse() == null) {
             return response;
         }
         ChatResponse chatResponse = response.chatResponse();

@@ -16,7 +16,7 @@ public record PageRequest(
     public static PageRequest of(int page, int size) {
         return new PageRequest(
                 Math.max(page, 1),
-                Math.min(Math.max(size, 1), 500)
+                Math.clamp(size, 1, 500)
         );
     }
 

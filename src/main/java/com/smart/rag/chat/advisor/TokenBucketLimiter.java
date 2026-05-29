@@ -1,5 +1,6 @@
 package com.smart.rag.chat.advisor;
 
+import com.smart.rag.config.AdvisorAutoConfiguration;
 import com.smart.rag.exception.BusinessException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

@@ -43,9 +43,8 @@ public class SimpleModeStrategy implements ChatModeStrategy {
 
     @Override
     public ModeChainResult buildAdvisorChain(AdvisorChainContext ctx) {
-        List<Advisor> chain = new ArrayList<>();
 
-        chain.addAll(infra.getGlobalAdvisors());
+        List<Advisor> chain = new ArrayList<>(infra.getGlobalAdvisors());
 
         if (ctx.request().isRagEnabled()) {
             chain.add(infra.getRagAdvisorFactory()

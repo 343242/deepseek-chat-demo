@@ -26,8 +26,12 @@ import com.smart.rag.rag.agent.intent.IntentResult;
 import com.smart.rag.rag.agent.tool.callback.AgentToolCallbackFactory;
 import com.smart.rag.rag.agent.workspace.ToolWorkspace;
 import com.smart.rag.rag.agent.workspace.ToolWorkspaceFactory;
+import org.jspecify.annotations.NonNull;
+import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.ai.chat.prompt.ChatOptions;
+import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
 import org.springframework.ai.chat.client.advisor.ToolCallAdvisor;
@@ -41,10 +45,9 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
 
-import java.util.ArrayList;
-import java.util.LinkedHashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
+
+import static org.springframework.ai.chat.memory.ChatMemory.CONVERSATION_ID;
 
 /**
  * Agent 模式策略 -- 意图识别、动态 Tool 选择、ReAct 循环
@@ -168,12 +171,8 @@ public class AgentModeStrategy implements ChatModeStrategy {
         ChatModel chatModel = chatClientRegistry.getChatModel(route.toCompositeId());
 
         TokenCountingChatModel tokenCountingModel;
-        if (chatModel != null) {
-            tokenCountingModel = new TokenCountingChatModel(chatModel);
-        } else {
-            // 无法获取 ChatModel，创建一个仅用字符估算的兜底计数器
-            tokenCountingModel = new TokenCountingChatModel(new NoOpChatModel());
-        }
+        // 无法获取 ChatModel，创建一个仅用字符估算的兜底计数器
+        tokenCountingModel = new TokenCountingChatModel(Objects.requireNonNullElseGet(chatModel, NoOpChatModel::new));
 
         // token 上限估算：128K 默认上下文窗口 x contextWindowRatio
         long tokenLimit = (long) (128_000 * agentProperties.contextWindowRatio());
@@ -204,19 +203,17 @@ public class AgentModeStrategy implements ChatModeStrategy {
      */
     private static class NoOpChatModel implements ChatModel {
         @Override
-        public org.springframework.ai.chat.model.ChatResponse call(
-            org.springframework.ai.chat.prompt.Prompt prompt) {
+        public @Nullable ChatResponse call(Prompt prompt) {
             return null;
         }
 
         @Override
-        public reactor.core.publisher.Flux<org.springframework.ai.chat.model.ChatResponse> stream(
-            org.springframework.ai.chat.prompt.Prompt prompt) {
-            return reactor.core.publisher.Flux.empty();
+        public @NonNull Flux<org.springframework.ai.chat.model.ChatResponse> stream(Prompt prompt) {
+            return Flux.empty();
         }
 
         @Override
-        public org.springframework.ai.chat.prompt.ChatOptions getDefaultOptions() {
+        public ChatOptions getDefaultOptions() {
             return null;
         }
     }
@@ -229,14 +226,20 @@ public class AgentModeStrategy implements ChatModeStrategy {
                 ctx.cagContext(), ctx.route());
             ModeChainResult result = buildAdvisorChain(chainCtx);
 
-            ChatClient countingClient = ChatClient.builder(result.tokenCountingModel()).build();
-            ChatResponse springResponse = countingClient.prompt()
-                .user(ctx.request().message())
-                .advisors(a -> a.advisors(result.chain())
-                    .param(org.springframework.ai.chat.memory.ChatMemory.CONVERSATION_ID,
-                        ctx.conversationId()))
-                .call()
-                .chatResponse();
+            ChatClient countingClient = null;
+            if (result.tokenCountingModel() != null) {
+                countingClient = ChatClient.builder(result.tokenCountingModel()).build();
+            }
+            ChatResponse springResponse = null;
+            if (countingClient != null) {
+                springResponse = countingClient.prompt()
+                    .user(ctx.request().message())
+                    .advisors(a -> a.advisors(result.chain())
+                        .param(CONVERSATION_ID,
+                            ctx.conversationId()))
+                    .call()
+                    .chatResponse();
+            }
 
             String content = SimpleModeStrategy.extractContent(springResponse);
             Map<String, Object> agentMetadata = buildAgentMetadata(result);
@@ -271,9 +274,15 @@ public class AgentModeStrategy implements ChatModeStrategy {
 
     private static Map<String, Object> buildAgentMetadata(ModeChainResult result) {
         Map<String, Object> metadata = new LinkedHashMap<>();
-        metadata.put("intent", result.intentResult().intent().name());
-        metadata.put("confidence", result.intentResult().confidence());
-        metadata.put("retrievalRounds", result.workspace().getRetrievalRound());
+        if (result.intentResult() != null) {
+            metadata.put("intent", result.intentResult().intent().name());
+        }
+        if (result.intentResult() != null) {
+            metadata.put("confidence", result.intentResult().confidence());
+        }
+        if (result.workspace() != null) {
+            metadata.put("retrievalRounds", result.workspace().getRetrievalRound());
+        }
         return metadata;
     }
 

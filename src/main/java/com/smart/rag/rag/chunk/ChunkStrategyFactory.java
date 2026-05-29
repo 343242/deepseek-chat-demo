@@ -28,7 +28,7 @@ public class ChunkStrategyFactory {
         this.defaultStrategy = strategies.stream()
                 .filter(s -> "parent-child".equals(s.strategyName()))
                 .findFirst()
-                .orElse(strategies.get(0));
+                .orElse(strategies.getFirst());
 
         Map<String, ChunkStrategy> map = new HashMap<>();
         for (ChunkStrategy strategy : strategies) {

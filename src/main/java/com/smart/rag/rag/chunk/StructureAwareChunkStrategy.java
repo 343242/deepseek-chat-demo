@@ -206,25 +206,25 @@ public class StructureAwareChunkStrategy implements ChunkStrategy {
 
         List<Document> result = new ArrayList<>();
         StringBuilder currentText = new StringBuilder();
-        Map<String, Object> currentMeta = new java.util.HashMap<>(pages.get(0).getMetadata());
+        Map<String, Object> currentMeta = new java.util.HashMap<>(pages.getFirst().getMetadata());
 
         for (Document page : pages) {
             String text = page.getText();
             if (text == null) text = "";
 
-            if (currentText.length() > 0 && currentText.length() >= minLength) {
+            if (!currentText.isEmpty() && currentText.length() >= minLength) {
                 result.add(new Document(currentText.toString(), currentMeta));
                 currentText = new StringBuilder();
                 currentMeta = new java.util.HashMap<>(page.getMetadata());
             }
 
-            if (currentText.length() > 0) {
+            if (!currentText.isEmpty()) {
                 currentText.append("\n\n");
             }
             currentText.append(text);
         }
 
-        if (currentText.length() > 0) {
+        if (!currentText.isEmpty()) {
             result.add(new Document(currentText.toString(), currentMeta));
         }
 
@@ -308,14 +308,22 @@ public class StructureAwareChunkStrategy implements ChunkStrategy {
 
         for (Document doc : documents) {
             String text = doc.getText();
-            List<String> paragraphs = splitIntoParagraphs(text);
-            List<String> merged = mergeShortParagraphs(paragraphs, minLength);
+            List<String> paragraphs = null;
+            if (text != null) {
+                paragraphs = splitIntoParagraphs(text);
+            }
+            List<String> merged = null;
+            if (paragraphs != null) {
+                merged = mergeShortParagraphs(paragraphs, minLength);
+            }
 
-            for (String para : merged) {
-                if (para.isBlank()) continue;
-                Document chunk = createChunk(para, doc.getMetadata(), sourceFileName, globalIndex, "paragraph");
-                allChunks.add(chunk);
-                globalIndex++;
+            if (merged != null) {
+                for (String para : merged) {
+                    if (para.isBlank()) continue;
+                    Document chunk = createChunk(para, doc.getMetadata(), sourceFileName, globalIndex, "paragraph");
+                    allChunks.add(chunk);
+                    globalIndex++;
+                }
             }
         }
 
@@ -352,7 +360,7 @@ public class StructureAwareChunkStrategy implements ChunkStrategy {
         if (paragraphs.isEmpty()) return paragraphs;
 
         List<String> merged = new ArrayList<>();
-        StringBuilder current = new StringBuilder(paragraphs.get(0));
+        StringBuilder current = new StringBuilder(paragraphs.getFirst());
 
         for (int i = 1; i < paragraphs.size(); i++) {
             String para = paragraphs.get(i);

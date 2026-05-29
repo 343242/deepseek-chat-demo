@@ -1,8 +1,8 @@
 package com.smart.rag.chat.service;
 
-import com.smart.rag.rag.agent.guardrail.TokenCountingChatModel;
-import com.smart.rag.rag.agent.intent.IntentResult;
-import com.smart.rag.rag.agent.workspace.ToolWorkspace;
+import com.smart.rag.agent.guardrail.TokenCountingChatModel;
+import com.smart.rag.agent.intent.IntentResult;
+import com.smart.rag.agent.workspace.ToolWorkspace;
 import org.jspecify.annotations.Nullable;
 import org.springframework.ai.chat.client.advisor.api.Advisor;
 

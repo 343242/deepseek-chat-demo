@@ -1,6 +1,6 @@
 package com.smart.rag.rag.retrieval;
 
-import com.smart.rag.rag.agent.service.HybridSearchService;
+import com.smart.rag.agent.service.HybridSearchService;
 import com.smart.rag.rag.config.RagRetrievalProperties;
 import com.smart.rag.rag.mapper.VectorStoreMapper;
 import org.junit.jupiter.api.BeforeEach;

@@ -1,6 +1,6 @@
 package com.smart.rag.rag.retrieval;
 
-import com.smart.rag.rag.agent.service.HybridSearchService;
+import com.smart.rag.agent.service.HybridSearchService;
 import org.jspecify.annotations.Nullable;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.rag.Query;

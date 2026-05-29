@@ -25,7 +25,7 @@ import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
         "com.smart.rag.chat.mapper",
         "com.smart.rag.conversation.mapper",
         "com.smart.rag.rag.mapper",
-        "com.smart.rag.rag.agent.event",
+        "com.smart.rag.agent.event",
         "com.smart.rag.team.mapper"
 })
 public class SmartRagApplication {

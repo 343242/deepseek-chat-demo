@@ -45,7 +45,11 @@ import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 
 import static org.springframework.ai.chat.memory.ChatMemory.CONVERSATION_ID;
 
@@ -226,20 +230,14 @@ public class AgentModeStrategy implements ChatModeStrategy {
                 ctx.cagContext(), ctx.route());
             ModeChainResult result = buildAdvisorChain(chainCtx);
 
-            ChatClient countingClient = null;
-            if (result.tokenCountingModel() != null) {
-                countingClient = ChatClient.builder(result.tokenCountingModel()).build();
-            }
-            ChatResponse springResponse = null;
-            if (countingClient != null) {
-                springResponse = countingClient.prompt()
-                    .user(ctx.request().message())
-                    .advisors(a -> a.advisors(result.chain())
-                        .param(CONVERSATION_ID,
-                            ctx.conversationId()))
-                    .call()
-                    .chatResponse();
-            }
+            ChatClient countingClient = ChatClient.builder(result.tokenCountingModel()).build();
+            ChatResponse springResponse = countingClient.prompt()
+                .user(ctx.request().message())
+                .advisors(a -> a.advisors(result.chain())
+                    .param(CONVERSATION_ID,
+                        ctx.conversationId()))
+                .call()
+                .chatResponse();
 
             String content = SimpleModeStrategy.extractContent(springResponse);
             Map<String, Object> agentMetadata = buildAgentMetadata(result);
@@ -274,15 +272,9 @@ public class AgentModeStrategy implements ChatModeStrategy {
 
     private static Map<String, Object> buildAgentMetadata(ModeChainResult result) {
         Map<String, Object> metadata = new LinkedHashMap<>();
-        if (result.intentResult() != null) {
-            metadata.put("intent", result.intentResult().intent().name());
-        }
-        if (result.intentResult() != null) {
-            metadata.put("confidence", result.intentResult().confidence());
-        }
-        if (result.workspace() != null) {
-            metadata.put("retrievalRounds", result.workspace().getRetrievalRound());
-        }
+        metadata.put("intent", result.intentResult().intent().name());
+        metadata.put("confidence", result.intentResult().confidence());
+        metadata.put("retrievalRounds", result.workspace().getRetrievalRound());
         return metadata;
     }
 

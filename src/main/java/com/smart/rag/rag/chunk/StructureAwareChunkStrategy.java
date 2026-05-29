@@ -308,22 +308,14 @@ public class StructureAwareChunkStrategy implements ChunkStrategy {
 
         for (Document doc : documents) {
             String text = doc.getText();
-            List<String> paragraphs = null;
-            if (text != null) {
-                paragraphs = splitIntoParagraphs(text);
-            }
-            List<String> merged = null;
-            if (paragraphs != null) {
-                merged = mergeShortParagraphs(paragraphs, minLength);
-            }
+            List<String> paragraphs = splitIntoParagraphs(text);
+            List<String> merged = mergeShortParagraphs(paragraphs, minLength);
 
-            if (merged != null) {
-                for (String para : merged) {
-                    if (para.isBlank()) continue;
-                    Document chunk = createChunk(para, doc.getMetadata(), sourceFileName, globalIndex, "paragraph");
-                    allChunks.add(chunk);
-                    globalIndex++;
-                }
+            for (String para : merged) {
+                if (para.isBlank()) continue;
+                Document chunk = createChunk(para, doc.getMetadata(), sourceFileName, globalIndex, "paragraph");
+                allChunks.add(chunk);
+                globalIndex++;
             }
         }
 

@@ -2,6 +2,11 @@ package com.smart.rag.chat.mode;
 
 import com.smart.rag.chat.service.AdvisorChainContext;
 import com.smart.rag.chat.service.ModeChainResult;
+import com.smart.rag.chat.service.StrategyExecuteResult;
+import com.smart.rag.chat.service.StrategyExecutionContext;
+import com.smart.rag.exception.BusinessException;
+import com.smart.rag.common.errorcode.ErrorCode;
+import reactor.core.publisher.Flux;
 
 /**
  * 对话模式策略接口
@@ -29,21 +34,22 @@ public interface ChatModeStrategy {
      */
     ModeChainResult buildAdvisorChain(AdvisorChainContext ctx);
 
-    // === 以下 flag 方法标记 @Deprecated，Step 2 移除 ===
-    // 保留是为了 ChatServiceImpl 中少量非链构建的 flag 依赖
+    /**
+     * 阻塞式执行 — 策略负责链构建 + spec 创建 + 调用执行。
+     * 返回 StrategyExecuteResult，由 ChatServiceImpl 统一后续处理。
+     */
+    default StrategyExecuteResult execute(StrategyExecutionContext ctx) {
+        throw new BusinessException(ErrorCode.UNSUPPORTED_OPERATION,
+            getMode() + " mode does not implement execute()");
+    }
 
     /**
-     * @deprecated 由 buildAdvisorChain 内部决定，外部不再需要查询
+     * 流式执行 — 策略负责链构建 + 流式调用 + 流式收尾。
+     * 内部使用 .stream().chatResponse() 追踪 lastAiResponse，
+     * doFinally 中完成消息持久化。
      */
-    @Deprecated
-    boolean isMemoryEnabled();
-
-    /**
-     * @deprecated 由 buildAdvisorChain 内部决定，外部不再需要查询
-     */
-    @Deprecated
-    default boolean isAgentMode() { return false; }
-
-    // isThinkingEnabled() -- 未实现的功能，不属于本次重构范围，从接口移除
-    // isContextEnabled() -- 由 buildAdvisorChain 内部决定，从接口移除
+    default Flux<String> executeStream(StrategyExecutionContext ctx) {
+        throw new BusinessException(ErrorCode.UNSUPPORTED_OPERATION,
+            getMode() + " mode does not support streaming in this version.");
+    }
 }

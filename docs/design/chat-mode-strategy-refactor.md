@@ -736,11 +736,8 @@ public class AdvisorAutoConfiguration {
 | `skipXxx` 执行指示是过渡设计 | 低 | Step 2 将 `createSpec()` 职责下沉到策略后可移除；当前作为 Step 1 最小改动的桥接方案，不引入新的策略级 flag |
 | thinking 功能遗漏 | 无 | 已明确记录为独立 feature，本次重构不涉及 |
 
-## 7. 后续（Step 2 预告）
 
-Step 1 完成后，如需进一步：
-- 将 `doChat()` / `doAgentChat()` / `doAgentStream()` 的执行逻辑也下沉到策略（`execute()` / `executeStream()`）
-- 新增 `doAgentStream()` — Agent ReAct 循环的流式支持（多轮工具调用 + 流式输出 + 护栏检查）
-- 移除 `isAgentMode()` / `isMemoryEnabled()` 等 flag 方法
-- `ChatServiceImpl` 变成纯管道：`prepare → strategy.execute → postProcess`
-- `ModeChainResult` 的 `skipXxx` 执行指示随 `createSpec()` 职责下沉到策略后可移除
+## 7. Step 2 设计方案（独立文档）
+
+> Step 2 设计方案已独立为 [chat-mode-strategy-step2-execute-sinking.md](chat-mode-strategy-step2-execute-sinking.md)。
+> 章节编号保持 §7.x 不变，与本文档的 Codex Review 修正记录（§4 R1-R5）交叉引用一致。

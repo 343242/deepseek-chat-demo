@@ -5,12 +5,17 @@ import com.smart.rag.chat.client.ChatClientRegistry;
 import com.smart.rag.chat.context.ContextPromptInjector;
 import com.smart.rag.chat.mode.ChatMode;
 import com.smart.rag.chat.mode.ChatModeStrategy;
+import com.smart.rag.chat.mode.MultiTurnModeStrategy;
+import com.smart.rag.chat.mode.SimpleModeStrategy;
 import com.smart.rag.chat.provider.ModelRouter;
 import com.smart.rag.chat.service.AdvisorChainContext;
 import com.smart.rag.chat.service.AdvisorInfrastructure;
 import com.smart.rag.chat.service.ModeChainResult;
+import com.smart.rag.chat.service.StrategyExecuteResult;
+import com.smart.rag.chat.service.StrategyExecutionContext;
 import com.smart.rag.rag.agent.advisor.AgentSystemPromptAdvisor;
 import com.smart.rag.rag.agent.config.AgentRagProperties;
+import com.smart.rag.rag.agent.guardrail.AgentDegradationStrategy;
 import com.smart.rag.rag.agent.guardrail.AgentGuardrails;
 import com.smart.rag.rag.agent.guardrail.TokenCountingChatModel;
 import com.smart.rag.rag.agent.intent.AgentIntent;
@@ -21,17 +26,22 @@ import com.smart.rag.rag.agent.workspace.ToolWorkspace;
 import com.smart.rag.rag.agent.workspace.ToolWorkspaceFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
 import org.springframework.ai.chat.client.advisor.ToolCallAdvisor;
 import org.springframework.ai.chat.client.advisor.api.Advisor;
 import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.model.tool.DefaultToolCallingManager;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.tool.resolution.StaticToolCallbackResolver;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Agent 模式策略 -- 意图识别、动态 Tool 选择、ReAct 循环
@@ -63,6 +73,8 @@ public class AgentModeStrategy implements ChatModeStrategy {
     private final AgentRagProperties agentProperties;
     private final ContextPromptInjector contextPromptInjector;
     private final ChatClientRegistry chatClientRegistry;
+    private final AgentDegradationStrategy degradationStrategy;
+    private final ObjectProvider<MultiTurnModeStrategy> multiTurnProvider;
 
     public AgentModeStrategy(AdvisorInfrastructure infra,
                               IntentClassifier intentClassifier,
@@ -70,7 +82,9 @@ public class AgentModeStrategy implements ChatModeStrategy {
                               AgentToolCallbackFactory agentToolCallbackFactory,
                               AgentRagProperties agentProperties,
                               ContextPromptInjector contextPromptInjector,
-                              ChatClientRegistry chatClientRegistry) {
+                              ChatClientRegistry chatClientRegistry,
+                              AgentDegradationStrategy degradationStrategy,
+                              ObjectProvider<MultiTurnModeStrategy> multiTurnProvider) {
         this.infra = infra;
         this.intentClassifier = intentClassifier;
         this.workspaceFactory = workspaceFactory;
@@ -78,6 +92,8 @@ public class AgentModeStrategy implements ChatModeStrategy {
         this.agentProperties = agentProperties;
         this.contextPromptInjector = contextPromptInjector;
         this.chatClientRegistry = chatClientRegistry;
+        this.degradationStrategy = degradationStrategy;
+        this.multiTurnProvider = multiTurnProvider;
     }
 
     @Override
@@ -203,10 +219,49 @@ public class AgentModeStrategy implements ChatModeStrategy {
     }
 
     @Override
-    @Deprecated
-    public boolean isMemoryEnabled() { return true; }
+    public StrategyExecuteResult execute(StrategyExecutionContext ctx) {
+        try {
+            AdvisorChainContext chainCtx = new AdvisorChainContext(
+                ctx.conversationId(), ctx.request(), ctx.userId(),
+                ctx.cagContext(), ctx.route());
+            ModeChainResult result = buildAdvisorChain(chainCtx);
 
-    @Override
-    @Deprecated
-    public boolean isAgentMode() { return true; }
+            ChatClient countingClient = ChatClient.builder(result.tokenCountingModel()).build();
+            ChatResponse springResponse = countingClient.prompt()
+                .user(ctx.request().message())
+                .advisors(a -> a.advisors(result.chain())
+                    .param(org.springframework.ai.chat.memory.ChatMemory.CONVERSATION_ID,
+                        ctx.conversationId()))
+                .call()
+                .chatResponse();
+
+            String content = SimpleModeStrategy.extractContent(springResponse);
+            Map<String, Object> agentMetadata = buildAgentMetadata(result);
+            return StrategyExecuteResult.agent(springResponse, content, agentMetadata);
+
+        } catch (Exception e) {
+            if (degradationStrategy.shouldDegrade(e)) {
+                log.warn("Agent degradation triggered, falling back to MULTI_TURN", e);
+                return fallbackToMultiTurn(ctx);
+            }
+            throw e;
+        }
+    }
+
+    private StrategyExecuteResult fallbackToMultiTurn(StrategyExecutionContext ctx) {
+        MultiTurnModeStrategy multiTurnStrategy = multiTurnProvider.getIfAvailable();
+        if (multiTurnStrategy == null) {
+            throw new IllegalStateException("MultiTurnModeStrategy not available for agent fallback");
+        }
+        return multiTurnStrategy.execute(ctx);
+    }
+
+    private static Map<String, Object> buildAgentMetadata(ModeChainResult result) {
+        Map<String, Object> metadata = new LinkedHashMap<>();
+        metadata.put("intent", result.intentResult().intent().name());
+        metadata.put("confidence", result.intentResult().confidence());
+        metadata.put("retrievalRounds", result.workspace().getRetrievalRound());
+        return metadata;
+    }
+
 }

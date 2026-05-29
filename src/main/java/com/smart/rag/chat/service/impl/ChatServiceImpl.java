@@ -14,31 +14,23 @@ import com.smart.rag.chat.fallback.StreamRetryHandler;
 import com.smart.rag.chat.mode.ChatModeStrategy;
 import com.smart.rag.chat.mode.ModeRouter;
 import com.smart.rag.chat.provider.ModelRouter;
-import com.smart.rag.chat.service.AdvisorChainContext;
 import com.smart.rag.chat.service.ChatConversationHelper;
-import com.smart.rag.chat.service.ChatRequestSpecFactory;
 import com.smart.rag.chat.service.ChatService;
 import com.smart.rag.chat.service.ChatUsageTracker;
-import com.smart.rag.chat.service.ModeChainResult;
+import com.smart.rag.chat.service.StrategyExecuteResult;
+import com.smart.rag.chat.service.StrategyExecutionContext;
 import com.smart.rag.common.errorcode.ErrorCode;
 import com.smart.rag.common.uuid.UuidV7;
 import com.smart.rag.conversation.util.ConversationIdUtil;
 import com.smart.rag.exception.BusinessException;
-import com.smart.rag.rag.agent.config.AgentRagProperties;
-import com.smart.rag.rag.agent.guardrail.AgentDegradationStrategy;
 import com.smart.rag.security.util.SecurityUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
-import org.springframework.ai.chat.model.Generation;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * 聊天服务（编排层）-- 请求预处理 -> 委托工厂构建请求 -> 调用并处理响应。
@@ -52,7 +44,6 @@ public class ChatServiceImpl implements ChatService {
     private final ChatClientRegistry registry;
     private final ModelRouter modelRouter;
     private final ModeRouter modeRouter;
-    private final ChatRequestSpecFactory requestSpecFactory;
     private final ChatUsageTracker usageTracker;
     private final ChatConversationHelper conversationHelper;
     private final ChatFallbackProperties fallbackProperties;
@@ -61,14 +52,10 @@ public class ChatServiceImpl implements ChatService {
     private final StreamRetryHandler streamRetryHandler;
     private final RequestContextManager cagContextManager;
     private final CagProperties cagProperties;
-    private final com.smart.rag.chat.service.ChatAdvisorChainFactory advisorChainFactory;
-    private final AgentRagProperties agentProperties;
-    private final AgentDegradationStrategy degradationStrategy;
 
     public ChatServiceImpl(ChatClientRegistry registry,
                            ModelRouter modelRouter,
                            ModeRouter modeRouter,
-                           ChatRequestSpecFactory requestSpecFactory,
                            ChatUsageTracker usageTracker,
                            ChatConversationHelper conversationHelper,
                            ChatFallbackProperties fallbackProperties,
@@ -76,14 +63,10 @@ public class ChatServiceImpl implements ChatService {
                            FallbackEligibility fallbackEligibility,
                            StreamRetryHandler streamRetryHandler,
                            RequestContextManager cagContextManager,
-                           CagProperties cagProperties,
-                           com.smart.rag.chat.service.ChatAdvisorChainFactory advisorChainFactory,
-                           AgentRagProperties agentProperties,
-                           AgentDegradationStrategy degradationStrategy) {
+                           CagProperties cagProperties) {
         this.registry = registry;
         this.modelRouter = modelRouter;
         this.modeRouter = modeRouter;
-        this.requestSpecFactory = requestSpecFactory;
         this.usageTracker = usageTracker;
         this.conversationHelper = conversationHelper;
         this.fallbackProperties = fallbackProperties;
@@ -92,9 +75,6 @@ public class ChatServiceImpl implements ChatService {
         this.streamRetryHandler = streamRetryHandler;
         this.cagContextManager = cagContextManager;
         this.cagProperties = cagProperties;
-        this.advisorChainFactory = advisorChainFactory;
-        this.agentProperties = agentProperties;
-        this.degradationStrategy = degradationStrategy;
     }
     // ==================== 阻塞式聊天 ====================
 
@@ -176,115 +156,13 @@ public class ChatServiceImpl implements ChatService {
         conversationHelper.ensureConversationExists(ctx.userId, ctx.conversationId, request.model());
         RequestContext cagCtx = buildCagContext(ctx, request);
 
-        // Agent 模式：独立编排流程
-        if (ctx.modeStrategy.isAgentMode()) {
-            return doAgentChat(ctx, request, cagCtx);
-        }
+        StrategyExecutionContext execCtx = new StrategyExecutionContext(
+            ctx.chatClient, ctx.route, request,
+            ctx.conversationId, ctx.rawConversationId, ctx.userId, cagCtx,
+            ctx.startTimeMs);
 
-        ChatClient.ChatClientRequestSpec requestSpec = requestSpecFactory.createSpec(
-                ctx.chatClient, ctx.route, request, ctx.conversationId, ctx.modeStrategy, cagCtx, ctx.userId);
-
-        org.springframework.ai.chat.model.ChatResponse aiResponse = requestSpec.call().chatResponse();
-
-        if (aiResponse != null) {
-            usageTracker.recordUsage(ctx.conversationId, ctx.route.toCompositeId(), aiResponse, ctx.elapsed());
-        } else {
-            usageTracker.recordUsage(ctx.conversationId, ctx.route.toCompositeId(), ctx.elapsed());
-        }
-
-        Generation generation = (aiResponse != null) ? aiResponse.getResult() : null;
-        String content = generation != null ? generation.getOutput().getText() : "";
-
-        conversationHelper.saveMessagesAndNotify(ctx.conversationId, request.message(), content,
-                ctx.route.toCompositeId(), aiResponse, ctx.elapsed());
-
-        return new ChatResponse(ctx.route.toCompositeId(), content, ctx.rawConversationId, fallback);
-    }
-
-    /** 执行 Agent 模式聊天 */
-    private ChatResponse doAgentChat(ChatContext ctx, ChatRequest request, RequestContext cagCtx) {
-        long agentStart = System.currentTimeMillis();
-
-        try {
-            // 1. 构建链 -- 统一走策略，返回 ModeChainResult
-            AdvisorChainContext chainCtx = new AdvisorChainContext(
-                ctx.conversationId, request, ctx.userId, cagCtx, ctx.route);
-            ModeChainResult result = ctx.modeStrategy.buildAdvisorChain(chainCtx);
-
-            // 2. 从 ModeChainResult 提取 Agent 元数据
-            // 3. 构建 ChatClient 请求（使用 tokenCountingModel）
-            //    这样每轮 LLM 调用都会经过 token 计数装饰器，护栏才能正确触发 TOKEN_LIMIT
-            ChatClient agentChatClient = ChatClient.builder(result.tokenCountingModel()).build();
-            ChatClient.ChatClientRequestSpec spec = agentChatClient.prompt()
-                .user(request.message())
-                .advisors(a -> a.advisors(result.chain())
-                    .param(org.springframework.ai.chat.memory.ChatMemory.CONVERSATION_ID,
-                        ctx.conversationId));
-
-            // 4. 执行 Agent 调用（ReAct 循环在 ToolCallAdvisor 内部完成）
-            org.springframework.ai.chat.model.ChatResponse aiResponse = spec.call().chatResponse();
-
-            // 5. 提取结果
-            Generation generation = (aiResponse != null) ? aiResponse.getResult() : null;
-            String content = generation != null ? generation.getOutput().getText() : "";
-            long durationMs = System.currentTimeMillis() - agentStart;
-
-            // 6. 记录 usage
-            if (aiResponse != null) {
-                usageTracker.recordUsage(ctx.conversationId, ctx.route.toCompositeId(), aiResponse, ctx.elapsed());
-            } else {
-                usageTracker.recordUsage(ctx.conversationId, ctx.route.toCompositeId(), ctx.elapsed());
-            }
-
-            // 7. 保存消息
-            conversationHelper.saveMessagesAndNotify(ctx.conversationId, request.message(), content,
-                ctx.route.toCompositeId(), aiResponse, ctx.elapsed());
-
-            // 8. 构建 Agent 元数据
-            Map<String, Object> agentMetadata = new LinkedHashMap<>();
-            agentMetadata.put("intent", result.intentResult().intent().name());
-            agentMetadata.put("confidence", result.intentResult().confidence());
-            agentMetadata.put("retrievalRounds", result.workspace().getRetrievalRound());
-            agentMetadata.put("durationMs", durationMs);
-
-            log.info("Agent chat completed: intent={}, rounds={}, duration={}ms, conversation={}",
-                result.intentResult().intent(), result.workspace().getRetrievalRound(),
-                durationMs, ctx.conversationId);
-
-            return new ChatResponse(ctx.route.toCompositeId(), content, ctx.rawConversationId,
-                null, agentMetadata);
-
-        } catch (Exception e) {
-            long durationMs = System.currentTimeMillis() - agentStart;
-            log.error("Agent chat failed after {}ms: {}", durationMs, e.getMessage(), e);
-
-            if (agentProperties.degradeOnFailure() && degradationStrategy.shouldDegrade(e)) {
-                log.warn("Agent degradation triggered, falling back to standard chat");
-                return doStandardFallbackChat(ctx, request);
-            }
-            throw e;
-        }
-    }
-
-    /** Agent 降级：回退到标准 MULTI_TURN 模式 */
-    private ChatResponse doStandardFallbackChat(ChatContext ctx, ChatRequest request) {
-        RequestContext cagCtx = buildCagContext(ctx, request);
-
-        // 降级为 MULTI_TURN 模式
-        ChatModeStrategy multiTurnStrategy = modeRouter.route("MULTI_TURN");
-
-        ChatClient.ChatClientRequestSpec requestSpec = requestSpecFactory.createSpec(
-            ctx.chatClient, ctx.route, request, ctx.conversationId, multiTurnStrategy, cagCtx, ctx.userId);
-
-        org.springframework.ai.chat.model.ChatResponse aiResponse = requestSpec.call().chatResponse();
-
-        Generation generation = (aiResponse != null) ? aiResponse.getResult() : null;
-        String content = generation != null ? generation.getOutput().getText() : "";
-
-        conversationHelper.saveMessagesAndNotify(ctx.conversationId, request.message(), content,
-            ctx.route.toCompositeId(), aiResponse, ctx.elapsed());
-
-        return new ChatResponse(ctx.route.toCompositeId(), content, ctx.rawConversationId);
+        StrategyExecuteResult result = ctx.modeStrategy.execute(execCtx);
+        return processResult(result, execCtx, fallback);
     }
 
     /** 执行单次流式聊天（无降级逻辑） */
@@ -293,66 +171,40 @@ public class ChatServiceImpl implements ChatService {
         conversationHelper.ensureConversationExists(ctx.userId, ctx.conversationId, request.model());
         RequestContext cagCtx = buildCagContext(ctx, request);
 
-        // Step 1: Agent 模式暂不支持流式 -- ReAct 循环的多轮工具调用在流式中需特殊处理
-        // 使用 BusinessException 而非 UnsupportedOperationException，
-        // 后者不在 FallbackEligibility 不可降级列表中，会被流式 fallback 误判为可降级并重试
-        if (ctx.modeStrategy.isAgentMode()) {
-            throw new BusinessException(ErrorCode.UNSUPPORTED_OPERATION,
-                "Agent mode does not support streaming in this version. Use blocking call instead.");
+        StrategyExecutionContext execCtx = new StrategyExecutionContext(
+            ctx.chatClient, ctx.route, request,
+            ctx.conversationId, ctx.rawConversationId, ctx.userId, cagCtx,
+            ctx.startTimeMs);
+
+        return ctx.modeStrategy.executeStream(execCtx);
+    }
+
+    /**
+     * 统一后处理 — 从 StrategyExecuteResult 完成后续操作。
+     * rawConversationId → DTO 返回客户端；conversationId → 消息保存、usage 记录。
+     */
+    private ChatResponse processResult(StrategyExecuteResult result,
+                                        StrategyExecutionContext ctx,
+                                        FallbackMeta fallback) {
+        String compositeModelId = ctx.route().toCompositeId();
+
+        if (result.springAiResponse() != null) {
+            usageTracker.recordUsage(ctx.conversationId(), compositeModelId,
+                result.springAiResponse(), ctx.elapsed());
+        } else {
+            usageTracker.recordUsage(ctx.conversationId(), compositeModelId, ctx.elapsed());
         }
 
-        ChatClient.ChatClientRequestSpec requestSpec = requestSpecFactory.createSpec(
-                ctx.chatClient, ctx.route, request, ctx.conversationId, ctx.modeStrategy, cagCtx, ctx.userId);
+        conversationHelper.saveMessagesAndNotify(ctx.conversationId(),
+            ctx.request().message(), result.content(),
+            compositeModelId, result.springAiResponse(), ctx.elapsed());
 
-        StringBuilder collectedContent = new StringBuilder();
-        final int maxContentLength = 1 << 20; // 1 MB
-        AtomicBoolean usageRecorded = new AtomicBoolean(false);
-        AtomicReference<org.springframework.ai.chat.model.ChatResponse> lastAiResponse = new AtomicReference<>();
-
-        return requestSpec.stream()
-                .chatResponse()
-                .mapNotNull(aiResponse -> {
-                    lastAiResponse.set(aiResponse);
-                    Generation gen = aiResponse.getResult();
-                    if (gen == null || gen.getOutput() == null) {
-                        return null;
-                    }
-                    String text = gen.getOutput().getText();
-                    if (text != null && collectedContent.length() < maxContentLength) {
-                        collectedContent.append(text);
-                    }
-                    return text;
-                })
-                .doFinally(signal -> {
-                    if (ctx.modeStrategy.isMemoryEnabled()) {
-                        switch (signal) {
-                            case ON_ERROR, CANCEL -> {
-                                log.warn("Stream {} for conversation {}: collected {} chars",
-                                        signal, ctx.conversationId, collectedContent.length());
-                                conversationHelper.savePartialResponse(ctx.conversationId,
-                                        collectedContent.toString());
-                            }
-                            case ON_COMPLETE -> {
-                                log.debug("Stream completed for conversation: {}", ctx.conversationId);
-                                conversationHelper.saveMessagesAndNotify(ctx.conversationId, request.message(),
-                                        collectedContent.toString(), ctx.route.toCompositeId(),
-                                        lastAiResponse.get(), ctx.elapsed());
-                            }
-                            default -> {}
-                        }
-                    }
-                    if (usageRecorded.compareAndSet(false, true)) {
-                        long duration = ctx.elapsed();
-                        org.springframework.ai.chat.model.ChatResponse last = lastAiResponse.get();
-                        if (last != null && last.getMetadata() != null && last.getMetadata().getUsage() != null) {
-                            usageTracker.recordUsage(ctx.conversationId, ctx.route.toCompositeId(),
-                                    last, duration);
-                        } else {
-                            usageTracker.recordUsage(ctx.conversationId, ctx.route.toCompositeId(),
-                                    duration);
-                        }
-                    }
-                });
+        if (result.agentMetadata() != null) {
+            return new ChatResponse(compositeModelId, result.content(),
+                ctx.rawConversationId(), null, result.agentMetadata());
+        }
+        return new ChatResponse(compositeModelId, result.content(),
+            ctx.rawConversationId(), fallback);
     }
     // ==================== 内部辅助 ====================
 
@@ -404,10 +256,6 @@ public class ChatServiceImpl implements ChatService {
             this.modeStrategy = modeStrategy;
             this.userId = userId;
             this.startTimeMs = System.currentTimeMillis();
-        }
-
-        long elapsed() {
-            return System.currentTimeMillis() - startTimeMs;
         }
     }
 }

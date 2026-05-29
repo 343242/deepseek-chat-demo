@@ -103,8 +103,13 @@ public record StrategyExecutionContext(
     String conversationId,       // 隔离后的 ID — 内部使用（消息保存、usage 记录）
     String rawConversationId,    // 原始 ID — 返回给客户端的 DTO
     Long userId,
-    RequestContext cagContext
-) {}
+    RequestContext cagContext,
+    long startTimeMs             // 创建时间戳，供 elapsed() 计算
+) {
+    public long elapsed() {
+        return System.currentTimeMillis() - startTimeMs;
+    }
+}
 ```
 
 ### 7.5 精简：ModeChainResult
@@ -335,6 +340,8 @@ public Flux<String> executeStream(StrategyExecutionContext ctx) {
     AtomicReference<org.springframework.ai.chat.model.ChatResponse> lastAiResponse =
         new AtomicReference<>();
     StringBuilder collectedContent = new StringBuilder();
+    final int maxContentLength = 1 << 20;  // 1 MB
+    AtomicBoolean usageRecorded = new AtomicBoolean(false);
 
     // 3. 流式执行 — ToolCallAdvisor 自动处理流式工具调用
     return countingClient.prompt()
@@ -356,9 +363,21 @@ public Flux<String> executeStream(StrategyExecutionContext ctx) {
             return text;
         })
         .doFinally(signal -> {
-            // Agent 流式收尾：保存消息、记录 usage
+            // 1. Agent 流式消息持久化
             onAgentStreamComplete(ctx, collectedContent.toString(),
                 lastAiResponse.get(), signal, result);
+
+            // 2. usage 记录 — 所有信号都执行
+            if (usageRecorded.compareAndSet(false, true)) {
+                org.springframework.ai.chat.model.ChatResponse last = lastAiResponse.get();
+                if (last != null && last.getMetadata() != null && last.getMetadata().getUsage() != null) {
+                    usageTracker.recordUsage(ctx.conversationId(), ctx.route().toCompositeId(),
+                        last, ctx.elapsed());
+                } else {
+                    usageTracker.recordUsage(ctx.conversationId(), ctx.route().toCompositeId(),
+                        ctx.elapsed());
+                }
+            }
         });
 }
 ```
@@ -368,6 +387,9 @@ public Flux<String> executeStream(StrategyExecutionContext ctx) {
 ```java
 @Service
 public class ChatServiceImpl implements ChatService {
+
+    // chat() 外层 fallback loop 不变 — 保留当前 fallback chain 遍历 + FallbackEligibility 判断。
+    // 仅将 doChat() 内部的 isAgentMode() 分支替换为 strategy.execute() 多态分发。
 
     @Override
     public ChatResponse doChat(ChatRequest request, FallbackMeta fallback) {
@@ -379,13 +401,32 @@ public class ChatServiceImpl implements ChatService {
         // 策略多态 — 无 isAgentMode() 分支
         StrategyExecutionContext execCtx = new StrategyExecutionContext(
             ctx.chatClient, ctx.route, request,
-            ctx.conversationId, ctx.rawConversationId, ctx.userId, cagCtx);
+            ctx.conversationId, ctx.rawConversationId, ctx.userId, cagCtx,
+            System.currentTimeMillis());
 
-        return executeWithFallback(execCtx, ctx.modeStrategy, fallback);
+        StrategyExecuteResult result = ctx.modeStrategy.execute(execCtx);
+        return processResult(result, execCtx, fallback);
     }
 
     @Override
     public Flux<String> chatStream(ChatRequest request) {
+        // 外层 fallback loop 保留 — 与当前 chatStream() 完全一致
+        if (!fallbackProperties.enabled()) {
+            return doStream(request.model(), request);
+        }
+
+        List<String> chain = fallbackChainProvider.resolve(request.model());
+        String requestedModel = request.model();
+
+        return streamRetryHandler.execute(chain, 0, 0, modelId -> {
+            boolean isFallback = !modelId.equals(requestedModel);
+            ChatRequest candidateRequest = isFallback ? request.withModel(modelId) : request;
+            return doStream(modelId, candidateRequest);
+        });
+    }
+
+    /** 单次流式执行 — 保留，内部改为策略多态 */
+    private Flux<String> doStream(String modelId, ChatRequest request) {
         ChatContext ctx = prepareContext(request);
         conversationHelper.ensureConversationExists(
             ctx.userId, ctx.conversationId, request.model());
@@ -393,7 +434,8 @@ public class ChatServiceImpl implements ChatService {
 
         StrategyExecutionContext execCtx = new StrategyExecutionContext(
             ctx.chatClient, ctx.route, request,
-            ctx.conversationId, ctx.rawConversationId, ctx.userId, cagCtx);
+            ctx.conversationId, ctx.rawConversationId, ctx.userId, cagCtx,
+            System.currentTimeMillis());
 
         // 策略多态 — 无 isAgentMode() 分支
         return ctx.modeStrategy.executeStream(execCtx);
@@ -411,12 +453,19 @@ public class ChatServiceImpl implements ChatService {
                                         FallbackMeta fallback) {
         String compositeModelId = ctx.route().toCompositeId();
 
-        // 1. usage 记录 — 使用隔离 conversationId + compositeModelId
-        recordUsage(ctx.conversationId(), compositeModelId, result.springAiResponse());
+        // 1. usage 记录 — 签名对齐 ChatUsageTracker.recordUsage(convId, modelId, aiResponse, durationMs)
+        if (result.springAiResponse() != null) {
+            usageTracker.recordUsage(ctx.conversationId(), compositeModelId,
+                result.springAiResponse(), ctx.elapsed());
+        } else {
+            usageTracker.recordUsage(ctx.conversationId(), compositeModelId, ctx.elapsed());
+        }
 
-        // 2. 消息保存 — 使用隔离 conversationId
-        saveMessages(ctx.conversationId(), ctx.request().message(),
-            result.content(), compositeModelId, result.springAiResponse());
+        // 2. 消息保存 — 签名对齐 ChatConversationHelper.saveMessagesAndNotify(
+        //    convId, userContent, assistantContent, modelId, aiResponse, durationMs)
+        conversationHelper.saveMessagesAndNotify(ctx.conversationId(),
+            ctx.request().message(), result.content(),
+            compositeModelId, result.springAiResponse(), ctx.elapsed());
 
         // 3. 构建 business DTO — rawConversationId 返回客户端
         if (result.agentMetadata() != null) {
@@ -426,18 +475,6 @@ public class ChatServiceImpl implements ChatService {
         return new ChatResponse(compositeModelId, result.content(),
             ctx.rawConversationId(), fallback);
     }
-
-    private ChatResponse executeWithFallback(StrategyExecutionContext execCtx,
-                                              ChatModeStrategy strategy,
-                                              FallbackMeta fallback) {
-        try {
-            StrategyExecuteResult result = strategy.execute(execCtx);
-            return processResult(result, execCtx, fallback);
-        } catch (ModelException e) {
-            // 模型级 fallback（A 模型不可用换 B 模型）
-            return handleModelFallback(e, execCtx, fallback);
-        }
-    }
 }
 ```
 
@@ -445,8 +482,27 @@ public class ChatServiceImpl implements ChatService {
 >
 > **删除分支**：`isAgentMode()` if-else — 多态分发替代。
 >
+> **保留不变**：`chatStream()` 外层 fallback loop（`streamRetryHandler.execute()`）、
+> `chat()` 外层 fallback loop（候选链遍历 + `FallbackEligibility`）— 只替换内部调用入口。
+>
 > **新增方法**：`processResult()` — 统一后处理，替代当前 `doChat()` 中分散的
 > usage 记录、content 提取、消息保存、DTO 包装。
+
+#### 流式错误契约
+
+`executeStream()` 在 `doStream()` 内被调用，外层由 `StreamRetryHandler` + `FallbackEligibility` 控制降级重试。策略必须遵守以下异常契约：
+
+| 异常类型 | 策略行为 | FallbackEligibility 判定 | 效果 |
+|----------|---------|-------------------------|------|
+| 模型侧异常（网络超时、5xx、限流） | 原样抛出 | 可降级 | `streamRetryHandler` 尝试下一个候选模型 |
+| `BusinessException(UNSUPPORTED_OPERATION)` | Agent 模式（Phase C 前不支持流式） | 不可降级 | 直接返回错误，不触发重试 |
+| `BusinessException`（其他业务错误） | 参数校验失败、权限不足等 | 不可降级 | 直接返回错误，不触发重试 |
+| 流式中间错误（Flux 内部） | `doFinally` ON_ERROR 处理 partial save | 不适用 | 流已开始，无法重试 |
+
+**策略实现规则**：
+1. `executeStream()` 不得吞掉可降级异常 — 必须原样抛出给 `doStream()` → `streamRetryHandler`
+2. 不支持流式的模式（如 Phase C 前的 Agent）必须在 `executeStream()` 中抛 `BusinessException(ErrorCode.UNSUPPORTED_OPERATION)`
+3. `doFinally` 内部的 `usageRecorded` / `onStreamComplete()` 异常必须 catch 并 log，不影响主流程
 
 ### 7.11 ChatRequestSpecFactory 演进
 
@@ -505,21 +561,25 @@ protected void onStreamComplete(StrategyExecutionContext ctx, String content,
     // 不持久化消息
 }
 
-// MultiTurnModeStrategy — 保存消息（ON_COMPLETE 完整保存，ON_ERROR/CANCEL partial 保存）
+// MultiTurnModeStrategy — 注入 ChatConversationHelper，保存消息
+// ON_COMPLETE: 完整保存  ON_ERROR/CANCEL: partial 保存
 protected void onStreamComplete(StrategyExecutionContext ctx, String content,
                                  ChatResponse lastResp, SignalType signal) {
     switch (signal) {
         case ON_COMPLETE -> {
             if (lastResp != null) {
-                messageService.save(ctx.conversationId(),
+                // 对齐 ChatConversationHelper.saveMessagesAndNotify(
+                //   convId, userContent, assistantContent, modelId, aiResponse, durationMs)
+                conversationHelper.saveMessagesAndNotify(ctx.conversationId(),
                     ctx.request().message(), content,
-                    ctx.route().toCompositeId(), lastResp);
+                    ctx.route().toCompositeId(), lastResp, ctx.elapsed());
             }
         }
         case ON_ERROR, CANCEL -> {
             log.warn("Stream {} for conversation {}: collected {} chars",
                 signal, ctx.conversationId(), content.length());
-            messageService.savePartialResponse(ctx.conversationId(), content);
+            // 对齐 ChatConversationHelper.savePartialResponse(convId, content)
+            conversationHelper.savePartialResponse(ctx.conversationId(), content);
         }
         default -> {}
     }
@@ -531,10 +591,11 @@ protected void onStreamComplete(StrategyExecutionContext ctx, String content,
 >
 > **R6 #27 注意**：`onStreamComplete()` 仅负责策略级消息持久化差异；
 > usage 记录在 `executeStream()` 的 `doFinally` 中统一处理（见 §7.6），所有模式都执行，不经过此方法。
+> 策略需注入 `ChatConversationHelper`（当前项目已有的 bean）来复用消息保存逻辑。
 
 ### 7.13 改动文件清单
 
-| 文件 | 动作 | 说明 |
+| 文件（完整路径前缀：`src/main/java/com/smart/rag/`） | 动作 | 说明 |
 |------|------|------|
 | `chat/mode/ChatModeStrategy.java` | 修改 | 新增 `execute()` / `executeStream()`，删除 flag 方法 |
 | `chat/mode/SimpleModeStrategy.java` | 修改 | 实现 execute / executeStream，空 onStreamComplete |
@@ -545,9 +606,11 @@ protected void onStreamComplete(StrategyExecutionContext ctx, String content,
 | `chat/service/StrategyExecutionContext.java` | **新增** | 执行上下文 record |
 | `chat/service/ChatRequestSpecFactory.java` | 简化 | 签名移除 strategy 参数，移除 skipXxx 检查 |
 | `chat/service/impl/ChatServiceImpl.java` | 简化 | 删除 doAgentChat / doStandardFallbackChat，新增 processResult |
-| `chat/service/ChatAdvisorChainFactory.java` | 评估 | 如果职责完全被策略替代则删除 |
+| `chat/service/ChatAdvisorChainFactory.java` | 评估 | 决策见 Phase D 分支判断 |
 
 ### 7.14 迁移步骤
+
+> **Phase A/B 保留声明**：`ChatAdvisorChainFactory` 在 Phase A/B 期间保持不变，`ChatRequestSpecFactory` 继续通过它获取 tools（`hasTools()` / `getToolCallbacks()`）。Phase D 再做去留决策。
 
 #### Phase A — execute() 下沉 + StrategyExecuteResult
 
@@ -557,7 +620,7 @@ protected void onStreamComplete(StrategyExecutionContext ctx, String content,
 4. `ChatRequestSpecFactory.createSpec()` 简化签名（移除 strategy 参数，接收 `List<Advisor> chain`）
 5. `SimpleModeStrategy` 实现 execute — 委托 ChatRequestSpecFactory，返回 StrategyExecuteResult
 6. `MultiTurnModeStrategy` 实现 execute — 同上
-7. `AgentModeStrategy` 实现 execute — 搬入 `doAgentChat()` 逻辑 + 降级处理（注入 ModeRouter）
+7. `AgentModeStrategy` 实现 execute — 搬入 `doAgentChat()` 逻辑 + 降级处理（注入 `ObjectProvider<MultiTurnModeStrategy>`）
 8. `ChatServiceImpl.doChat()` 改为 `strategy.execute()` + `processResult()`
 9. `ModeChainResult` 移除 skipXxx 字段，更新所有引用点
 10. 编译 + 功能验证
@@ -583,7 +646,15 @@ protected void onStreamComplete(StrategyExecutionContext ctx, String content,
 
 1. 删除 `isAgentMode()` / `isMemoryEnabled()` flag 方法
 2. 删除 `doAgentChat()` / `doStandardFallbackChat()`
-3. 评估 `ChatAdvisorChainFactory` 是否保留
+3. `ChatAdvisorChainFactory` 去留决策：
+   - **前置检查**：`grep -r ChatAdvisorChainFactory src/` 全项目引用
+   - **判定标准**：仅 `ChatRequestSpecFactory` 引用 → 分支 A；其他组件也引用 → 分支 B
+   - **分支 A（仅 ChatRequestSpecFactory 引用）**：
+     a. `ChatRequestSpecFactory` 改为注入 `AdvisorInfrastructure`（或直接注入 `ToolRegistry`）
+     b. 将 `hasTools()` / `getToolCallbacks()` 委托到新注入的依赖
+     c. 删除 `ChatAdvisorChainFactory`
+     d. 全量编译 + `grep -r ChatAdvisorChainFactory src/` 验证无残留引用
+   - **分支 B（仍有其他引用）**：保留 `ChatAdvisorChainFactory` 作为薄封装，Step 2 不动
 4. 编译 + 全量回归
 
 ### 7.15 风险评估
@@ -597,12 +668,13 @@ protected void onStreamComplete(StrategyExecutionContext ctx, String content,
 | TokenCountingChatModel 流式计数 | 低 | Phase C 验证项之一 |
 | fallback 机制与 execute() 集成 | 低 | `ChatServiceImpl` 保持 fallback 逻辑不变，只改调用入口 |
 | ChatAdvisorChainFactory 废弃判断 | 低 | Phase D 根据实际引用情况决定保留或删除 |
-| `StrategyExecutionContext` 后处理上下文不足 | 高 | 扩展执行上下文，显式携带 `rawConversationId`、`actualModelId`/`route.toCompositeId()`、`startTimeMs` 或 `durationMs`，避免 `processResult()` 暴露隔离后的 conversationId 或使用错误模型 ID |
-| Agent 降级注入 `ModeRouter` 形成 Spring 循环依赖 | 高 | 不在 `AgentModeStrategy` 构造器直接注入 `ModeRouter`；改用 `ObjectProvider<MultiTurnModeStrategy>`、专用 `AgentFallbackExecutor`，或保留模式级降级在 `ChatServiceImpl` |
-| 流式下沉遗漏 usage 记录和 partial 保存 | 高 | 将当前 `doStream()` 的 usage 记录、`ON_ERROR`/`CANCEL` partial 保存、`ON_COMPLETE` 完整保存抽成共享生命周期组件或基类，策略只决定持久化差异 |
-| `executeWithFallback()` 示例与现有 fallback 语义不一致 | 中 | 明确保留当前 `chat()`/`chatStream()` 外层 fallback loop 和 `FallbackEligibility`，`doChat()` 内部只替换为 `strategy.execute()` |
+| `StrategyExecutionContext` 后处理上下文不足 | ~~高~~ 已缓解 | §7.4 已添加 `rawConversationId`、`startTimeMs` + `elapsed()`；§7.10 `processResult()` 已对齐实际 API 签名 |
+| Agent 降级注入 `ModeRouter` 形成 Spring 循环依赖 | ~~高~~ 已缓解 | §7.8 已改为 `ObjectProvider<MultiTurnModeStrategy>` 延迟注入，避免构造器循环依赖 |
+| 流式下沉遗漏 usage 记录和 partial 保存 | ~~高~~ 已缓解 | §7.6 usage 记录已分离到 `doFinally` 统一处理；§7.12 `onStreamComplete()` 已包含 ON_ERROR/CANCEL partial 保存 |
+| `executeWithFallback()` 示例与现有 fallback 语义不一致 | ~~中~~ 已修正 | §7.10 已删除 `executeWithFallback()` 伪代码，改为注释说明保留当前外层 fallback loop |
 | 流式 chunk 提取缺少 `getOutput()` 空值保护 | 中 | 复用 null-safe `extractContent()`/`extractChunk()` helper，保持当前 `gen == null || gen.getOutput() == null` 保护 |
-| `ChatRequestSpecFactory` 简化后工具依赖来源不明确 | 中 | 若 Phase D 删除 `ChatAdvisorChainFactory`，则 `ChatRequestSpecFactory` 显式注入 `AdvisorInfrastructure` 获取 tools |
+| `ChatRequestSpecFactory` 简化后工具依赖来源不明确 | ~~中~~ 已明确 | Phase D 分支判断：删除则注入 `AdvisorInfrastructure`，否则保留（§7.14） |
+| 流式 `executeStream()` 错误契约未定义 | 高 | §7.10 新增错误契约表：模型侧异常可降级、`BusinessException` 不可降级、策略不得吞掉可降级异常 |
 
 ### 7.16 Codex R5 审查修正记录
 
@@ -610,7 +682,7 @@ protected void onStreamComplete(StrategyExecutionContext ctx, String content,
 |---|------|------|------|
 | 20 | HIGH | `execute()` 返回 Spring AI `ChatResponse`，ChatServiceImpl 无法完成 usage 记录、消息保存、DTO 包装 | 新增 `StrategyExecuteResult` record（§7.3），携带 springAiResponse + content + agentMetadata。ChatServiceImpl 新增 `processResult()` 统一后续处理（§7.10） |
 | 21 | HIGH | `executeStream()` 返回 `Flux<String>` 使用 `.stream().content()`，丢失 `lastAiResponse` 追踪 | 策略内部使用 `.stream().chatResponse()` + `doFinally` + `AtomicReference<ChatResponse>`，完整保留 usage 和消息保存能力（§7.6） |
-| 22 | HIGH | Agent 降级逻辑 `doStandardFallbackChat()` 无明确迁移归属 | 迁入 `AgentModeStrategy`，注入 `ModeRouter` 实现 MULTI_TURN 降级路由（§7.8） |
+| 22 | HIGH | Agent 降级逻辑 `doStandardFallbackChat()` 无明确迁移归属 | 迁入 `AgentModeStrategy`，注入 `ObjectProvider<MultiTurnModeStrategy>` 实现 MULTI_TURN 降级路由（§7.8），避免 `ModeRouter` 构造器循环依赖 |
 | 23 | MEDIUM | Agent 流式兼容性未验证就与 execute 下沉同 Phase | 拆分为独立 Phase C，设置前置验证清单，验证通过后才实施（§7.9, §7.14） |
 | 24 | MEDIUM | 删除 `isMemoryEnabled()` 后 SIMPLE/MULTI_TURN 流式持久化语义混合 | 每个策略通过 `onStreamComplete()` 多态方法自行决定持久化行为（§7.12） |
 
@@ -627,15 +699,13 @@ protected void onStreamComplete(StrategyExecutionContext ctx, String content,
 | 29 | MEDIUM | 流式 chunk 提取缺少 `getOutput()` 空值保护 | 当前实现检查 `gen == null || gen.getOutput() == null`；原文档 Agent 流式示例只检查 `resp.getResult() != null` | **已修正** §7.6 标准模式 + §7.9 Agent 流式均改为 `mapNotNull` + `gen == null || gen.getOutput() == null` 空值保护 |
 | 30 | MEDIUM | `ChatRequestSpecFactory` 简化后工具依赖来源不明确 | 当前 `hasTools()`/`getToolCallbacks()` 来自 `ChatAdvisorChainFactory`；本文档 Phase D 又评估删除该 factory | **已确认** §7.11 保留当前依赖来源；若 Phase D 删除 `ChatAdvisorChainFactory`，`ChatRequestSpecFactory` 改为注入 `AdvisorInfrastructure`（见 §7.15 风险表） |
 
-### 7.18 仍待落地的问题
+### 7.18 Codex R7 复核（落地前最终验证）
 
-> 以下问题是当前文档里仍会卡真实落地的实现缺口，不是概念上的残留。
+> 复核对象：R5/R6 修正后的完整文档。以下 4 项为 Codex 新一轮落地审查发现，经逐项核对代码后确认状态。
 
-| # | 等级 | 问题 | 说明 | 建议 |
-|---|------|------|------|------|
-| 31 | HIGH | `StrategyExecutionContext` 没有 `elapsed()` / `startTimeMs` | 文档里 `StrategyExecutionContext` 只有数据字段，但后面 `executeStream()` / `processResult()` 仍在调用 `ctx.elapsed()`；按当前形状实现会直接编译失败 | 给 `StrategyExecutionContext` 增加 `long startTimeMs` 和 `elapsed()`，或直接携带 `durationMs`，避免依赖外部隐式计时 |
-| 32 | HIGH | `processResult()` 的 `recordUsage(...)` / `saveMessages(...)` 调用不匹配当前项目 API | 当前项目的 `ChatUsageTracker.recordUsage` 和 `ChatConversationHelper.saveMessagesAndNotify` 都需要 `durationMs`；如果照文档落地，容易漏参或写出不存在的方法名 | 把文档里的伪代码改成真实签名：`usageTracker.recordUsage(..., aiResponse, ctx.elapsed())` 和 `conversationHelper.saveMessagesAndNotify(..., aiResponse, ctx.elapsed())` |
-| 33 | HIGH | `onStreamComplete()` 使用 `messageService.save(...)` / `savePartialResponse(...)`，但当前项目没有这个策略层依赖形状 | 现有可复用的实现是 `ChatConversationHelper.saveMessagesAndNotify()` 和 `savePartialResponse()`；如果策略自己做流式收尾，应直接注入 `ChatConversationHelper` | 把流式收尾依赖改成 `ChatConversationHelper`，不要引入文档中不存在的 `messageService` 形状 |
-| 34 | MEDIUM | 文档内部仍有 `AgentModeStrategy` 注入 `ModeRouter` 的旧表达 | 你已经把实现路径改成 `ObjectProvider<MultiTurnModeStrategy>`，但正文或风险表里仍可能残留旧说法，容易让实现者重新写出循环依赖 | 全文统一成一种说法，只保留 `ObjectProvider<MultiTurnModeStrategy>` 方案，并同步删除旧的 `ModeRouter` 表述 |
-| 35 | MEDIUM | `executeWithFallback()` 还是伪代码，仍可能误导实现者收窄 fallback 语义 | 真实项目里模型 fallback 依赖外层 `chat()` / `chatStream()` 的候选链和 `FallbackEligibility`，不是这里的 `catch (ModelException)` 示意 | 把这段改成纯说明性文字，明确“外层 fallback loop 不变，`doChat()` 内只替换为 `strategy.execute(execCtx)`” |
-| 36 | LOW | `Agent` 流式章节仍属于 Phase C 预研 | 这部分不是 Step 2 主路径，但如果标题和说明不够明确，容易被误当成可直接实施的主体设计 | 在章节开头再次强调“仅预研，不纳入 Step 2 落地范围” |
+| # | 等级 | 问题 | 核实结果 | 处置 |
+|---|------|------|----------|------|
+| 31 | HIGH | 流式下沉会把 fallback 语义分散到策略边界，文档没有明确错误契约 | **已修正（R6）**：§7.10 已有完整"流式错误契约"表（异常类型 × FallbackEligibility 判定 × 效果）+ 3 条策略实现规则，明确引用 `StreamRetryHandler` + `FallbackEligibility`。`BusinessException`（含 `UNSUPPORTED_OPERATION`）已在不可降级列表 | 无需改动 |
+| 32 | MEDIUM | R5 #22 修正记录仍写"注入 ModeRouter"，与 §7.8 的 `ObjectProvider` 不一致 | **已修正（R6）**：§7.16 #22 实际文本为"注入 `ObjectProvider<MultiTurnModeStrategy>` 实现 MULTI_TURN 降级路由（§7.8），避免 `ModeRouter` 构造器循环依赖"，与 §7.8 一致 | 无需改动 |
+| 33 | MEDIUM | 文件清单路径省略前缀，多包迁移时增加漏改风险 | **已明确**：§7.13 表头已声明"完整路径前缀：`src/main/java/com/smart/rag/`"，各相对路径与实际文件一致（`chat/mode/`、`chat/service/`、`rag/agent/mode/`） | 无需改动 |
+| 34 | MEDIUM | Phase D `ChatAdvisorChainFactory` 去留缺少可执行步骤 | **已修正**：§7.14 Phase D 步骤 3 已拆分为前置检查 → 判定标准 → 分支 A（4 步引用清理）→ 分支 B；Phase A/B 新增保留声明，明确 `ChatAdvisorChainFactory` 在 Phase A/B 期间不动 | 本轮修正 |

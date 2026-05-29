@@ -4,13 +4,15 @@ import com.smart.rag.chat.context.ContextPromptInjector;
 import com.smart.rag.chat.context.RequestContext;
 import com.smart.rag.chat.dto.ChatRequest;
 import com.smart.rag.chat.entity.ModelParams;
-import com.smart.rag.chat.mode.ChatModeStrategy;
 import com.smart.rag.chat.provider.ModelProvider;
 import com.smart.rag.chat.provider.ModelRouter;
 import com.smart.rag.chat.provider.ProviderRegistry;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.client.advisor.api.Advisor;
 import org.springframework.ai.chat.prompt.ChatOptions;
 import org.springframework.stereotype.Component;
+
+import java.util.List;
 
 /**
  * ChatClient 请求规格构建工厂
@@ -19,12 +21,13 @@ import org.springframework.stereotype.Component;
  * <ul>
  *   <li>用户消息设置</li>
  *   <li>Advisor 链挂载</li>
- *   <li>Tool Calling 绑定（尊重 ModeChainResult.skipGlobalTools）</li>
- *   <li>System Prompt 解析（复合格式 -> 纯 modelId 降级，尊重 ModeChainResult.skipDbSystemPrompt）</li>
- *   <li>模型参数热调整（复合格式 -> 纯 modelId 降级，尊重 ModeChainResult.skipDbModelOptions）</li>
+ *   <li>Tool Calling 绑定</li>
+ *   <li>System Prompt 解析（复合格式 -> 纯 modelId 降级）</li>
+ *   <li>模型参数热调整（复合格式 -> 纯 modelId 降级）</li>
  * </ul>
  * <p>
  * 单一职责：只负责将请求参数转换为 ChatClientRequestSpec，不关心调用方式和结果处理。
+ * Agent 模式不调用此方法 — 直接构建 spec，跳过全局 tools / DB system prompt / DB model options。
  */
 @Component
 public class ChatRequestSpecFactory {
@@ -48,72 +51,44 @@ public class ChatRequestSpecFactory {
     }
 
     /**
-     * 构建 ChatClientRequestSpec（Phase 2 新签名 -- 含 userId 和 route）
+     * 构建 ChatClientRequestSpec（Step 2 简化签名 — 直接传 chain）
      *
      * @param chatClient      目标 ChatClient
      * @param route           模型路由结果
      * @param request         聊天请求
      * @param conversationId  隔离后的对话 ID
-     * @param modeStrategy    对话模式策略
+     * @param chain           已构建好的 Advisor 链
      * @param cagContext      CAG 请求上下文（可能为 null，表示 CAG 未启用）
-     * @param userId          用户 ID
      * @return 已配置好的请求规格
      */
     public ChatClient.ChatClientRequestSpec createSpec(ChatClient chatClient,
                                                        ModelRouter.Route route,
                                                        ChatRequest request,
                                                        String conversationId,
-                                                       ChatModeStrategy modeStrategy,
-                                                       RequestContext cagContext,
-                                                       Long userId) {
-        ModeChainResult result = advisorChainFactory.buildChain(
-            conversationId, request, modeStrategy, cagContext, userId, route);
-
+                                                       List<Advisor> chain,
+                                                       RequestContext cagContext) {
         ChatClient.ChatClientRequestSpec spec = chatClient.prompt()
                 .user(request.message())
-                .advisors(a -> a.advisors(result.chain())
+                .advisors(a -> a.advisors(chain)
                         .param(org.springframework.ai.chat.memory.ChatMemory.CONVERSATION_ID,
                                 conversationId));
 
-        // Tool Calling -- Agent 模式跳过（有自建 ToolCallAdvisor）
-        if (!result.skipGlobalTools() && advisorChainFactory.hasTools()) {
+        if (advisorChainFactory.hasTools()) {
             spec = spec.tools((Object) advisorChainFactory.getToolCallbacks());
         }
 
-        // System Prompt（CAG 增强）-- Agent 模式跳过（有 AgentSystemPromptAdvisor）
-        if (!result.skipDbSystemPrompt()) {
-            String systemPrompt = resolveSystemPrompt(route);
-            systemPrompt = contextPromptInjector.inject(systemPrompt, cagContext);
-            if (systemPrompt != null && !systemPrompt.isBlank()) {
-                spec = spec.system(systemPrompt);
-            }
+        String systemPrompt = resolveSystemPrompt(route);
+        systemPrompt = contextPromptInjector.inject(systemPrompt, cagContext);
+        if (systemPrompt != null && !systemPrompt.isBlank()) {
+            spec = spec.system(systemPrompt);
         }
 
-        // 模型参数 -- Agent 模式跳过（使用自有模型配置）
-        if (!result.skipDbModelOptions()) {
-            ChatOptions options = resolveChatOptions(route);
-            if (options != null) {
-                spec = spec.options(options);
-            }
+        ChatOptions options = resolveChatOptions(route);
+        if (options != null) {
+            spec = spec.options(options);
         }
 
         return spec;
-    }
-
-    /**
-     * 构建 ChatClientRequestSpec（旧签名 -- 向后兼容，内部提取 userId）
-     *
-     * @deprecated 使用 {@link #createSpec(ChatClient, ModelRouter.Route, ChatRequest, String, ChatModeStrategy, RequestContext, Long)} 代替
-     */
-    @Deprecated
-    public ChatClient.ChatClientRequestSpec createSpec(ChatClient chatClient,
-                                                       ModelRouter.Route route,
-                                                       ChatRequest request,
-                                                       String conversationId,
-                                                       ChatModeStrategy modeStrategy,
-                                                       RequestContext cagContext) {
-        return createSpec(chatClient, route, request, conversationId, modeStrategy,
-            cagContext, com.smart.rag.security.util.SecurityUtils.getCurrentUserId());
     }
 
     /**

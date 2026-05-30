@@ -3,7 +3,7 @@
 **日期**: 2026-05-31  
 **审查范围**: `src/main/java/com/smart/rag/**` 中 `CompletableFuture`、`Future`、`ExecutorService`、`join()`、`get()` 相关使用  
 **审查口径**: 只读审计，重点检查阻塞 IO 是否误用 commonPool、异步是否被同步等待抵消、异常是否延迟到 `join/get` 才暴露、是否具备超时和取消策略、Future 使用是否有必要
-**补充评估**: 2026-05-31 — 线程池合规性审查、thenCombine 方案、结构化并发可行性
+**补充评估**: 2026-05-31 — 线程池合规性审查、thenCombine 方案
 **最终建议**: REQUEST CHANGES — 补充评估已纳入
 
 ---
@@ -399,30 +399,6 @@ Rerank 使用专用 `ThreadPoolExecutor` 和 `future.get(timeout)`，且 HTTP �
 
 ---
 
-## 结构化并发评估
-
-### Java 21 现状
-
-`StructuredTaskScope` 在 Java 21 中是 **Preview 特性**（JEP 453），需要 `--enable-preview` 编译和运行时参数。Preview API 可能在后续版本变更签名，不适合生产依赖。Java 24 中才正式成为 Final API。
-
-### 逐场景评估
-
-| 场景 | StructuredTaskScope 替代效果 | 结论 |
-|------|--------------------------|------|
-| HybridSearchService (M1) | `ShutdownOnFailure` 天然并行+取消+异常传播，但不支持"部分降级" | 最佳候选，但需 Preview |
-| ModelRegistryRefresher | 虚拟线程 + `join()` 已是合理屏障，差异不大 | 不改 |
-| StandardStrategy/FastTrackStrategy | 批量操作 `StructuredTaskScope` 语法反而不如 `CompletableFuture.allOf()` 简洁 | 不适合 |
-| DatasetGenerator | 可用但仅 evaluation profile，优先级低 | 远期 |
-| 启动初始化 | fire-and-forget 不适合 `StructuredTaskScope` 的同步等待模型 | 不适合 |
-
-### 结论
-
-**当前阶段（Java 21）**：不引入结构化并发。用 `thenCombine` + 虚拟线程作为近期最优解。
-
-**远期（升级 Java 24+ 后）**：`StructuredTaskScope` 成为 Final API 后，可对 HybridSearchService 这类"少量并行分支"场景做改造。ETL 批处理保持 `CompletableFuture.allOf()` 不变。
-
----
-
 ## 优先级建议
 
 1. **P0 — 修 H1 + 合规违规**: `runAsync()` 加虚拟线程 executor；`EvaluationRunner` 和 Test 改 `newVirtualThreadPerTaskExecutor()`
@@ -430,7 +406,6 @@ Rerank 使用专用 `ThreadPoolExecutor` 和 `future.get(timeout)`，且 HTTP �
 3. **P2 — M4 补超时**: `FastTrackStrategy.extractAll()` 加 `orTimeout(5, MINUTES)` 对齐 `StandardStrategy`
 4. **P3 — M3 补超时**: `DatasetGenerator` 加 `orTimeout` 或改后台 Job
 5. **保留合理异步**: L1/L2/L3 的 `join()` 是业务阶段屏障，不建议删除
-6. **远期**: 升级 Java 24 后评估 `StructuredTaskScope` 替代 HybridSearchService
 
 ---
 
@@ -449,6 +424,5 @@ Rerank 使用专用 `ThreadPoolExecutor` 和 `future.get(timeout)`，且 HTTP �
 ### 补充评估结论
 
 1. **线程池合规**：3 处违反 java-handbook 规则的创建点（2 处 `Executors.newFixedThreadPool`，1 处裸 `runAsync`）
-2. **M1 最佳方案**：`thenCombine` 链式编排 + 虚拟线程，比结构化并发更贴合"部分降级"的业务语义
-3. **结构化并发**：Java 21 Preview 状态不适合生产引入，等 Java 24 Final API 后再做 HybridSearchService 场景改造
-4. **近期优先级**：P0 合规修复 → P1 thenCombine+虚拟线程 → P2/P3 补超时
+2. **M1 最佳方案**：`thenCombine` 链式编排 + 虚拟线程，贴合"部分降级"的业务语义
+3. **近期优先级**：P0 合规修复 → P1 thenCombine+虚拟线程 → P2/P3 补超时

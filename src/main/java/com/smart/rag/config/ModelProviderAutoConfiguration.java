@@ -3,7 +3,7 @@ package com.smart.rag.config;
 import com.smart.rag.chat.service.ModelRegistryRefresher;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.boot.CommandLineRunner;
+import org.springframework.boot.ApplicationRunner;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -12,6 +12,7 @@ import org.springframework.web.client.RestClient;
 
 import java.net.http.HttpClient;
 import java.time.Duration;
+import java.util.concurrent.CompletableFuture;
 
 /**
  * 模型厂商统一自动配置
@@ -65,18 +66,25 @@ public class ModelProviderAutoConfiguration {
     // ==================== Startup ====================
 
     /**
-     * 启动时从所有 Provider 拉取模型列表并注册到 ChatClientRegistry
+     * 启动时异步从所有 Provider 拉取模型列表并注册到 ChatClientRegistry
+     * <p>
+     * 使用 CompletableFuture 异步执行，不阻塞 Spring Boot 启动过程。
      */
     @Bean
-    public CommandLineRunner modelInitializer(ModelRegistryRefresher refresher) {
+    public ApplicationRunner modelInitializer(ModelRegistryRefresher refresher) {
         return args -> {
-            log.info("Initializing models from all providers...");
-            boolean success = refresher.refresh();
-            if (success) {
-                log.info("Model initialization completed");
-            } else {
-                log.warn("Model initialization failed, service may be partially available");
-            }
+            log.info("Initializing models from all providers (async)...");
+            CompletableFuture.runAsync(() -> {
+                boolean success = refresher.refresh();
+                if (success) {
+                    log.info("Model initialization completed");
+                } else {
+                    log.warn("Model initialization failed, service may be partially available");
+                }
+            }).exceptionally(ex -> {
+                log.warn("Model initialization error: {}", ex.getMessage());
+                return null;
+            });
         };
     }
 

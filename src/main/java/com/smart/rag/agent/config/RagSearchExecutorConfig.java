@@ -6,6 +6,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 
 import java.util.concurrent.ThreadPoolExecutor;
@@ -23,6 +24,7 @@ public class RagSearchExecutorConfig {
 
     private static final Logger log = LoggerFactory.getLogger(RagSearchExecutorConfig.class);
 
+    @Lazy
     @Bean("ragSearchExecutor")
     public ThreadPoolTaskExecutor ragSearchExecutor(RagSearchExecutorProperties cfg) {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();

@@ -8,6 +8,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Lazy;
 
 /**
  * 沙箱自动配置
@@ -23,6 +24,7 @@ public class SandboxAutoConfiguration {
 
     private static final Logger log = LoggerFactory.getLogger(SandboxAutoConfiguration.class);
 
+    @Lazy
     @Bean
     public SandboxService sandboxService(SandboxConfig config) {
         log.info("SandboxConfig: enabled={}, timeout={}s, maxMemory={}MB, maxCpus={}, maxConcurrency={}",

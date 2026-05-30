@@ -8,6 +8,7 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 
 import java.util.List;
@@ -40,6 +41,7 @@ public class EtlExecutorConfig {
     /**
      * IO 密集型线程池 — 文件读取、MinIO 下载、Embedding API、PGvector 写入
      */
+    @Lazy
     @Bean("etlIoExecutor")
     public ThreadPoolTaskExecutor etlIoExecutor(EtlExecutorProperties properties) {
         EtlExecutorProperties.PoolConfig cfg = properties.getIo();
@@ -52,6 +54,7 @@ public class EtlExecutorConfig {
     /**
      * CPU 密集型线程池 — 文本分块、文档解析计算
      */
+    @Lazy
     @Bean("etlCpuExecutor")
     public ThreadPoolTaskExecutor etlCpuExecutor(EtlExecutorProperties properties) {
         EtlExecutorProperties.PoolConfig cfg = properties.getCpu();
@@ -64,6 +67,7 @@ public class EtlExecutorConfig {
     /**
      * ETL 任务执行器门面
      */
+    @Lazy
     @Bean
     public EtlTaskExecutorBridge etlTaskExecutorBridge(
             @Qualifier("etlIoExecutor") ThreadPoolTaskExecutor etlIoExecutor,
@@ -74,6 +78,7 @@ public class EtlExecutorConfig {
     /**
      * 分片上传合并线程池 — 异步执行 composeObject + MD5 校验 + DB 写入 + ETL 触发
      */
+    @Lazy
     @Bean("mergeExecutor")
     public ThreadPoolTaskExecutor mergeExecutor(EtlExecutorProperties properties) {
         EtlExecutorProperties.PoolConfig cfg = properties.getMerge();

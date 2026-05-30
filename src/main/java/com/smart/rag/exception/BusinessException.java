@@ -29,6 +29,12 @@ public class BusinessException extends RuntimeException {
         this.detail = detail;
     }
 
+    public BusinessException(ErrorCode errorCode, String detail, Throwable cause) {
+        super(detail != null ? detail : errorCode.getMessage(), cause);
+        this.errorCode = errorCode;
+        this.detail = detail;
+    }
+
     /**
      * 兼容旧代码：纯 message 构造，映射到 BAD_REQUEST
      */

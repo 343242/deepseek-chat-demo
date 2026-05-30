@@ -37,6 +37,9 @@ public class SandboxService implements AutoCloseable {
         this.config = config;
         this.concurrencyLimiter = new Semaphore(config.maxConcurrency());
         // 虚线程 per-task：每个容器执行独立一个虚线程，通过 Semaphore 限流
+        // Virtual thread per-task executor is the standard API for virtual threads.
+        // Unlike platform thread pools, virtual threads are lightweight and unbounded by design.
+        // Concurrency is controlled at the call site level, not by pool sizing.
         this.executor = Executors.newVirtualThreadPerTaskExecutor();
         this.dockerAvailable = checkDockerAvailable();
         if (dockerAvailable) {
@@ -79,7 +82,8 @@ public class SandboxService implements AutoCloseable {
         } finally {
             try {
                 Files.deleteIfExists(tempFile);
-            } catch (IOException ignored) {
+            } catch (IOException e) {
+                log.debug("Failed to delete temp file after sandbox execution", e);
             }
         }
     }
@@ -116,6 +120,9 @@ public class SandboxService implements AutoCloseable {
             }
 
             containerId = createOutput.trim();
+            if (!containerId.matches("^[a-f0-9]{12}([a-f0-9]{52})?$")) {
+                throw new IllegalStateException("Invalid Docker container ID format: " + containerId.substring(0, Math.min(12, containerId.length())) + "...");
+            }
             log.debug("Container created: {}", containerId);
 
             // 启动容器并等待（带超时）
@@ -269,6 +276,7 @@ public class SandboxService implements AutoCloseable {
             boolean exited = drainAndAwait(process, 10);
             return exited && process.exitValue() == 0;
         } catch (Exception e) {
+            log.debug("Docker availability check failed, sandbox will be unavailable", e);
             return false;
         }
     }

@@ -118,8 +118,9 @@ public class ChatClientRegistry {
     public ChatClient get(String modelId) {
         ChatClient client = snapshot.registry.get(modelId);
         if (client == null) {
+            log.warn("Model not found: {}, available: {}", modelId, snapshot.registry.keySet());
             throw new ModelNotFoundException(modelId,
-                    "Model not found: " + modelId + ". Available: " + snapshot.registry.keySet());
+                    "Model not found: " + modelId);
         }
         return client;
     }

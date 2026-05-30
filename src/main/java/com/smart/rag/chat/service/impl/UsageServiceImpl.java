@@ -5,6 +5,9 @@ import com.smart.rag.chat.dto.TokenUsageDTO;
 import com.smart.rag.chat.dto.UsageStats;
 import com.smart.rag.chat.entity.TokenUsage;
 import com.smart.rag.chat.service.UsageService;
+import com.smart.rag.common.errorcode.ErrorCode;
+import com.smart.rag.conversation.util.ConversationIdUtil;
+import com.smart.rag.exception.BusinessException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -41,6 +44,37 @@ public class UsageServiceImpl implements UsageService {
                 durationMs
         );
         transactionTemplate.executeWithoutResult(status -> mapper.insert(usage));
+    }
+
+    @Override
+    public List<TokenUsageDTO> getRecords(Long userId, String conversation, String model) {
+        if (conversation != null && !conversation.isBlank()) {
+            String isolatedId = ConversationIdUtil.buildIsolatedId(userId, conversation);
+            return getByConversation(isolatedId);
+        }
+        if (model != null && !model.isBlank()) {
+            String prefix = ConversationIdUtil.buildLikePrefix(userId);
+            return getByModelAndUser(model, prefix);
+        }
+        throw new BusinessException(ErrorCode.USAGE_PARAM_MISSING);
+    }
+
+    @Override
+    public List<UsageStats> statsByModel(Long userId, String model,
+                                         LocalDateTime startTime, LocalDateTime endTime) {
+        String prefix = ConversationIdUtil.buildLikePrefix(userId);
+        return aggregateByModelForUser(model, prefix, startTime, endTime);
+    }
+
+    @Override
+    public List<UsageStats> statsByConversation(Long userId, String conversation,
+                                                 LocalDateTime startTime, LocalDateTime endTime) {
+        if (conversation != null && !conversation.isBlank()) {
+            String isolatedId = ConversationIdUtil.buildIsolatedId(userId, conversation);
+            return aggregateByConversation(isolatedId, startTime, endTime);
+        }
+        String prefix = ConversationIdUtil.buildLikePrefix(userId);
+        return aggregateByUserConversations(prefix, startTime, endTime);
     }
 
     @Override

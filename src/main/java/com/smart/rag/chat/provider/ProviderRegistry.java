@@ -63,9 +63,9 @@ public class ProviderRegistry {
     public ModelProvider get(String providerId) {
         ModelProvider provider = providers.get(providerId);
         if (provider == null) {
+            log.warn("Provider not found: {}, available: {}", providerId, providers.keySet());
             throw new ProviderNotFoundException(providerId,
-                    "Provider not found: " + providerId
-                            + ". Available: " + providers.keySet());
+                    "Provider not found: " + providerId);
         }
         return provider;
     }

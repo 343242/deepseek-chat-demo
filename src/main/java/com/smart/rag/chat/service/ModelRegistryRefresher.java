@@ -35,6 +35,9 @@ public class ModelRegistryRefresher {
     private static final Logger log = LoggerFactory.getLogger(ModelRegistryRefresher.class);
 
     /** 并行拉取模型列表用的虚拟线程池 */
+    // Virtual thread per-task executor is the standard API for virtual threads.
+    // Unlike platform thread pools, virtual threads are lightweight and unbounded by design.
+    // Concurrency is controlled at the call site level, not by pool sizing.
     private static final Executor FETCH_EXECUTOR = Executors.newVirtualThreadPerTaskExecutor();
 
     private final ProviderRegistry providerRegistry;

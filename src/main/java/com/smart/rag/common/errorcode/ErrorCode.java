@@ -24,6 +24,7 @@ public enum ErrorCode {
     NOT_FOUND(40400, "资源不存在"),
     RATE_LIMITED(42900, "请求过于频繁"),
     INTERNAL_ERROR(50000, "服务内部错误，请稍后重试"),
+    SERIALIZATION_FAILED(50099, "序列化失败"),
 
     // ==================== 认证 10xxx ====================
     CAPTCHA_PARAM_MISSING(10001, "验证码参数缺失"),

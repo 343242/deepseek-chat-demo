@@ -15,6 +15,16 @@ public interface UsageService {
                      long promptTokens, long completionTokens, long totalTokens,
                      long durationMs);
 
+    List<TokenUsageDTO> getRecords(Long userId, String conversation, String model);
+
+    List<UsageStats> statsByModel(Long userId, String model,
+                                  LocalDateTime startTime, LocalDateTime endTime);
+
+    List<UsageStats> statsByConversation(Long userId, String conversation,
+                                         LocalDateTime startTime, LocalDateTime endTime);
+
+    // ---- 内部查询方法（保留，供其他服务复用）----
+
     List<TokenUsageDTO> getByConversation(String conversationId);
 
     List<TokenUsageDTO> getByModelAndUser(String modelId, String userPrefix);

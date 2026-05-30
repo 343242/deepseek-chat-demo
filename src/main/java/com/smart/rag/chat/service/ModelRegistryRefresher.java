@@ -6,6 +6,7 @@ import com.smart.rag.chat.provider.ModelProvider;
 import com.smart.rag.chat.provider.ProviderRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.stereotype.Component;
@@ -66,14 +67,21 @@ public class ModelRegistryRefresher {
                 providers.size(), providerRegistry.getAvailableProviderIds());
 
         // ====== 阶段1: 并行拉取模型列表（网络 I/O 密集） ======
+        // 在异步线程中恢复 MDC 上下文，确保日志 traceId 可追溯
+        Map<String, String> parentMdc = MDC.getCopyOfContextMap();
         List<CompletableFuture<ProviderResult>> futures = providers.stream()
                 .map(provider -> CompletableFuture.supplyAsync(() -> {
+                    if (parentMdc != null) {
+                        MDC.setContextMap(parentMdc);
+                    }
                     try {
                         List<ModelInfo> models = provider.fetchModels();
                         return new ProviderResult(provider, models, null);
                     } catch (Exception e) {
                         log.error("Failed to fetch models from {}: {}", provider.getProviderId(), e.getMessage());
                         return new ProviderResult(provider, List.of(), e);
+                    } finally {
+                        MDC.clear();
                     }
                 }, FETCH_EXECUTOR))
                 .toList();

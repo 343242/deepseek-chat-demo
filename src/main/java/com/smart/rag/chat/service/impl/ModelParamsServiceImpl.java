@@ -4,6 +4,7 @@ import com.smart.rag.chat.mapper.ModelParamsMapper;
 import com.smart.rag.chat.dto.ModelParamsDTO;
 import com.smart.rag.chat.entity.ModelParams;
 import com.smart.rag.chat.service.ModelParamsService;
+import com.smart.rag.chat.context.CagProperties;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import org.springframework.stereotype.Service;
@@ -28,12 +29,13 @@ public class ModelParamsServiceImpl implements ModelParamsService {
     private final Cache<String, ModelParams> paramsCache;
 
     public ModelParamsServiceImpl(ModelParamsMapper mapper,
-                                  TransactionTemplate transactionTemplate) {
+                                  TransactionTemplate transactionTemplate,
+                                  CagProperties cagProperties) {
         this.mapper = mapper;
         this.transactionTemplate = transactionTemplate;
         this.paramsCache = Caffeine.newBuilder()
-                .expireAfterWrite(Duration.ofSeconds(30))
-                .maximumSize(200)
+                .expireAfterWrite(Duration.ofSeconds(cagProperties.getModelParamsCacheTtlSeconds()))
+                .maximumSize(cagProperties.getModelParamsCacheMaxSize())
                 .build();
     }
 

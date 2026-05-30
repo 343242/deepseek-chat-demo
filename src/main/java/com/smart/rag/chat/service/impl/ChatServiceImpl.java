@@ -26,11 +26,13 @@ import com.smart.rag.exception.BusinessException;
 import com.smart.rag.security.util.SecurityUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.stereotype.Service;
 import reactor.core.publisher.Flux;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * 聊天服务（编排层）-- 请求预处理 -> 委托工厂构建请求 -> 调用并处理响应。
@@ -153,14 +155,7 @@ public class ChatServiceImpl implements ChatService {
     /** 执行单次阻塞式聊天（无降级逻辑） */
     private ChatResponse doChat(ChatRequest request, FallbackMeta fallback) {
         ChatContext ctx = prepareContext(request);
-        conversationHelper.ensureConversationExists(ctx.userId, ctx.conversationId, request.model());
-        RequestContext cagCtx = buildCagContext(ctx, request);
-
-        StrategyExecutionContext execCtx = new StrategyExecutionContext(
-            ctx.chatClient, ctx.route, request,
-            ctx.conversationId, ctx.rawConversationId, ctx.userId, cagCtx,
-            ctx.startTimeMs);
-
+        StrategyExecutionContext execCtx = buildExecutionContext(ctx, request);
         StrategyExecuteResult result = ctx.modeStrategy.execute(execCtx);
         return processResult(result, execCtx, fallback);
     }
@@ -168,15 +163,16 @@ public class ChatServiceImpl implements ChatService {
     /** 执行单次流式聊天（无降级逻辑） */
     private Flux<String> doStream(String modelId, ChatRequest request) {
         ChatContext ctx = prepareContext(request);
-        conversationHelper.ensureConversationExists(ctx.userId, ctx.conversationId, request.model());
-        RequestContext cagCtx = buildCagContext(ctx, request);
-
-        StrategyExecutionContext execCtx = new StrategyExecutionContext(
-            ctx.chatClient, ctx.route, request,
-            ctx.conversationId, ctx.rawConversationId, ctx.userId, cagCtx,
-            ctx.startTimeMs);
-
-        return ctx.modeStrategy.executeStream(execCtx);
+        StrategyExecutionContext execCtx = buildExecutionContext(ctx, request);
+        // 在 Flux 订阅时恢复调用方的 MDC 上下文（如 traceId），流结束时清理。
+        // TODO: 启用 io.micrometer:context-propagation 后可改用 .contextWrite() 实现自动传播
+        Map<String, String> parentMdc = MDC.getCopyOfContextMap();
+        Flux<String> flux = ctx.modeStrategy.executeStream(execCtx);
+        if (parentMdc != null) {
+            flux = flux.doOnSubscribe(s -> MDC.setContextMap(parentMdc))
+                       .doFinally(signal -> MDC.clear());
+        }
+        return flux;
     }
 
     /**
@@ -207,6 +203,16 @@ public class ChatServiceImpl implements ChatService {
             ctx.rawConversationId(), fallback);
     }
     // ==================== 内部辅助 ====================
+
+    /** 构建策略执行上下文：会话确保、CAG 上下文、统一入参 */
+    private StrategyExecutionContext buildExecutionContext(ChatContext ctx, ChatRequest request) {
+        conversationHelper.ensureConversationExists(ctx.userId, ctx.conversationId, request.model());
+        RequestContext cagCtx = buildCagContext(ctx, request);
+        return new StrategyExecutionContext(
+            ctx.chatClient, ctx.route, request,
+            ctx.conversationId, ctx.rawConversationId, ctx.userId, cagCtx,
+            ctx.startTimeMs);
+    }
 
     /** 预处理请求上下文：用户隔离、模式路由、模型路由 */
     private ChatContext prepareContext(ChatRequest request) {

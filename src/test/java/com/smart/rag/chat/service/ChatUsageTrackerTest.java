@@ -37,7 +37,7 @@ class ChatUsageTrackerTest {
 
         @Test
         @DisplayName("usage 非空时委托给 UsageService")
-        void delegatesToUsageService() {
+        void test_recordUsage_withResponse_delegatesToUsageService() {
             when(aiResponse.getMetadata()).thenReturn(metadata);
             when(metadata.getUsage()).thenReturn(usage);
             when(usage.getPromptTokens()).thenReturn(100);
@@ -52,7 +52,7 @@ class ChatUsageTrackerTest {
 
         @Test
         @DisplayName("usage 为 null 时不调用 UsageService")
-        void noCallWhenUsageNull() {
+        void test_recordUsage_withResponse_noCallWhenUsageNull() {
             when(aiResponse.getMetadata()).thenReturn(metadata);
             when(metadata.getUsage()).thenReturn(null);
 
@@ -64,7 +64,7 @@ class ChatUsageTrackerTest {
 
         @Test
         @DisplayName("UsageService 抛异常时不向外传播")
-        void swallowsException() {
+        void test_recordUsage_withResponse_swallowsException() {
             when(aiResponse.getMetadata()).thenReturn(metadata);
             when(metadata.getUsage()).thenReturn(usage);
             when(usage.getPromptTokens()).thenReturn(100);
@@ -85,7 +85,7 @@ class ChatUsageTrackerTest {
 
         @Test
         @DisplayName("无 AI 响应时使用默认值 -1")
-        void usesDefaults() {
+        void test_recordUsage_durationOnly_usesDefaults() {
             ChatUsageTracker tracker = new ChatUsageTracker(usageService);
             tracker.recordUsage("conv-1", "model-a", 200L);
 
@@ -94,7 +94,7 @@ class ChatUsageTrackerTest {
 
         @Test
         @DisplayName("UsageService 抛异常时不向外传播")
-        void swallowsException() {
+        void test_recordUsage_durationOnly_swallowsException() {
             doThrow(new RuntimeException("DB error")).when(usageService)
                     .recordUsage(anyString(), anyString(), anyLong(), anyLong(), anyLong(), anyLong());
 

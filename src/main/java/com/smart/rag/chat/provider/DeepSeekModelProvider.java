@@ -6,7 +6,7 @@ import com.smart.rag.chat.entity.ModelParams;
 import com.smart.rag.config.DeepSeekProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.prompt.ChatOptions;
 import org.springframework.ai.deepseek.DeepSeekChatModel;
 import org.springframework.ai.deepseek.DeepSeekChatOptions;
@@ -27,7 +27,7 @@ import java.util.List;
  * @see DeepSeekProperties
  */
 @Component
-public class DeepSeekModelProvider implements ModelProvider {
+public class DeepSeekModelProvider extends AbstractModelProvider {
 
     private static final Logger log = LoggerFactory.getLogger(DeepSeekModelProvider.class);
 
@@ -93,17 +93,17 @@ public class DeepSeekModelProvider implements ModelProvider {
     }
 
     /**
-     * 为指定 DeepSeek 模型创建 ChatClient
+     * 构建 DeepSeek 特定的 ChatModel。
      * <p>
-     * 构建链路：DeepSeekApi → DeepSeekChatOptions → DeepSeekChatModel → ChatClient。
+     * 构建链路：DeepSeekApi + DeepSeekChatOptions -> DeepSeekChatModel。
      * temperature 参数优先级：传入参数 > 配置文件默认值。
      *
      * @param modelId     模型 ID，如 "deepseek-chat"、"deepseek-reasoner"
      * @param temperature 可选温度参数，null 使用配置默认值
-     * @return 可用的 ChatClient 实例
+     * @return DeepSeekChatModel 实例
      */
     @Override
-    public ChatClient createClient(String modelId, Double temperature) {
+    protected ChatModel buildChatModel(String modelId, Double temperature) {
         DeepSeekChatOptions.Builder optionsBuilder = DeepSeekChatOptions.builder()
                 .model(modelId);
 
@@ -118,40 +118,10 @@ public class DeepSeekModelProvider implements ModelProvider {
             optionsBuilder.maxTokens(properties.chat().maxTokens());
         }
 
-        DeepSeekChatModel chatModel = DeepSeekChatModel.builder()
+        return DeepSeekChatModel.builder()
                 .deepSeekApi(sharedApi)
                 .defaultOptions(optionsBuilder.build())
                 .build();
-
-        return ChatClient.builder(chatModel).build();
-    }
-
-    /**
-     * 创建 ChatClient 并复用已构建的 DeepSeekChatModel，避免重复构建
-     */
-    @Override
-    public ClientAndModel createClientWithModel(String modelId, Double temperature) {
-        DeepSeekChatOptions.Builder optionsBuilder = DeepSeekChatOptions.builder()
-                .model(modelId);
-
-        Double temp = temperature != null ? temperature : properties.chat().temperature();
-        if (temp != null) {
-            optionsBuilder.temperature(temp);
-        }
-        if (properties.chat().topP() != null) {
-            optionsBuilder.topP(properties.chat().topP());
-        }
-        if (properties.chat().maxTokens() != null) {
-            optionsBuilder.maxTokens(properties.chat().maxTokens());
-        }
-
-        DeepSeekChatModel chatModel = DeepSeekChatModel.builder()
-                .deepSeekApi(sharedApi)
-                .defaultOptions(optionsBuilder.build())
-                .build();
-
-        ChatClient client = ChatClient.builder(chatModel).build();
-        return new ClientAndModel(client, chatModel);
     }
 
     /**

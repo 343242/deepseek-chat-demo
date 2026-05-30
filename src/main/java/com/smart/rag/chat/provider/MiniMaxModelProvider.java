@@ -6,7 +6,7 @@ import com.smart.rag.chat.entity.ModelParams;
 import com.smart.rag.config.MiniMaxProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.prompt.ChatOptions;
 import org.springframework.ai.minimax.MiniMaxChatModel;
 import org.springframework.ai.minimax.MiniMaxChatOptions;
@@ -30,7 +30,7 @@ import java.util.List;
  * @see MiniMaxProperties
  */
 @Component
-public class MiniMaxModelProvider implements ModelProvider {
+public class MiniMaxModelProvider extends AbstractModelProvider {
 
     private static final Logger log = LoggerFactory.getLogger(MiniMaxModelProvider.class);
 
@@ -95,17 +95,17 @@ public class MiniMaxModelProvider implements ModelProvider {
     }
 
     /**
-     * 为指定 MiniMax 模型创建 ChatClient
+     * 构建 MiniMax 特定的 ChatModel。
      * <p>
-     * 构建链路：MiniMaxApi → MiniMaxChatOptions → MiniMaxChatModel → ChatClient。
+     * 构建链路：MiniMaxApi + MiniMaxChatOptions -> MiniMaxChatModel。
      * temperature 参数优先级：传入参数 > 配置文件默认值。
      *
      * @param modelId     模型 ID，如 "MiniMax-Text-01"、"abab6.5g-chat"
      * @param temperature 可选温度参数，null 使用 MiniMax 默认值
-     * @return 可用的 ChatClient 实例
+     * @return MiniMaxChatModel 实例
      */
     @Override
-    public ChatClient createClient(String modelId, Double temperature) {
+    protected ChatModel buildChatModel(String modelId, Double temperature) {
         MiniMaxChatOptions.Builder optionsBuilder = MiniMaxChatOptions.builder()
                 .model(modelId);
 
@@ -120,33 +120,7 @@ public class MiniMaxModelProvider implements ModelProvider {
             optionsBuilder.maxTokens(properties.chat().maxTokens());
         }
 
-        MiniMaxChatModel chatModel = new MiniMaxChatModel(sharedApi, optionsBuilder.build());
-
-        return ChatClient.builder(chatModel).build();
-    }
-
-    /**
-     * 创建 ChatClient 并复用已构建的 MiniMaxChatModel，避免重复构建
-     */
-    @Override
-    public ClientAndModel createClientWithModel(String modelId, Double temperature) {
-        MiniMaxChatOptions.Builder optionsBuilder = MiniMaxChatOptions.builder()
-                .model(modelId);
-
-        Double temp = temperature != null ? temperature : properties.chat().temperature();
-        if (temp != null) {
-            optionsBuilder.temperature(temp);
-        }
-        if (properties.chat().topP() != null) {
-            optionsBuilder.topP(properties.chat().topP());
-        }
-        if (properties.chat().maxTokens() != null) {
-            optionsBuilder.maxTokens(properties.chat().maxTokens());
-        }
-
-        MiniMaxChatModel chatModel = new MiniMaxChatModel(sharedApi, optionsBuilder.build());
-        ChatClient client = ChatClient.builder(chatModel).build();
-        return new ClientAndModel(client, chatModel);
+        return new MiniMaxChatModel(sharedApi, optionsBuilder.build());
     }
 
     /**

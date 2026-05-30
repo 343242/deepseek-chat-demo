@@ -2,6 +2,7 @@ package com.smart.rag.chat.tool.sandbox;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -9,6 +10,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.*;
 
 /**
@@ -127,12 +129,18 @@ public class SandboxService implements AutoCloseable {
 
             // 启动容器并等待（带超时）
             final String cid = containerId;
+            // 在异步线程中恢复 MDC 上下文，确保日志 traceId 可追溯
+            Map<String, String> parentMdc = MDC.getCopyOfContextMap();
             Future<SandboxResult> future = executor.submit(() -> {
+                if (parentMdc != null) {
+                    MDC.setContextMap(parentMdc);
+                }
                 concurrencyLimiter.acquire();
                 try {
                     return startAndWait(cid, startTime);
                 } finally {
                     concurrencyLimiter.release();
+                    MDC.clear();
                 }
             });
 

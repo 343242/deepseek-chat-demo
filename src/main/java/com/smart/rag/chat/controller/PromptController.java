@@ -14,7 +14,7 @@ import java.util.List;
  * System Prompt 管理 API
  */
 @RestController
-@RequestMapping("/api/prompts")
+@RequestMapping("/api/v1/prompts")
 @PreAuthorize("hasAuthority('prompt:manage')")
 public class PromptController {
 

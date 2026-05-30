@@ -59,10 +59,10 @@ public class FallbackChainResolver implements FallbackChainProvider {
             return properties.defaultChain();
         }
 
-        Set<String> seen = new LinkedHashSet<>();
+        Set<String> seen = new LinkedHashSet<>(MAX_CHAIN_SIZE);
         seen.add(requestedModel);
 
-        List<String> toExpand = new ArrayList<>();
+        List<String> toExpand = new ArrayList<>(MAX_CHAIN_SIZE);
         toExpand.add(requestedModel);
 
         // BFS 展开：对每个模型查找其降级链，追加未出现过的模型

@@ -3,6 +3,7 @@ package com.smart.rag.chat.service;
 import com.smart.rag.conversation.entity.Message;
 import com.smart.rag.conversation.service.ConversationMessageService;
 import com.smart.rag.conversation.service.ConversationService;
+import com.smart.rag.conversation.util.ConversationIdUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.memory.ChatMemory;
@@ -54,7 +55,7 @@ public class ChatConversationHelper {
             var messages = chatMemory.get(conversationId);
             return messages != null ? messages.size() : 0;
         } catch (Exception e) {
-            log.error("Failed to get message count: conversationId={}", conversationId, e);
+            log.error("Failed to get message count: conversationId={}", ConversationIdUtil.mask(conversationId), e);
             return 0;
         }
     }
@@ -71,9 +72,9 @@ public class ChatConversationHelper {
             conversationService.getOrCreate(userId, conversationId, model);
         } catch (DuplicateKeyException e) {
             // 并发创建冲突，唯一约束兜底，忽略
-            log.debug("Conversation already exists (concurrent create): {}", conversationId);
+            log.debug("Conversation already exists (concurrent create): {}", ConversationIdUtil.mask(conversationId));
         } catch (Exception e) {
-            log.error("Failed to ensure conversation exists: conversationId={}", conversationId, e);
+            log.error("Failed to ensure conversation exists: conversationId={}", ConversationIdUtil.mask(conversationId), e);
             throw e;
         }
     }
@@ -118,7 +119,7 @@ public class ChatConversationHelper {
         } catch (Exception e) {
             // 消息持久化失败不影响已返回给用户的响应，但必须记录完整异常栈
             log.error("Failed to save message records: conversationId={}, model={}",
-                    conversationId, modelId, e);
+                    ConversationIdUtil.mask(conversationId), modelId, e);
         }
     }
 
@@ -140,10 +141,10 @@ public class ChatConversationHelper {
                     }
                 }
                 chatMemory.add(conversationId, new AssistantMessage(content));
-                log.info("Saved partial stream response for conversation: {}", conversationId);
+                log.info("Saved partial stream response for conversation: {}", ConversationIdUtil.mask(conversationId));
             } catch (Exception e) {
                 log.error("Failed to save partial stream response: conversationId={}",
-                        conversationId, e);
+                        ConversationIdUtil.mask(conversationId), e);
             }
         }
     }

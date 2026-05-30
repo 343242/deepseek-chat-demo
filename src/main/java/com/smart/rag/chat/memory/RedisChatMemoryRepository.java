@@ -19,6 +19,7 @@ import org.springframework.util.Assert;
 
 import com.smart.rag.common.errorcode.ErrorCode;
 import com.smart.rag.exception.BusinessException;
+import com.smart.rag.conversation.util.ConversationIdUtil;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
@@ -128,7 +129,7 @@ public class RedisChatMemoryRepository implements ChatMemoryRepository {
                 messages.add(toMessage(doc));
             } catch (JsonProcessingException e) {
                 log.error("Failed to deserialize message in conversation {}, skipping: {}",
-                        conversationId, e.getMessage());
+                        ConversationIdUtil.mask(conversationId), e.getMessage());
                 // Skip corrupted message instead of failing entire list
             }
         }

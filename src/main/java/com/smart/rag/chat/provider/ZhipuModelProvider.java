@@ -3,7 +3,7 @@ package com.smart.rag.chat.provider;
 import com.smart.rag.chat.dto.ModelInfo;
 import com.smart.rag.chat.entity.ModelParams;
 import com.smart.rag.config.ZhipuProperties;
-import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.prompt.ChatOptions;
 import org.springframework.ai.zhipuai.ZhiPuAiChatModel;
 import org.springframework.ai.zhipuai.ZhiPuAiChatOptions;
@@ -24,7 +24,7 @@ import java.util.List;
  * @see ZhipuProperties
  */
 @Component
-public class ZhipuModelProvider implements ModelProvider {
+public class ZhipuModelProvider extends AbstractModelProvider {
 
     /** 智谱 AI 可用模型列表（硬编码，因智谱无 /models API） */
     private static final List<ModelInfo> MODELS = List.of(
@@ -81,17 +81,17 @@ public class ZhipuModelProvider implements ModelProvider {
     }
 
     /**
-     * 为指定智谱模型创建 ChatClient
+     * 构建智谱 AI 特定的 ChatModel。
      * <p>
-     * 构建链路：ZhiPuAiApi → ZhiPuAiChatOptions → ZhiPuAiChatModel → ChatClient。
+     * 构建链路：ZhiPuAiApi + ZhiPuAiChatOptions -> ZhiPuAiChatModel。
      * temperature 参数优先级：传入参数 > 配置文件默认值。
      *
      * @param modelId     模型 ID，如 "glm-4-air"、"glm-4-flash"
      * @param temperature 可选温度参数，null 使用智谱默认值
-     * @return 可用的 ChatClient 实例
+     * @return ZhiPuAiChatModel 实例
      */
     @Override
-    public ChatClient createClient(String modelId, Double temperature) {
+    protected ChatModel buildChatModel(String modelId, Double temperature) {
         ZhiPuAiChatOptions.Builder optionsBuilder = ZhiPuAiChatOptions.builder()
                 .model(modelId);
 
@@ -106,33 +106,7 @@ public class ZhipuModelProvider implements ModelProvider {
             optionsBuilder.maxTokens(properties.chat().maxTokens());
         }
 
-        ZhiPuAiChatModel chatModel = new ZhiPuAiChatModel(sharedApi, optionsBuilder.build());
-
-        return ChatClient.builder(chatModel).build();
-    }
-
-    /**
-     * 创建 ChatClient 并复用已构建的 ZhiPuAiChatModel，避免重复构建
-     */
-    @Override
-    public ClientAndModel createClientWithModel(String modelId, Double temperature) {
-        ZhiPuAiChatOptions.Builder optionsBuilder = ZhiPuAiChatOptions.builder()
-                .model(modelId);
-
-        Double temp = temperature != null ? temperature : properties.chat().temperature();
-        if (temp != null) {
-            optionsBuilder.temperature(temp);
-        }
-        if (properties.chat().topP() != null) {
-            optionsBuilder.topP(properties.chat().topP());
-        }
-        if (properties.chat().maxTokens() != null) {
-            optionsBuilder.maxTokens(properties.chat().maxTokens());
-        }
-
-        ZhiPuAiChatModel chatModel = new ZhiPuAiChatModel(sharedApi, optionsBuilder.build());
-        ChatClient client = ChatClient.builder(chatModel).build();
-        return new ClientAndModel(client, chatModel);
+        return new ZhiPuAiChatModel(sharedApi, optionsBuilder.build());
     }
 
     /**

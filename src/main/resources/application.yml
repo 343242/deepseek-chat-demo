@@ -33,6 +33,14 @@ app:
           - zhipu/glm-4.7-flash
   rag:
     fts-config: ${RAG_FTS_CONFIG:jiebacfg}
+  cag:
+    enabled: ${CAG_ENABLED:true}
+    inject-prompt: ${CAG_INJECT_PROMPT:true}
+    log-context: ${CAG_LOG_CONTEXT:true}
+    model-params-cache-ttl-seconds: ${MODEL_PARAMS_CACHE_TTL_SECONDS:30}
+    model-params-cache-max-size: ${MODEL_PARAMS_CACHE_MAX_SIZE:200}
+    system-prompt-cache-ttl-minutes: ${SYSTEM_PROMPT_CACHE_TTL_MINUTES:5}
+    system-prompt-cache-max-size: ${SYSTEM_PROMPT_CACHE_MAX_SIZE:200}
   agent:
     enabled: ${AGENT_ENABLED:true}
     intent-model: ${AGENT_INTENT_MODEL:deepseek/deepseek-v4-flash}

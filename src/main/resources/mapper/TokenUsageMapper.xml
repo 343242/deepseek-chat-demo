@@ -11,6 +11,14 @@
     </select>
 
     <!-- 按模型 ID + 对话前缀查询（用户隔离，倒序） -->
+    <!--
+        用户隔离机制说明：
+        userPrefix 由 ConversationIdUtil.buildLikePrefix(userId) 生成，格式为 "u_{userId}_"。
+        因为 userId 是 Long 类型，拼接后的前缀不可能包含 SQL LIKE 通配符 '%'，
+        因此 CONCAT(#{userPrefix}, '%') 仅在 userId 数字后追加通配符，不会被注入利用。
+        buildLikePrefix() 内含防御性断言 assertNoLikeWildcards()，
+        确保即使未来 ID 格式变更，含 '%' 的前缀也会立即失败。
+    -->
     <select id="selectByModelAndUserPrefix" resultType="com.smart.rag.chat.entity.TokenUsage">
         SELECT * FROM token_usage
         WHERE model_id = #{modelId}
@@ -47,6 +55,8 @@
     </select>
 
     <!-- 用户隔离：按模型聚合，仅统计当前用户的记录 -->
+    <!-- 隔离机制同 selectByModelAndUserPrefix：userPrefix 由 buildLikePrefix(userId) 生成，
+         含防御性通配符断言，详见上方注释。 -->
     <select id="aggregateByModelForUser" resultType="com.smart.rag.chat.dto.UsageStats">
         SELECT model_id AS groupKey,
                COUNT(*) AS requestCount,
@@ -63,6 +73,8 @@
     </select>
 
     <!-- 用户隔离：按对话聚合，仅统计当前用户的记录 -->
+    <!-- 隔离机制同 selectByModelAndUserPrefix：userPrefix 由 buildLikePrefix(userId) 生成，
+         含防御性通配符断言，详见上方注释。 -->
     <select id="aggregateByUserConversations" resultType="com.smart.rag.chat.dto.UsageStats">
         SELECT conversation_id AS groupKey,
                COUNT(*) AS requestCount,

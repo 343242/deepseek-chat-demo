@@ -16,7 +16,7 @@ import java.util.List;
  * 用量统计 API（用户隔离版）
  */
 @RestController
-@RequestMapping("/api/usage")
+@RequestMapping("/api/v1/usage")
 @PreAuthorize("hasAuthority('usage:view')")
 public class UsageController {
 

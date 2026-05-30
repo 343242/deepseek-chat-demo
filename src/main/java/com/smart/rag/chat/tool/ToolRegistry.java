@@ -64,7 +64,9 @@ public class ToolRegistry {
     }
 
     /**
-     * 是否有可用工具
+     * 检查是否有可用的工具注册
+     *
+     * @return 如果至少注册了一个工具回调则返回 true
      */
     public boolean hasTools() {
         return callbacks.length > 0;
@@ -85,7 +87,9 @@ public class ToolRegistry {
     }
 
     /**
-     * 已注册工具数量
+     * 已注册的工具回调数量
+     *
+     * @return 当前注册的 ToolCallback 数量
      */
     public int size() {
         return callbacks.length;

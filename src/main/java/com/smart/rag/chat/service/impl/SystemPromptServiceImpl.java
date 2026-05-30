@@ -3,6 +3,7 @@ package com.smart.rag.chat.service.impl;
 import com.smart.rag.chat.mapper.SystemPromptMapper;
 import com.smart.rag.chat.dto.SystemPromptDTO;
 import com.smart.rag.chat.entity.SystemPrompt;
+import com.smart.rag.chat.context.CagProperties;
 import com.smart.rag.chat.service.PromptLoaderService;
 import com.smart.rag.chat.service.SystemPromptService;
 import com.github.benmanes.caffeine.cache.Cache;
@@ -37,13 +38,14 @@ public class SystemPromptServiceImpl implements SystemPromptService {
 
     public SystemPromptServiceImpl(SystemPromptMapper mapper,
                                    TransactionTemplate transactionTemplate,
-                                   PromptLoaderService promptLoaderService) {
+                                   PromptLoaderService promptLoaderService,
+                                   CagProperties cagProperties) {
         this.mapper = mapper;
         this.transactionTemplate = transactionTemplate;
         this.promptLoaderService = promptLoaderService;
         this.promptCache = Caffeine.newBuilder()
-                .expireAfterWrite(Duration.ofMinutes(5))
-                .maximumSize(200)
+                .expireAfterWrite(Duration.ofMinutes(cagProperties.getSystemPromptCacheTtlMinutes()))
+                .maximumSize(cagProperties.getSystemPromptCacheMaxSize())
                 .build();
     }
 

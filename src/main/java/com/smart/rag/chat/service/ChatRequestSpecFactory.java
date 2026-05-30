@@ -27,7 +27,13 @@ import java.util.List;
  * </ul>
  * <p>
  * 单一职责：只负责将请求参数转换为 ChatClientRequestSpec，不关心调用方式和结果处理。
- * Agent 模式不调用此方法 — 直接构建 spec，跳过全局 tools / DB system prompt / DB model options。
+ * Agent 模式不调用此方法 -- 直接构建 spec，跳过全局 tools / DB system prompt / DB model options。
+ * <p>
+ * <b>耦合说明：</b>本工厂直接注入 {@link SystemPromptService} 和 {@link ModelParamsService}，
+ * 而非通过参数传入。这是有意为之的设计决策 -- 工厂的职责是将请求参数 + 模型路由结果
+ * 完整转换为可执行的 ChatClientRequestSpec，system prompt 和模型参数的解析是规格构建的
+ * 固有步骤。将其作为参数传入会迫使调用方承担本不应关心的解析细节，增加调用方的耦合度，
+ * 同时破坏工厂封装的完整性。
  */
 @Component
 public class ChatRequestSpecFactory {

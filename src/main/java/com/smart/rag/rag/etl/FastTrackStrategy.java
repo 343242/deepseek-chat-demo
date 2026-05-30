@@ -12,6 +12,7 @@ import org.springframework.stereotype.Component;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 /**
@@ -205,7 +206,9 @@ public class FastTrackStrategy implements EtlRouteStrategy {
                 }, ioExecutor))
                 .toList();
 
-        CompletableFuture.allOf(futures.toArray(CompletableFuture[]::new)).join();
+        CompletableFuture.allOf(futures.toArray(CompletableFuture[]::new))
+                .orTimeout(5, TimeUnit.MINUTES)
+                .join();
 
         return futures.stream()
                 .map(CompletableFuture::join)

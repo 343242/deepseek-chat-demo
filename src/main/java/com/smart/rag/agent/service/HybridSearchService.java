@@ -16,8 +16,10 @@ import org.springframework.stereotype.Service;
 
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * 混合检索服务 -- 提取 HybridDocumentRetriever 核心逻辑为独立 Service
@@ -74,47 +76,51 @@ public class HybridSearchService {
             return vectorSearch(normalized, vectorTopK, userId, teamId);
         }
 
-        boolean vectorFailed = false;
-        boolean bm25Failed = false;
-        List<ScoredDocument> vectorResults = Collections.emptyList();
-        List<ScoredDocument> bm25Results = Collections.emptyList();
-
         CompletableFuture<List<ScoredDocument>> vectorFuture =
                 CompletableFuture.supplyAsync(() -> vectorSearchWithScore(normalized, vectorTopK, userId, teamId), searchExecutor);
         CompletableFuture<List<ScoredDocument>> bm25Future =
                 CompletableFuture.supplyAsync(() -> bm25Search(normalized, bm25TopK, userId, teamId), searchExecutor);
 
-        try {
-            vectorResults = vectorFuture.get(SEARCH_TIMEOUT_SECONDS, TimeUnit.SECONDS);
-        } catch (Exception e) {
-            vectorFailed = true;
-            log.warn("Vector search degraded: {}", e.getMessage());
-        }
+        // Track per-branch failure to detect total failure after thenCombine
+        var vectorFailed = new AtomicBoolean(false);
+        var bm25Failed = new AtomicBoolean(false);
 
         try {
-            bm25Results = bm25Future.get(SEARCH_TIMEOUT_SECONDS, TimeUnit.SECONDS);
-        } catch (Exception e) {
-            bm25Failed = true;
-            log.warn("BM25 search degraded: {}", e.getMessage());
+            List<Document> fused = vectorFuture
+                    .exceptionally(ex -> {
+                        vectorFailed.set(true);
+                        log.warn("Vector search degraded: {}", ex.getMessage());
+                        return Collections.emptyList();
+                    })
+                    .thenCombine(
+                            bm25Future.exceptionally(ex -> {
+                                bm25Failed.set(true);
+                                log.warn("BM25 search degraded: {}", ex.getMessage());
+                                return Collections.emptyList();
+                            }),
+                            (vec, bm25) -> rrfFusion(vec, bm25))
+                    .orTimeout(SEARCH_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+                    .join();
+
+            // Both branches recovered via exceptionally -> signal total failure to caller
+            if (vectorFailed.get() && bm25Failed.get()) {
+                log.error("Both vector and BM25 search failed for queryLen={}", normalized.length());
+                throw new BusinessException("向量检索和 BM25 检索均不可用");
+            }
+
+            if (vectorFailed.get() || bm25Failed.get()) {
+                log.warn("Partial search degradation: vector={}, bm25={}",
+                        vectorFailed.get() ? "FAILED" : "OK", bm25Failed.get() ? "FAILED" : "OK");
+            }
+
+            log.debug("Hybrid search: queryLen={}, vectorFailed={}, bm25Failed={}, fused={}, teamId={}",
+                    normalized.length(), vectorFailed.get(), bm25Failed.get(), fused.size(), teamId);
+
+            return fused;
+        } catch (CompletionException e) {
+            // TimeoutException or unexpected error from the combined pipeline
+            throw e;
         }
-
-        // Both branches failed -> throw to signal failure to caller (HybridSearchTool)
-        if (vectorFailed && bm25Failed) {
-            log.error("Both vector and BM25 search failed for queryLen={}", normalized.length());
-            throw new BusinessException("向量检索和 BM25 检索均不可用");
-        }
-
-        if (vectorFailed || bm25Failed) {
-            log.warn("Partial search degradation: vector={}, bm25={}",
-                vectorFailed ? "FAILED" : "OK", bm25Failed ? "FAILED" : "OK");
-        }
-
-        List<Document> fused = rrfFusion(vectorResults, bm25Results);
-
-        log.debug("Hybrid search: queryLen={}, vector={}, bm25={}, fused={}, teamId={}",
-                normalized.length(), vectorResults.size(), bm25Results.size(), fused.size(), teamId);
-
-        return fused;
     }
 
     // === 向量检索 ===

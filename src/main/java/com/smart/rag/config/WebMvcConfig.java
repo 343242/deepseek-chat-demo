@@ -1,5 +1,6 @@
 package com.smart.rag.config;
 
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
@@ -13,9 +14,19 @@ import java.util.concurrent.ThreadPoolExecutor;
  * <p>
  * 主要配置异步支持：为 SSE（Flux）响应提供专用线程池，
  * 替代默认的 {@code SimpleAsyncTaskExecutor}（每次创建新线程，不适合生产环境）。
+ * <p>
+ * 线程池参数通过 {@link MvcExecutorProperties} 外部化，
+ * 遵循项目标准模式（对齐 EtlExecutorConfig）。
  */
 @Configuration
+@EnableConfigurationProperties(MvcExecutorProperties.class)
 public class WebMvcConfig implements WebMvcConfigurer {
+
+    private final MvcExecutorProperties mvcExecutorProperties;
+
+    public WebMvcConfig(MvcExecutorProperties mvcExecutorProperties) {
+        this.mvcExecutorProperties = mvcExecutorProperties;
+    }
 
     @Override
     public void configureAsyncSupport(AsyncSupportConfigurer configurer) {
@@ -27,11 +38,12 @@ public class WebMvcConfig implements WebMvcConfigurer {
     @Bean("mvcAsyncExecutor")
     public ThreadPoolTaskExecutor mvcAsyncExecutor() {
         ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
-        executor.setCorePoolSize(4);
-        executor.setMaxPoolSize(8);
-        executor.setQueueCapacity(100);
-        executor.setKeepAliveSeconds(60);
-        executor.setThreadNamePrefix("mvc-async-");
+        executor.setCorePoolSize(mvcExecutorProperties.getCorePoolSize());
+        executor.setMaxPoolSize(mvcExecutorProperties.getMaxPoolSize());
+        executor.setQueueCapacity(mvcExecutorProperties.getQueueCapacity());
+        executor.setKeepAliveSeconds(mvcExecutorProperties.getKeepAliveSeconds());
+        executor.setThreadFactory(new NamedThreadFactory("mvc-async-"));
+        executor.setAllowCoreThreadTimeOut(true);
         executor.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
         executor.setWaitForTasksToCompleteOnShutdown(true);
         executor.setAwaitTerminationSeconds(30);

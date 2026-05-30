@@ -13,6 +13,8 @@ import org.springframework.web.client.RestClient;
 import java.net.http.HttpClient;
 import java.time.Duration;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
 
 /**
  * 模型厂商统一自动配置
@@ -40,6 +42,9 @@ import java.util.concurrent.CompletableFuture;
 public class ModelProviderAutoConfiguration {
 
     private static final Logger log = LoggerFactory.getLogger(ModelProviderAutoConfiguration.class);
+
+    /** 启动模型初始化专用 executor，避免使用 ForkJoinPool.commonPool */
+    private static final Executor INIT_EXECUTOR = Executors.newVirtualThreadPerTaskExecutor();
 
     // ==================== RestClient Beans ====================
 
@@ -81,7 +86,7 @@ public class ModelProviderAutoConfiguration {
                 } else {
                     log.warn("Model initialization failed, service may be partially available");
                 }
-            }).exceptionally(ex -> {
+            }, INIT_EXECUTOR).exceptionally(ex -> {
                 log.warn("Model initialization error: {}", ex.getMessage());
                 return null;
             });

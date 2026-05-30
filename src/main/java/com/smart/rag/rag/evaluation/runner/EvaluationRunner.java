@@ -191,7 +191,7 @@ public class EvaluationRunner {
         // 创建使用覆盖配置的临时 HybridSearchService
         HybridSearchService evalSearchService = new HybridSearchService(
                 vectorStore, vectorStoreMapper, evalProps, queryNormalizer,
-                Executors.newFixedThreadPool(2));
+                Executors.newVirtualThreadPerTaskExecutor());
         return new HybridDocumentRetriever(evalSearchService, userId, null);
     }
 

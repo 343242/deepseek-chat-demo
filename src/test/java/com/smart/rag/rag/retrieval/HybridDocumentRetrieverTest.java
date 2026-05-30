@@ -87,7 +87,7 @@ class HybridDocumentRetrieverTest {
 
     private HybridDocumentRetriever createRetriever(RagRetrievalProperties props, Long userId, Long teamId) {
         HybridSearchService service = new HybridSearchService(vectorStore, vectorStoreMapper, props, queryNormalizer,
-                Executors.newFixedThreadPool(2));
+                Executors.newVirtualThreadPerTaskExecutor());
         return new HybridDocumentRetriever(service, userId, teamId);
     }
 

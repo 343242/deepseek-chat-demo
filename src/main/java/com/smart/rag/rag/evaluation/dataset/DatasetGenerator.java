@@ -121,6 +121,10 @@ public class DatasetGenerator {
                 }, executor));
             }
 
+            CompletableFuture.allOf(futures.toArray(CompletableFuture[]::new))
+                    .orTimeout(10, TimeUnit.MINUTES)
+                    .join();
+
             List<EvaluationDatasetItem> allItems = futures.stream()
                     .map(CompletableFuture::join)
                     .flatMap(List::stream)

@@ -4,7 +4,7 @@
 <mapper namespace="com.smart.rag.team.mapper.TeamMapper">
 
     <select id="selectByIdForUpdate" resultType="com.smart.rag.team.entity.Team">
-        SELECT * FROM team WHERE id = #{id} FOR UPDATE
+        SELECT id, team_name, team_desc, creator_id, default_upload_limit_mb, creator_upload_limit_mb, status, created_at, updated_at, deleted FROM team WHERE id = #{id} FOR UPDATE
     </select>
 
 </mapper>

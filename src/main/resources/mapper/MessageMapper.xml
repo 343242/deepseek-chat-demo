@@ -4,21 +4,21 @@
 <mapper namespace="com.smart.rag.conversation.mapper.MessageMapper">
 
     <select id="selectAllByConversationId" resultType="com.smart.rag.conversation.entity.Message">
-        SELECT * FROM message WHERE conversation_id = #{conversationId} ORDER BY created_at ASC
+        SELECT id, conversation_id, parent_id, role, content, status, model_id, thinking_enabled, token_usage, duration_ms, created_at, updated_at FROM message WHERE conversation_id = #{conversationId} ORDER BY created_at ASC
     </select>
 
     <select id="selectRootMessages" resultType="com.smart.rag.conversation.entity.Message">
-        SELECT * FROM message WHERE conversation_id = #{conversationId}
+        SELECT id, conversation_id, parent_id, role, content, status, model_id, thinking_enabled, token_usage, duration_ms, created_at, updated_at FROM message WHERE conversation_id = #{conversationId}
         AND parent_id IS NULL ORDER BY created_at ASC
     </select>
 
     <select id="selectChildren" resultType="com.smart.rag.conversation.entity.Message">
-        SELECT * FROM message WHERE parent_id = #{parentId}
+        SELECT id, conversation_id, parent_id, role, content, status, model_id, thinking_enabled, token_usage, duration_ms, created_at, updated_at FROM message WHERE parent_id = #{parentId}
         AND conversation_id = #{conversationId} ORDER BY created_at ASC
     </select>
 
     <select id="selectLatestAssistant" resultType="com.smart.rag.conversation.entity.Message">
-        SELECT * FROM message WHERE conversation_id = #{conversationId}
+        SELECT id, conversation_id, parent_id, role, content, status, model_id, thinking_enabled, token_usage, duration_ms, created_at, updated_at FROM message WHERE conversation_id = #{conversationId}
         AND role = 'ASSISTANT' ORDER BY created_at DESC LIMIT 1
     </select>
 

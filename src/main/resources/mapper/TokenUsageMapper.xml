@@ -5,7 +5,7 @@
 
     <!-- 按对话 ID 查询（倒序） -->
     <select id="selectByConversationId" resultType="com.smart.rag.chat.entity.TokenUsage">
-        SELECT * FROM token_usage
+        SELECT id, conversation_id, model_id, prompt_tokens, completion_tokens, total_tokens, duration_ms, created_at FROM token_usage
         WHERE conversation_id = #{conversationId}
         ORDER BY created_at DESC
     </select>
@@ -20,7 +20,7 @@
         确保即使未来 ID 格式变更，含 '%' 的前缀也会立即失败。
     -->
     <select id="selectByModelAndUserPrefix" resultType="com.smart.rag.chat.entity.TokenUsage">
-        SELECT * FROM token_usage
+        SELECT id, conversation_id, model_id, prompt_tokens, completion_tokens, total_tokens, duration_ms, created_at FROM token_usage
         WHERE model_id = #{modelId}
           AND conversation_id LIKE CONCAT(#{userPrefix}, '%')
         ORDER BY created_at DESC

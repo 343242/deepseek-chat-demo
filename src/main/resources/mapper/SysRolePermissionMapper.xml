@@ -4,7 +4,7 @@
 <mapper namespace="com.smart.rag.user.mapper.SysRolePermissionMapper">
 
     <select id="selectPermissionsByRoleIds" resultType="com.smart.rag.user.entity.SysPermission">
-        SELECT DISTINCT p.* FROM sys_permission p
+        SELECT DISTINCT p.id, p.permission_name, p.permission_desc, p.resource_type, p.resource_key, p.parent_id, p.status, p.created_at, p.updated_at, p.deleted FROM sys_permission p
         INNER JOIN sys_role_permission rp ON p.id = rp.permission_id
         WHERE rp.role_id IN
         <foreach collection="roleIds" item="id" open="(" separator="," close=")">
@@ -14,7 +14,7 @@
     </select>
 
     <select id="selectPermissionsByRoleId" resultType="com.smart.rag.user.entity.SysPermission">
-        SELECT p.* FROM sys_permission p
+        SELECT p.id, p.permission_name, p.permission_desc, p.resource_type, p.resource_key, p.parent_id, p.status, p.created_at, p.updated_at, p.deleted FROM sys_permission p
         INNER JOIN sys_role_permission rp ON p.id = rp.permission_id
         WHERE rp.role_id = #{roleId} AND p.status = 1 AND p.deleted = 0
     </select>

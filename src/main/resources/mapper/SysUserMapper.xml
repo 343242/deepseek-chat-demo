@@ -4,15 +4,15 @@
 <mapper namespace="com.smart.rag.user.mapper.SysUserMapper">
 
     <select id="selectByUsername" resultType="com.smart.rag.user.entity.SysUser">
-        SELECT * FROM sys_user WHERE username = #{username} AND deleted = 0
+        SELECT id, username, password, nickname, email, phone, avatar, status, created_at, updated_at, deleted FROM sys_user WHERE username = #{username} AND deleted = 0
     </select>
 
     <select id="selectActiveById" resultType="com.smart.rag.user.entity.SysUser">
-        SELECT * FROM sys_user WHERE id = #{id} AND deleted = 0
+        SELECT id, username, password, nickname, email, phone, avatar, status, created_at, updated_at, deleted FROM sys_user WHERE id = #{id} AND deleted = 0
     </select>
 
     <select id="selectByEmailExcludingId" resultType="com.smart.rag.user.entity.SysUser">
-        SELECT * FROM sys_user WHERE email = #{email} AND deleted = 0 AND id != #{excludeId}
+        SELECT id, username, password, nickname, email, phone, avatar, status, created_at, updated_at, deleted FROM sys_user WHERE email = #{email} AND deleted = 0 AND id != #{excludeId}
     </select>
 
 </mapper>

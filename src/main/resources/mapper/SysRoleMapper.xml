@@ -4,15 +4,15 @@
 <mapper namespace="com.smart.rag.user.mapper.SysRoleMapper">
 
     <select id="selectAllOrdered" resultType="com.smart.rag.user.entity.SysRole">
-        SELECT * FROM sys_role WHERE deleted = 0 ORDER BY id ASC
+        SELECT id, role_name, role_desc, status, created_at, updated_at, deleted FROM sys_role WHERE deleted = 0 ORDER BY id ASC
     </select>
 
     <select id="selectByRoleName" resultType="com.smart.rag.user.entity.SysRole">
-        SELECT * FROM sys_role WHERE role_name = #{roleName} AND deleted = 0
+        SELECT id, role_name, role_desc, status, created_at, updated_at, deleted FROM sys_role WHERE role_name = #{roleName} AND deleted = 0
     </select>
 
     <select id="selectByIds" resultType="com.smart.rag.user.entity.SysRole">
-        SELECT * FROM sys_role WHERE deleted = 0 AND id IN
+        SELECT id, role_name, role_desc, status, created_at, updated_at, deleted FROM sys_role WHERE deleted = 0 AND id IN
         <foreach item="id" collection="ids" open="(" separator="," close=")">
             #{id}
         </foreach>

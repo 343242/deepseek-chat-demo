@@ -3,20 +3,20 @@
 <mapper namespace="com.smart.rag.agent.event.AgentEventMapper">
 
     <select id="selectBySessionIdOrderByPriorityLimited" resultType="com.smart.rag.agent.event.AgentSessionEvent">
-        SELECT * FROM agent_session_event
+        SELECT id, session_id, user_id, event_type, priority, data, tool_name, success, duration_ms, created_at FROM agent_session_event
         WHERE session_id = #{sessionId} AND user_id = #{userId}
         ORDER BY priority ASC, created_at ASC
         LIMIT #{limit}
     </select>
 
     <select id="selectBySessionIdOrderByPriority" resultType="com.smart.rag.agent.event.AgentSessionEvent">
-        SELECT * FROM agent_session_event
+        SELECT id, session_id, user_id, event_type, priority, data, tool_name, success, duration_ms, created_at FROM agent_session_event
         WHERE session_id = #{sessionId} AND user_id = #{userId}
         ORDER BY priority ASC, created_at ASC
     </select>
 
     <select id="searchBySessionAndUserAndQuery" resultType="com.smart.rag.agent.event.AgentSessionEvent">
-        SELECT * FROM agent_session_event
+        SELECT id, session_id, user_id, event_type, priority, data, tool_name, success, duration_ms, created_at FROM agent_session_event
         WHERE user_id = #{userId}
         <if test="sessionId != null">AND session_id = #{sessionId} </if>
         AND (data::text ILIKE '%' || #{query} || '%'

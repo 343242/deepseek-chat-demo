@@ -5,12 +5,12 @@
 
     <!-- 按模型 ID 查询 -->
     <select id="selectByModelId" resultType="com.smart.rag.chat.entity.ModelParams">
-        SELECT * FROM model_params WHERE model_id = #{modelId}
+        SELECT id, model_id, temperature, max_tokens, top_p, frequency_penalty, presence_penalty, created_at, updated_at FROM model_params WHERE model_id = #{modelId}
     </select>
 
     <!-- 查询全部（按 model_id 排序） -->
     <select id="selectAllOrdered" resultType="com.smart.rag.chat.entity.ModelParams">
-        SELECT * FROM model_params ORDER BY model_id
+        SELECT id, model_id, temperature, max_tokens, top_p, frequency_penalty, presence_penalty, created_at, updated_at FROM model_params ORDER BY model_id
     </select>
 
     <!-- 按模型 ID 删除 -->

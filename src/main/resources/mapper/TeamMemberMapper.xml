@@ -4,11 +4,11 @@
 <mapper namespace="com.smart.rag.team.mapper.TeamMemberMapper">
 
     <select id="selectByTeamAndUser" resultType="com.smart.rag.team.entity.TeamMember">
-        SELECT * FROM team_member WHERE team_id = #{teamId} AND user_id = #{userId} AND status = 1 LIMIT 1
+        SELECT id, team_id, user_id, role, upload_limit_mb, status, joined_at, updated_at FROM team_member WHERE team_id = #{teamId} AND user_id = #{userId} AND status = 1 LIMIT 1
     </select>
 
     <select id="selectLatestByTeamAndUser" resultType="com.smart.rag.team.entity.TeamMember">
-        SELECT * FROM team_member WHERE team_id = #{teamId} AND user_id = #{userId} ORDER BY id DESC LIMIT 1
+        SELECT id, team_id, user_id, role, upload_limit_mb, status, joined_at, updated_at FROM team_member WHERE team_id = #{teamId} AND user_id = #{userId} ORDER BY id DESC LIMIT 1
     </select>
 
     <select id="selectMemberCountByTeamIds" resultType="java.util.Map">

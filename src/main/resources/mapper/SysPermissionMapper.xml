@@ -4,15 +4,15 @@
 <mapper namespace="com.smart.rag.user.mapper.SysPermissionMapper">
 
     <select id="selectAllOrdered" resultType="com.smart.rag.user.entity.SysPermission">
-        SELECT * FROM sys_permission WHERE deleted = 0 ORDER BY id ASC
+        SELECT id, permission_name, permission_desc, resource_type, resource_key, parent_id, status, created_at, updated_at, deleted FROM sys_permission WHERE deleted = 0 ORDER BY id ASC
     </select>
 
     <select id="selectByPermissionName" resultType="com.smart.rag.user.entity.SysPermission">
-        SELECT * FROM sys_permission WHERE permission_name = #{permissionName} AND deleted = 0
+        SELECT id, permission_name, permission_desc, resource_type, resource_key, parent_id, status, created_at, updated_at, deleted FROM sys_permission WHERE permission_name = #{permissionName} AND deleted = 0
     </select>
 
     <select id="selectByResourceKey" resultType="com.smart.rag.user.entity.SysPermission">
-        SELECT * FROM sys_permission WHERE resource_key = #{resourceKey} AND deleted = 0
+        SELECT id, permission_name, permission_desc, resource_type, resource_key, parent_id, status, created_at, updated_at, deleted FROM sys_permission WHERE resource_key = #{resourceKey} AND deleted = 0
     </select>
 
 </mapper>

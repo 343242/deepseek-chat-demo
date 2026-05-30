@@ -93,15 +93,6 @@ app:
         thread-name-prefix: "merge-"
         keep-alive-seconds: 120
 
-  # Agent 检索线程池配置
-  agent:
-    search-executor:
-      core-pool-size: 4
-      max-pool-size: 8
-      queue-capacity: 50
-      thread-name-prefix: "rag-search-"
-      keep-alive-seconds: 60
-
 mybatis-plus:
   mapper-locations: classpath*:/mapper/**/*.xml
   configuration:

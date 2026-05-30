@@ -416,13 +416,8 @@ spring:
       minimum-idle: 5
       connection-timeout: 30000
 
-# Agent 搜索线程池
-app:
-  agent:
-    search-executor:
-      core-pool-size: 4
-      max-pool-size: 8
-      queue-capacity: 100
+# Agent 搜索线程池 — 已迁移至虚拟线程（RagSearchExecutorConfig），
+# 无需手动配置 pool sizing，并发由 HybridSearchService.orTimeout(5s) + DB 连接池控制。
 ```
 
 ---

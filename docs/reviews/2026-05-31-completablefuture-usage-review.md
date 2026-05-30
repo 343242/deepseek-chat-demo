@@ -2,8 +2,9 @@
 
 **日期**: 2026-05-31  
 **审查范围**: `src/main/java/com/smart/rag/**` 中 `CompletableFuture`、`Future`、`ExecutorService`、`join()`、`get()` 相关使用  
-**审查口径**: 只读审计，重点检查阻塞 IO 是否误用 commonPool、异步是否被同步等待抵消、异常是否延迟到 `join/get` 才暴露、是否具备超时和取消策略、Future 使用是否有必要  
-**最终建议**: REQUEST CHANGES
+**审查口径**: 只读审计，重点检查阻塞 IO 是否误用 commonPool、异步是否被同步等待抵消、异常是否延迟到 `join/get` 才暴露、是否具备超时和取消策略、Future 使用是否有必要
+**补充评估**: 2026-05-31 — 线程池合规性审查、thenCombine 方案、结构化并发可行性
+**最终建议**: REQUEST CHANGES — 补充评估已纳入
 
 ---
 
@@ -93,6 +94,31 @@ private int queueCapacity = 20;
 - 根据目标并发调整 `app.agent.search-executor.max-pool-size` 和队列容量；
 - 评估 vector 检索和 BM25 是否应拆成两个 executor，避免其中一路慢查询拖累另一路；
 - 增加线程池指标暴露：active count、queue size、rejection/caller-runs 次数。
+
+#### 后续评估：thenCombine 重写 + 虚拟线程
+
+经团队讨论，M1 的最佳修复方案是将当前两个串行 `get()` 改为 `thenCombine` 链式编排，同时将 `ragSearchExecutor` 从平台线程池改为虚拟线程：
+
+```java
+CompletableFuture<List<ScoredDocument>> vectorFuture =
+    CompletableFuture.supplyAsync(() -> vectorSearchWithScore(...), virtualThreadExecutor);
+CompletableFuture<List<ScoredDocument>> bm25Future =
+    CompletableFuture.supplyAsync(() -> bm25Search(...), virtualThreadExecutor);
+
+return vectorFuture
+    .exceptionally(ex -> { log.warn("Vector degraded: {}", ex.getMessage()); return Collections.emptyList(); })
+    .thenCombine(
+        bm25Future.exceptionally(ex -> { log.warn("BM25 degraded: {}", ex.getMessage()); return Collections.emptyList(); }),
+        (vec, bm25) -> rrfFusion(vec, bm25))
+    .orTimeout(SEARCH_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+    .join();
+```
+
+收益：
+- 调用线程阻塞从串行两次（最坏 10s）降为一次 join（最坏 5s）
+- `exceptionally → emptyList` 实现链式降级，替代手动 flag 判断
+- `orTimeout` 自动触发取消，消除 M2（超时后未 cancel）问题
+- 虚拟线程替代固定线程池，按 java-handbook 规则 22 I/O 密集场景优先虚拟线程
 
 ---
 
@@ -329,6 +355,27 @@ CompletableFuture<Void> future = CompletableFuture
 
 ---
 
+## 线程池合规性审查
+
+对照 java-handbook 并发规范（规则 3/4/22/23），逐一检查项目中的 executor 创建：
+
+| 创建点 | 方式 | 合规性 |
+|--------|------|--------|
+| `EtlExecutorConfig` ×4 | `ThreadPoolTaskExecutor` 完整 7 参数 + `NamedThreadFactory` | 合规 |
+| `RagSearchExecutorConfig` | 同上 + `@ConfigurationProperties` 外部化 | 合规 |
+| `ModelRegistryRefresher` | `Executors.newVirtualThreadPerTaskExecutor()` | 合规（规则 22） |
+| `ChunkUploadServiceImpl` | 注入 Spring Bean `mergeExecutor` | 合规 |
+| `MvcAsyncConfig` | Spring `ThreadPoolTaskExecutor` | 合规 |
+| `EvaluationRunner:194` | `Executors.newFixedThreadPool(2)` | **违规（规则 4）** |
+| `HybridDocumentRetrieverTest:90` | `Executors.newFixedThreadPool(2)` | **违规（规则 4）** |
+| `ModelProviderAutoConfiguration:77` | `CompletableFuture.runAsync()` 无 executor | **违规（commonPool）** |
+
+3 处违规需修复：
+- `EvaluationRunner` 和 Test 应改为 `newVirtualThreadPerTaskExecutor()`（I/O 密集，规则 22）
+- 启动初始化 `runAsync()` 应传入显式 executor
+
+---
+
 ## 其他 Future 使用点
 
 ### SandboxService
@@ -352,22 +399,56 @@ Rerank 使用专用 `ThreadPoolExecutor` 和 `future.get(timeout)`，且 HTTP �
 
 ---
 
+## 结构化并发评估
+
+### Java 21 现状
+
+`StructuredTaskScope` 在 Java 21 中是 **Preview 特性**（JEP 453），需要 `--enable-preview` 编译和运行时参数。Preview API 可能在后续版本变更签名，不适合生产依赖。Java 24 中才正式成为 Final API。
+
+### 逐场景评估
+
+| 场景 | StructuredTaskScope 替代效果 | 结论 |
+|------|--------------------------|------|
+| HybridSearchService (M1) | `ShutdownOnFailure` 天然并行+取消+异常传播，但不支持"部分降级" | 最佳候选，但需 Preview |
+| ModelRegistryRefresher | 虚拟线程 + `join()` 已是合理屏障，差异不大 | 不改 |
+| StandardStrategy/FastTrackStrategy | 批量操作 `StructuredTaskScope` 语法反而不如 `CompletableFuture.allOf()` 简洁 | 不适合 |
+| DatasetGenerator | 可用但仅 evaluation profile，优先级低 | 远期 |
+| 启动初始化 | fire-and-forget 不适合 `StructuredTaskScope` 的同步等待模型 | 不适合 |
+
+### 结论
+
+**当前阶段（Java 21）**：不引入结构化并发。用 `thenCombine` + 虚拟线程作为近期最优解。
+
+**远期（升级 Java 24+ 后）**：`StructuredTaskScope` 成为 Final API 后，可对 HybridSearchService 这类"少量并行分支"场景做改造。ETL 批处理保持 `CompletableFuture.allOf()` 不变。
+
+---
+
 ## 优先级建议
 
-1. **先修 H1**: 禁止裸 `CompletableFuture.runAsync()`，启动模型初始化必须指定 executor。
-2. **再修 M2/M1**: 混合检索超时后取消任务，并根据实际并发调大或拆分 `ragSearchExecutor`。
-3. **补齐超时一致性**: `FastTrackStrategy.extractAll()` 对齐 `StandardStrategy.joinAll()`；`DatasetGenerator` 增加整体超时或改后台 job。
-4. **保留合理异步**: 不建议删除 `StandardStrategy`、`FastTrackStrategy.asyncVectorize()`、`ModelRegistryRefresher.refresh()` 的 Future。它们分别承担阶段并发、后台向量化、provider 并发拉取的业务价值。
+1. **P0 — 修 H1 + 合规违规**: `runAsync()` 加虚拟线程 executor；`EvaluationRunner` 和 Test 改 `newVirtualThreadPerTaskExecutor()`
+2. **P1 — M1+M2 合并修复**: `HybridSearchService` 改 `thenCombine` + `ragSearchExecutor` 改虚拟线程（一箭双雕：消除串行等待 + 自动取消 + 解决线程池容量问题）
+3. **P2 — M4 补超时**: `FastTrackStrategy.extractAll()` 加 `orTimeout(5, MINUTES)` 对齐 `StandardStrategy`
+4. **P3 — M3 补超时**: `DatasetGenerator` 加 `orTimeout` 或改后台 Job
+5. **保留合理异步**: L1/L2/L3 的 `join()` 是业务阶段屏障，不建议删除
+6. **远期**: 升级 Java 24 后评估 `StructuredTaskScope` 替代 HybridSearchService
 
 ---
 
 ## 结论
 
+### 原始审查结论
+
 项目中没有大面积把阻塞 IO 扔进 `ForkJoinPool.commonPool` 的问题；多数高风险路径已经显式指定业务线程池或使用虚拟线程。
 
 真正需要处理的是：
-
 - 一个裸 `runAsync()` 的 commonPool 风险；
 - 检索线程池容量与超时取消策略不完整；
 - 部分批处理 Future 缺少整体超时；
 - 一些 `join/get` 虽然是同步等待，但多数属于业务上必要的阶段屏障，不应简单删除。
+
+### 补充评估结论
+
+1. **线程池合规**：3 处违反 java-handbook 规则的创建点（2 处 `Executors.newFixedThreadPool`，1 处裸 `runAsync`）
+2. **M1 最佳方案**：`thenCombine` 链式编排 + 虚拟线程，比结构化并发更贴合"部分降级"的业务语义
+3. **结构化并发**：Java 21 Preview 状态不适合生产引入，等 Java 24 Final API 后再做 HybridSearchService 场景改造
+4. **近期优先级**：P0 合规修复 → P1 thenCombine+虚拟线程 → P2/P3 补超时

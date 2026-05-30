@@ -426,3 +426,99 @@ Rerank 使用专用 `ThreadPoolExecutor` 和 `future.get(timeout)`，且 HTTP �
 1. **线程池合规**：3 处违反 java-handbook 规则的创建点（2 处 `Executors.newFixedThreadPool`，1 处裸 `runAsync`）
 2. **M1 最佳方案**：`thenCombine` 链式编排 + 虚拟线程，贴合"部分降级"的业务语义
 3. **近期优先级**：P0 合规修复 → P1 thenCombine+虚拟线程 → P2/P3 补超时
+
+---
+
+## 二次核验（2026-05-31）
+
+对上述全部 H1–L3 发现、线程池合规表、以及其他 Future 使用点进行源码交叉核验。
+
+### 已确认发现（8/8 全部准确）
+
+| 审查项 | 核验结论 |
+|--------|----------|
+| **H1** `runAsync()` 裸用 commonPool | `ModelProviderAutoConfiguration.java:77` 确认单参数 `runAsync()`，无 executor |
+| **M1** 混合检索默认 core=2, max=4 | `HybridSearchService.java:82-85` 确认传 `searchExecutor`；`RagSearchExecutorProperties` 默认 core=2, max=4 |
+| **M2** `get(timeout)` 后未 cancel | `HybridSearchService.java:88-99` 确认仅设 flag + log，无 `cancel()` |
+| **M3** DatasetGenerator `join()` 无超时 | `DatasetGenerator.java:98-128` 确认 `futures.stream().map(CompletableFuture::join)` 无超时 |
+| **M4** FastTrack extract `allOf().join()` 无超时 | `FastTrackStrategy.java:193-210` 确认 `allOf().join()` 无 `orTimeout`；超时仅存在于 `awaitAsyncCompletion`（关机等待） |
+| **L1** ModelRegistryRefresher 虚拟线程 | `ModelRegistryRefresher.java:42` 确认 `newVirtualThreadPerTaskExecutor()` |
+| **L2** StandardStrategy 5 分钟 `orTimeout` | `StandardStrategy.java:188-192` 确认 `orTimeout(5, MINUTES)` |
+| **L3** FastTrack asyncVectorize CPU→IO 链式 | `FastTrackStrategy.java:157-190` 确认 `cpuExecutor` → `ioExecutor` + `exceptionally` |
+
+### 线程池合规表核验
+
+| 创建点 | 报告判定 | 核验结果 | 状态 |
+|--------|----------|----------|------|
+| `EtlExecutorConfig` ×3 | 合规 | `buildExecutor()` 完整 7 参数 + `NamedThreadFactory` + `@ConfigurationProperties` | 确认合规 |
+| `RagSearchExecutorConfig` | 合规 | 同上模式 | 确认合规 |
+| `ModelRegistryRefresher` | 合规 | `newVirtualThreadPerTaskExecutor()` | 确认合规 |
+| `ChunkUploadServiceImpl` | 合规 | 构造器注入 `mergeExecutor` | 确认合规 |
+| `EvaluationRunner:194` | **违规** | `Executors.newFixedThreadPool(2)` 且未 shutdown | 确认违规 |
+| `HybridDocumentRetrieverTest:90` | **违规** | `Executors.newFixedThreadPool(2)` | 确认违规 |
+| `ModelProviderAutoConfiguration:77` | **违规** | 单参数 `CompletableFuture.runAsync()` | 确认违规 |
+
+### 额外发现
+
+#### E1: WebMvcConfig 硬编码 — 应从"合规"降级为"部分合规"
+
+**文件**: `src/main/java/com/smart/rag/config/WebMvcConfig.java`
+
+与项目标准模式（`EtlExecutorConfig.buildExecutor()`）对照：
+
+| 检查项 | EtlExecutorConfig | WebMvcConfig |
+|--------|-------------------|--------------|
+| 参数外部化 | `@ConfigurationProperties` | 硬编码（core=4, max=8, queue=100） |
+| `NamedThreadFactory` | `new NamedThreadFactory(...)` 含 UncaughtExceptionHandler | 仅 `setThreadNamePrefix`，无 `NamedThreadFactory` |
+| `allowCoreThreadTimeOut` | `true` | 未设置（默认 `false`，核心线程永不回收） |
+| `awaitTerminationSeconds` | 120 | 30 |
+
+**影响**: 空闲时 4 个核心线程永不释放；参数调整需改代码重新部署。
+
+**建议**: 补充外部化配置 + `NamedThreadFactory` + `allowCoreThreadTimeOut(true)`，对齐 ETL/RAG executor 标准。
+
+#### E2: BailianRerankPostProcessor cancel 已完善 — 更正原始审查结论
+
+**文件**: `src/main/java/com/smart/rag/rag/retrieval/BailianRerankPostProcessor.java:107-166`
+
+原始审查报告称"仍需确认 catch 分支是否对超时 future 做了 cancel"。核验确认：
+
+- `TimeoutException` → `future.cancel(true)` + 降级
+- `InterruptedException` → `future.cancel(true)` + 恢复中断标记 + 降级
+- `Exception`（通用兜底）→ `future.cancel(true)` + 降级
+- `ExecutionException` → 不 cancel（任务已完成，cancel 无意义）
+- `future` 变量刻意声明在 try 外部，注释明确标注"确保 catch 块中可 cancel"
+
+**结论**: Rerank 的 cancel 策略是完善的，无修复必要。
+
+#### E3: DatasetGenerator 与 EvaluationRunner 为不同文件，合规性不同
+
+| 文件 | Executor 创建 | 合规性 |
+|------|--------------|--------|
+| `DatasetGenerator.java:91` | 完整 7 参数 `ThreadPoolExecutor` + `NamedThreadFactory` + `CallerRunsPolicy` + `finally` 中 `shutdown()` | **合规** |
+| `EvaluationRunner.java:194` | `Executors.newFixedThreadPool(2)` + 未 shutdown | **违规** |
+
+M3（`join()` 无超时）针对的是 `DatasetGenerator`，问题成立但线程池创建本身合规。`EvaluationRunner` 的 `newFixedThreadPool` 违规已在合规表中单独记录。
+
+### 修正后的线程池合规总表
+
+| 创建点 | 方式 | 合规性 | 来源 |
+|--------|------|--------|------|
+| `EtlExecutorConfig` ×3 | `ThreadPoolTaskExecutor` 完整 7 参数 + `NamedThreadFactory` | 合规 | 原始审查 |
+| `RagSearchExecutorConfig` | 同上 + `@ConfigurationProperties` 外部化 | 合规 | 原始审查 |
+| `ModelRegistryRefresher` | `Executors.newVirtualThreadPerTaskExecutor()` | 合规 | 原始审查 |
+| `ChunkUploadServiceImpl` | 注入 Spring Bean `mergeExecutor` | 合规 | 原始审查 |
+| `WebMvcConfig` | `ThreadPoolTaskExecutor` 硬编码参数 + 无 `NamedThreadFactory` | **部分合规** | 二次核验 |
+| `BailianRerankPostProcessor` | 完整 7 参数 `ThreadPoolExecutor` + `NamedThreadFactory` + cancel 完善 | 合规 | 二次核验 |
+| `EvaluationRunner:194` | `Executors.newFixedThreadPool(2)` | **违规（规则 4）** | 原始审查 |
+| `HybridDocumentRetrieverTest:90` | `Executors.newFixedThreadPool(2)` | **违规（规则 4）** | 原始审查 |
+| `ModelProviderAutoConfiguration:77` | `CompletableFuture.runAsync()` 无 executor | **违规（规则 23）** | 原始审查 |
+
+### 修正后优先级建议
+
+1. **P0 — 修 H1 + 合规违规**: `runAsync()` 加虚拟线程 executor；`EvaluationRunner` 和 Test 改 `newVirtualThreadPerTaskExecutor()`
+2. **P1 — M1+M2 合并修复**: `HybridSearchService` 改 `thenCombine` + `ragSearchExecutor` 改虚拟线程
+3. **P2 — M4 补超时**: `FastTrackStrategy.extractAll()` 加 `orTimeout(5, MINUTES)`
+4. **P3 — M3 补超时**: `DatasetGenerator` 加 `orTimeout` 或改后台 Job
+5. **P4 — E1 WebMvcConfig 对齐**: 补外部化配置 + `NamedThreadFactory` + `allowCoreThreadTimeOut`
+6. **保留合理异步**: L1/L2/L3 的 `join()` 是业务阶段屏障，不建议删除

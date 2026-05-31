@@ -117,7 +117,7 @@ final class DefaultTaskScope implements TaskScope {
 | Phase | 目标 | 状态 | 退出条件 |
 |-------|------|------|----------|
 | Phase 1 | 建立最小结构化并发作用域 | 必做 | 小型测试服务通过 owner、fork、join、timeout、cancel、MDC、异常聚合测试 |
-| Phase 2 | 迁移第一个真实业务场景 | 必做 | `HybridSearchService` 或等价场景在保持原行为的前提下完成迁移 |
+| Phase 2 | 迁移第一个真实业务场景 | 已完成 | `HybridSearchService` 在保持 partial-success 行为的前提下完成迁移 |
 | Phase 3 | 扩展上下文、executor 和观测能力 | 按需 | 出现第二个以上真实使用方，且重复配置/观测需求明确 |
 | Phase 4 | 补充高级策略和流式边界能力 | 延后 | 有竞速成功、复杂 partial success 或 Reactor 深度整合需求 |
 | Phase 5 | 对齐未来稳定 JDK API | 延后 | JDK 结构化并发转正且项目 JVM 可升级 |
@@ -173,6 +173,14 @@ Phase 2 必须先写行为表：
 - 优先使用 `COLLECT_ALL` + 调用方显式判断成功/失败。
 - 如果相同 partial-success 模式出现第二处，再新增 `PARTIAL_SUCCESS_OR_THROW`。
 - 迁移前必须先补回归测试，迁移后再替换实现。
+
+Phase 2 落地结果：
+
+- `HybridSearchService.hybridSearch()` 已从 `CompletableFuture.supplyAsync()` / `thenCombine()` 迁移到 `TaskScope`。
+- 策略使用 `COLLECT_ALL`，等待后读取每个 `Subtask.exception()` 判断分支是否失败。
+- vector 或 BM25 单分支失败时降级为空列表继续融合；两者都失败时抛 `BusinessException("向量检索和 BM25 检索均不可用")`。
+- 回归测试覆盖 vector 成功 + BM25 成功、vector 失败 + BM25 成功、vector 成功 + BM25 失败、两者都失败。
+- 暂不新增 `PARTIAL_SUCCESS_OR_THROW`，直到第二个真实业务场景出现相同模式。
 
 ### 4.3 Phase 3：上下文、executor 和观测扩展
 
@@ -511,6 +519,8 @@ public enum ScopePolicy {
 | 超时且无成功 | 抛出 `ScopeTimeoutException` |
 
 Phase 2 可先用 `COLLECT_ALL` + 调用方显式判断实现该语义，等出现第二个相同模式后再抽成独立策略，避免过早扩展。
+
+当前落地约束：`HybridSearchService` 已采用该过渡方案。后续维护时不要在该链路改用 `SHUTDOWN_ON_FAILURE`，否则任一检索分支失败都会取消另一分支，破坏 partial-success 降级语义。
 
 ## 7. 上下文传递设计
 

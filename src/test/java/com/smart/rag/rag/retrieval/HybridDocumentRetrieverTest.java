@@ -1,6 +1,7 @@
 package com.smart.rag.rag.retrieval;
 
 import com.smart.rag.agent.service.HybridSearchService;
+import com.smart.rag.exception.BusinessException;
 import com.smart.rag.rag.config.RagRetrievalProperties;
 import com.smart.rag.rag.mapper.VectorStoreMapper;
 import org.junit.jupiter.api.BeforeEach;
@@ -20,6 +21,7 @@ import java.util.Map;
 import java.util.concurrent.Executors;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.eq;
@@ -198,6 +200,39 @@ class HybridDocumentRetrieverTest {
             List<Document> result = retriever.retrieve(query("test"));
 
             assertThat(result).hasSizeGreaterThanOrEqualTo(2);
+        }
+
+        @Test
+        @DisplayName("向量失败时优雅降级返回 BM25 结果")
+        void vector_failure_degrades_gracefully() {
+            var props = defaultProperties();
+            var retriever = createRetriever(props, 1L, null);
+
+            when(vectorStore.similaritySearch(any(SearchRequest.class)))
+                    .thenThrow(new RuntimeException("vector error"));
+            when(vectorStoreMapper.bm25Search(any(), any(), any(), any(), anyInt()))
+                    .thenReturn(List.of(doc("d1", "c1"), doc("d2", "c2")));
+
+            List<Document> result = retriever.retrieve(query("test"));
+
+            assertThat(result).hasSize(2);
+            assertThat(result.stream().map(Document::getId).toList()).containsExactly("d1", "d2");
+        }
+
+        @Test
+        @DisplayName("向量和 BM25 均失败时抛业务异常")
+        void both_branches_fail_throws_business_exception() {
+            var props = defaultProperties();
+            var retriever = createRetriever(props, 1L, null);
+
+            when(vectorStore.similaritySearch(any(SearchRequest.class)))
+                    .thenThrow(new RuntimeException("vector error"));
+            when(vectorStoreMapper.bm25Search(any(), any(), any(), any(), anyInt()))
+                    .thenThrow(new RuntimeException("DB error"));
+
+            assertThatThrownBy(() -> retriever.retrieve(query("test")))
+                    .isInstanceOf(BusinessException.class)
+                    .hasMessage("向量检索和 BM25 检索均不可用");
         }
     }
 

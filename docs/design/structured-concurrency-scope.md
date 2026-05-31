@@ -21,7 +21,7 @@ JDK 21 中虚拟线程已经稳定，可以通过 `Executors.newVirtualThreadPer
 
 | 位置 | 当前模式 | 主要问题 |
 |------|----------|----------|
-| `HybridSearchService` | `CompletableFuture.supplyAsync()` 并行向量/BM25 检索 | 失败、取消、上下文传播分散 |
+| `HybridSearchService` | `CompletableFuture.supplyAsync()` + `thenCombine()` 并行向量/BM25 检索 | 部分降级、整体超时、上下文传播分散 |
 | `ModelRegistryRefresher` | `CompletableFuture` + 手写 MDC 恢复 | MDC 传递重复实现 |
 | `SandboxService` | `ExecutorService` + 手写 MDC 恢复 | 作用域生命周期不统一 |
 | `StandardStrategy` / `FastTrackStrategy` | 多阶段 `CompletableFuture.allOf()` | 异常聚合和取消语义不直观 |
@@ -35,8 +35,8 @@ JDK 21 中虚拟线程已经稳定，可以通过 `Executors.newVirtualThreadPer
 
 - 提供类似结构化并发的作用域 API：所有子任务必须挂在父作用域下。
 - 父作用域退出时，自动取消未完成任务。
-- 支持等待全部、超时等待、失败即取消、成功即取消、全部收集等策略。
-- 支持 MDC、请求上下文、安全上下文等 ThreadLocal 类上下文的显式传递。
+- 支持等待全部、超时等待、失败即取消、全部收集等 Phase 1 策略，并为成功即取消等高级策略保留扩展点。
+- Phase 1 支持 MDC 显式传递；请求上下文、安全上下文等 ThreadLocal 类上下文在 Phase 3 按真实使用方扩展。
 - 支持任务命名、耗时记录、失败聚合和可观测性。
 - 只使用 JDK 21 稳定 API 和项目已有 Spring / SLF4J 能力。
 - 不新增第三方依赖。
@@ -128,12 +128,13 @@ Phase 1 目标是证明这个工具能在本项目稳定运行，而不是一次
 
 必须实现：
 
-- `ScopedTasks.open(String name)` 和 `ScopedTasks.open(String name, ScopeOptions options)`。
+- `ScopedTasks.open(String name)`、`ScopedTasks.open(String name, ScopePolicy policy)` 和 `ScopedTasks.open(String name, ScopeOptions options)`。
 - `TaskScope.fork(String, Callable<T>)` 和 `fork(String, Runnable)`。
 - owner 线程约束。
 - join 后禁止继续 fork。
 - `join()` / `joinUntil(Duration)`。
 - `ScopeOptions.builder(String)`、`defaultTimeout`、`closeTimeout`。
+- 默认 `VIRTUAL_THREAD_PER_TASK` executor；`PLATFORM_THREAD_POOL` / `SHARED_EXECUTOR` 只保留设计位，不在 Phase 1 暴露生产配置。
 - `SHUTDOWN_ON_FAILURE`。
 - `COLLECT_ALL`。
 - `try-with-resources` 关闭时取消未完成任务。
@@ -227,6 +228,8 @@ public interface ScopedTasks {
     TaskScope open(String name, ScopeOptions options);
 }
 ```
+
+`open(String name, ScopePolicy policy)` 是 Phase 1 的轻量便利入口，等价于使用默认 `ScopeOptions` 并覆盖策略。它只能接受 Phase 1 已实现的策略；高级策略必须等对应 Phase 落地后再进入生产枚举。
 
 推荐实现类：
 
@@ -348,8 +351,8 @@ public record ScopeOptions(
             Duration.ofSeconds(5),
             true,
             true,
-            true,
-            true
+            false,
+            false
         );
     }
 
@@ -366,8 +369,8 @@ public record ScopeOptions(
         private Duration closeTimeout = Duration.ofSeconds(5);
         private boolean executorOwnedByScope = true;
         private boolean inheritMdc = true;
-        private boolean inheritSecurityContext = true;
-        private boolean inheritRequestContext = true;
+        private boolean inheritSecurityContext;
+        private boolean inheritRequestContext;
 
         private Builder(String name) {
             this.name = name;
@@ -394,6 +397,8 @@ public record ScopeOptions(
 
 `ScopeOptions` 保持 record 作为不可变值对象，但调用方必须通过 Builder 渐进配置，避免 10 个构造参数在调用点产生顺序错误。
 
+Phase 1 只启用 `inheritMdc`。`inheritSecurityContext` 和 `inheritRequestContext` 是 Phase 3 预留开关，默认必须为 `false`；在对应 carrier 未注册前，调用方不应启用它们，避免文档承诺超出实现范围。
+
 `maxConcurrency = 0` 表示不在 scope 层限流，由调用方或底层资源控制。对外部模型调用、RAG 检索、工具调用等场景，可配置正数并发上限。
 
 `defaultTimeout` 的优先级：
@@ -416,7 +421,6 @@ public record ScopeOptions(
 ```java
 public enum ScopePolicy {
     SHUTDOWN_ON_FAILURE,
-    SHUTDOWN_ON_SUCCESS,
     COLLECT_ALL
 }
 ```
@@ -424,7 +428,6 @@ public enum ScopePolicy {
 | 策略 | 语义 | 适用场景 |
 |------|------|----------|
 | `SHUTDOWN_ON_FAILURE` | 任一任务失败后取消其它未完成任务 | 多个必要子任务并行，任一失败都无法继续 |
-| `SHUTDOWN_ON_SUCCESS` | 任一任务成功后取消其它未完成任务 | 多数据源竞速、fallback 竞速 |
 | `COLLECT_ALL` | 等待全部结束，不自动 fail-fast | 批量评估、ETL 多候选处理、允许部分降级的检索 |
 
 Phase 1 建议 `open(String name)` 默认使用 `SHUTDOWN_ON_FAILURE`，但迁移现有代码时必须按当前业务语义选择策略。允许部分成功继续的链路不能直接套用 fail-fast。
@@ -437,7 +440,7 @@ log.warn("TaskScope '{}' closed with {} unhandled failure(s). "
     name, unhandledFailureCount);
 ```
 
-`SHUTDOWN_ON_SUCCESS` 的完整语义：
+`SHUTDOWN_ON_SUCCESS` 属于 Phase 4 高级策略，Phase 1 不进入 `ScopePolicy` 生产枚举。未来引入时必须满足以下完整语义，不能只实现“任一成功即取消”的 happy path：
 
 | 条件 | `throwIfFailed()` | 成功结果读取 |
 |------|-------------------|--------------|
@@ -467,19 +470,19 @@ interface ScopePolicyHandler {
 
 ```text
 ShutdownOnFailurePolicy
-ShutdownOnSuccessPolicy
 CollectAllPolicy
 ```
 
-后续如果出现“至少 N 个任务成功即可返回”的需求，可以新增 `QuorumSuccessPolicy`，而不修改 `DefaultTaskScope` 主流程。
+Phase 1 只实现 `ShutdownOnFailurePolicy` 和 `CollectAllPolicy`。后续如果出现“任一成功即可返回”或“至少 N 个任务成功即可返回”的需求，可以新增 `ShutdownOnSuccessPolicy`、`QuorumSuccessPolicy`，而不修改 `DefaultTaskScope` 主流程。
 
 `onTimeout()` 是策略的一部分，而不是 `joinUntil()` 的硬编码分支。不同策略的超时含义不同：
 
 | 策略 | 超时语义 |
 |------|----------|
 | `SHUTDOWN_ON_FAILURE` | 超时视为 scope 失败，取消未完成任务并抛出 `ScopeTimeoutException` |
-| `SHUTDOWN_ON_SUCCESS` | 如果已有成功结果，则取消未完成任务并允许读取成功结果；否则抛出 `ScopeTimeoutException` |
 | `COLLECT_ALL` | 取消未完成任务，保留已完成结果和已知失败，调用方继续按收集结果处理 |
+
+Phase 4 引入 `SHUTDOWN_ON_SUCCESS` 时，其超时语义必须是：如果已有成功结果，则取消未完成任务并允许读取成功结果；否则抛出 `ScopeTimeoutException`。
 
 如果未来需要让策略直接返回强类型结果，可以在当前 `ScopePolicyHandler` 之外新增 `ScopeJoiner<R>` 抽象，借鉴 JEP Joiner 的“策略与结果收集一体化”设计。但 Phase 1 不引入该复杂度。
 
@@ -636,6 +639,8 @@ public enum ExecutorMode {
 - IO 密集型请求内任务：`VIRTUAL_THREAD_PER_TASK`
 - CPU 密集型任务：`PLATFORM_THREAD_POOL`
 - 已由 Spring 管理的专用线程池：`SHARED_EXECUTOR`
+
+Phase 1 只交付 `VIRTUAL_THREAD_PER_TASK` 默认路径。`PLATFORM_THREAD_POOL` 和 `SHARED_EXECUTOR` 的代码分支可以作为受测内部扩展点保留，但不能在配置层对业务开放；等 Phase 3 出现共享 executor / 平台线程池的真实复用需求后，再补配置属性、生命周期测试和自动配置。
 
 ### 8.2 工厂模式
 
@@ -1044,14 +1049,11 @@ src/main/java/com/smart/rag/common/concurrent/context/
 ├── ContextSnapshot.java
 ├── ContextRestorer.java
 ├── ContextAwareCallable.java
-├── MdcContextCarrier.java
-├── RequestContextCarrier.java
-└── SecurityContextCarrier.java
+└── MdcContextCarrier.java
 
 src/main/java/com/smart/rag/common/concurrent/policy/
 ├── ScopePolicyHandler.java
 ├── ShutdownOnFailurePolicy.java
-├── ShutdownOnSuccessPolicy.java
 └── CollectAllPolicy.java
 
 src/main/java/com/smart/rag/common/concurrent/executor/
@@ -1063,6 +1065,21 @@ src/main/java/com/smart/rag/config/
 ```
 
 放在 `common/concurrent` 的原因：这是跨 RAG、ETL、模型刷新、沙箱执行都可能复用的基础设施，不属于某个业务模块。
+
+Phase 3 才允许补充以下上下文 carrier，不能在 Phase 1 顺手加入：
+
+```text
+src/main/java/com/smart/rag/common/concurrent/context/
+├── RequestContextCarrier.java
+└── SecurityContextCarrier.java
+```
+
+Phase 4 才允许补充高级策略实现：
+
+```text
+src/main/java/com/smart/rag/common/concurrent/policy/
+└── ShutdownOnSuccessPolicy.java
+```
 
 ## 16. 设计模式总结
 
@@ -1090,6 +1107,8 @@ Phase 1 只实现最小闭环，范围与第 4.1 节一致。任何未列入 Pha
 - 单元测试覆盖 Phase 1 语义。
 - 一个小型测试服务或测试 fixture 验证集成行为。
 
+Phase 1 明确不交付 SecurityContext / RequestContext carrier、`ShutdownOnSuccessPolicy`、Micrometer、共享 executor 配置属性。若实现过程中发现必须依赖这些能力，应先更新本文档和测试计划，再进入下一个 Phase。
+
 ### 17.2 Phase 2 范围
 
 Phase 2 只做一个真实业务迁移，优先选择 `HybridSearchService` 或等价的请求内并发场景。
@@ -1108,9 +1127,11 @@ Phase 3 只处理复用后出现的基础设施扩展：
 - Security / RequestContext carrier。
 - 共享 executor / 平台线程池配置。
 - `ScopedTaskProperties`。
-- scope 级结构化日志。
+- scope 级结构化日志增强。
 - Micrometer 指标。
 - 跨请求 bulkhead。
+
+如果 Phase 3 引入 Security / RequestContext carrier，必须同步把 `ScopeOptions.inheritSecurityContext` / `inheritRequestContext` 的默认值、自动配置和泄漏测试补齐；在那之前默认值保持 `false`。
 
 ### 17.4 Phase 4 范围
 
@@ -1158,7 +1179,6 @@ Phase 5 只在 JDK 结构化并发转正并且项目 JVM 可升级后启动。
 - MDC 在子任务中可见，任务结束后不污染执行线程。
 - 多个失败任务通过 suppressed 聚合。
 - `ScopeExecutionException.allFailures()` 返回完整失败列表。
-- `SHARED_EXECUTOR` 模式下 `close()` 不关闭共享 executor。
 - `Runnable` 重载能返回 `Subtask<Void>` 并正确传播异常。
 - 嵌套 scope 中 parent 超时取消能通过中断传播到 inner scope。
 
@@ -1177,6 +1197,7 @@ Phase 2 必须补业务回归测试：
 
 - SecurityContext / RequestContext 可传递且不泄漏。
 - 共享 executor 不被 scope 关闭。
+- `SHARED_EXECUTOR` 模式下 `close()` 只取消本 scope 任务，不关闭共享 executor。
 - 配置属性覆盖默认 timeout / closeTimeout / executor mode。
 - Micrometer 标签不包含用户输入。
 - bulkhead 能限制跨请求并发。
@@ -1267,5 +1288,8 @@ Phase 1 应小步实现，并优先在测试服务中锁定并发、失败、取
 |------|----------------|
 | [JEP 444: Virtual Threads](https://openjdk.org/jeps/444) | 确认 JDK 21 虚拟线程是稳定能力，可作为 executor 基础 |
 | [JDK 21 Virtual Threads Guide](https://docs.oracle.com/en/java/javase/21/core/virtual-threads.html) | 确认 JDK 21 下 synchronized + 阻塞操作存在 pinning 风险，以及 ReentrantLock 替代建议 |
+| [JEP 505: Structured Concurrency (Fifth Preview)](https://openjdk.org/jeps/505) | 参考 owner 线程、Subtask 结果读取、Joiner 语义和取消边界 |
+| [JEP 525: Structured Concurrency (Sixth Preview)](https://openjdk.org/jeps/525) | 参考 timeout 进入完成策略、成功/失败策略命名和结果收集演进 |
+| [JEP 533: Structured Concurrency (Seventh Preview)](https://openjdk.org/jeps/533) | 参考 typed result/exception、timeout 处理和等待全部 API 的风险取舍 |
 | [JDK 25 StructuredTaskScope Preview API](https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/util/concurrent/StructuredTaskScope.html) | 参考 owner 线程、fork/join/close 生命周期、close 等待子任务终止、fork-after-join 禁止等结构化约束 |
 | [JEP 491: Synchronize Virtual Threads without Pinning](https://openjdk.org/jeps/491) | 确认 synchronized pinning 的改善属于 JDK 24，不适合作为本项目 JDK 21 的默认假设 |

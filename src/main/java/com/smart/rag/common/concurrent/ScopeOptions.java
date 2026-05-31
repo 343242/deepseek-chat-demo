@@ -31,8 +31,8 @@ public record ScopeOptions(
         if (defaultTimeout.isNegative()) {
             throw new ScopeViolationException("defaultTimeout must not be negative");
         }
-        if (closeTimeout.isNegative()) {
-            throw new ScopeViolationException("closeTimeout must not be negative");
+        if (closeTimeout.isZero() || closeTimeout.isNegative()) {
+            throw new ScopeViolationException("closeTimeout must be positive");
         }
     }
 

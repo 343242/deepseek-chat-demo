@@ -1,12 +1,13 @@
 package com.smart.rag.common.concurrent;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
-import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class ScopeState {
 
-    private final CopyOnWriteArrayList<DefaultSubtask<?>> subtasks = new CopyOnWriteArrayList<>();
+    private final ArrayList<DefaultSubtask<?>> subtasks = new ArrayList<>();
     private final AtomicBoolean stopRequested = new AtomicBoolean();
 
     public void add(DefaultSubtask<?> subtask) {
@@ -14,11 +15,11 @@ public final class ScopeState {
     }
 
     public List<DefaultSubtask<?>> internalSubtasks() {
-        return List.copyOf(subtasks);
+        return Collections.unmodifiableList(subtasks);
     }
 
     public List<Subtask<?>> publicSubtasks() {
-        return List.copyOf(subtasks);
+        return Collections.unmodifiableList(subtasks);
     }
 
     public List<Throwable> failures() {

@@ -9,6 +9,7 @@ import com.smart.rag.common.concurrent.policy.ShutdownOnFailurePolicy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.lang.ref.Cleaner;
 import java.time.Duration;
 import java.util.Comparator;
 import java.util.List;
@@ -26,6 +27,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 public final class DefaultTaskScope implements TaskScope {
 
     private static final Logger log = LoggerFactory.getLogger(DefaultTaskScope.class);
+    private static final Cleaner CLEANER = Cleaner.create();
 
     private final ScopeOptions options;
     private final ExecutorService executor;
@@ -38,6 +40,7 @@ public final class DefaultTaskScope implements TaskScope {
     private final AtomicBoolean closed = new AtomicBoolean();
     private final AtomicBoolean joined = new AtomicBoolean();
     private final AtomicBoolean failuresHandled = new AtomicBoolean();
+    private final Cleaner.Cleanable cleanable;
 
     public DefaultTaskScope(
             ScopeOptions options,
@@ -52,6 +55,7 @@ public final class DefaultTaskScope implements TaskScope {
             case COLLECT_ALL -> new CollectAllPolicy();
         };
         this.concurrencyLimit = options.maxConcurrency() > 0 ? new Semaphore(options.maxConcurrency()) : null;
+        this.cleanable = CLEANER.register(this, new ScopeCleanup(options.name(), closed));
     }
 
     @Override
@@ -78,6 +82,7 @@ public final class DefaultTaskScope implements TaskScope {
     public void join() {
         Duration timeout = options.defaultTimeout();
         if (timeout.isZero()) {
+            log.debug("TaskScope '{}' joining without timeout (defaultTimeout=ZERO)", options.name());
             joinInternal(null);
         } else {
             joinInternal(timeout);
@@ -114,13 +119,38 @@ public final class DefaultTaskScope implements TaskScope {
             return;
         }
 
-        cancelUnfinished();
-        waitForTermination(options.closeTimeout(), false);
-        warnAboutUnhandledCollectAllFailures();
-        logScopeSummary();
+        try {
+            cancelUnfinished();
 
-        if (options.executorOwnedByScope()) {
-            executor.shutdown();
+            // M3: Save and clear interrupt flag so waitForTermination is not short-circuited
+            boolean wasInterrupted = Thread.interrupted();
+            try {
+                waitForTermination(options.closeTimeout(), false);
+            } finally {
+                if (wasInterrupted) {
+                    Thread.currentThread().interrupt();
+                }
+            }
+
+            warnAboutUnhandledCollectAllFailures();
+            logScopeSummary();
+        } finally {
+            // H1 + H2: executor.shutdown in finally, with awaitTermination
+            if (options.executorOwnedByScope()) {
+                executor.shutdown();
+                try {
+                    if (!executor.awaitTermination(5, TimeUnit.SECONDS)) {
+                        log.warn("TaskScope '{}' executor did not terminate within 5s after shutdown, forcing shutdownNow",
+                                options.name());
+                        executor.shutdownNow();
+                    }
+                } catch (InterruptedException ex) {
+                    log.warn("TaskScope '{}' interrupted while awaiting executor termination", options.name());
+                    executor.shutdownNow();
+                    Thread.currentThread().interrupt();
+                }
+            }
+            cleanable.clean();
         }
     }
 
@@ -173,6 +203,8 @@ public final class DefaultTaskScope implements TaskScope {
             Thread.currentThread().interrupt();
             throw new ScopeExecutionException(options.name(), List.of(ex));
         } catch (ExecutionException ex) {
+            // completionSignal always completes normally -- this should not happen
+            log.warn("Unexpected ExecutionException in joinInternal for scope '{}'", options.name(), ex);
             drainCompletedSignalsOnOwnerThread();
         }
     }
@@ -293,6 +325,31 @@ public final class DefaultTaskScope implements TaskScope {
         if (Thread.currentThread() != ownerThread) {
             throw new ScopeViolationException(
                     operation + " must be called from the scope owner thread");
+        }
+    }
+
+    /**
+     * Cleaner action that logs a warning if the scope was never explicitly closed.
+     * This is a safety net -- scopes should always be used with try-with-resources.
+     */
+    private static final class ScopeCleanup implements Runnable {
+
+        private final String scopeName;
+        private final AtomicBoolean closed;
+
+        ScopeCleanup(String scopeName, AtomicBoolean closed) {
+            this.scopeName = scopeName;
+            this.closed = closed;
+        }
+
+        @Override
+        public void run() {
+            if (!closed.get()) {
+                LoggerFactory.getLogger(DefaultTaskScope.class)
+                        .warn("TaskScope '{}' was never explicitly closed. "
+                                + "Always use try-with-resources: try (var scope = ...) {{ ... }}",
+                                scopeName);
+            }
         }
     }
 }

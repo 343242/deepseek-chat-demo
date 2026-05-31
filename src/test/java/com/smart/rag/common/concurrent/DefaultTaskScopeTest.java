@@ -272,6 +272,11 @@ class DefaultTaskScopeTest {
                     .build())
                     .isInstanceOf(ScopeViolationException.class)
                     .hasMessageContaining("closeTimeout");
+            assertThatThrownBy(() -> ScopeOptions.builder("zero-close-timeout")
+                    .closeTimeout(Duration.ZERO)
+                    .build())
+                    .isInstanceOf(ScopeViolationException.class)
+                    .hasMessageContaining("closeTimeout must be positive");
             assertThatThrownBy(() -> ScopeOptions.builder(null).build())
                     .isInstanceOf(NullPointerException.class)
                     .hasMessageContaining("name must not be null");

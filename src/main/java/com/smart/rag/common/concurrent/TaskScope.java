@@ -6,6 +6,13 @@ import java.util.concurrent.Callable;
 
 public interface TaskScope extends AutoCloseable {
 
+    /**
+     * Fork a new subtask within this scope.
+     * <p><b>Warning:</b> Avoid capturing large objects (e.g. full collections, byte arrays,
+     * or heavy domain objects) in the {@code Callable} closure. The closure is captured at fork
+     * time and held in memory until the subtask completes. Prefer passing identifiers or
+     * lightweight references and fetching the data inside the callable body.
+     */
     <T> Subtask<T> fork(String name, Callable<T> task);
 
     default Subtask<Void> fork(String name, Runnable task) {

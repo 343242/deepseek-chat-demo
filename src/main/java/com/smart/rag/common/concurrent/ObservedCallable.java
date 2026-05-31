@@ -23,7 +23,9 @@ final class ObservedCallable<T> implements Callable<T> {
     @Override
     public T call() throws Exception {
         long start = System.nanoTime();
-        subtask.markRunning();
+        if (!subtask.markRunning()) {
+            throw new InterruptedException("Subtask '" + subtask.name() + "' was cancelled before execution (state=" + subtask.state() + ")");
+        }
         log.debug("TaskScope '{}' subtask '{}' started", scopeName, subtask.name());
         try {
             T value = delegate.call();

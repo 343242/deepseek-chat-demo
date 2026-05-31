@@ -57,6 +57,13 @@ public final class DefaultSubtask<T> implements Subtask<T> {
         return error;
     }
 
+    /**
+     * Returns the raw failure without marking it as observed.
+     * Unlike {@link #exception()}, this method does NOT set the failure-observed flag.
+     * Use {@link #exception()} for public consumption (marks failure as observed, suppressing
+     * the "unhandled failure" warning). Use this method for internal scope bookkeeping
+     * where the observation flag should not be affected.
+     */
     public Throwable failure() {
         return exception.get();
     }

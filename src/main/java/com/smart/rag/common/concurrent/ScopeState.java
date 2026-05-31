@@ -19,7 +19,7 @@ public final class ScopeState {
     }
 
     public List<Subtask<?>> publicSubtasks() {
-        return Collections.unmodifiableList(subtasks);
+        return List.copyOf(subtasks);
     }
 
     public List<Throwable> failures() {

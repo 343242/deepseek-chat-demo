@@ -203,6 +203,34 @@ class DefaultTaskScopeTest {
             assertThat(interrupted).isTrue();
             assertThat(terminated.await(100, TimeUnit.MILLISECONDS)).isTrue();
         }
+
+        @Test
+        @DisplayName("close timeout remains hard limit when task ignores interruption")
+        void closeTimeout_remainsHardLimitWhenTaskIgnoresInterruption() throws Exception {
+            ScopeOptions options = ScopeOptions.builder("close-hard-limit")
+                    .closeTimeout(Duration.ofMillis(100))
+                    .build();
+            CountDownLatch started = new CountDownLatch(1);
+            TaskScope scope = scopedTasks.open("close-hard-limit", options);
+            scope.fork("ignore-interrupt", () -> {
+                started.countDown();
+                long deadline = System.nanoTime() + Duration.ofSeconds(2).toNanos();
+                while (System.nanoTime() < deadline) {
+                    try {
+                        Thread.sleep(Duration.ofMillis(25));
+                    } catch (InterruptedException ignored) {
+                        // Deliberately ignore interruption to prove closeTimeout is the hard limit.
+                    }
+                }
+                return "late";
+            });
+            assertThat(started.await(1, TimeUnit.SECONDS)).isTrue();
+            long startedClose = System.nanoTime();
+
+            scope.close();
+
+            assertThat(Duration.ofNanos(System.nanoTime() - startedClose)).isLessThan(Duration.ofMillis(600));
+        }
     }
 
     @Nested
@@ -240,6 +268,24 @@ class DefaultTaskScopeTest {
                 scope.throwIfFailed();
 
                 assertThat(task.result()).isEqualTo("options");
+            }
+        }
+
+        @Test
+        @DisplayName("subtasks returns immutable snapshot")
+        void subtasks_returnsImmutableSnapshot() {
+            try (TaskScope scope = scopedTasks.open("subtasks-snapshot")) {
+                scope.fork("first", () -> "first");
+                List<Subtask<?>> snapshot = scope.subtasks();
+
+                scope.fork("second", () -> "second");
+                scope.join();
+                scope.throwIfFailed();
+
+                assertThat(snapshot).hasSize(1);
+                assertThatThrownBy(() -> snapshot.clear())
+                        .isInstanceOf(UnsupportedOperationException.class);
+                assertThat(scope.subtasks()).hasSize(2);
             }
         }
 

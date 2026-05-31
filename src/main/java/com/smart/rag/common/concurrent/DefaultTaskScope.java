@@ -119,13 +119,14 @@ public final class DefaultTaskScope implements TaskScope {
             return;
         }
 
+        long closeDeadlineNanos = System.nanoTime() + options.closeTimeout().toNanos();
         try {
             cancelUnfinished();
 
             // M3: Save and clear interrupt flag so waitForTermination is not short-circuited
             boolean wasInterrupted = Thread.interrupted();
             try {
-                waitForTermination(options.closeTimeout(), false);
+                waitForTerminationRemaining(closeDeadlineNanos, false);
             } finally {
                 if (wasInterrupted) {
                     Thread.currentThread().interrupt();
@@ -137,18 +138,7 @@ public final class DefaultTaskScope implements TaskScope {
         } finally {
             // H1 + H2: executor.shutdown in finally, with awaitTermination
             if (options.executorOwnedByScope()) {
-                executor.shutdown();
-                try {
-                    if (!executor.awaitTermination(5, TimeUnit.SECONDS)) {
-                        log.warn("TaskScope '{}' executor did not terminate within 5s after shutdown, forcing shutdownNow",
-                                options.name());
-                        executor.shutdownNow();
-                    }
-                } catch (InterruptedException ex) {
-                    log.warn("TaskScope '{}' interrupted while awaiting executor termination", options.name());
-                    executor.shutdownNow();
-                    Thread.currentThread().interrupt();
-                }
+                shutdownOwnedExecutor(closeDeadlineNanos);
             }
             cleanable.clean();
         }
@@ -266,6 +256,10 @@ public final class DefaultTaskScope implements TaskScope {
 
     private void waitForTermination(Duration timeout, boolean preserveInterrupt) {
         long deadlineNanos = System.nanoTime() + timeout.toNanos();
+        waitForTerminationRemaining(deadlineNanos, preserveInterrupt);
+    }
+
+    private void waitForTerminationRemaining(long deadlineNanos, boolean preserveInterrupt) {
         for (DefaultSubtask<?> subtask : state.internalSubtasks()) {
             long remaining = deadlineNanos - System.nanoTime();
             if (remaining <= 0) {
@@ -277,7 +271,7 @@ public final class DefaultTaskScope implements TaskScope {
                 boolean terminated = subtask.awaitTermination(remaining, TimeUnit.NANOSECONDS);
                 if (!terminated) {
                     log.warn("TaskScope '{}' subtask '{}' did not terminate within closeTimeout={}",
-                            options.name(), subtask.name(), timeout);
+                            options.name(), subtask.name(), options.closeTimeout());
                     return;
                 }
             } catch (InterruptedException ex) {
@@ -288,6 +282,28 @@ public final class DefaultTaskScope implements TaskScope {
                         options.name(), subtask.name());
                 return;
             }
+        }
+    }
+
+    private void shutdownOwnedExecutor(long closeDeadlineNanos) {
+        executor.shutdown();
+        long remaining = closeDeadlineNanos - System.nanoTime();
+        if (remaining <= 0) {
+            log.warn("TaskScope '{}' closeTimeout elapsed before executor termination wait, forcing shutdownNow",
+                    options.name());
+            executor.shutdownNow();
+            return;
+        }
+        try {
+            if (!executor.awaitTermination(remaining, TimeUnit.NANOSECONDS)) {
+                log.warn("TaskScope '{}' executor did not terminate within closeTimeout={}, forcing shutdownNow",
+                        options.name(), options.closeTimeout());
+                executor.shutdownNow();
+            }
+        } catch (InterruptedException ex) {
+            log.warn("TaskScope '{}' interrupted while awaiting executor termination", options.name());
+            executor.shutdownNow();
+            Thread.currentThread().interrupt();
         }
     }
 

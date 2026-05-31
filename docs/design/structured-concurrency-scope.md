@@ -231,6 +231,7 @@ public record ScopeOptions(
     ExecutorMode executorMode,
     int maxConcurrency,
     Duration defaultTimeout,
+    Duration closeTimeout,
     boolean executorOwnedByScope,
     boolean inheritMdc,
     boolean inheritSecurityContext,
@@ -243,14 +244,54 @@ public record ScopeOptions(
             ExecutorMode.VIRTUAL_THREAD_PER_TASK,
             0,
             Duration.ZERO,
+            Duration.ofSeconds(5),
             true,
             true,
             true,
             true
         );
     }
+
+    public static Builder builder(String name) {
+        return new Builder(name);
+    }
+
+    public static final class Builder {
+        private final String name;
+        private ScopePolicy policy = ScopePolicy.SHUTDOWN_ON_FAILURE;
+        private ExecutorMode executorMode = ExecutorMode.VIRTUAL_THREAD_PER_TASK;
+        private int maxConcurrency;
+        private Duration defaultTimeout = Duration.ZERO;
+        private Duration closeTimeout = Duration.ofSeconds(5);
+        private boolean executorOwnedByScope = true;
+        private boolean inheritMdc = true;
+        private boolean inheritSecurityContext = true;
+        private boolean inheritRequestContext = true;
+
+        private Builder(String name) {
+            this.name = name;
+        }
+
+        public Builder policy(ScopePolicy policy) { this.policy = policy; return this; }
+        public Builder executorMode(ExecutorMode executorMode) { this.executorMode = executorMode; return this; }
+        public Builder maxConcurrency(int maxConcurrency) { this.maxConcurrency = maxConcurrency; return this; }
+        public Builder defaultTimeout(Duration defaultTimeout) { this.defaultTimeout = defaultTimeout; return this; }
+        public Builder closeTimeout(Duration closeTimeout) { this.closeTimeout = closeTimeout; return this; }
+        public Builder executorOwnedByScope(boolean value) { this.executorOwnedByScope = value; return this; }
+        public Builder inheritMdc(boolean value) { this.inheritMdc = value; return this; }
+        public Builder inheritSecurityContext(boolean value) { this.inheritSecurityContext = value; return this; }
+        public Builder inheritRequestContext(boolean value) { this.inheritRequestContext = value; return this; }
+
+        public ScopeOptions build() {
+            return new ScopeOptions(name, policy, executorMode, maxConcurrency, defaultTimeout,
+                closeTimeout, executorOwnedByScope, inheritMdc, inheritSecurityContext,
+                inheritRequestContext);
+        }
+    }
 }
 ```
+
+`ScopeOptions` 保持 record 作为不可变值对象，但调用方必须通过 Builder 渐进配置，避免 10 个构造参数在调用点产生顺序错误。
 
 `maxConcurrency = 0` 表示不在 scope 层限流，由调用方或底层资源控制。对外部模型调用、RAG 检索、工具调用等场景，可配置正数并发上限。
 
@@ -259,6 +300,8 @@ public record ScopeOptions(
 1. 调用 `joinUntil(Duration)` 时，以该显式超时为准。
 2. 调用 `join()` 且 `defaultTimeout > 0` 时，按 `defaultTimeout` 限时等待。
 3. 调用 `join()` 且 `defaultTimeout == Duration.ZERO` 时，无限等待直到所有任务完成或策略提前终止。
+
+`closeTimeout` 是 `close()` 等待子任务终止的硬上限。第一阶段必须提供默认值，不能留给实现阶段临时决定。建议默认 5 秒；如果调用方配置了 `defaultTimeout` 且需要更严格的关闭等待，可以显式设置 `closeTimeout`。
 
 `executorOwnedByScope` 区分 executor 生命周期：
 
@@ -279,11 +322,11 @@ public enum ScopePolicy {
 
 | 策略 | 语义 | 适用场景 |
 |------|------|----------|
-| `SHUTDOWN_ON_FAILURE` | 任一任务失败后取消其它未完成任务 | 请求内多个必要子任务并行 |
+| `SHUTDOWN_ON_FAILURE` | 任一任务失败后取消其它未完成任务 | 多个必要子任务并行，任一失败都无法继续 |
 | `SHUTDOWN_ON_SUCCESS` | 任一任务成功后取消其它未完成任务 | 多数据源竞速、fallback 竞速 |
-| `COLLECT_ALL` | 等待全部结束，不自动 fail-fast | 批量评估、ETL 多候选处理 |
+| `COLLECT_ALL` | 等待全部结束，不自动 fail-fast | 批量评估、ETL 多候选处理、允许部分降级的检索 |
 
-第一阶段建议默认使用 `SHUTDOWN_ON_FAILURE`，因为 RAG 请求内并行子任务通常是共同构成最终结果的必要步骤。
+第一阶段建议 `open(String name)` 默认使用 `SHUTDOWN_ON_FAILURE`，但迁移现有代码时必须按当前业务语义选择策略。允许部分成功继续的链路不能直接套用 fail-fast。
 
 `COLLECT_ALL` 不是“忽略失败”。它只是不在第一个失败时取消其它任务。调用方必须显式检查每个 `Subtask`，或调用 `throwIfFailed()` 统一抛出失败。为了避免失败静默，`DefaultTaskScope.close()` 必须在 `COLLECT_ALL` 模式下检查未处理失败；如果发现调用方既没有调用 `throwIfFailed()`，也没有读取失败子任务的 `exception()`，应记录 `WARN`：
 
@@ -338,6 +381,32 @@ CollectAllPolicy
 | `COLLECT_ALL` | 取消未完成任务，保留已完成结果和已知失败，调用方继续按收集结果处理 |
 
 如果未来需要让策略直接返回强类型结果，可以在当前 `ScopePolicyHandler` 之外新增 `ScopeJoiner<R>` 抽象，借鉴 JEP Joiner 的“策略与结果收集一体化”设计。但第一阶段不引入该复杂度。
+
+### 5.3 部分成功策略扩展点
+
+当前项目已经存在“部分成功即可继续”的业务语义，例如混合检索中 vector 和 BM25 任一分支失败时降级为空列表，两者都失败时才抛业务异常。该语义不能用 `SHUTDOWN_ON_FAILURE` 表达。
+
+后续可新增：
+
+```java
+public enum ScopePolicy {
+    SHUTDOWN_ON_FAILURE,
+    SHUTDOWN_ON_SUCCESS,
+    COLLECT_ALL,
+    PARTIAL_SUCCESS_OR_THROW
+}
+```
+
+`PARTIAL_SUCCESS_OR_THROW` 语义：
+
+| 条件 | 行为 |
+|------|------|
+| 至少一个任务成功 | 保留成功结果，失败任务由调用方按默认值或降级逻辑处理 |
+| 全部任务失败 | 抛出 `ScopeExecutionException`，包含全部失败 |
+| 超时且已有成功 | 取消未完成任务，允许基于部分成功结果继续 |
+| 超时且无成功 | 抛出 `ScopeTimeoutException` |
+
+第一阶段可先用 `COLLECT_ALL` + 调用方显式判断实现该语义，等出现第二个相同模式后再抽成独立策略，避免过早扩展。
 
 ## 6. 上下文传递设计
 
@@ -529,25 +598,28 @@ if (options.executorOwnedByScope()) {
 
 ```text
 1. 校验当前线程是 owner。
-2. 读取当前 scope 已注册任务快照。
-3. 如果 defaultTimeout > 0，则转换为限时等待；否则无限等待。
-4. 每个任务完成后更新状态。
-5. 成功任务记录 result。
-6. 失败任务记录 Throwable。
-7. 调用 ScopePolicyHandler 判断是否需要取消其它任务。
-8. 如果策略要求提前停止，则 cancel 未完成任务。
+2. 校验 scope 尚未 joined。
+3. 读取当前 scope 已注册任务快照。
+4. 如果 defaultTimeout > 0，则转换为限时等待；否则无限等待。
+5. 等待任一子任务完成信号。
+6. 在 owner 线程中读取已完成任务状态，并调用 ScopePolicyHandler。
+7. 如果策略要求提前停止，则 cancel 未完成任务。
+8. 所有任务终止、策略提前停止或超时后，标记 scope 已 joined。
 ```
+
+本工具与 JDK 结构化并发保持一致：`join()` / `joinUntil()` 只能成功调用一次。调用 `join` 后禁止继续 `fork` 新任务。原因是结构化作用域应该只有一个清晰的 forking phase 和一个 joining phase；允许 join 后再次 fork 会迫使实现区分“旧任务”和“新任务”，破坏生命周期清晰度。
 
 ### 8.3 joinUntil
 
 ```text
 1. 校验当前线程是 owner。
-2. 计算 deadline。
-3. 对所有任务按剩余时间等待。
-4. 任务完成时仍按 ScopePolicyHandler 处理 success/failure。
-5. 超时后取消未完成任务。
-6. 调用 ScopePolicyHandler.onTimeout(state) 决定抛异常还是保留部分结果。
-7. 保留已失败任务作为 suppressed，便于排查。
+2. 校验 scope 尚未 joined。
+3. 计算 deadline。
+4. 等待任一子任务完成信号。
+5. 任务完成时仍按 ScopePolicyHandler 处理 success/failure。
+6. 超时后取消未完成任务。
+7. 调用 ScopePolicyHandler.onTimeout(state) 决定抛异常还是保留部分结果。
+8. 保留已失败任务作为 suppressed，便于排查。
 ```
 
 ### 8.4 close
@@ -556,7 +628,7 @@ if (options.executorOwnedByScope()) {
 1. 校验当前线程是 owner。
 2. 标记 scope closing。
 3. 取消所有 NEW/RUNNING 状态任务。
-4. 等待已取消任务结束，确保 close 返回后没有子任务仍在运行。
+4. 在 `ScopeOptions.closeTimeout` 内等待已取消任务结束，确保 close 不无限阻塞。
 5. 如果 policy == COLLECT_ALL 且存在未处理失败，记录 WARN。
 6. 记录 scope 级汇总日志。
 7. 如果 executor 由 scope 创建，则 shutdown。
@@ -564,9 +636,130 @@ if (options.executorOwnedByScope()) {
 9. 多次 close 必须幂等。
 ```
 
-`close()` 必须尽力等待任务终止，而不是只调用 `cancel(true)` 后立即返回。否则父作用域已经退出，子任务仍可能继续运行，结构化生命周期保证会失效。等待终止的最大时间可以复用剩余 timeout，或由 `ScopeOptions.closeTimeout` 在后续阶段补充。
+`close()` 必须尽力等待任务终止，而不是只调用 `cancel(true)` 后立即返回。否则父作用域已经退出，子任务仍可能继续运行，结构化生命周期保证会失效。但等待必须有硬上限：如果子任务吞掉中断或卡在不可中断 IO 中，超过 `closeTimeout` 后记录 `WARN` 并继续关闭 scope 拥有的资源。
 
-## 9. 异常模型
+## 9. 实现约束
+
+### 9.1 join 等待机制
+
+第一阶段实现必须指定一个确定的等待机制，避免实现者在 `Future.get()`、`CompletableFuture.allOf()`、`CountDownLatch`、`Phaser` 之间自行选择导致语义偏差。
+
+推荐机制：
+
+- 每个 `DefaultSubtask` 内部持有一个 `CompletableFuture<SubtaskInternal<?>> completionSignal`。
+- `ObservedCallable` 在任务成功、失败或取消时完成该 signal。
+- owner 线程的 `join()` / `joinUntil()` 循环使用 `CompletableFuture.anyOf(...)` 等待任一任务完成。
+- 每次任一任务完成后，owner 线程统一读取 `ScopeState` 并调用 `ScopePolicyHandler`。
+
+伪代码：
+
+```java
+while (!state.allTerminal()) {
+    if (policyHandler.shouldStop(state)) {
+        cancelUnfinished();
+        break;
+    }
+
+    long remaining = deadlineNanos - System.nanoTime();
+    if (remaining <= 0) {
+        cancelUnfinished();
+        policyHandler.onTimeout(state);
+        break;
+    }
+
+    CompletableFuture.anyOf(activeCompletionSignals())
+        .get(remaining, TimeUnit.NANOSECONDS);
+
+    drainCompletedSignalsOnOwnerThread();
+}
+```
+
+这里使用 `CompletableFuture` 只是内部完成信号，不把 `CompletableFuture` 暴露给业务层，也不回到业务代码直接编排异步链的模式。
+
+禁止使用的实现方式：
+
+- 逐个 `Future.get(timeout)`：会把并发等待退化为按任务顺序等待。
+- 只用 `CompletableFuture.allOf()`：无法在第一个失败时及时执行 `SHUTDOWN_ON_FAILURE`。
+- 使用轮询：引入延迟和无谓 CPU 消耗。
+
+### 9.2 线程模型
+
+| 操作 | 执行线程 | 同步要求 |
+|------|----------|----------|
+| `fork` / `join` / `joinUntil` / `throwIfFailed` / `close` | owner 线程 | 通过 owner 约束保证单线程生命周期控制 |
+| `Callable.call()` | 任务线程 | 不访问 scope 生命周期方法 |
+| `SubtaskInternal.markRunning/markSuccess/markFailed/markCancelled` | 任务线程 | 必须线程安全 |
+| `ScopePolicyHandler.onSuccess/onFailure/onTimeout/shouldStop` | owner 线程 | 策略实现不要求线程安全 |
+| `Subtask.state()` / `Subtask.exception()` | 任意线程读取 | 字段必须具备可见性保证 |
+
+`ScopePolicyHandler` 回调只能在 owner 线程中执行。任务线程只负责写入子任务终态并完成 signal，不直接调用策略。这样可以把策略实现保持为普通对象，避免把业务策略和并发控制纠缠在一起。
+
+### 9.3 同步原语
+
+本项目运行在 JDK 21。JDK 21 虚拟线程在 `synchronized` 块或方法内执行长时间阻塞操作会 pin 住 carrier 线程。JDK 24 的 JEP 491 改善了该问题，但本项目不能假设运行在 JDK 24+。
+
+实现要求：
+
+- `ScopeState`、`DefaultSubtask` 等并发状态优先使用 `AtomicReference`、`AtomicBoolean`、`ConcurrentLinkedQueue`、`CopyOnWriteArrayList` 或 `ReentrantLock`。
+- 不在 `synchronized` 块或 `synchronized` 方法内执行 `Future.get()`、`CompletableFuture.get()`、IO、sleep、join、等待 signal 等阻塞操作。
+- 如需互斥并且可能包裹阻塞等待，使用 `ReentrantLock` 并在 `finally` 中释放。
+- 短小纯内存临界区可以使用 `synchronized`，但第一阶段建议统一避免，以减少误用。
+
+### 9.4 ContextCarrier 泛型擦除
+
+`ContextCarrier<S>` 的 `S` 类型在运行期会被擦除。`ContextSnapshot` 内部不可避免要保存异构 carrier 和 snapshot：
+
+```java
+record CapturedContext<S>(ContextCarrier<S> carrier, S snapshot) {}
+```
+
+实现上可以在 `ContextSnapshot.capture(List<ContextCarrier<?>>)` 内集中处理 unchecked cast，并把警告限制在这一处。调用方不应直接操作 `CapturedContext<?>`。
+
+### 9.5 嵌套 scope 与中断传播
+
+嵌套 scope 是允许的，但必须遵守 owner 线程和关闭顺序：
+
+```java
+try (TaskScope outer = scopedTasks.open("outer")) {
+    outer.fork("child", () -> {
+        try (TaskScope inner = scopedTasks.open("inner")) {
+            inner.fork("work", this::slowWork);
+            inner.join();
+        }
+        return null;
+    });
+    outer.joinUntil(Duration.ofSeconds(1));
+}
+```
+
+当外层 scope 超时取消 `child` 时，`child` 任务线程会收到中断。如果它正阻塞在 `inner.join()`，`inner.join()` 必须响应 `InterruptedException`：取消 inner scope 未完成任务，恢复当前线程中断状态，并把中断传播为 scope 失败或取消信号。
+
+实现要求：
+
+- `join()` / `joinUntil()` 不能吞掉 `InterruptedException`。
+- 捕获 `InterruptedException` 后必须调用 `Thread.currentThread().interrupt()` 恢复中断状态。
+- 被中断的 scope 必须取消自身未完成任务，防止嵌套任务泄漏。
+- 测试必须覆盖 parent timeout -> child interrupted -> inner scope cancelled 的传播链。
+
+### 9.6 Subtask 异常层级
+
+为降低调用方 catch 成本，所有 `Subtask.result()` 抛出的非成功状态异常应继承同一个父类：
+
+```java
+public abstract class SubtaskException extends RuntimeException {
+    protected SubtaskException(String message, Throwable cause) {
+        super(message, cause);
+    }
+}
+
+public final class SubtaskNotCompletedException extends SubtaskException { ... }
+public final class SubtaskFailedException extends SubtaskException { ... }
+public final class SubtaskCancelledException extends SubtaskException { ... }
+```
+
+调用方可以按需要 catch `SubtaskException`，也可以精确处理某一种状态。
+
+## 10. 异常模型
 
 项目规范要求业务异常统一，工具层异常建议放在 `com.smart.rag.exception` 或 `com.smart.rag.common.concurrent` 下，并最终可由 `GlobalExceptionHandler` 转换。
 
@@ -610,7 +803,7 @@ public class ScopeExecutionException extends RuntimeException {
 - `ScopeExecutionException.allFailures()` 返回完整失败列表，便于 `COLLECT_ALL` 调用方做精细化处理。
 - 取消不是失败；除非取消由超时触发，否则不进入 `allFailures()`。
 
-## 10. 可观测性
+## 11. 可观测性
 
 `ObservedCallable` 负责记录任务级指标：
 
@@ -663,9 +856,9 @@ log.debug("TaskScope '{}' completed: total={}ms, tasks={}, success={}, failed={}
 
 指标标签必须受控，`taskName` 和 `scopeName` 应来自代码常量，不允许直接使用用户输入。
 
-## 11. 与 CompletableFuture 的关系
+## 12. 与 CompletableFuture 的关系
 
-### 11.1 适合迁移
+### 12.1 适合迁移
 
 适合迁移的代码通常符合以下特征：
 
@@ -699,7 +892,7 @@ try (TaskScope scope = scopedTasks.open("load-and-combine")) {
 }
 ```
 
-### 11.2 不适合迁移
+### 12.2 不适合迁移
 
 - Spring 启动后的后台异步初始化。
 - 不需要父调用方等待的 fire-and-forget 任务。
@@ -708,7 +901,7 @@ try (TaskScope scope = scopedTasks.open("load-and-combine")) {
 
 这些场景应继续使用现有模型，或单独设计后台任务管理器。
 
-## 12. 与流式响应的边界
+## 13. 与流式响应的边界
 
 `executeStream`、SSE、Reactor `Flux` 等流式场景不能简单包进一个短生命周期 `TaskScope`。原因：
 
@@ -722,7 +915,7 @@ try (TaskScope scope = scopedTasks.open("load-and-combine")) {
 - 不用 `TaskScope` 包住整个 `Flux` 生成过程。
 - 如需深度整合 Reactor，应另开设计文档，明确 subscription 和 scope 的绑定关系。
 
-## 13. 建议包结构
+## 14. 建议包结构
 
 ```text
 src/main/java/com/smart/rag/common/concurrent/
@@ -740,6 +933,7 @@ src/main/java/com/smart/rag/common/concurrent/
 ├── ScopeTimeoutException.java
 ├── ScopeClosedException.java
 ├── ScopeViolationException.java
+├── SubtaskException.java
 ├── SubtaskNotCompletedException.java
 ├── SubtaskFailedException.java
 └── SubtaskCancelledException.java
@@ -769,7 +963,7 @@ src/main/java/com/smart/rag/config/
 
 放在 `common/concurrent` 的原因：这是跨 RAG、ETL、模型刷新、沙箱执行都可能复用的基础设施，不属于某个业务模块。
 
-## 14. 设计模式总结
+## 15. 设计模式总结
 
 | 模式 | 应用位置 | 目的 |
 |------|----------|------|
@@ -780,7 +974,7 @@ src/main/java/com/smart/rag/config/
 | 模板方法思想 | `DefaultTaskScope` 的 fork/join/close 生命周期 | 固定生命周期骨架，策略只定制关键节点行为 |
 | 组合复用 | `DefaultTaskScope` 组合 executor、policy、context carriers | 避免继承膨胀，符合项目质量规范 |
 
-## 15. 第一阶段实现范围
+## 16. 第一阶段实现范围
 
 建议第一阶段只实现最小闭环：
 
@@ -803,9 +997,9 @@ src/main/java/com/smart/rag/config/
 - 与 Reactor 流式深度整合
 - 自动迁移所有 `CompletableFuture`
 
-## 16. 测试计划
+## 17. 测试计划
 
-### 16.1 单元测试
+### 17.1 单元测试
 
 第一阶段必须覆盖：
 
@@ -816,19 +1010,24 @@ src/main/java/com/smart/rag/config/
 - `joinUntil` 超时后取消未完成任务。
 - `joinUntil` 显式超时优先于 `ScopeOptions.defaultTimeout`。
 - `join()` 在配置 `defaultTimeout` 时触发限时等待。
+- `join()` / `joinUntil()` 只能成功调用一次，join 后再次 fork 抛出异常。
+- join 内部等待任一 completion signal 后由 owner 线程调用策略。
 - 不同 `ScopePolicyHandler.onTimeout()` 语义按策略生效。
 - `close` 对未完成任务执行取消。
 - `close` 等待已取消任务终止。
+- `close` 超过 `closeTimeout` 时记录 WARN 并返回，不无限阻塞。
 - `close` 幂等。
 - 对已关闭 scope 调用 `fork` 抛出异常。
 - 非 owner 线程调用 `fork` / `join` / `close` 抛出 `ScopeViolationException`。
 - 未完成或失败任务调用 `result()` 抛出异常。
+- `SubtaskNotCompletedException` / `SubtaskFailedException` / `SubtaskCancelledException` 都继承 `SubtaskException`。
 - `result()` 不阻塞等待任务完成。
 - MDC 在子任务中可见，任务结束后不污染执行线程。
 - 多个失败任务通过 suppressed 聚合。
 - `ScopeExecutionException.allFailures()` 返回完整失败列表。
 - `SHARED_EXECUTOR` 模式下 `close()` 不关闭共享 executor。
 - `Runnable` 重载能返回 `Subtask<Void>` 并正确传播异常。
+- 嵌套 scope 中 parent 超时取消能通过中断传播到 inner scope。
 
 实现 `SHUTDOWN_ON_SUCCESS` 前必须补充：
 
@@ -837,16 +1036,17 @@ src/main/java/com/smart/rag/config/
 - 超时且已有成功时允许读取成功结果。
 - 超时且无成功时抛出 `ScopeTimeoutException`。
 
-### 16.2 集成测试
+### 17.2 集成测试
 
-第一批集成测试建议围绕 `HybridSearchService` 或一个小型测试服务：
+第一批集成测试建议优先使用一个小型测试服务验证结构化并发基础语义。`HybridSearchService` 可以作为后续迁移试点，但不能用 `SHUTDOWN_ON_FAILURE` 直接替换当前行为。
 
 - 并行任务成功合并结果。
-- 一个检索分支失败时另一个分支被取消。
+- 一个必要分支失败时另一个分支被取消。
+- 一个可降级分支失败时另一个分支继续完成。
 - traceId 在并行任务日志中保持一致。
 - 超时配置生效。
 
-### 16.3 回归测试
+### 17.3 回归测试
 
 迁移每一个现有 `CompletableFuture` 使用点时，都应先补齐当前行为测试，再替换实现。尤其注意：
 
@@ -855,27 +1055,29 @@ src/main/java/com/smart/rag/config/
 - 是否从“等待全部”变成“失败即取消”。
 - 是否影响调用方对 partial result 的处理。
 
-## 17. 迁移策略
+## 18. 迁移策略
 
-### 17.1 候选顺序
+### 18.1 候选顺序
 
 建议按风险从低到高迁移：
 
-1. `HybridSearchService`：请求内两个检索分支并行，最贴近结构化并发模型。
-2. `ModelRegistryRefresher`：主要收益是复用 MDC 传递，但它是后台刷新任务，需谨慎判断是否适合 scope 生命周期。
-3. `SandboxService`：已有虚拟线程和 MDC 手写逻辑，可用 context 装饰器减少重复。
-4. `StandardStrategy` / `FastTrackStrategy`：ETL 多阶段并发较复杂，应等工具稳定后迁移。
-5. `DatasetGenerator`：涉及自建并发上限，迁移前需确认性能和限流语义。
+1. 小型测试服务或新功能内部试点：用 `SHUTDOWN_ON_FAILURE` 验证 owner、timeout、取消、MDC、异常聚合等基础能力。
+2. `HybridSearchService`：请求内两个检索分支并行，但当前语义是“部分降级”：vector 或 BM25 单分支失败时返回空列表并继续融合，只有两者都失败才抛 `BusinessException`。迁移时应使用 `COLLECT_ALL` 或新增 `PARTIAL_SUCCESS_OR_THROW` 策略，不能直接使用 `SHUTDOWN_ON_FAILURE`。
+3. `ModelRegistryRefresher`：主要收益是复用 MDC 传递，但它是后台刷新任务，需谨慎判断是否适合 scope 生命周期。
+4. `SandboxService`：已有虚拟线程和 MDC 手写逻辑，可用 context 装饰器减少重复。
+5. `StandardStrategy` / `FastTrackStrategy`：ETL 多阶段并发较复杂，应等工具稳定后迁移。
+6. `DatasetGenerator`：涉及自建并发上限，迁移前需确认性能和限流语义。
 
-### 17.2 迁移规则
+### 18.2 迁移规则
 
 - 先加测试，再替换实现。
 - 每次只迁移一个服务或一个方法。
 - 不改变业务超时和异常对外表现，除非单独评审。
 - 优先保留原有日志字段和 traceId。
 - 不把长期后台任务强行放进请求 scope。
+- 对现有降级语义先画出“单分支失败、全部失败、超时”的行为表，再选择或新增策略。
 
-## 18. 风险和缓解
+## 19. 风险和缓解
 
 | 风险 | 说明 | 缓解 |
 |------|------|------|
@@ -889,8 +1091,12 @@ src/main/java/com/smart/rag/config/
 | `COLLECT_ALL` 失败静默 | 调用方只等待不检查失败 | `close()` 安全网 WARN + 测试覆盖 |
 | 共享 executor 被误关闭 | `SHARED_EXECUTOR` close 时影响其它业务 | 显式 `executorOwnedByScope` 标记 |
 | close 返回过早 | 子任务 cancel 后仍继续运行 | `close()` 等待任务终止，并记录取消失败 |
+| close 无限阻塞 | 子任务吞掉中断或卡在不可中断 IO | `ScopeOptions.closeTimeout` 提供硬上限 |
+| join 实现选型错误 | allOf/逐个 get 无法表达 fail-fast 或正确并发等待 | 使用 completion signal + anyOf，由 owner 线程驱动策略 |
+| JDK 21 虚拟线程 pinning | synchronized 内阻塞会固定 carrier 线程 | 阻塞等待路径使用 ReentrantLock/并发集合/原子类，避免 synchronized 包裹阻塞 |
+| 降级语义被 fail-fast 破坏 | 直接迁移 HybridSearchService 会改变 partial result 行为 | 对降级链路使用 COLLECT_ALL 或新增 partial-success 策略 |
 
-## 19. 结论
+## 20. 结论
 
 基于 JDK 21 稳定 API 实现项目内结构化并发工具是可行的。核心不是复制 JDK 预览 API 的类名，而是把结构化并发的关键语义落到项目基础设施：
 
@@ -902,7 +1108,7 @@ src/main/java/com/smart/rag/config/
 
 第一阶段应小步实现，并优先在请求内并发、失败语义清晰的场景试点。等工具的取消、超时、异常聚合和上下文传递都被测试锁住后，再逐步替换散落的 `CompletableFuture` 编排代码。
 
-## 20. JEP 演进参考与本项目取舍
+## 21. JEP 演进参考与本项目取舍
 
 | JEP 演进点 | 本项目采纳方式 | 不直接采纳原因 |
 |------------|----------------|----------------|
@@ -915,3 +1121,12 @@ src/main/java/com/smart/rag/config/
 | ScopedValue 继承 | 第一阶段不实现 | 项目当前主要痛点是 MDC / ThreadLocal 类上下文，且不能依赖预览特性 |
 
 本项目的原则是：吸收 JEP 演进里已经稳定下来的语义约束，但不绑定仍在变化的预览 API 形状。这样未来 JDK 结构化并发转正后，可以通过适配层迁移，而不是让业务代码直接依赖预览类名。
+
+## 22. 参考资料
+
+| 资料 | 本文档使用方式 |
+|------|----------------|
+| [JEP 444: Virtual Threads](https://openjdk.org/jeps/444) | 确认 JDK 21 虚拟线程是稳定能力，可作为 executor 基础 |
+| [JDK 21 Virtual Threads Guide](https://docs.oracle.com/en/java/javase/21/core/virtual-threads.html) | 确认 JDK 21 下 synchronized + 阻塞操作存在 pinning 风险，以及 ReentrantLock 替代建议 |
+| [JDK 25 StructuredTaskScope Preview API](https://docs.oracle.com/en/java/javase/25/docs/api/java.base/java/util/concurrent/StructuredTaskScope.html) | 参考 owner 线程、fork/join/close 生命周期、close 等待子任务终止、fork-after-join 禁止等结构化约束 |
+| [JEP 491: Synchronize Virtual Threads without Pinning](https://openjdk.org/jeps/491) | 确认 synchronized pinning 的改善属于 JDK 24，不适合作为本项目 JDK 21 的默认假设 |

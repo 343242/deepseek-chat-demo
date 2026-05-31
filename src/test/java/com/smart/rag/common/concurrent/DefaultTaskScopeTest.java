@@ -1,5 +1,12 @@
 package com.smart.rag.common.concurrent;
 
+import com.smart.rag.common.concurrent.context.MdcContextCarrier;
+import org.apache.logging.log4j.Level;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.core.LogEvent;
+import org.apache.logging.log4j.core.appender.AbstractAppender;
+import org.apache.logging.log4j.core.config.Property;
+import org.apache.logging.log4j.core.layout.PatternLayout;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -10,8 +17,12 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -107,6 +118,28 @@ class DefaultTaskScopeTest {
         }
 
         @Test
+        @DisplayName("non owner thread cannot join, joinUntil, or throwIfFailed")
+        void nonOwnerThread_cannotUseOwnerOnlyOperations() throws Exception {
+            try (TaskScope scope = scopedTasks.open("owner-only-operations")) {
+                AtomicReference<Throwable> joinError = new AtomicReference<>();
+                AtomicReference<Throwable> joinUntilError = new AtomicReference<>();
+                AtomicReference<Throwable> throwIfFailedError = new AtomicReference<>();
+
+                Thread worker = Thread.startVirtualThread(() -> {
+                    captureThrowable(scope::join, joinError);
+                    captureThrowable(() -> scope.joinUntil(Duration.ofMillis(10)), joinUntilError);
+                    captureThrowable(scope::throwIfFailed, throwIfFailedError);
+                });
+
+                worker.join();
+
+                assertThat(joinError.get()).isInstanceOf(ScopeViolationException.class);
+                assertThat(joinUntilError.get()).isInstanceOf(ScopeViolationException.class);
+                assertThat(throwIfFailedError.get()).isInstanceOf(ScopeViolationException.class);
+            }
+        }
+
+        @Test
         @DisplayName("join can only be called once and fork is forbidden after join")
         void joinOnceAndNoForkAfterJoin() {
             try (TaskScope scope = scopedTasks.open("single-join")) {
@@ -137,6 +170,181 @@ class DefaultTaskScopeTest {
             scope.close();
 
             assertThatCode(scope::close).doesNotThrowAnyException();
+        }
+
+        @Test
+        @DisplayName("close without join cancels unfinished tasks and waits for termination")
+        void closeWithoutJoin_cancelsUnfinishedTasksAndWaitsForTermination() throws Exception {
+            ScopeOptions options = ScopeOptions.builder("close-cancel")
+                    .closeTimeout(Duration.ofSeconds(1))
+                    .build();
+            CountDownLatch started = new CountDownLatch(1);
+            CountDownLatch terminated = new CountDownLatch(1);
+            AtomicBoolean interrupted = new AtomicBoolean();
+            TaskScope scope = scopedTasks.open("close-cancel", options);
+
+            Subtask<String> slow = scope.fork("slow", () -> {
+                started.countDown();
+                try {
+                    Thread.sleep(Duration.ofSeconds(10));
+                } catch (InterruptedException ex) {
+                    interrupted.set(true);
+                    throw ex;
+                } finally {
+                    terminated.countDown();
+                }
+                return "slow";
+            });
+            assertThat(started.await(1, TimeUnit.SECONDS)).isTrue();
+
+            scope.close();
+
+            assertThat(slow.state()).isEqualTo(TaskState.CANCELLED);
+            assertThat(interrupted).isTrue();
+            assertThat(terminated.await(100, TimeUnit.MILLISECONDS)).isTrue();
+        }
+    }
+
+    @Nested
+    @DisplayName("scope options and entrypoints")
+    class ScopeOptionsAndEntrypoints {
+
+        @Test
+        @DisplayName("open variants create usable scopes")
+        void openVariants_createUsableScopes() {
+            try (TaskScope scope = scopedTasks.open("open-default")) {
+                Subtask<String> task = scope.fork("task", () -> "default");
+
+                scope.join();
+                scope.throwIfFailed();
+
+                assertThat(task.result()).isEqualTo("default");
+            }
+
+            try (TaskScope scope = scopedTasks.open("open-policy", ScopePolicy.COLLECT_ALL)) {
+                Subtask<String> task = scope.fork("task", () -> "policy");
+
+                scope.join();
+                scope.throwIfFailed();
+
+                assertThat(task.result()).isEqualTo("policy");
+            }
+
+            ScopeOptions options = ScopeOptions.builder("open-options")
+                    .defaultTimeout(Duration.ofSeconds(1))
+                    .build();
+            try (TaskScope scope = scopedTasks.open("open-options", options)) {
+                Subtask<String> task = scope.fork("task", () -> "options");
+
+                scope.join();
+                scope.throwIfFailed();
+
+                assertThat(task.result()).isEqualTo("options");
+            }
+        }
+
+        @Test
+        @DisplayName("open rejects mismatched scope name and options name")
+        void open_rejectsMismatchedNameAndOptionsName() {
+            ScopeOptions options = ScopeOptions.builder("actual").build();
+
+            assertThatThrownBy(() -> scopedTasks.open("requested", options))
+                    .isInstanceOf(ScopeViolationException.class)
+                    .hasMessageContaining("scope name and options.name must match");
+        }
+
+        @Test
+        @DisplayName("scope options validate required values")
+        void scopeOptions_validateRequiredValues() {
+            assertThatThrownBy(() -> ScopeOptions.builder("").build())
+                    .isInstanceOf(ScopeViolationException.class)
+                    .hasMessageContaining("scope name must not be blank");
+            assertThatThrownBy(() -> ScopeOptions.builder("negative-concurrency").maxConcurrency(-1).build())
+                    .isInstanceOf(ScopeViolationException.class)
+                    .hasMessageContaining("maxConcurrency");
+            assertThatThrownBy(() -> ScopeOptions.builder("negative-default-timeout")
+                    .defaultTimeout(Duration.ofMillis(-1))
+                    .build())
+                    .isInstanceOf(ScopeViolationException.class)
+                    .hasMessageContaining("defaultTimeout");
+            assertThatThrownBy(() -> ScopeOptions.builder("negative-close-timeout")
+                    .closeTimeout(Duration.ofMillis(-1))
+                    .build())
+                    .isInstanceOf(ScopeViolationException.class)
+                    .hasMessageContaining("closeTimeout");
+            assertThatThrownBy(() -> ScopeOptions.builder(null).build())
+                    .isInstanceOf(NullPointerException.class)
+                    .hasMessageContaining("name must not be null");
+            assertThatThrownBy(() -> ScopeOptions.builder("null-policy").policy(null).build())
+                    .isInstanceOf(NullPointerException.class)
+                    .hasMessageContaining("policy must not be null");
+            assertThatThrownBy(() -> ScopeOptions.builder("null-executor-mode").executorMode(null).build())
+                    .isInstanceOf(NullPointerException.class)
+                    .hasMessageContaining("executorMode must not be null");
+            assertThatThrownBy(() -> ScopeOptions.builder("null-default-timeout").defaultTimeout(null).build())
+                    .isInstanceOf(NullPointerException.class)
+                    .hasMessageContaining("defaultTimeout must not be null");
+            assertThatThrownBy(() -> ScopeOptions.builder("null-close-timeout").closeTimeout(null).build())
+                    .isInstanceOf(NullPointerException.class)
+                    .hasMessageContaining("closeTimeout must not be null");
+        }
+
+        @Test
+        @DisplayName("joinUntil rejects null, zero, and negative timeouts")
+        void joinUntil_rejectsInvalidTimeouts() {
+            try (TaskScope scope = scopedTasks.open("invalid-timeout")) {
+                assertThatThrownBy(() -> scope.joinUntil(null))
+                        .isInstanceOf(ScopeViolationException.class)
+                        .hasMessageContaining("joinUntil timeout must be positive");
+                assertThatThrownBy(() -> scope.joinUntil(Duration.ZERO))
+                        .isInstanceOf(ScopeViolationException.class)
+                        .hasMessageContaining("joinUntil timeout must be positive");
+                assertThatThrownBy(() -> scope.joinUntil(Duration.ofMillis(-1)))
+                        .isInstanceOf(ScopeViolationException.class)
+                        .hasMessageContaining("joinUntil timeout must be positive");
+            }
+        }
+
+        @Test
+        @DisplayName("phase 1 rejects platform and shared executor modes")
+        void phase1_rejectsUnsupportedExecutorModes() {
+            ScopeOptions platform = ScopeOptions.builder("platform")
+                    .executorMode(ExecutorMode.PLATFORM_THREAD_POOL)
+                    .build();
+            ScopeOptions shared = ScopeOptions.builder("shared")
+                    .executorMode(ExecutorMode.SHARED_EXECUTOR)
+                    .build();
+
+            assertThatThrownBy(() -> scopedTasks.open("platform", platform))
+                    .isInstanceOf(ScopeViolationException.class)
+                    .hasMessageContaining("Executor mode is not enabled in Phase 1");
+            assertThatThrownBy(() -> scopedTasks.open("shared", shared))
+                    .isInstanceOf(ScopeViolationException.class)
+                    .hasMessageContaining("Executor mode is not enabled in Phase 1");
+        }
+
+        @Test
+        @DisplayName("executorOwnedByScope false leaves external executor open")
+        void executorOwnedByScopeFalse_leavesExternalExecutorOpen() {
+            ExecutorService executor = Executors.newSingleThreadExecutor();
+            ScopeOptions options = ScopeOptions.builder("external-executor")
+                    .executorOwnedByScope(false)
+                    .build();
+            try {
+                TaskScope scope = new DefaultTaskScope(options, executor, List.of());
+                try (scope) {
+                    Subtask<String> task = scope.fork("task", () -> "ok");
+
+                    scope.join();
+                    scope.throwIfFailed();
+
+                    assertThat(task.result()).isEqualTo("ok");
+                }
+
+                assertThat(executor.isShutdown()).isFalse();
+            } finally {
+                executor.shutdownNow();
+            }
         }
     }
 
@@ -225,6 +433,48 @@ class DefaultTaskScopeTest {
                         });
             }
         }
+
+        @Test
+        @DisplayName("collect all warns when failures are not handled explicitly")
+        void collectAll_warnsWhenFailuresAreUnhandled() {
+            CapturingAppender appender = attachTaskScopeAppender();
+            try {
+                try (TaskScope scope = scopedTasks.open("collect-unhandled", ScopePolicy.COLLECT_ALL)) {
+                    scope.fork("failure", () -> {
+                        throw new IllegalStateException("unhandled");
+                    });
+
+                    scope.join();
+                }
+
+                assertThat(appender.containsWarn("TaskScope 'collect-unhandled' closed with 1 unhandled failure(s)"))
+                        .isTrue();
+            } finally {
+                detachTaskScopeAppender(appender);
+            }
+        }
+
+        @Test
+        @DisplayName("collect all does not warn after failure exception is inspected")
+        void collectAll_doesNotWarnWhenFailureIsObserved() {
+            CapturingAppender appender = attachTaskScopeAppender();
+            try {
+                try (TaskScope scope = scopedTasks.open("collect-observed", ScopePolicy.COLLECT_ALL)) {
+                    Subtask<String> failure = scope.fork("failure", () -> {
+                        throw new IllegalStateException("observed");
+                    });
+
+                    scope.join();
+
+                    assertThat(failure.exception()).isInstanceOf(IllegalStateException.class);
+                }
+
+                assertThat(appender.containsWarn("TaskScope 'collect-observed' closed with"))
+                        .isFalse();
+            } finally {
+                detachTaskScopeAppender(appender);
+            }
+        }
     }
 
     @Nested
@@ -286,6 +536,54 @@ class DefaultTaskScopeTest {
                 assertThat(slow.state()).isEqualTo(TaskState.CANCELLED);
             }
         }
+
+        @Test
+        @DisplayName("joinUntil explicit timeout overrides a longer default timeout")
+        void joinUntil_overridesDefaultTimeout() {
+            ScopeOptions options = ScopeOptions.builder("explicit-timeout")
+                    .defaultTimeout(Duration.ofSeconds(10))
+                    .closeTimeout(Duration.ofMillis(100))
+                    .build();
+
+            try (TaskScope scope = scopedTasks.open("explicit-timeout", options)) {
+                scope.fork("slow", () -> {
+                    Thread.sleep(Duration.ofSeconds(10));
+                    return "slow";
+                });
+                long started = System.nanoTime();
+
+                assertThatThrownBy(() -> scope.joinUntil(Duration.ofMillis(50)))
+                        .isInstanceOf(ScopeTimeoutException.class);
+                assertThat(Duration.ofNanos(System.nanoTime() - started)).isLessThan(Duration.ofSeconds(1));
+            }
+        }
+
+        @Test
+        @DisplayName("collect all timeout preserves known failures")
+        void collectAllTimeout_preservesKnownFailures() {
+            ScopeOptions options = ScopeOptions.builder("collect-timeout-failure")
+                    .policy(ScopePolicy.COLLECT_ALL)
+                    .closeTimeout(Duration.ofMillis(100))
+                    .build();
+
+            try (TaskScope scope = scopedTasks.open("collect-timeout-failure", options)) {
+                Subtask<String> failed = scope.fork("failed", () -> {
+                    throw new IllegalStateException("known");
+                });
+                Subtask<String> slow = scope.fork("slow", () -> {
+                    Thread.sleep(Duration.ofSeconds(10));
+                    return "slow";
+                });
+
+                scope.joinUntil(Duration.ofMillis(80));
+
+                assertThat(failed.exception()).isInstanceOf(IllegalStateException.class);
+                assertThat(slow.state()).isEqualTo(TaskState.CANCELLED);
+                assertThatThrownBy(scope::throwIfFailed)
+                        .isInstanceOf(ScopeExecutionException.class)
+                        .satisfies(ex -> assertThat(((ScopeExecutionException) ex).allFailures()).hasSize(1));
+            }
+        }
     }
 
     @Nested
@@ -332,6 +630,24 @@ class DefaultTaskScopeTest {
                         .isInstanceOf(SubtaskException.class);
             }
         }
+
+        @Test
+        @DisplayName("exception is only populated for failed tasks")
+        void exception_isOnlyPopulatedForFailedTasks() {
+            try (TaskScope scope = scopedTasks.open("exception-state", ScopePolicy.COLLECT_ALL)) {
+                Subtask<String> success = scope.fork("success", () -> "ok");
+                Subtask<String> cancelled = scope.fork("cancelled", () -> {
+                    Thread.sleep(Duration.ofSeconds(10));
+                    return "cancelled";
+                });
+                cancelled.cancel();
+
+                scope.join();
+
+                assertThat(success.exception()).isNull();
+                assertThat(cancelled.exception()).isNull();
+            }
+        }
     }
 
     @Nested
@@ -351,6 +667,97 @@ class DefaultTaskScopeTest {
 
                 assertThat(traceId.result()).isEqualTo("trace-1");
                 assertThat(MDC.get("traceId")).isEqualTo("trace-1");
+            }
+        }
+
+        @Test
+        @DisplayName("MDC propagation can be disabled")
+        void mdcPropagation_canBeDisabled() {
+            MDC.setContextMap(Map.of("traceId", "trace-disabled"));
+            ScopeOptions options = ScopeOptions.builder("mdc-disabled")
+                    .inheritMdc(false)
+                    .build();
+
+            try (TaskScope scope = scopedTasks.open("mdc-disabled", options)) {
+                Subtask<String> traceId = scope.fork("read-mdc", () -> MDC.get("traceId"));
+
+                scope.join();
+                scope.throwIfFailed();
+
+                assertThat(traceId.result()).isNull();
+                assertThat(MDC.get("traceId")).isEqualTo("trace-disabled");
+            }
+        }
+
+        @Test
+        @DisplayName("MDC is restored on reusable worker threads")
+        void mdc_isRestoredOnReusableWorkerThreads() throws Exception {
+            ExecutorService executor = Executors.newSingleThreadExecutor();
+            ScopeOptions options = ScopeOptions.builder("mdc-restore")
+                    .executorOwnedByScope(false)
+                    .build();
+            try {
+                executor.submit(() -> {
+                    MDC.setContextMap(Map.of("traceId", "worker-before"));
+                    return null;
+                }).get(1, TimeUnit.SECONDS);
+
+                MDC.setContextMap(Map.of("traceId", "owner"));
+                TaskScope scope = new DefaultTaskScope(options, executor, List.of(new MdcContextCarrier()));
+                try (scope) {
+                    Subtask<String> traceId = scope.fork("mutate-mdc", () -> {
+                        String captured = MDC.get("traceId");
+                        MDC.put("traceId", "worker-mutated");
+                        return captured;
+                    });
+
+                    scope.join();
+                    scope.throwIfFailed();
+
+                    assertThat(traceId.result()).isEqualTo("owner");
+                }
+
+                String workerTraceId = executor.submit(() -> MDC.get("traceId")).get(1, TimeUnit.SECONDS);
+                assertThat(workerTraceId).isEqualTo("worker-before");
+                assertThat(MDC.get("traceId")).isEqualTo("owner");
+            } finally {
+                executor.shutdownNow();
+            }
+        }
+    }
+
+    @Nested
+    @DisplayName("concurrency limits")
+    class ConcurrencyLimits {
+
+        @Test
+        @DisplayName("maxConcurrency limits simultaneous callable execution")
+        void maxConcurrency_limitsSimultaneousCallableExecution() {
+            ScopeOptions options = ScopeOptions.builder("limited")
+                    .maxConcurrency(2)
+                    .build();
+            AtomicInteger active = new AtomicInteger();
+            AtomicInteger maxActive = new AtomicInteger();
+
+            try (TaskScope scope = scopedTasks.open("limited", options)) {
+                for (int i = 0; i < 8; i++) {
+                    scope.fork("task-" + i, () -> {
+                        int now = active.incrementAndGet();
+                        maxActive.accumulateAndGet(now, Math::max);
+                        try {
+                            Thread.sleep(Duration.ofMillis(40));
+                            return "ok";
+                        } finally {
+                            active.decrementAndGet();
+                        }
+                    });
+                }
+
+                scope.join();
+                scope.throwIfFailed();
+
+                assertThat(maxActive.get()).isLessThanOrEqualTo(2);
+                assertThat(scope.subtasks()).allSatisfy(task -> assertThat(task.state()).isEqualTo(TaskState.SUCCESS));
             }
         }
     }
@@ -383,5 +790,55 @@ class DefaultTaskScopeTest {
             assertThat(innerTask.get()).isNotNull();
             assertThat(innerTask.get().state()).isEqualTo(TaskState.CANCELLED);
         }
+    }
+
+    private static void captureThrowable(CheckedRunnable action, AtomicReference<Throwable> target) {
+        try {
+            action.run();
+        } catch (Throwable ex) {
+            target.set(ex);
+        }
+    }
+
+    private static CapturingAppender attachTaskScopeAppender() {
+        org.apache.logging.log4j.core.Logger logger =
+                (org.apache.logging.log4j.core.Logger) LogManager.getLogger(DefaultTaskScope.class);
+        CapturingAppender appender = new CapturingAppender("default-task-scope-capture-" + System.nanoTime());
+        appender.start();
+        logger.addAppender(appender);
+        return appender;
+    }
+
+    private static void detachTaskScopeAppender(CapturingAppender appender) {
+        org.apache.logging.log4j.core.Logger logger =
+                (org.apache.logging.log4j.core.Logger) LogManager.getLogger(DefaultTaskScope.class);
+        logger.removeAppender(appender);
+        appender.stop();
+    }
+
+    private static final class CapturingAppender extends AbstractAppender {
+
+        private final List<LogEvent> events = new CopyOnWriteArrayList<>();
+
+        private CapturingAppender(String name) {
+            super(name, null, PatternLayout.createDefaultLayout(), false, Property.EMPTY_ARRAY);
+        }
+
+        @Override
+        public void append(LogEvent event) {
+            events.add(event.toImmutable());
+        }
+
+        private boolean containsWarn(String fragment) {
+            return events.stream()
+                    .anyMatch(event -> event.getLevel().isMoreSpecificThan(Level.WARN)
+                            && event.getMessage().getFormattedMessage().contains(fragment));
+        }
+    }
+
+    @FunctionalInterface
+    private interface CheckedRunnable {
+
+        void run() throws Exception;
     }
 }

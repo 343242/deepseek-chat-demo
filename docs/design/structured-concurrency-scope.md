@@ -47,7 +47,7 @@ JDK 21 中虚拟线程已经稳定，可以通过 `Executors.newVirtualThreadPer
 - 不通过反射读取或修改 JVM 内部 `ThreadLocalMap`。
 - 不强制杀死不响应中断的任务。
 - 不替代所有 `CompletableFuture`。长期后台任务、事件驱动链路、缓存预热、无父请求生命周期的异步任务仍可继续使用现有模型。
-- 不在第一阶段接管 Reactor `Flux` 的完整流式生命周期。
+- 不在 Phase 1 接管 Reactor `Flux` 的完整流式生命周期。
 
 ## 3. 设计原则
 
@@ -110,9 +110,110 @@ final class DefaultTaskScope implements TaskScope {
 
 本设计不尝试“自动发现所有 ThreadLocal”，而是采用白名单式 `ContextCarrier`。原因是 JDK 没有稳定公开 API 可以安全枚举所有 ThreadLocal；反射读取内部结构会引入 JVM 兼容风险，也违背本设计“不修改 JVM、不依赖非稳定能力”的目标。
 
-## 4. 核心抽象
+## 4. Phase 迭代路线
 
-### 4.1 ScopedTasks
+本文档描述完整方向，但实现必须分 Phase 推进。Phase 1 只落地最小可用闭环，后续能力在真实使用场景出现后再扩展。
+
+| Phase | 目标 | 状态 | 退出条件 |
+|-------|------|------|----------|
+| Phase 1 | 建立最小结构化并发作用域 | 必做 | 小型测试服务通过 owner、fork、join、timeout、cancel、MDC、异常聚合测试 |
+| Phase 2 | 迁移第一个真实业务场景 | 必做 | `HybridSearchService` 或等价场景在保持原行为的前提下完成迁移 |
+| Phase 3 | 扩展上下文、executor 和观测能力 | 按需 | 出现第二个以上真实使用方，且重复配置/观测需求明确 |
+| Phase 4 | 补充高级策略和流式边界能力 | 延后 | 有竞速成功、复杂 partial success 或 Reactor 深度整合需求 |
+| Phase 5 | 对齐未来稳定 JDK API | 延后 | JDK 结构化并发转正且项目 JVM 可升级 |
+
+### 4.1 Phase 1：最小可用闭环
+
+Phase 1 目标是证明这个工具能在本项目稳定运行，而不是一次性实现所有策略。
+
+必须实现：
+
+- `ScopedTasks.open(String name)` 和 `ScopedTasks.open(String name, ScopeOptions options)`。
+- `TaskScope.fork(String, Callable<T>)` 和 `fork(String, Runnable)`。
+- owner 线程约束。
+- join 后禁止继续 fork。
+- `join()` / `joinUntil(Duration)`。
+- `ScopeOptions.builder(String)`、`defaultTimeout`、`closeTimeout`。
+- `SHUTDOWN_ON_FAILURE`。
+- `COLLECT_ALL`。
+- `try-with-resources` 关闭时取消未完成任务。
+- MDC 上下文传递。
+- `ScopeExecutionException`、`ScopeTimeoutException`、`ScopeClosedException`、`ScopeViolationException`。
+- `SubtaskException` 及其三个子类。
+- completion signal + owner 线程驱动策略的 join 实现。
+
+明确不实现：
+
+- `SHUTDOWN_ON_SUCCESS`。
+- `PARTIAL_SUCCESS_OR_THROW`。
+- `ScopeJoiner<R>`。
+- Spring Security / RequestContext carrier。
+- Micrometer 指标。
+- Reactor / `Flux` 生命周期整合。
+- 嵌套 scope 的专门优化。Phase 1 只要求不吞中断，并在测试中覆盖基本取消传播。
+- 真实业务迁移。Phase 1 先用小型测试服务验证语义。
+
+### 4.2 Phase 2：首个业务迁移
+
+Phase 2 才迁移真实业务。首选候选是 `HybridSearchService`，但不能直接使用 `SHUTDOWN_ON_FAILURE`，因为当前行为是部分降级：vector 或 BM25 单分支失败时继续融合，两者都失败才抛业务异常。
+
+Phase 2 必须先写行为表：
+
+| 场景 | 当前行为 | 迁移后要求 |
+|------|----------|------------|
+| vector 成功，BM25 成功 | 融合两边结果 | 保持 |
+| vector 失败，BM25 成功 | vector 降级为空，继续 BM25 | 保持 |
+| vector 成功，BM25 失败 | BM25 降级为空，继续 vector | 保持 |
+| vector 失败，BM25 失败 | 抛 `BusinessException` | 保持 |
+| 整体超时 | 抛超时相关异常 | 行为需显式确认后锁测试 |
+
+实现方式：
+
+- 优先使用 `COLLECT_ALL` + 调用方显式判断成功/失败。
+- 如果相同 partial-success 模式出现第二处，再新增 `PARTIAL_SUCCESS_OR_THROW`。
+- 迁移前必须先补回归测试，迁移后再替换实现。
+
+### 4.3 Phase 3：上下文、executor 和观测扩展
+
+Phase 3 处理“重复使用后自然出现”的基础设施需求：
+
+- Spring Security context carrier。
+- RequestContext carrier。
+- 共享 executor 模式。
+- 平台线程池模式。
+- 配置属性类，例如 `ScopedTaskProperties`。
+- scope 级结构化日志增强。
+- Micrometer 指标。
+- 跨请求 bulkhead / 限流设计。
+
+Phase 3 的准入条件：至少两个业务场景已经使用 Phase 1/2 能力，且出现重复配置或重复观测需求。
+
+### 4.4 Phase 4：高级策略和流式边界
+
+Phase 4 处理高级并发模式：
+
+- `SHUTDOWN_ON_SUCCESS`。
+- `PARTIAL_SUCCESS_OR_THROW`。
+- `QuorumSuccessPolicy`。
+- `ScopeJoiner<R>` 或等价的强类型结果收集抽象。
+- Reactor `Flux` / SSE 与 scope 生命周期绑定。
+- 更完整的嵌套 scope 结构违规检测。
+
+这些能力 Phase 1 不做。只有当业务明确需要竞速成功、强类型聚合结果或流式深度整合时再实现。
+
+### 4.5 Phase 5：JDK 稳定 API 适配
+
+当 JDK 结构化并发转正且项目 JVM 可升级时，再评估：
+
+- 是否用 JDK API 替换内部实现。
+- 是否保留本项目 `TaskScope` 门面作为兼容层。
+- 是否迁移 `ScopePolicyHandler` 到 JDK Joiner 风格。
+
+在此之前，本项目工具只吸收语义，不依赖 preview API。
+
+## 5. 核心抽象
+
+### 5.1 ScopedTasks
 
 `ScopedTasks` 是业务入口门面，负责创建 `TaskScope`。
 
@@ -133,7 +234,7 @@ public interface ScopedTasks {
 com.smart.rag.common.concurrent.DefaultScopedTasks
 ```
 
-### 4.2 TaskScope
+### 5.2 TaskScope
 
 `TaskScope` 是结构化并发作用域，生命周期由 `try-with-resources` 管理。
 
@@ -171,7 +272,7 @@ public interface TaskScope extends AutoCloseable {
 - `throwIfFailed()` 将已记录失败聚合后抛出。
 - `close()` 必须取消所有未完成任务、等待任务终止并释放 scope 拥有的资源。
 
-### 4.3 Subtask
+### 5.3 Subtask
 
 `Subtask` 是业务可见的子任务句柄，封装底层 `Future`。
 
@@ -222,7 +323,7 @@ T result();
 
 `exception()` 只返回任务自身失败原因。任务未完成、成功或取消时返回 `null`。
 
-### 4.4 ScopeOptions
+### 5.4 ScopeOptions
 
 ```java
 public record ScopeOptions(
@@ -301,16 +402,16 @@ public record ScopeOptions(
 2. 调用 `join()` 且 `defaultTimeout > 0` 时，按 `defaultTimeout` 限时等待。
 3. 调用 `join()` 且 `defaultTimeout == Duration.ZERO` 时，无限等待直到所有任务完成或策略提前终止。
 
-`closeTimeout` 是 `close()` 等待子任务终止的硬上限。第一阶段必须提供默认值，不能留给实现阶段临时决定。建议默认 5 秒；如果调用方配置了 `defaultTimeout` 且需要更严格的关闭等待，可以显式设置 `closeTimeout`。
+`closeTimeout` 是 `close()` 等待子任务终止的硬上限。Phase 1 必须提供默认值，不能留给实现阶段临时决定。建议默认 5 秒；如果调用方配置了 `defaultTimeout` 且需要更严格的关闭等待，可以显式设置 `closeTimeout`。
 
 `executorOwnedByScope` 区分 executor 生命周期：
 
 - `true`：executor 由本 scope 创建，`close()` 时可以关闭。
 - `false`：executor 是 Spring 或外部共享资源，`close()` 只能取消本 scope 的任务，不能关闭 executor。
 
-## 5. 策略语义
+## 6. 策略语义
 
-### 5.1 ScopePolicy
+### 6.1 ScopePolicy
 
 ```java
 public enum ScopePolicy {
@@ -326,7 +427,7 @@ public enum ScopePolicy {
 | `SHUTDOWN_ON_SUCCESS` | 任一任务成功后取消其它未完成任务 | 多数据源竞速、fallback 竞速 |
 | `COLLECT_ALL` | 等待全部结束，不自动 fail-fast | 批量评估、ETL 多候选处理、允许部分降级的检索 |
 
-第一阶段建议 `open(String name)` 默认使用 `SHUTDOWN_ON_FAILURE`，但迁移现有代码时必须按当前业务语义选择策略。允许部分成功继续的链路不能直接套用 fail-fast。
+Phase 1 建议 `open(String name)` 默认使用 `SHUTDOWN_ON_FAILURE`，但迁移现有代码时必须按当前业务语义选择策略。允许部分成功继续的链路不能直接套用 fail-fast。
 
 `COLLECT_ALL` 不是“忽略失败”。它只是不在第一个失败时取消其它任务。调用方必须显式检查每个 `Subtask`，或调用 `throwIfFailed()` 统一抛出失败。为了避免失败静默，`DefaultTaskScope.close()` 必须在 `COLLECT_ALL` 模式下检查未处理失败；如果发现调用方既没有调用 `throwIfFailed()`，也没有读取失败子任务的 `exception()`，应记录 `WARN`：
 
@@ -345,7 +446,7 @@ log.warn("TaskScope '{}' closed with {} unhandled failure(s). "
 | 超时且已有成功 | 不抛异常，取消未完成任务 | 读取已成功任务的结果 |
 | 超时且无成功 | 抛出 `ScopeTimeoutException`，包含已知失败 | 未完成任务 `result()` 抛 `SubtaskCancelledException` 或 `SubtaskNotCompletedException` |
 
-### 5.2 策略模式
+### 6.2 策略模式
 
 `TaskScope` 不直接硬编码所有完成策略，而是委托给策略处理器：
 
@@ -380,9 +481,9 @@ CollectAllPolicy
 | `SHUTDOWN_ON_SUCCESS` | 如果已有成功结果，则取消未完成任务并允许读取成功结果；否则抛出 `ScopeTimeoutException` |
 | `COLLECT_ALL` | 取消未完成任务，保留已完成结果和已知失败，调用方继续按收集结果处理 |
 
-如果未来需要让策略直接返回强类型结果，可以在当前 `ScopePolicyHandler` 之外新增 `ScopeJoiner<R>` 抽象，借鉴 JEP Joiner 的“策略与结果收集一体化”设计。但第一阶段不引入该复杂度。
+如果未来需要让策略直接返回强类型结果，可以在当前 `ScopePolicyHandler` 之外新增 `ScopeJoiner<R>` 抽象，借鉴 JEP Joiner 的“策略与结果收集一体化”设计。但 Phase 1 不引入该复杂度。
 
-### 5.3 部分成功策略扩展点
+### 6.3 部分成功策略扩展点
 
 当前项目已经存在“部分成功即可继续”的业务语义，例如混合检索中 vector 和 BM25 任一分支失败时降级为空列表，两者都失败时才抛业务异常。该语义不能用 `SHUTDOWN_ON_FAILURE` 表达。
 
@@ -406,11 +507,11 @@ public enum ScopePolicy {
 | 超时且已有成功 | 取消未完成任务，允许基于部分成功结果继续 |
 | 超时且无成功 | 抛出 `ScopeTimeoutException` |
 
-第一阶段可先用 `COLLECT_ALL` + 调用方显式判断实现该语义，等出现第二个相同模式后再抽成独立策略，避免过早扩展。
+Phase 2 可先用 `COLLECT_ALL` + 调用方显式判断实现该语义，等出现第二个相同模式后再抽成独立策略，避免过早扩展。
 
-## 6. 上下文传递设计
+## 7. 上下文传递设计
 
-### 6.1 ContextCarrier
+### 7.1 ContextCarrier
 
 ```java
 public interface ContextCarrier<S> {
@@ -429,7 +530,7 @@ public interface ContextCarrier<S> {
 - `restore()`：在子线程执行任务前恢复快照，并返回子线程原上下文。
 - `clear()`：任务结束后恢复子线程原上下文，防止线程复用导致污染。
 
-### 6.2 MDC 示例
+### 7.2 MDC 示例
 
 ```java
 public final class MdcContextCarrier implements ContextCarrier<Map<String, String>> {
@@ -461,7 +562,7 @@ public final class MdcContextCarrier implements ContextCarrier<Map<String, Strin
 }
 ```
 
-### 6.3 ContextSnapshot
+### 7.3 ContextSnapshot
 
 ```java
 public final class ContextSnapshot {
@@ -486,7 +587,7 @@ try (ContextRestorer ignored = snapshot.restore()) {
 }
 ```
 
-### 6.4 装饰器模式
+### 7.4 装饰器模式
 
 上下文传递通过装饰原始任务完成：
 
@@ -518,9 +619,9 @@ final class ContextAwareCallable<T> implements Callable<T> {
 
 差异是：本项目工具采用显式 carrier 白名单，而不是扩展 ThreadLocal 类型本身。这样更符合项目约束，也更容易做安全审计。
 
-## 7. Executor 设计
+## 8. Executor 设计
 
-### 7.1 ExecutorMode
+### 8.1 ExecutorMode
 
 ```java
 public enum ExecutorMode {
@@ -536,7 +637,7 @@ public enum ExecutorMode {
 - CPU 密集型任务：`PLATFORM_THREAD_POOL`
 - 已由 Spring 管理的专用线程池：`SHARED_EXECUTOR`
 
-### 7.2 工厂模式
+### 8.2 工厂模式
 
 ```java
 interface ScopeExecutorFactory {
@@ -579,9 +680,9 @@ if (options.executorOwnedByScope()) {
 | `PLATFORM_THREAD_POOL` | scope | 取消未完成任务，等待终止，关闭 executor |
 | `SHARED_EXECUTOR` | 外部 | 只取消本 scope 任务，不关闭 executor |
 
-## 8. TaskScope 执行流程
+## 9. TaskScope 执行流程
 
-### 8.1 fork
+### 9.1 fork
 
 ```text
 1. 校验当前线程是 owner。
@@ -594,7 +695,7 @@ if (options.executorOwnedByScope()) {
 8. 创建 DefaultSubtask 并注册到 ScopeState。
 ```
 
-### 8.2 join
+### 9.2 join
 
 ```text
 1. 校验当前线程是 owner。
@@ -609,7 +710,7 @@ if (options.executorOwnedByScope()) {
 
 本工具与 JDK 结构化并发保持一致：`join()` / `joinUntil()` 只能成功调用一次。调用 `join` 后禁止继续 `fork` 新任务。原因是结构化作用域应该只有一个清晰的 forking phase 和一个 joining phase；允许 join 后再次 fork 会迫使实现区分“旧任务”和“新任务”，破坏生命周期清晰度。
 
-### 8.3 joinUntil
+### 9.3 joinUntil
 
 ```text
 1. 校验当前线程是 owner。
@@ -622,7 +723,7 @@ if (options.executorOwnedByScope()) {
 8. 保留已失败任务作为 suppressed，便于排查。
 ```
 
-### 8.4 close
+### 9.4 close
 
 ```text
 1. 校验当前线程是 owner。
@@ -638,11 +739,11 @@ if (options.executorOwnedByScope()) {
 
 `close()` 必须尽力等待任务终止，而不是只调用 `cancel(true)` 后立即返回。否则父作用域已经退出，子任务仍可能继续运行，结构化生命周期保证会失效。但等待必须有硬上限：如果子任务吞掉中断或卡在不可中断 IO 中，超过 `closeTimeout` 后记录 `WARN` 并继续关闭 scope 拥有的资源。
 
-## 9. 实现约束
+## 10. 实现约束
 
-### 9.1 join 等待机制
+### 10.1 join 等待机制
 
-第一阶段实现必须指定一个确定的等待机制，避免实现者在 `Future.get()`、`CompletableFuture.allOf()`、`CountDownLatch`、`Phaser` 之间自行选择导致语义偏差。
+Phase 1 实现必须指定一个确定的等待机制，避免实现者在 `Future.get()`、`CompletableFuture.allOf()`、`CountDownLatch`、`Phaser` 之间自行选择导致语义偏差。
 
 推荐机制：
 
@@ -682,7 +783,7 @@ while (!state.allTerminal()) {
 - 只用 `CompletableFuture.allOf()`：无法在第一个失败时及时执行 `SHUTDOWN_ON_FAILURE`。
 - 使用轮询：引入延迟和无谓 CPU 消耗。
 
-### 9.2 线程模型
+### 10.2 线程模型
 
 | 操作 | 执行线程 | 同步要求 |
 |------|----------|----------|
@@ -694,7 +795,7 @@ while (!state.allTerminal()) {
 
 `ScopePolicyHandler` 回调只能在 owner 线程中执行。任务线程只负责写入子任务终态并完成 signal，不直接调用策略。这样可以把策略实现保持为普通对象，避免把业务策略和并发控制纠缠在一起。
 
-### 9.3 同步原语
+### 10.3 同步原语
 
 本项目运行在 JDK 21。JDK 21 虚拟线程在 `synchronized` 块或方法内执行长时间阻塞操作会 pin 住 carrier 线程。JDK 24 的 JEP 491 改善了该问题，但本项目不能假设运行在 JDK 24+。
 
@@ -703,9 +804,9 @@ while (!state.allTerminal()) {
 - `ScopeState`、`DefaultSubtask` 等并发状态优先使用 `AtomicReference`、`AtomicBoolean`、`ConcurrentLinkedQueue`、`CopyOnWriteArrayList` 或 `ReentrantLock`。
 - 不在 `synchronized` 块或 `synchronized` 方法内执行 `Future.get()`、`CompletableFuture.get()`、IO、sleep、join、等待 signal 等阻塞操作。
 - 如需互斥并且可能包裹阻塞等待，使用 `ReentrantLock` 并在 `finally` 中释放。
-- 短小纯内存临界区可以使用 `synchronized`，但第一阶段建议统一避免，以减少误用。
+- 短小纯内存临界区可以使用 `synchronized`，但 Phase 1 建议统一避免，以减少误用。
 
-### 9.4 ContextCarrier 泛型擦除
+### 10.4 ContextCarrier 泛型擦除
 
 `ContextCarrier<S>` 的 `S` 类型在运行期会被擦除。`ContextSnapshot` 内部不可避免要保存异构 carrier 和 snapshot：
 
@@ -715,7 +816,7 @@ record CapturedContext<S>(ContextCarrier<S> carrier, S snapshot) {}
 
 实现上可以在 `ContextSnapshot.capture(List<ContextCarrier<?>>)` 内集中处理 unchecked cast，并把警告限制在这一处。调用方不应直接操作 `CapturedContext<?>`。
 
-### 9.5 嵌套 scope 与中断传播
+### 10.5 嵌套 scope 与中断传播
 
 嵌套 scope 是允许的，但必须遵守 owner 线程和关闭顺序：
 
@@ -741,7 +842,7 @@ try (TaskScope outer = scopedTasks.open("outer")) {
 - 被中断的 scope 必须取消自身未完成任务，防止嵌套任务泄漏。
 - 测试必须覆盖 parent timeout -> child interrupted -> inner scope cancelled 的传播链。
 
-### 9.6 Subtask 异常层级
+### 10.6 Subtask 异常层级
 
 为降低调用方 catch 成本，所有 `Subtask.result()` 抛出的非成功状态异常应继承同一个父类：
 
@@ -759,7 +860,7 @@ public final class SubtaskCancelledException extends SubtaskException { ... }
 
 调用方可以按需要 catch `SubtaskException`，也可以精确处理某一种状态。
 
-## 10. 异常模型
+## 11. 异常模型
 
 项目规范要求业务异常统一，工具层异常建议放在 `com.smart.rag.exception` 或 `com.smart.rag.common.concurrent` 下，并最终可由 `GlobalExceptionHandler` 转换。
 
@@ -803,7 +904,7 @@ public class ScopeExecutionException extends RuntimeException {
 - `ScopeExecutionException.allFailures()` 返回完整失败列表，便于 `COLLECT_ALL` 调用方做精细化处理。
 - 取消不是失败；除非取消由超时触发，否则不进入 `allFailures()`。
 
-## 11. 可观测性
+## 12. 可观测性
 
 `ObservedCallable` 负责记录任务级指标：
 
@@ -856,9 +957,9 @@ log.debug("TaskScope '{}' completed: total={}ms, tasks={}, success={}, failed={}
 
 指标标签必须受控，`taskName` 和 `scopeName` 应来自代码常量，不允许直接使用用户输入。
 
-## 12. 与 CompletableFuture 的关系
+## 13. 与 CompletableFuture 的关系
 
-### 12.1 适合迁移
+### 13.1 适合迁移
 
 适合迁移的代码通常符合以下特征：
 
@@ -892,7 +993,7 @@ try (TaskScope scope = scopedTasks.open("load-and-combine")) {
 }
 ```
 
-### 12.2 不适合迁移
+### 13.2 不适合迁移
 
 - Spring 启动后的后台异步初始化。
 - 不需要父调用方等待的 fire-and-forget 任务。
@@ -901,7 +1002,7 @@ try (TaskScope scope = scopedTasks.open("load-and-combine")) {
 
 这些场景应继续使用现有模型，或单独设计后台任务管理器。
 
-## 13. 与流式响应的边界
+## 14. 与流式响应的边界
 
 `executeStream`、SSE、Reactor `Flux` 等流式场景不能简单包进一个短生命周期 `TaskScope`。原因：
 
@@ -909,13 +1010,13 @@ try (TaskScope scope = scopedTasks.open("load-and-combine")) {
 - 取消信号来自 Reactor subscription，不一定等于 Java 线程中断。
 - 背压、partial content 保存、usage 记录需要依赖 `doFinally` 等 Reactor 钩子。
 
-因此第一阶段建议：
+因此 Phase 1 建议：
 
 - 只在流式响应的前置准备阶段使用 `TaskScope`，例如并行加载配置、上下文、工具元数据。
 - 不用 `TaskScope` 包住整个 `Flux` 生成过程。
 - 如需深度整合 Reactor，应另开设计文档，明确 subscription 和 scope 的绑定关系。
 
-## 14. 建议包结构
+## 15. 建议包结构
 
 ```text
 src/main/java/com/smart/rag/common/concurrent/
@@ -963,7 +1064,7 @@ src/main/java/com/smart/rag/config/
 
 放在 `common/concurrent` 的原因：这是跨 RAG、ETL、模型刷新、沙箱执行都可能复用的基础设施，不属于某个业务模块。
 
-## 15. 设计模式总结
+## 16. 设计模式总结
 
 | 模式 | 应用位置 | 目的 |
 |------|----------|------|
@@ -974,34 +1075,66 @@ src/main/java/com/smart/rag/config/
 | 模板方法思想 | `DefaultTaskScope` 的 fork/join/close 生命周期 | 固定生命周期骨架，策略只定制关键节点行为 |
 | 组合复用 | `DefaultTaskScope` 组合 executor、policy、context carriers | 避免继承膨胀，符合项目质量规范 |
 
-## 16. 第一阶段实现范围
+## 17. Phase 实施范围
 
-建议第一阶段只实现最小闭环：
+### 17.1 Phase 1 范围
 
-- `ScopedTasks.open(String name)`
-- `SHUTDOWN_ON_FAILURE`
-- `COLLECT_ALL`
-- `join()` / `joinUntil(Duration)`
-- `throwIfFailed()`
-- `try-with-resources` 自动取消
-- MDC 上下文传递
-- 虚拟线程 executor
-- 单元测试覆盖核心语义
+Phase 1 只实现最小闭环，范围与第 4.1 节一致。任何未列入 Phase 1 的能力都不得在第一版实现中顺手加入。
 
-暂缓：
+交付物：
 
-- `SHUTDOWN_ON_SUCCESS`
-- Spring Security 上下文传递
-- RequestContextHolder 传递
-- Micrometer 指标
-- 与 Reactor 流式深度整合
-- 自动迁移所有 `CompletableFuture`
+- `com.smart.rag.common.concurrent` 基础接口和默认实现。
+- `com.smart.rag.common.concurrent.context` 的 MDC carrier。
+- `com.smart.rag.common.concurrent.policy` 的 `SHUTDOWN_ON_FAILURE` / `COLLECT_ALL`。
+- `ScopedTaskAutoConfiguration` 注册默认 `ScopedTasks`。
+- 单元测试覆盖 Phase 1 语义。
+- 一个小型测试服务或测试 fixture 验证集成行为。
 
-## 17. 测试计划
+### 17.2 Phase 2 范围
 
-### 17.1 单元测试
+Phase 2 只做一个真实业务迁移，优先选择 `HybridSearchService` 或等价的请求内并发场景。
 
-第一阶段必须覆盖：
+交付物：
+
+- 迁移前行为表。
+- 回归测试。
+- 使用 `COLLECT_ALL` 保持部分降级语义。
+- 迁移后删除对应位置的手写 `CompletableFuture` 编排。
+
+### 17.3 Phase 3 范围
+
+Phase 3 只处理复用后出现的基础设施扩展：
+
+- Security / RequestContext carrier。
+- 共享 executor / 平台线程池配置。
+- `ScopedTaskProperties`。
+- scope 级结构化日志。
+- Micrometer 指标。
+- 跨请求 bulkhead。
+
+### 17.4 Phase 4 范围
+
+Phase 4 才允许引入高级策略：
+
+- `SHUTDOWN_ON_SUCCESS`。
+- `PARTIAL_SUCCESS_OR_THROW`。
+- quorum / race 类策略。
+- `ScopeJoiner<R>`。
+- Reactor 生命周期整合。
+
+### 17.5 Phase 5 范围
+
+Phase 5 只在 JDK 结构化并发转正并且项目 JVM 可升级后启动。
+
+交付物：
+
+- JDK 稳定 API 适配评估。
+- 是否保留项目门面的决策。
+- 迁移风险和兼容层方案。
+
+## 18. Phase 验收测试
+
+### 18.1 Phase 1 测试
 
 - 所有任务成功时，`result()` 正确返回。
 - 任一任务失败时，`SHUTDOWN_ON_FAILURE` 取消其它未完成任务。
@@ -1029,35 +1162,41 @@ src/main/java/com/smart/rag/config/
 - `Runnable` 重载能返回 `Subtask<Void>` 并正确传播异常。
 - 嵌套 scope 中 parent 超时取消能通过中断传播到 inner scope。
 
-实现 `SHUTDOWN_ON_SUCCESS` 前必须补充：
+### 18.2 Phase 2 测试
 
-- 任一任务成功时取消其它未完成任务。
-- 全部任务失败时，`throwIfFailed()` 聚合全部失败。
-- 超时且已有成功时允许读取成功结果。
-- 超时且无成功时抛出 `ScopeTimeoutException`。
+Phase 2 必须补业务回归测试：
 
-### 17.2 集成测试
+- vector 成功、BM25 成功。
+- vector 失败、BM25 成功。
+- vector 成功、BM25 失败。
+- vector 失败、BM25 失败。
+- 整体超时。
+- traceId 在迁移后的并发任务中保持一致。
 
-第一批集成测试建议优先使用一个小型测试服务验证结构化并发基础语义。`HybridSearchService` 可以作为后续迁移试点，但不能用 `SHUTDOWN_ON_FAILURE` 直接替换当前行为。
+### 18.3 Phase 3 测试
 
-- 并行任务成功合并结果。
-- 一个必要分支失败时另一个分支被取消。
-- 一个可降级分支失败时另一个分支继续完成。
-- traceId 在并行任务日志中保持一致。
-- 超时配置生效。
+- SecurityContext / RequestContext 可传递且不泄漏。
+- 共享 executor 不被 scope 关闭。
+- 配置属性覆盖默认 timeout / closeTimeout / executor mode。
+- Micrometer 标签不包含用户输入。
+- bulkhead 能限制跨请求并发。
 
-### 17.3 回归测试
+### 18.4 Phase 4 测试
 
-迁移每一个现有 `CompletableFuture` 使用点时，都应先补齐当前行为测试，再替换实现。尤其注意：
+- `SHUTDOWN_ON_SUCCESS` 任一任务成功时取消其它未完成任务。
+- `SHUTDOWN_ON_SUCCESS` 全部失败时聚合全部失败。
+- `PARTIAL_SUCCESS_OR_THROW` 至少一个成功时保留部分结果，全部失败时抛异常。
+- Reactor 整合时 cancellation 能从 subscription 传递到 scope。
 
-- 异常类型是否改变。
-- 超时时间是否改变。
-- 是否从“等待全部”变成“失败即取消”。
-- 是否影响调用方对 partial result 的处理。
+### 18.5 Phase 5 验收
 
-## 18. 迁移策略
+- JDK 稳定 API 适配方案经过 spike 验证。
+- 保留项目门面或直接迁移 JDK API 的决策已记录。
+- 现有业务测试在适配方案下保持通过。
 
-### 18.1 候选顺序
+## 19. Phase 迁移计划
+
+### 19.1 候选顺序
 
 建议按风险从低到高迁移：
 
@@ -1068,7 +1207,7 @@ src/main/java/com/smart/rag/config/
 5. `StandardStrategy` / `FastTrackStrategy`：ETL 多阶段并发较复杂，应等工具稳定后迁移。
 6. `DatasetGenerator`：涉及自建并发上限，迁移前需确认性能和限流语义。
 
-### 18.2 迁移规则
+### 19.2 迁移规则
 
 - 先加测试，再替换实现。
 - 每次只迁移一个服务或一个方法。
@@ -1077,7 +1216,7 @@ src/main/java/com/smart/rag/config/
 - 不把长期后台任务强行放进请求 scope。
 - 对现有降级语义先画出“单分支失败、全部失败、超时”的行为表，再选择或新增策略。
 
-## 19. 风险和缓解
+## 20. 风险和缓解
 
 | 风险 | 说明 | 缓解 |
 |------|------|------|
@@ -1085,8 +1224,8 @@ src/main/java/com/smart/rag/config/
 | 异常语义变化 | `CompletableFuture` 常包裹 `CompletionException` | 迁移时保持外层服务异常契约，并补回归测试 |
 | 上下文泄漏 | 线程复用时 ThreadLocal 未清理会污染后续任务 | `ContextRestorer.close()` 必须恢复 previous |
 | 并发过高 | 虚拟线程降低线程成本，但不降低下游资源压力 | 对模型调用、数据库、外部 API 配置 `maxConcurrency` |
-| 流式生命周期混淆 | Reactor subscription 生命周期不同于方法调用 | 第一阶段不包住完整 `Flux` |
-| 过度抽象 | 一次性设计太多策略和上下文类型 | 第一阶段只实现最小闭环 |
+| 流式生命周期混淆 | Reactor subscription 生命周期不同于方法调用 | Phase 1 不包住完整 `Flux` |
+| 过度抽象 | 一次性设计太多策略和上下文类型 | Phase 1 只实现最小闭环 |
 | owner 约束被绕过 | scope 被传给其它线程继续 fork，破坏结构化边界 | 所有生命周期方法强制校验 owner 线程 |
 | `COLLECT_ALL` 失败静默 | 调用方只等待不检查失败 | `close()` 安全网 WARN + 测试覆盖 |
 | 共享 executor 被误关闭 | `SHARED_EXECUTOR` close 时影响其它业务 | 显式 `executorOwnedByScope` 标记 |
@@ -1096,7 +1235,7 @@ src/main/java/com/smart/rag/config/
 | JDK 21 虚拟线程 pinning | synchronized 内阻塞会固定 carrier 线程 | 阻塞等待路径使用 ReentrantLock/并发集合/原子类，避免 synchronized 包裹阻塞 |
 | 降级语义被 fail-fast 破坏 | 直接迁移 HybridSearchService 会改变 partial result 行为 | 对降级链路使用 COLLECT_ALL 或新增 partial-success 策略 |
 
-## 20. 结论
+## 21. 结论
 
 基于 JDK 21 稳定 API 实现项目内结构化并发工具是可行的。核心不是复制 JDK 预览 API 的类名，而是把结构化并发的关键语义落到项目基础设施：
 
@@ -1106,23 +1245,23 @@ src/main/java/com/smart/rag/config/
 - `ContextAwareCallable` 管 ThreadLocal 类上下文传递。
 - `ScopeExecutorFactory` 管虚拟线程和线程池选择。
 
-第一阶段应小步实现，并优先在请求内并发、失败语义清晰的场景试点。等工具的取消、超时、异常聚合和上下文传递都被测试锁住后，再逐步替换散落的 `CompletableFuture` 编排代码。
+Phase 1 应小步实现，并优先在测试服务中锁定并发、失败、取消、超时和上下文传递语义。等工具的核心语义被测试锁住后，再进入 Phase 2 迁移真实业务。
 
-## 21. JEP 演进参考与本项目取舍
+## 22. JEP 演进参考与本项目取舍
 
 | JEP 演进点 | 本项目采纳方式 | 不直接采纳原因 |
 |------------|----------------|----------------|
 | owner 线程约束 | 强制采纳，非 owner 调用抛 `ScopeViolationException` | 这是结构化生命周期的核心，不依赖预览 API |
-| Joiner / result 策略一体化 | 暂不实现，只保留 `ScopePolicyHandler` | 当前项目第一阶段不需要强类型策略结果，避免过度抽象 |
+| Joiner / result 策略一体化 | 暂不实现，只保留 `ScopePolicyHandler` | 当前项目 Phase 1 不需要强类型策略结果，避免过度抽象 |
 | timeout 由策略决定 | 采纳为 `ScopePolicyHandler.onTimeout()` | 不使用预览 Joiner API，但保留其语义 |
 | `Subtask.get()` 命名争议 | 使用 `result()` 并声明非阻塞契约 | 避免与 `Future.get()` 混淆 |
 | `awaitAll()` 移除 | `COLLECT_ALL` 增加失败处理安全网 | 项目仍需要批量收集，但必须防止失败静默 |
 | `fork(Runnable)` | 采纳为 default 重载 | 简化无返回值任务调用 |
-| ScopedValue 继承 | 第一阶段不实现 | 项目当前主要痛点是 MDC / ThreadLocal 类上下文，且不能依赖预览特性 |
+| ScopedValue 继承 | Phase 1 不实现 | 项目当前主要痛点是 MDC / ThreadLocal 类上下文，且不能依赖预览特性 |
 
 本项目的原则是：吸收 JEP 演进里已经稳定下来的语义约束，但不绑定仍在变化的预览 API 形状。这样未来 JDK 结构化并发转正后，可以通过适配层迁移，而不是让业务代码直接依赖预览类名。
 
-## 22. 参考资料
+## 23. 参考资料
 
 | 资料 | 本文档使用方式 |
 |------|----------------|

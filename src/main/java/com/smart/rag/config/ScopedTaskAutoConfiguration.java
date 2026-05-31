@@ -5,6 +5,7 @@ import com.smart.rag.common.concurrent.ScopeObserver;
 import com.smart.rag.common.concurrent.ScopedTaskProperties;
 import com.smart.rag.common.concurrent.ScopedTasks;
 import com.smart.rag.common.concurrent.executor.DefaultScopeExecutorFactory;
+import com.smart.rag.common.concurrent.executor.ScopeExecutorFactory;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -13,8 +14,8 @@ import org.springframework.context.annotation.Configuration;
 @EnableConfigurationProperties(ScopedTaskProperties.class)
 public class ScopedTaskAutoConfiguration {
 
-    @Bean
-    public DefaultScopeExecutorFactory scopeExecutorFactory(ScopedTaskProperties properties) {
+    @Bean(destroyMethod = "close")
+    public ScopeExecutorFactory scopeExecutorFactory(ScopedTaskProperties properties) {
         return new DefaultScopeExecutorFactory(properties);
     }
 
@@ -25,7 +26,7 @@ public class ScopedTaskAutoConfiguration {
 
     @Bean
     public ScopedTasks scopedTasks(
-            DefaultScopeExecutorFactory executorFactory,
+            ScopeExecutorFactory executorFactory,
             ScopedTaskProperties properties,
             ScopeObserver scopeObserver
     ) {

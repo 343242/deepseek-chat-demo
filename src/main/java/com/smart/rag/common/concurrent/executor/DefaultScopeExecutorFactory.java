@@ -1,6 +1,5 @@
 package com.smart.rag.common.concurrent.executor;
 
-import com.smart.rag.common.concurrent.ExecutorMode;
 import com.smart.rag.common.concurrent.ScopedTaskProperties;
 import com.smart.rag.common.concurrent.ScopeOptions;
 import com.smart.rag.common.concurrent.ScopeViolationException;
@@ -12,7 +11,7 @@ import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
-public final class DefaultScopeExecutorFactory implements ScopeExecutorFactory, AutoCloseable {
+public final class DefaultScopeExecutorFactory implements ScopeExecutorFactory {
 
     private final ScopedTaskProperties properties;
     private final ExecutorService sharedExecutor;
@@ -43,6 +42,14 @@ public final class DefaultScopeExecutorFactory implements ScopeExecutorFactory, 
     @Override
     public void close() {
         sharedExecutor.shutdown();
+        try {
+            if (!sharedExecutor.awaitTermination(properties.getCloseTimeout().toNanos(), TimeUnit.NANOSECONDS)) {
+                sharedExecutor.shutdownNow();
+            }
+        } catch (InterruptedException ex) {
+            sharedExecutor.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
     }
 
     private ExecutorService createPool(ScopedTaskProperties.PoolConfig config) {

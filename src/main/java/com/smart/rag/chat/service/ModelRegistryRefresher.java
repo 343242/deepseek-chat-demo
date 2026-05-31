@@ -64,16 +64,18 @@ public class ModelRegistryRefresher {
         log.info("Refreshing models from {} providers: {}",
                 providers.size(), providerRegistry.getAvailableProviderIds());
 
+        String scopeName = "model-registry-refresh";
         List<ProviderResult> results;
-        ScopeOptions options = ScopeOptions.builder("model-registry-refresh")
+        ScopeOptions options = ScopeOptions.builder(scopeName)
                 .policy(ScopePolicy.COLLECT_ALL)
                 .build();
-        try (TaskScope scope = scopedTasks.open("model-registry-refresh", options)) {
+        try (TaskScope scope = scopedTasks.open(scopeName, options)) {
             List<Subtask<ProviderResult>> subtasks = providers.stream()
                     .map(provider -> scope.fork("fetch-" + provider.getProviderId(), () -> fetchModels(provider)))
                     .toList();
 
             scope.join();
+            rethrowFatalFailures(subtasks);
             results = subtasks.stream()
                     .map(Subtask::result)
                     .toList();
@@ -144,6 +146,14 @@ public class ModelRegistryRefresher {
         return successCount > 0;
     }
 
+    private void rethrowFatalFailures(List<Subtask<ProviderResult>> subtasks) {
+        for (Subtask<ProviderResult> subtask : subtasks) {
+            if (subtask.exception() instanceof Error error) {
+                throw error;
+            }
+        }
+    }
+
     /**
      * Provider 拉取结果载体
      */
@@ -151,13 +161,15 @@ public class ModelRegistryRefresher {
         try {
             List<ModelInfo> models = provider.fetchModels();
             return new ProviderResult(provider, models, null);
-        } catch (Exception e) {
-            log.error("Failed to fetch models from {}: {}", provider.getProviderId(), e.getMessage());
-            return new ProviderResult(provider, List.of(), e);
+        } catch (Error error) {
+            throw error;
+        } catch (Throwable t) {
+            log.error("Failed to fetch models from {}: {}", provider.getProviderId(), t.getMessage());
+            return new ProviderResult(provider, List.of(), t);
         }
     }
 
-    private record ProviderResult(ModelProvider provider, List<ModelInfo> models, Exception error) {}
+    private record ProviderResult(ModelProvider provider, List<ModelInfo> models, Throwable error) {}
 
     /**
      * 查找模型所属的 Provider（O(1)，基于刷新时构建的索引）

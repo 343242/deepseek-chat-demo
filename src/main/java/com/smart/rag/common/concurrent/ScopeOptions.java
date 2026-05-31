@@ -44,6 +44,12 @@ public record ScopeOptions(
         return new Builder(name);
     }
 
+    public ScopeOptions withPolicy(ScopePolicy policy) {
+        return new ScopeOptions(name, policy, executorMode, maxConcurrency,
+                defaultTimeout, closeTimeout, executorOwnedByScope,
+                inheritMdc, inheritSecurityContext, inheritRequestContext);
+    }
+
     public static final class Builder {
 
         private final String name;

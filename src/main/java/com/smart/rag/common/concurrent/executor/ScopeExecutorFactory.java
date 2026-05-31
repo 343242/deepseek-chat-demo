@@ -4,7 +4,10 @@ import com.smart.rag.common.concurrent.ScopeOptions;
 
 import java.util.concurrent.ExecutorService;
 
-public interface ScopeExecutorFactory {
+public interface ScopeExecutorFactory extends AutoCloseable {
 
     ExecutorService create(ScopeOptions options);
+
+    @Override
+    default void close() {}
 }

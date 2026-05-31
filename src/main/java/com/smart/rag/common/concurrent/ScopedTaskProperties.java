@@ -25,7 +25,7 @@ public class ScopedTaskProperties {
                 .maxConcurrency(maxConcurrency)
                 .defaultTimeout(defaultTimeout)
                 .closeTimeout(closeTimeout)
-                .executorOwnedByScope(executorMode != ExecutorMode.SHARED_EXECUTOR)
+                .executorOwnedByScope(executorMode.ownsExecutor())
                 .inheritMdc(inheritMdc)
                 .inheritSecurityContext(inheritSecurityContext)
                 .inheritRequestContext(inheritRequestContext)
@@ -101,6 +101,9 @@ public class ScopedTaskProperties {
     }
 
     public void setPlatformThreadPool(PoolConfig platformThreadPool) {
+        if (platformThreadPool == null) {
+            throw new IllegalArgumentException("platformThreadPool must not be null");
+        }
         this.platformThreadPool = platformThreadPool;
     }
 
@@ -109,6 +112,9 @@ public class ScopedTaskProperties {
     }
 
     public void setSharedExecutor(PoolConfig sharedExecutor) {
+        if (sharedExecutor == null) {
+            throw new IllegalArgumentException("sharedExecutor must not be null");
+        }
         this.sharedExecutor = sharedExecutor;
     }
 
@@ -133,6 +139,12 @@ public class ScopedTaskProperties {
         }
 
         public void setCorePoolSize(int corePoolSize) {
+            if (corePoolSize < 0) {
+                throw new IllegalArgumentException("corePoolSize must be >= 0");
+            }
+            if (corePoolSize > maxPoolSize) {
+                throw new IllegalArgumentException("corePoolSize must be <= maxPoolSize");
+            }
             this.corePoolSize = corePoolSize;
         }
 
@@ -141,6 +153,12 @@ public class ScopedTaskProperties {
         }
 
         public void setMaxPoolSize(int maxPoolSize) {
+            if (maxPoolSize <= 0) {
+                throw new IllegalArgumentException("maxPoolSize must be > 0");
+            }
+            if (maxPoolSize < corePoolSize) {
+                throw new IllegalArgumentException("maxPoolSize must be >= corePoolSize");
+            }
             this.maxPoolSize = maxPoolSize;
         }
 
@@ -149,6 +167,9 @@ public class ScopedTaskProperties {
         }
 
         public void setQueueCapacity(int queueCapacity) {
+            if (queueCapacity <= 0) {
+                throw new IllegalArgumentException("queueCapacity must be > 0");
+            }
             this.queueCapacity = queueCapacity;
         }
 
@@ -157,6 +178,9 @@ public class ScopedTaskProperties {
         }
 
         public void setKeepAliveSeconds(int keepAliveSeconds) {
+            if (keepAliveSeconds < 0) {
+                throw new IllegalArgumentException("keepAliveSeconds must be >= 0");
+            }
             this.keepAliveSeconds = keepAliveSeconds;
         }
 
@@ -165,6 +189,9 @@ public class ScopedTaskProperties {
         }
 
         public void setThreadNamePrefix(String threadNamePrefix) {
+            if (threadNamePrefix == null || threadNamePrefix.isBlank()) {
+                throw new IllegalArgumentException("threadNamePrefix must not be blank");
+            }
             this.threadNamePrefix = threadNamePrefix;
         }
     }

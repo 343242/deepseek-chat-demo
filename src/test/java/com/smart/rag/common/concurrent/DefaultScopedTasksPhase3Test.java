@@ -17,10 +17,12 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import java.time.Duration;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -67,6 +69,41 @@ class DefaultScopedTasksPhase3Test {
             assertThat(options.inheritMdc()).isFalse();
             assertThat(options.inheritSecurityContext()).isTrue();
             assertThat(options.inheritRequestContext()).isTrue();
+        }
+
+        @Test
+        @DisplayName("PoolConfig rejects invalid executor configuration early")
+        void poolConfig_rejectsInvalidConfigurationEarly() {
+            ScopedTaskProperties.PoolConfig pool = new ScopedTaskProperties.PoolConfig();
+
+            assertThatThrownBy(() -> pool.setCorePoolSize(-1))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("corePoolSize");
+            assertThatThrownBy(() -> pool.setMaxPoolSize(0))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("maxPoolSize");
+            assertThatThrownBy(() -> pool.setQueueCapacity(0))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("queueCapacity");
+            assertThatThrownBy(() -> pool.setKeepAliveSeconds(-1))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("keepAliveSeconds");
+            assertThatThrownBy(() -> pool.setThreadNamePrefix(" "))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("threadNamePrefix");
+
+            ScopedTaskProperties properties = new ScopedTaskProperties();
+            assertThatThrownBy(() -> properties.setPlatformThreadPool(null))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("platformThreadPool");
+            assertThatThrownBy(() -> properties.setSharedExecutor(null))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("sharedExecutor");
+
+            pool.setCorePoolSize(4);
+            assertThatThrownBy(() -> pool.setMaxPoolSize(3))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("maxPoolSize");
         }
     }
 
@@ -145,6 +182,38 @@ class DefaultScopedTasksPhase3Test {
             assertThatThrownBy(() -> scopedTasks.open("bad-shared", options))
                     .isInstanceOf(ScopeViolationException.class)
                     .hasMessageContaining("SHARED_EXECUTOR requires executorOwnedByScope=false");
+        }
+
+        @Test
+        @DisplayName("factory close waits for shared executor using subsecond closeTimeout")
+        void factoryClose_waitsForSharedExecutorWithSubsecondTimeout() throws Exception {
+            ScopedTaskProperties properties = new ScopedTaskProperties();
+            properties.setCloseTimeout(Duration.ofMillis(500));
+            properties.getSharedExecutor().setCorePoolSize(1);
+            properties.getSharedExecutor().setMaxPoolSize(1);
+            DefaultScopeExecutorFactory executorFactory = new DefaultScopeExecutorFactory(properties);
+            ExecutorService sharedExecutor = executorFactory.create(ScopeOptions.builder("shared")
+                    .executorMode(ExecutorMode.SHARED_EXECUTOR)
+                    .executorOwnedByScope(false)
+                    .build());
+            CountDownLatch started = new CountDownLatch(1);
+            AtomicBoolean interrupted = new AtomicBoolean();
+
+            sharedExecutor.submit(() -> {
+                started.countDown();
+                try {
+                    Thread.sleep(100);
+                } catch (InterruptedException ex) {
+                    interrupted.set(true);
+                    Thread.currentThread().interrupt();
+                }
+            });
+            assertThat(started.await(1, TimeUnit.SECONDS)).isTrue();
+
+            executorFactory.close();
+
+            assertThat(interrupted).isFalse();
+            assertThat(sharedExecutor.isTerminated()).isTrue();
         }
     }
 

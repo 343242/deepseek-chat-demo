@@ -50,19 +50,7 @@ public final class DefaultScopedTasks implements ScopedTasks {
 
     @Override
     public TaskScope open(String name, ScopePolicy policy) {
-        ScopeOptions defaults = properties.toOptions(name);
-        ScopeOptions options = ScopeOptions.builder(name)
-                .policy(policy)
-                .executorMode(defaults.executorMode())
-                .maxConcurrency(defaults.maxConcurrency())
-                .defaultTimeout(defaults.defaultTimeout())
-                .closeTimeout(defaults.closeTimeout())
-                .executorOwnedByScope(defaults.executorOwnedByScope())
-                .inheritMdc(defaults.inheritMdc())
-                .inheritSecurityContext(defaults.inheritSecurityContext())
-                .inheritRequestContext(defaults.inheritRequestContext())
-                .build();
-        return open(name, options);
+        return open(name, properties.toOptions(name).withPolicy(policy));
     }
 
     @Override

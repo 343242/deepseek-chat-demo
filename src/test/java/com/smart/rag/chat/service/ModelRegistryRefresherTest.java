@@ -22,6 +22,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -128,6 +129,22 @@ class ModelRegistryRefresherTest {
             assertThat(scopedTasks.openOptionsCount()).isEqualTo(1);
             assertThat(scopedTasks.lastOptions().name()).isEqualTo("model-registry-refresh");
             assertThat(MDC.get("traceId")).isEqualTo("trace-001");
+        }
+
+        @Test
+        @DisplayName("Provider fatal Error 不应被容错结果吞掉")
+        void refresh_providerFatalErrorPropagates() {
+            ModelProvider deepseek = provider("deepseek");
+            when(deepseek.fetchModels()).thenThrow(new OutOfMemoryError("fatal"));
+            ModelRegistryRefresher refresher = new ModelRegistryRefresher(
+                    new ProviderRegistry(List.of(deepseek)),
+                    new ChatClientRegistry(),
+                    new DefaultScopedTasks()
+            );
+
+            assertThatThrownBy(refresher::refresh)
+                    .isInstanceOf(OutOfMemoryError.class)
+                    .hasMessage("fatal");
         }
     }
 

@@ -118,7 +118,7 @@ final class DefaultTaskScope implements TaskScope {
 |-------|------|------|----------|
 | Phase 1 | 建立最小结构化并发作用域 | 必做 | 小型测试服务通过 owner、fork、join、timeout、cancel、MDC、异常聚合测试 |
 | Phase 2 | 迁移第一个真实业务场景 | 已完成 | `HybridSearchService` 在保持 partial-success 行为的前提下完成迁移 |
-| Phase 3 | 扩展上下文、executor 和观测能力 | 按需 | 出现第二个以上真实使用方，且重复配置/观测需求明确 |
+| Phase 3 | 扩展上下文、executor 和观测能力 | 已启动 | `ModelRegistryRefresher` 迁移为第二个真实使用方；继续按重复需求增量扩展 |
 | Phase 4 | 补充高级策略和流式边界能力 | 延后 | 有竞速成功、复杂 partial success 或 Reactor 深度整合需求 |
 | Phase 5 | 对齐未来稳定 JDK API | 延后 | JDK 结构化并发转正且项目 JVM 可升级 |
 
@@ -196,6 +196,14 @@ Phase 3 处理“重复使用后自然出现”的基础设施需求：
 - 跨请求 bulkhead / 限流设计。
 
 Phase 3 的准入条件：至少两个业务场景已经使用 Phase 1/2 能力，且出现重复配置或重复观测需求。
+
+Phase 3 当前落地结果：
+
+- `ModelRegistryRefresher.refresh()` 已从 `CompletableFuture.supplyAsync()` + 静态虚拟线程 executor + 手写 MDC 恢复，迁移到 `ScopedTasks`。
+- 策略使用 `COLLECT_ALL`，每个 Provider 拉取失败时转成 `ProviderResult`，继续保留“单个 Provider 失败不影响其它 Provider”的容错语义。
+- MDC 继承、虚拟线程 executor 生命周期、任务命名和 scope 汇总日志统一由 `TaskScope` 承担。
+- 回归测试覆盖成功 Provider 注册、失败 Provider 隔离、全部 Provider 失败不替换已有 registry、MDC 继承和调用方线程 MDC 不被污染。
+- 暂不新增 `ScopedTaskProperties`、共享 executor、平台线程池、SecurityContext / RequestContext carrier 或 Micrometer 指标，直到第三个使用方或明确配置/观测重复需求出现。
 
 ### 4.4 Phase 4：高级策略和流式边界
 

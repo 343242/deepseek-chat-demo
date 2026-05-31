@@ -4,17 +4,18 @@ import com.smart.rag.chat.client.ChatClientRegistry;
 import com.smart.rag.chat.dto.ModelInfo;
 import com.smart.rag.chat.provider.ModelProvider;
 import com.smart.rag.chat.provider.ProviderRegistry;
+import com.smart.rag.common.concurrent.ScopeOptions;
+import com.smart.rag.common.concurrent.ScopePolicy;
+import com.smart.rag.common.concurrent.ScopedTasks;
+import com.smart.rag.common.concurrent.Subtask;
+import com.smart.rag.common.concurrent.TaskScope;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.slf4j.MDC;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.stereotype.Component;
 
 import java.util.*;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.Executor;
-import java.util.concurrent.Executors;
 
 /**
  * 模型注册刷新器（多 Provider 版）
@@ -35,22 +36,19 @@ public class ModelRegistryRefresher {
 
     private static final Logger log = LoggerFactory.getLogger(ModelRegistryRefresher.class);
 
-    /** 并行拉取模型列表用的虚拟线程池 */
-    // Virtual thread per-task executor is the standard API for virtual threads.
-    // Unlike platform thread pools, virtual threads are lightweight and unbounded by design.
-    // Concurrency is controlled at the call site level, not by pool sizing.
-    private static final Executor FETCH_EXECUTOR = Executors.newVirtualThreadPerTaskExecutor();
-
     private final ProviderRegistry providerRegistry;
     private final ChatClientRegistry chatClientRegistry;
+    private final ScopedTasks scopedTasks;
 
     /** modelId → providerId 反向索引（刷新时构建，O(1) 查询） */
     private volatile Map<String, String> modelToProvider = Map.of();
 
     public ModelRegistryRefresher(ProviderRegistry providerRegistry,
-                                  ChatClientRegistry chatClientRegistry) {
+                                  ChatClientRegistry chatClientRegistry,
+                                  ScopedTasks scopedTasks) {
         this.providerRegistry = providerRegistry;
         this.chatClientRegistry = chatClientRegistry;
+        this.scopedTasks = scopedTasks;
     }
 
     /**
@@ -66,30 +64,20 @@ public class ModelRegistryRefresher {
         log.info("Refreshing models from {} providers: {}",
                 providers.size(), providerRegistry.getAvailableProviderIds());
 
-        // ====== 阶段1: 并行拉取模型列表（网络 I/O 密集） ======
-        // 在异步线程中恢复 MDC 上下文，确保日志 traceId 可追溯
-        Map<String, String> parentMdc = MDC.getCopyOfContextMap();
-        List<CompletableFuture<ProviderResult>> futures = providers.stream()
-                .map(provider -> CompletableFuture.supplyAsync(() -> {
-                    if (parentMdc != null) {
-                        MDC.setContextMap(parentMdc);
-                    }
-                    try {
-                        List<ModelInfo> models = provider.fetchModels();
-                        return new ProviderResult(provider, models, null);
-                    } catch (Exception e) {
-                        log.error("Failed to fetch models from {}: {}", provider.getProviderId(), e.getMessage());
-                        return new ProviderResult(provider, List.of(), e);
-                    } finally {
-                        MDC.clear();
-                    }
-                }, FETCH_EXECUTOR))
-                .toList();
+        List<ProviderResult> results;
+        ScopeOptions options = ScopeOptions.builder("model-registry-refresh")
+                .policy(ScopePolicy.COLLECT_ALL)
+                .build();
+        try (TaskScope scope = scopedTasks.open("model-registry-refresh", options)) {
+            List<Subtask<ProviderResult>> subtasks = providers.stream()
+                    .map(provider -> scope.fork("fetch-" + provider.getProviderId(), () -> fetchModels(provider)))
+                    .toList();
 
-        // 等待所有拉取完成
-        List<ProviderResult> results = futures.stream()
-                .map(CompletableFuture::join)
-                .toList();
+            scope.join();
+            results = subtasks.stream()
+                    .map(Subtask::result)
+                    .toList();
+        }
 
         // ====== 阶段2: 串行创建 ChatClient 并注册（CPU 密集，需要原子性） ======
         Map<String, ChatClient> newClients = new LinkedHashMap<>();
@@ -159,6 +147,16 @@ public class ModelRegistryRefresher {
     /**
      * Provider 拉取结果载体
      */
+    private ProviderResult fetchModels(ModelProvider provider) {
+        try {
+            List<ModelInfo> models = provider.fetchModels();
+            return new ProviderResult(provider, models, null);
+        } catch (Exception e) {
+            log.error("Failed to fetch models from {}: {}", provider.getProviderId(), e.getMessage());
+            return new ProviderResult(provider, List.of(), e);
+        }
+    }
+
     private record ProviderResult(ModelProvider provider, List<ModelInfo> models, Exception error) {}
 
     /**

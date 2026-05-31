@@ -357,8 +357,8 @@ class DefaultTaskScopeTest {
         }
 
         @Test
-        @DisplayName("phase 1 rejects platform and shared executor modes")
-        void phase1_rejectsUnsupportedExecutorModes() {
+        @DisplayName("phase 3 supports platform executor and guards shared executor ownership")
+        void phase3_supportsConfiguredExecutorModes() {
             ScopeOptions platform = ScopeOptions.builder("platform")
                     .executorMode(ExecutorMode.PLATFORM_THREAD_POOL)
                     .build();
@@ -366,12 +366,15 @@ class DefaultTaskScopeTest {
                     .executorMode(ExecutorMode.SHARED_EXECUTOR)
                     .build();
 
-            assertThatThrownBy(() -> scopedTasks.open("platform", platform))
-                    .isInstanceOf(ScopeViolationException.class)
-                    .hasMessageContaining("Executor mode is not enabled in Phase 1");
+            try (TaskScope scope = scopedTasks.open("platform", platform)) {
+                Subtask<Boolean> virtual = scope.fork("is-virtual", () -> Thread.currentThread().isVirtual());
+                scope.join();
+                scope.throwIfFailed();
+                assertThat(virtual.result()).isFalse();
+            }
             assertThatThrownBy(() -> scopedTasks.open("shared", shared))
                     .isInstanceOf(ScopeViolationException.class)
-                    .hasMessageContaining("Executor mode is not enabled in Phase 1");
+                    .hasMessageContaining("SHARED_EXECUTOR requires executorOwnedByScope=false");
         }
 
         @Test

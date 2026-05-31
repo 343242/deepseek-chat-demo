@@ -41,15 +41,26 @@ public final class DefaultTaskScope implements TaskScope {
     private final AtomicBoolean joined = new AtomicBoolean();
     private final AtomicBoolean failuresHandled = new AtomicBoolean();
     private final Cleaner.Cleanable cleanable;
+    private final ScopeObserver scopeObserver;
 
     public DefaultTaskScope(
             ScopeOptions options,
             ExecutorService executor,
             List<ContextCarrier<?>> contextCarriers
     ) {
+        this(options, executor, contextCarriers, ScopeObserver.NOOP);
+    }
+
+    public DefaultTaskScope(
+            ScopeOptions options,
+            ExecutorService executor,
+            List<ContextCarrier<?>> contextCarriers,
+            ScopeObserver scopeObserver
+    ) {
         this.options = Objects.requireNonNull(options, "options must not be null");
         this.executor = Objects.requireNonNull(executor, "executor must not be null");
         this.contextCarriers = List.copyOf(contextCarriers);
+        this.scopeObserver = Objects.requireNonNull(scopeObserver, "scopeObserver must not be null");
         this.policyHandler = switch (options.policy()) {
             case SHUTDOWN_ON_FAILURE -> new ShutdownOnFailurePolicy();
             case COLLECT_ALL -> new CollectAllPolicy();
@@ -323,6 +334,22 @@ public final class DefaultTaskScope implements TaskScope {
     }
 
     private void logScopeSummary() {
+        ScopeReport report = scopeReport();
+        notifyScopeObserver(report);
+        log.debug("TaskScope '{}' completed: total={}ms, tasks={}, success={}, failed={}, cancelled={}, slowestTask={}",
+                report.scopeName(), report.elapsed().toMillis(), report.taskCount(), report.successCount(),
+                report.failedCount(), report.cancelledCount(), report.slowestTaskName());
+    }
+
+    private void notifyScopeObserver(ScopeReport report) {
+        try {
+            scopeObserver.onScopeClosed(report);
+        } catch (RuntimeException ex) {
+            log.warn("TaskScope '{}' observer failed while handling close report", options.name(), ex);
+        }
+    }
+
+    private ScopeReport scopeReport() {
         List<DefaultSubtask<?>> tasks = state.internalSubtasks();
         long success = tasks.stream().filter(task -> task.state() == TaskState.SUCCESS).count();
         long failed = tasks.stream().filter(task -> task.state() == TaskState.FAILED).count();
@@ -331,10 +358,9 @@ public final class DefaultTaskScope implements TaskScope {
                 .max(Comparator.comparing(DefaultSubtask::elapsed))
                 .map(DefaultSubtask::name)
                 .orElse("-");
-        long elapsedMillis = Duration.ofNanos(System.nanoTime() - startNanos).toMillis();
+        Duration elapsed = Duration.ofNanos(System.nanoTime() - startNanos);
 
-        log.debug("TaskScope '{}' completed: total={}ms, tasks={}, success={}, failed={}, cancelled={}, slowestTask={}",
-                options.name(), elapsedMillis, tasks.size(), success, failed, cancelled, slowestTaskName);
+        return new ScopeReport(options.name(), elapsed, tasks.size(), success, failed, cancelled, slowestTaskName);
     }
 
     private void ensureOwner(String operation) {

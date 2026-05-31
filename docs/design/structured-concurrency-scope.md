@@ -118,7 +118,7 @@ final class DefaultTaskScope implements TaskScope {
 |-------|------|------|----------|
 | Phase 1 | 建立最小结构化并发作用域 | 必做 | 小型测试服务通过 owner、fork、join、timeout、cancel、MDC、异常聚合测试 |
 | Phase 2 | 迁移第一个真实业务场景 | 已完成 | `HybridSearchService` 在保持 partial-success 行为的前提下完成迁移 |
-| Phase 3 | 扩展上下文、executor 和观测能力 | 已启动 | `ModelRegistryRefresher` 迁移为第二个真实使用方；继续按重复需求增量扩展 |
+| Phase 3 | 扩展上下文、executor 和观测能力 | 已完成 | 配置属性、平台/共享 executor、Security/Request carrier 和 scope observer 已落地 |
 | Phase 4 | 补充高级策略和流式边界能力 | 延后 | 有竞速成功、复杂 partial success 或 Reactor 深度整合需求 |
 | Phase 5 | 对齐未来稳定 JDK API | 延后 | JDK 结构化并发转正且项目 JVM 可升级 |
 
@@ -203,7 +203,11 @@ Phase 3 当前落地结果：
 - 策略使用 `COLLECT_ALL`，每个 Provider 拉取失败时转成 `ProviderResult`，继续保留“单个 Provider 失败不影响其它 Provider”的容错语义。
 - MDC 继承、虚拟线程 executor 生命周期、任务命名和 scope 汇总日志统一由 `TaskScope` 承担。
 - 回归测试覆盖成功 Provider 注册、失败 Provider 隔离、全部 Provider 失败不替换已有 registry、MDC 继承和调用方线程 MDC 不被污染。
-- 暂不新增 `ScopedTaskProperties`、共享 executor、平台线程池、SecurityContext / RequestContext carrier 或 Micrometer 指标，直到第三个使用方或明确配置/观测重复需求出现。
+- `ScopedTaskProperties` 已提供 `app.scoped-tasks.*` 默认配置入口，`DefaultScopedTasks.open(name)` 会按属性生成默认 `ScopeOptions`。
+- `PLATFORM_THREAD_POOL` 和 `SHARED_EXECUTOR` 已启用：平台线程池由 scope 拥有并在 close 时关闭；共享 executor 由 `DefaultScopeExecutorFactory` 持有，调用方必须使用 `executorOwnedByScope=false`。
+- `SecurityContextCarrier` 和 `RequestContextCarrier` 已启用，但默认仍为关闭，必须显式设置 `inheritSecurityContext(true)` / `inheritRequestContext(true)` 或通过配置开启。
+- `ScopeObserver` / `ScopeReport` 已作为无依赖观测扩展点落地；当前不新增 Micrometer 依赖，后续如引入 actuator，可通过 `ScopeObserver` 适配 `MeterRegistry`。
+- 暂不新增 `SHUTDOWN_ON_SUCCESS`、`PARTIAL_SUCCESS_OR_THROW`、`ScopeJoiner<R>` 或 Reactor 生命周期绑定；这些仍属于 Phase 4。
 
 ### 4.4 Phase 4：高级策略和流式边界
 
@@ -413,7 +417,7 @@ public record ScopeOptions(
 
 `ScopeOptions` 保持 record 作为不可变值对象，但调用方必须通过 Builder 渐进配置，避免 10 个构造参数在调用点产生顺序错误。
 
-Phase 1 只启用 `inheritMdc`。`inheritSecurityContext` 和 `inheritRequestContext` 是 Phase 3 预留开关，默认必须为 `false`；在对应 carrier 未注册前，调用方不应启用它们，避免文档承诺超出实现范围。
+Phase 3 已启用 `inheritSecurityContext` 和 `inheritRequestContext`。两者默认仍为 `false`，因为安全上下文和 CAG 请求上下文并不是所有后台任务都应该继承；调用方必须显式开启，或通过 `ScopedTaskProperties` 对默认 scope 统一开启。
 
 `maxConcurrency = 0` 表示不在 scope 层限流，由调用方或底层资源控制。对外部模型调用、RAG 检索、工具调用等场景，可配置正数并发上限。
 
@@ -658,7 +662,7 @@ public enum ExecutorMode {
 - CPU 密集型任务：`PLATFORM_THREAD_POOL`
 - 已由 Spring 管理的专用线程池：`SHARED_EXECUTOR`
 
-Phase 1 只交付 `VIRTUAL_THREAD_PER_TASK` 默认路径。`PLATFORM_THREAD_POOL` 和 `SHARED_EXECUTOR` 的代码分支可以作为受测内部扩展点保留，但不能在配置层对业务开放；等 Phase 3 出现共享 executor / 平台线程池的真实复用需求后，再补配置属性、生命周期测试和自动配置。
+Phase 3 已交付 `VIRTUAL_THREAD_PER_TASK`、`PLATFORM_THREAD_POOL` 和 `SHARED_EXECUTOR` 三种模式。默认仍是 `VIRTUAL_THREAD_PER_TASK`；平台线程池和共享 executor 必须通过 `ScopeOptions` 或 `app.scoped-tasks.*` 显式选择。
 
 ### 8.2 工厂模式
 

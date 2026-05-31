@@ -26,9 +26,6 @@ public class ScopeExecutionException extends RuntimeException {
     }
 
     private static Throwable requireFirstFailure(List<? extends Throwable> failures) {
-        if (failures == null || failures.isEmpty()) {
-            throw new ScopeViolationException("ScopeExecutionException requires at least one failure");
-        }
-        return failures.getFirst();
+        return requireNonEmpty(failures).getFirst();
     }
 }

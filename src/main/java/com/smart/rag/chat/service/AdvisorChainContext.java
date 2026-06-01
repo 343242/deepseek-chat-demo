@@ -2,7 +2,7 @@ package com.smart.rag.chat.service;
 
 import com.smart.rag.chat.context.RequestContext;
 import com.smart.rag.chat.dto.ChatRequest;
-import com.smart.rag.chat.provider.ModelRouter;
+import com.smart.rag.infrastructure.ai.provider.ModelRouter;
 import org.jspecify.annotations.Nullable;
 
 /**

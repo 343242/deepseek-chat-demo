@@ -1,8 +1,8 @@
 package com.smart.rag.agent.advisor;
 
-import com.smart.rag.agent.guardrail.AgentGuardrails;
+import com.smart.rag.infrastructure.agent.guardrail.AgentGuardrails;
 import com.smart.rag.agent.intent.AgentIntent;
-import com.smart.rag.agent.workspace.ToolWorkspace;
+import com.smart.rag.infrastructure.agent.workspace.ToolWorkspace;
 import org.jspecify.annotations.NonNull;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;

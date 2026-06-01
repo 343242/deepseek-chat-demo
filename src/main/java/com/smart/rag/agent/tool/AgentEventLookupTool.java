@@ -4,7 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smart.rag.agent.dto.ToolResult;
 import com.smart.rag.agent.event.AgentEventStore;
 import com.smart.rag.agent.event.AgentSessionEvent;
-import com.smart.rag.agent.workspace.ToolWorkspace;
+import com.smart.rag.infrastructure.agent.workspace.ToolWorkspace;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;

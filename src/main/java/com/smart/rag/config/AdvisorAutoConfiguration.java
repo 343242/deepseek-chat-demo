@@ -1,12 +1,12 @@
 package com.smart.rag.config;
 
-import com.smart.rag.chat.advisor.ContentFilterAdvisor;
-import com.smart.rag.chat.advisor.FallbackRateLimiter;
-import com.smart.rag.chat.advisor.RateLimitAdvisor;
-import com.smart.rag.chat.advisor.RateLimiter;
-import com.smart.rag.chat.advisor.TokenBucketLimiter;
-import com.smart.rag.chat.content.ContentFilterService;
-import com.smart.rag.chat.content.SensitiveWordFilterService;
+import com.smart.rag.infrastructure.ai.advisor.ContentFilterAdvisor;
+import com.smart.rag.infrastructure.ai.advisor.FallbackRateLimiter;
+import com.smart.rag.infrastructure.ai.advisor.RateLimitAdvisor;
+import com.smart.rag.infrastructure.ai.advisor.RateLimiter;
+import com.smart.rag.infrastructure.ai.advisor.TokenBucketLimiter;
+import com.smart.rag.infrastructure.ai.content.ContentFilterService;
+import com.smart.rag.infrastructure.ai.content.SensitiveWordFilterService;
 
 import org.redisson.api.RedissonClient;
 import org.slf4j.Logger;

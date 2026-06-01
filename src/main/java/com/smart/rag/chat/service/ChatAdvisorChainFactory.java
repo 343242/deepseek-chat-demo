@@ -3,7 +3,7 @@ package com.smart.rag.chat.service;
 import com.smart.rag.chat.context.RequestContext;
 import com.smart.rag.chat.dto.ChatRequest;
 import com.smart.rag.chat.mode.ChatModeStrategy;
-import com.smart.rag.chat.provider.ModelRouter;
+import com.smart.rag.infrastructure.ai.provider.ModelRouter;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.stereotype.Component;
 

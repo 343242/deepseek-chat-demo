@@ -1,18 +1,18 @@
 package com.smart.rag.chat.service.impl;
 
-import com.smart.rag.chat.client.ChatClientRegistry;
+import com.smart.rag.infrastructure.ai.client.ChatClientRegistry;
 import com.smart.rag.chat.context.CagProperties;
 import com.smart.rag.chat.context.RequestContextManager;
 import com.smart.rag.chat.dto.ChatRequest;
 import com.smart.rag.chat.dto.ChatResponse;
-import com.smart.rag.chat.fallback.ChatFallbackProperties;
-import com.smart.rag.chat.fallback.FallbackChainProvider;
-import com.smart.rag.chat.fallback.FallbackEligibility;
-import com.smart.rag.chat.fallback.StreamRetryHandler;
+import com.smart.rag.infrastructure.ai.fallback.ChatFallbackProperties;
+import com.smart.rag.infrastructure.ai.fallback.FallbackChainProvider;
+import com.smart.rag.infrastructure.ai.fallback.FallbackEligibility;
+import com.smart.rag.infrastructure.ai.fallback.StreamRetryHandler;
 import com.smart.rag.chat.mode.ChatMode;
 import com.smart.rag.chat.mode.ChatModeStrategy;
 import com.smart.rag.chat.mode.ModeRouter;
-import com.smart.rag.chat.provider.ModelRouter;
+import com.smart.rag.infrastructure.ai.provider.ModelRouter;
 import com.smart.rag.chat.service.ChatConversationHelper;
 import com.smart.rag.chat.service.ChatUsageTracker;
 import com.smart.rag.chat.service.StrategyExecuteResult;

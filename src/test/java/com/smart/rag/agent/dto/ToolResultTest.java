@@ -1,7 +1,7 @@
 package com.smart.rag.agent.dto;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.smart.rag.agent.workspace.RetrievedDocument;
+import com.smart.rag.infrastructure.agent.workspace.RetrievedDocument;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;

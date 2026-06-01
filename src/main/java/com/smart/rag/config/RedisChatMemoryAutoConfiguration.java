@@ -1,6 +1,6 @@
 package com.smart.rag.config;
 
-import com.smart.rag.chat.memory.RedisChatMemoryRepository;
+import com.smart.rag.infrastructure.ai.memory.RedisChatMemoryRepository;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.ai.chat.memory.ChatMemoryRepository;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;

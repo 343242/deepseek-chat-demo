@@ -1,11 +1,11 @@
 package com.smart.rag.config;
 
-import com.smart.rag.common.concurrent.DefaultScopedTasks;
-import com.smart.rag.common.concurrent.ScopeObserver;
-import com.smart.rag.common.concurrent.ScopedTaskProperties;
-import com.smart.rag.common.concurrent.ScopedTasks;
-import com.smart.rag.common.concurrent.executor.DefaultScopeExecutorFactory;
-import com.smart.rag.common.concurrent.executor.ScopeExecutorFactory;
+import com.smart.rag.infrastructure.concurrent.DefaultScopedTasks;
+import com.smart.rag.infrastructure.concurrent.ScopeObserver;
+import com.smart.rag.infrastructure.concurrent.ScopedTaskProperties;
+import com.smart.rag.infrastructure.concurrent.ScopedTasks;
+import com.smart.rag.infrastructure.concurrent.executor.DefaultScopeExecutorFactory;
+import com.smart.rag.infrastructure.concurrent.executor.ScopeExecutorFactory;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;

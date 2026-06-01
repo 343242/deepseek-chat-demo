@@ -1,12 +1,12 @@
 package com.smart.rag.agent.service;
 
-import com.smart.rag.common.concurrent.DefaultScopedTasks;
-import com.smart.rag.common.concurrent.ScopeOptions;
-import com.smart.rag.common.concurrent.ScopePolicy;
-import com.smart.rag.common.concurrent.ScopedTasks;
-import com.smart.rag.common.concurrent.Subtask;
-import com.smart.rag.common.concurrent.TaskState;
-import com.smart.rag.exception.BusinessException;
+import com.smart.rag.infrastructure.concurrent.DefaultScopedTasks;
+import com.smart.rag.infrastructure.concurrent.ScopeOptions;
+import com.smart.rag.infrastructure.concurrent.ScopePolicy;
+import com.smart.rag.infrastructure.concurrent.ScopedTasks;
+import com.smart.rag.infrastructure.concurrent.Subtask;
+import com.smart.rag.infrastructure.concurrent.TaskState;
+import com.smart.rag.infrastructure.exception.BusinessException;
 import com.smart.rag.rag.config.RagRetrievalProperties;
 import com.smart.rag.rag.mapper.VectorStoreMapper;
 import com.smart.rag.rag.retrieval.QueryNormalizer;

@@ -1,6 +1,6 @@
 package com.smart.rag.user.controller;
 
-import com.smart.rag.exception.GlobalExceptionHandler;
+import com.smart.rag.infrastructure.exception.GlobalExceptionHandler;
 import com.smart.rag.user.dto.AssignPermissionsRequest;
 import com.smart.rag.user.service.SysPermissionService;
 import com.smart.rag.user.service.SysRoleService;

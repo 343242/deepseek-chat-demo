@@ -1,29 +1,29 @@
 package com.smart.rag.chat.service.impl;
 
-import com.smart.rag.infrastructure.ai.client.ChatClientRegistry;
+import com.smart.rag.infrastructure.client.ChatClientRegistry;
 import com.smart.rag.chat.context.CagProperties;
 import com.smart.rag.chat.context.RequestContext;
 import com.smart.rag.chat.context.RequestContextManager;
 import com.smart.rag.chat.dto.ChatRequest;
 import com.smart.rag.chat.dto.ChatResponse;
 import com.smart.rag.chat.dto.FallbackMeta;
-import com.smart.rag.infrastructure.ai.fallback.ChatFallbackProperties;
-import com.smart.rag.infrastructure.ai.fallback.FallbackChainProvider;
-import com.smart.rag.infrastructure.ai.fallback.FallbackEligibility;
-import com.smart.rag.infrastructure.ai.fallback.StreamRetryHandler;
+import com.smart.rag.infrastructure.fallback.ChatFallbackProperties;
+import com.smart.rag.infrastructure.fallback.FallbackChainProvider;
+import com.smart.rag.infrastructure.fallback.FallbackEligibility;
+import com.smart.rag.infrastructure.fallback.StreamRetryHandler;
 import com.smart.rag.chat.mode.ChatModeStrategy;
 import com.smart.rag.chat.mode.ModeRouter;
-import com.smart.rag.infrastructure.ai.provider.ModelRouter;
+import com.smart.rag.infrastructure.provider.ModelRouter;
 import com.smart.rag.chat.service.ChatConversationHelper;
 import com.smart.rag.chat.service.ChatService;
 import com.smart.rag.chat.service.ChatUsageTracker;
 import com.smart.rag.chat.service.StrategyExecuteResult;
 import com.smart.rag.chat.service.StrategyExecutionContext;
-import com.smart.rag.common.errorcode.ErrorCode;
-import com.smart.rag.common.uuid.UuidV7;
-import com.smart.rag.common.conversation.ConversationIdUtil;
-import com.smart.rag.exception.BusinessException;
-import com.smart.rag.security.util.SecurityUtils;
+import com.smart.rag.infrastructure.exception.errorcode.ErrorCode;
+import com.smart.rag.common.util.UuidGeneratorUtil;
+import com.smart.rag.common.util.ConversationIdUtil;
+import com.smart.rag.infrastructure.exception.BusinessException;
+import com.smart.rag.infrastructure.web.util.SecurityUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
@@ -221,7 +221,7 @@ public class ChatServiceImpl implements ChatService {
 
         String rawConversationId = request.conversationId();
         if (rawConversationId == null) {
-            rawConversationId = UuidV7.generateCompact();
+            rawConversationId = UuidGeneratorUtil.generateCompact();
         }
         String conversationId = ConversationIdUtil.buildIsolatedId(userId, rawConversationId);
         ModelRouter.Route route = modelRouter.resolve(request.model());

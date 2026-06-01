@@ -1,7 +1,7 @@
 package com.smart.rag.user.service;
 
 import com.smart.rag.user.service.impl.SysPermissionServiceImpl;
-import com.smart.rag.exception.BusinessException;
+import com.smart.rag.infrastructure.exception.BusinessException;
 import com.smart.rag.user.entity.SysPermission;
 import com.smart.rag.user.mapper.SysPermissionMapper;
 import org.junit.jupiter.api.DisplayName;

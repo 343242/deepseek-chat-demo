@@ -1,11 +1,11 @@
 package com.smart.rag.team.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.smart.rag.common.errorcode.ErrorCode;
-import com.smart.rag.common.request.PageRequest;
-import com.smart.rag.common.response.PagedResult;
-import com.smart.rag.exception.BusinessException;
-import com.smart.rag.security.util.SecurityUtils;
+import com.smart.rag.infrastructure.exception.errorcode.ErrorCode;
+import com.smart.rag.infrastructure.request.PageRequest;
+import com.smart.rag.infrastructure.response.PagedResult;
+import com.smart.rag.infrastructure.exception.BusinessException;
+import com.smart.rag.infrastructure.web.util.SecurityUtils;
 import com.smart.rag.team.config.TeamProperties;
 import com.smart.rag.team.dto.MemberRoleUpdateRequest;
 import com.smart.rag.team.dto.MemberUploadLimitRequest;

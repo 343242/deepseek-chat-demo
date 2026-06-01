@@ -1,6 +1,6 @@
 package com.smart.rag.evaluation.metrics.generation;
 
-import com.smart.rag.common.util.JsonExtractor;
+import com.smart.rag.evaluation.util.JsonExtractorUtil;
 import com.smart.rag.evaluation.judge.LlmJudge;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -73,7 +73,7 @@ public class ContextRecallScorer {
         if (!verdict.success()) return Collections.emptyList();
 
         try {
-            String json = JsonExtractor.extractJson(verdict.rawJson());
+            String json = JsonExtractorUtil.extractJson(verdict.rawJson());
             return objectMapper.readValue(json, new TypeReference<List<String>>() {});
         } catch (Exception e) {
             log.warn("Failed to parse extracted claims: {}", e.getMessage());
@@ -113,7 +113,7 @@ public class ContextRecallScorer {
         if (!verdict.success()) return -1;
 
         try {
-            String json = JsonExtractor.extractJson(verdict.rawJson());
+            String json = JsonExtractorUtil.extractJson(verdict.rawJson());
             Map<String, Object> result = objectMapper.readValue(json, new TypeReference<Map<String, Object>>() {});
             if (result.containsKey("context_recall_score")) {
                 return ((Number) result.get("context_recall_score")).doubleValue();

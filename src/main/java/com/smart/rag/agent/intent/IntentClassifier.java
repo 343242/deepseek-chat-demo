@@ -2,8 +2,8 @@ package com.smart.rag.agent.intent;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.smart.rag.infrastructure.ai.client.ChatClientRegistry;
-import com.smart.rag.exception.BusinessException;
+import com.smart.rag.infrastructure.client.ChatClientRegistry;
+import com.smart.rag.infrastructure.exception.BusinessException;
 import com.smart.rag.agent.config.AgentRagProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

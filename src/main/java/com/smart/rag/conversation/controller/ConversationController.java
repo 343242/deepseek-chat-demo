@@ -1,7 +1,7 @@
 package com.smart.rag.conversation.controller;
 
-import com.smart.rag.common.response.GlobalResponse;
-import com.smart.rag.common.response.PagedResult;
+import com.smart.rag.infrastructure.response.GlobalResponse;
+import com.smart.rag.infrastructure.response.PagedResult;
 import com.smart.rag.conversation.dto.ConversationCreateRequest;
 import java.util.List;
 import com.smart.rag.conversation.dto.ConversationDetail;
@@ -9,8 +9,8 @@ import com.smart.rag.conversation.dto.ConversationSummary;
 import com.smart.rag.conversation.dto.ConversationUpdateRequest;
 import com.smart.rag.conversation.dto.MessageVO;
 import com.smart.rag.conversation.service.ConversationService;
-import com.smart.rag.common.conversation.ConversationIdUtil;
-import com.smart.rag.security.util.SecurityUtils;
+import com.smart.rag.common.util.ConversationIdUtil;
+import com.smart.rag.infrastructure.web.util.SecurityUtils;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;

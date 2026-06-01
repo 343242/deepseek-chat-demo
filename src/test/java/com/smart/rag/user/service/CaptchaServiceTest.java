@@ -1,8 +1,8 @@
 package com.smart.rag.user.service;
 
-import com.smart.rag.exception.RateLimitExceededException;
-import com.smart.rag.security.dto.CaptchaResult;
-import com.smart.rag.security.service.CaptchaService;
+import com.smart.rag.infrastructure.exception.RateLimitExceededException;
+import com.smart.rag.infrastructure.web.dto.CaptchaResult;
+import com.smart.rag.infrastructure.web.service.CaptchaService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;

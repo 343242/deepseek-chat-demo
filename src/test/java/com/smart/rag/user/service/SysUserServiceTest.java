@@ -1,12 +1,12 @@
 package com.smart.rag.user.service;
 
-import com.smart.rag.common.response.PagedResult;
+import com.smart.rag.infrastructure.response.PagedResult;
 import com.smart.rag.user.dto.*;
 import com.smart.rag.user.service.impl.SysUserServiceImpl;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
-import com.smart.rag.exception.BusinessException;
-import com.smart.rag.security.service.TokenCacheService;
+import com.smart.rag.infrastructure.exception.BusinessException;
+import com.smart.rag.infrastructure.web.service.TokenCacheService;
 import com.smart.rag.user.entity.SysRole;
 import com.smart.rag.user.entity.SysUser;
 import com.smart.rag.user.mapper.SysRoleMapper;

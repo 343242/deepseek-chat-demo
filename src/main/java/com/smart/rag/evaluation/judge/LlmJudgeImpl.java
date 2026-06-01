@@ -7,7 +7,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 
-import com.smart.rag.common.util.JsonExtractor;
+import com.smart.rag.evaluation.util.JsonExtractorUtil;
 
 import java.util.Collections;
 import java.util.List;
@@ -86,7 +86,7 @@ public class LlmJudgeImpl implements LlmJudge {
         }
 
         try {
-            String json = JsonExtractor.extractJson(verdict.rawJson());
+            String json = JsonExtractorUtil.extractJson(verdict.rawJson());
             return objectMapper.readValue(json, new TypeReference<>() {});
         } catch (Exception e) {
             log.warn("Failed to parse generated questions: {}", e.getMessage());

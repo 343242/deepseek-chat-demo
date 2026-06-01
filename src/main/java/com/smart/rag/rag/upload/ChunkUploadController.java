@@ -1,8 +1,8 @@
 package com.smart.rag.rag.upload;
 
-import com.smart.rag.common.errorcode.ErrorCode;
-import com.smart.rag.common.response.GlobalResponse;
-import com.smart.rag.exception.BusinessException;
+import com.smart.rag.infrastructure.exception.errorcode.ErrorCode;
+import com.smart.rag.infrastructure.response.GlobalResponse;
+import com.smart.rag.infrastructure.exception.BusinessException;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;

@@ -1,8 +1,8 @@
 package com.smart.rag.user.controller;
 
-import com.smart.rag.common.response.PagedResult;
-import com.smart.rag.exception.BusinessException;
-import com.smart.rag.exception.GlobalExceptionHandler;
+import com.smart.rag.infrastructure.response.PagedResult;
+import com.smart.rag.infrastructure.exception.BusinessException;
+import com.smart.rag.infrastructure.exception.GlobalExceptionHandler;
 import com.smart.rag.user.dto.*;
 import com.smart.rag.user.service.SysUserService;
 import com.fasterxml.jackson.databind.ObjectMapper;

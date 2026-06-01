@@ -1,7 +1,7 @@
 package com.smart.rag.rag.service.impl;
 
-import com.smart.rag.common.errorcode.ErrorCode;
-import com.smart.rag.exception.BusinessException;
+import com.smart.rag.infrastructure.exception.errorcode.ErrorCode;
+import com.smart.rag.infrastructure.exception.BusinessException;
 import com.smart.rag.rag.etl.EtlCandidate;
 import com.smart.rag.rag.etl.EtlResult;
 import com.smart.rag.rag.etl.Loader;

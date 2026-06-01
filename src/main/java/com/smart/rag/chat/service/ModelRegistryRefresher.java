@@ -1,14 +1,14 @@
 package com.smart.rag.chat.service;
 
-import com.smart.rag.infrastructure.ai.client.ChatClientRegistry;
-import com.smart.rag.infrastructure.ai.model.ModelInfo;
-import com.smart.rag.infrastructure.ai.provider.ModelProvider;
-import com.smart.rag.infrastructure.ai.provider.ProviderRegistry;
-import com.smart.rag.common.concurrent.ScopeOptions;
-import com.smart.rag.common.concurrent.ScopePolicy;
-import com.smart.rag.common.concurrent.ScopedTasks;
-import com.smart.rag.common.concurrent.Subtask;
-import com.smart.rag.common.concurrent.TaskScope;
+import com.smart.rag.infrastructure.client.ChatClientRegistry;
+import com.smart.rag.infrastructure.model.ModelInfo;
+import com.smart.rag.infrastructure.provider.ModelProvider;
+import com.smart.rag.infrastructure.provider.ProviderRegistry;
+import com.smart.rag.infrastructure.concurrent.ScopeOptions;
+import com.smart.rag.infrastructure.concurrent.ScopePolicy;
+import com.smart.rag.infrastructure.concurrent.ScopedTasks;
+import com.smart.rag.infrastructure.concurrent.Subtask;
+import com.smart.rag.infrastructure.concurrent.TaskScope;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;

@@ -1,15 +1,15 @@
 package com.smart.rag.agent.mode;
 
-import com.smart.rag.infrastructure.ai.advisor.ConversationContextAdvisor;
-import com.smart.rag.infrastructure.ai.client.ChatClientRegistry;
+import com.smart.rag.infrastructure.advisor.ConversationContextAdvisor;
+import com.smart.rag.infrastructure.client.ChatClientRegistry;
 import com.smart.rag.chat.context.ContextPromptInjector;
-import com.smart.rag.common.errorcode.ErrorCode;
-import com.smart.rag.exception.BusinessException;
+import com.smart.rag.infrastructure.exception.errorcode.ErrorCode;
+import com.smart.rag.infrastructure.exception.BusinessException;
 import com.smart.rag.chat.mode.ChatMode;
 import com.smart.rag.chat.mode.ChatModeStrategy;
 import com.smart.rag.chat.mode.MultiTurnModeStrategy;
 import com.smart.rag.chat.mode.SimpleModeStrategy;
-import com.smart.rag.infrastructure.ai.provider.ModelRouter;
+import com.smart.rag.infrastructure.provider.ModelRouter;
 import com.smart.rag.chat.service.AdvisorChainContext;
 import com.smart.rag.chat.service.AdvisorInfrastructure;
 import com.smart.rag.chat.service.ModeChainResult;

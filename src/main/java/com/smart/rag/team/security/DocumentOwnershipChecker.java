@@ -1,7 +1,7 @@
 package com.smart.rag.team.security;
 
-import com.smart.rag.common.errorcode.ErrorCode;
-import com.smart.rag.exception.BusinessException;
+import com.smart.rag.infrastructure.exception.errorcode.ErrorCode;
+import com.smart.rag.infrastructure.exception.BusinessException;
 import com.smart.rag.rag.entity.RagDocument;
 import com.smart.rag.rag.mapper.RagDocumentMapper;
 import com.smart.rag.team.service.TeamMembershipVerifier;

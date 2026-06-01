@@ -1,6 +1,6 @@
 package com.smart.rag.user.service;
 
-import com.smart.rag.common.response.PagedResult;
+import com.smart.rag.infrastructure.response.PagedResult;
 import com.smart.rag.user.dto.*;
 
 /**

@@ -1,7 +1,7 @@
 package com.smart.rag.team.service;
 
-import com.smart.rag.common.errorcode.ErrorCode;
-import com.smart.rag.exception.BusinessException;
+import com.smart.rag.infrastructure.exception.errorcode.ErrorCode;
+import com.smart.rag.infrastructure.exception.BusinessException;
 import com.smart.rag.team.entity.TeamMember;
 import com.smart.rag.team.enums.TeamMemberRole;
 import com.smart.rag.team.mapper.TeamMapper;

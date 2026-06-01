@@ -1,7 +1,7 @@
 package com.smart.rag.team.service;
 
-import com.smart.rag.common.request.PageRequest;
-import com.smart.rag.common.response.PagedResult;
+import com.smart.rag.infrastructure.request.PageRequest;
+import com.smart.rag.infrastructure.response.PagedResult;
 import com.smart.rag.team.dto.ApprovalReviewRequest;
 import com.smart.rag.team.dto.ApprovalVO;
 import com.smart.rag.team.dto.MyApprovalVO;

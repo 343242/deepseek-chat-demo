@@ -1,12 +1,12 @@
 package com.smart.rag.user.controller;
 
-import com.smart.rag.common.errorcode.ErrorCode;
-import com.smart.rag.common.response.GlobalResponse;
-import com.smart.rag.exception.BusinessException;
-import com.smart.rag.security.dto.CaptchaResult;
-import com.smart.rag.security.service.CaptchaService;
-import com.smart.rag.security.token.CookieTokenManager;
-import com.smart.rag.security.util.SecurityUtils;
+import com.smart.rag.infrastructure.exception.errorcode.ErrorCode;
+import com.smart.rag.infrastructure.response.GlobalResponse;
+import com.smart.rag.infrastructure.exception.BusinessException;
+import com.smart.rag.infrastructure.web.dto.CaptchaResult;
+import com.smart.rag.infrastructure.web.service.CaptchaService;
+import com.smart.rag.infrastructure.web.token.CookieTokenManager;
+import com.smart.rag.infrastructure.web.util.SecurityUtils;
 import com.smart.rag.user.dto.*;
 import com.smart.rag.user.service.AuthService;
 import jakarta.servlet.http.HttpServletRequest;

@@ -1,8 +1,8 @@
 package com.smart.rag.rag.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.smart.rag.common.errorcode.ErrorCode;
-import com.smart.rag.exception.BusinessException;
+import com.smart.rag.infrastructure.exception.errorcode.ErrorCode;
+import com.smart.rag.infrastructure.exception.BusinessException;
 import com.smart.rag.rag.dto.DocumentDTO;
 import com.smart.rag.rag.dto.DocumentUploadResponse;
 import com.smart.rag.rag.etl.EtlStatus;
@@ -10,7 +10,7 @@ import com.smart.rag.rag.entity.RagDocument;
 import com.smart.rag.rag.mapper.RagDocumentMapper;
 import com.smart.rag.rag.service.DocumentApplicationService;
 import com.smart.rag.rag.service.EtlDispatchService;
-import com.smart.rag.security.util.SecurityUtils;
+import com.smart.rag.infrastructure.web.util.SecurityUtils;
 import com.smart.rag.team.service.TeamMembershipVerifier;
 import com.smart.rag.team.upload.UploadStrategyFactory;
 import org.jspecify.annotations.Nullable;

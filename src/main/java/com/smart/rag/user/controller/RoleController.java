@@ -1,6 +1,6 @@
 package com.smart.rag.user.controller;
 
-import com.smart.rag.common.response.GlobalResponse;
+import com.smart.rag.infrastructure.response.GlobalResponse;
 import com.smart.rag.user.dto.AssignPermissionsRequest;
 import com.smart.rag.user.dto.CreateRoleRequest;
 import com.smart.rag.user.dto.RoleDetailVO;

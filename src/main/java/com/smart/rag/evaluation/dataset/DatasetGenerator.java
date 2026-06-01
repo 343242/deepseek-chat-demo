@@ -1,11 +1,11 @@
 package com.smart.rag.evaluation.dataset;
 
-import com.smart.rag.common.util.JsonExtractor;
-import com.smart.rag.common.concurrent.ScopeJoiner;
-import com.smart.rag.common.concurrent.ScopeOptions;
-import com.smart.rag.common.concurrent.ScopePolicy;
-import com.smart.rag.common.concurrent.ScopedTasks;
-import com.smart.rag.common.concurrent.TaskScope;
+import com.smart.rag.evaluation.util.JsonExtractorUtil;
+import com.smart.rag.infrastructure.concurrent.ScopeJoiner;
+import com.smart.rag.infrastructure.concurrent.ScopeOptions;
+import com.smart.rag.infrastructure.concurrent.ScopePolicy;
+import com.smart.rag.infrastructure.concurrent.ScopedTasks;
+import com.smart.rag.infrastructure.concurrent.TaskScope;
 import com.smart.rag.evaluation.config.EvaluationProperties;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -198,7 +198,7 @@ public class DatasetGenerator {
             if (response == null || response.isBlank()) {
                 return Collections.emptyList();
             }
-            String json = JsonExtractor.extractJson(response);
+            String json = JsonExtractorUtil.extractJson(response);
             return objectMapper.readValue(json, new TypeReference<>() {});
         } catch (Exception e) {
             log.warn("Failed to generate questions for chunk: {}", e.getMessage());

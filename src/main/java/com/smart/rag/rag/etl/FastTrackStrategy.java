@@ -1,11 +1,11 @@
 package com.smart.rag.rag.etl;
 
-import com.smart.rag.common.concurrent.ExecutorMode;
-import com.smart.rag.common.concurrent.ScopeJoiner;
-import com.smart.rag.common.concurrent.ScopeOptions;
-import com.smart.rag.common.concurrent.ScopePolicy;
-import com.smart.rag.common.concurrent.ScopedTasks;
-import com.smart.rag.common.concurrent.TaskScope;
+import com.smart.rag.infrastructure.concurrent.ExecutorMode;
+import com.smart.rag.infrastructure.concurrent.ScopeJoiner;
+import com.smart.rag.infrastructure.concurrent.ScopeOptions;
+import com.smart.rag.infrastructure.concurrent.ScopePolicy;
+import com.smart.rag.infrastructure.concurrent.ScopedTasks;
+import com.smart.rag.infrastructure.concurrent.TaskScope;
 import com.smart.rag.rag.config.EtlFastTrackProperties;
 import com.smart.rag.rag.mapper.VectorStoreMapper;
 import org.jspecify.annotations.Nullable;

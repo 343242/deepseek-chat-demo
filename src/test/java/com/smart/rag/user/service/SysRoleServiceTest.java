@@ -1,8 +1,8 @@
 package com.smart.rag.user.service;
 
 import com.smart.rag.user.service.impl.SysRoleServiceImpl;
-import com.smart.rag.exception.BusinessException;
-import com.smart.rag.security.service.TokenCacheService;
+import com.smart.rag.infrastructure.exception.BusinessException;
+import com.smart.rag.infrastructure.web.service.TokenCacheService;
 import com.smart.rag.user.entity.SysPermission;
 import com.smart.rag.user.entity.SysRole;
 import com.smart.rag.user.mapper.SysPermissionMapper;

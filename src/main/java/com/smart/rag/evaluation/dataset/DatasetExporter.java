@@ -1,6 +1,6 @@
 package com.smart.rag.evaluation.dataset;
 
-import com.smart.rag.exception.BusinessException;
+import com.smart.rag.infrastructure.exception.BusinessException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import org.springframework.stereotype.Component;

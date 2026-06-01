@@ -2,9 +2,9 @@ package com.smart.rag.conversation.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
-import com.smart.rag.common.uuid.UuidV7;
-import com.smart.rag.common.request.PageRequest;
-import com.smart.rag.common.response.PagedResult;
+import com.smart.rag.common.util.UuidGeneratorUtil;
+import com.smart.rag.infrastructure.request.PageRequest;
+import com.smart.rag.infrastructure.response.PagedResult;
 import com.smart.rag.conversation.dto.ConversationCreateRequest;
 import com.smart.rag.conversation.dto.ConversationDetail;
 import com.smart.rag.conversation.dto.ConversationSummary;
@@ -16,9 +16,9 @@ import com.smart.rag.conversation.enums.TitleSource;
 import com.smart.rag.conversation.mapper.ConversationMapper;
 import com.smart.rag.conversation.service.ConversationMessageService;
 import com.smart.rag.conversation.service.ConversationService;
-import com.smart.rag.common.conversation.ConversationIdUtil;
-import com.smart.rag.common.errorcode.ErrorCode;
-import com.smart.rag.exception.BusinessException;
+import com.smart.rag.common.util.ConversationIdUtil;
+import com.smart.rag.infrastructure.exception.errorcode.ErrorCode;
+import com.smart.rag.infrastructure.exception.BusinessException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.memory.ChatMemoryRepository;
@@ -57,7 +57,7 @@ public class ConversationServiceImpl implements ConversationService {
 
     @Override
     public ConversationSummary create(Long userId, ConversationCreateRequest request) {
-        String rawId = UuidV7.generateCompact();
+        String rawId = UuidGeneratorUtil.generateCompact();
         String conversationId = ConversationIdUtil.buildIsolatedId(userId, rawId);
 
         Conversation entity = new Conversation(conversationId, userId, request.modelId());

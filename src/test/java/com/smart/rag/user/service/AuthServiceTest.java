@@ -1,12 +1,12 @@
 package com.smart.rag.user.service;
 
 import com.smart.rag.user.service.impl.AuthServiceImpl;
-import com.smart.rag.exception.BusinessException;
-import com.smart.rag.exception.RateLimitExceededException;
-import com.smart.rag.security.config.JwtProperties;
-import com.smart.rag.security.service.CaptchaService;
-import com.smart.rag.security.service.TokenCacheService;
-import com.smart.rag.security.util.JwtTokenProvider;
+import com.smart.rag.infrastructure.exception.BusinessException;
+import com.smart.rag.infrastructure.exception.RateLimitExceededException;
+import com.smart.rag.infrastructure.web.config.JwtProperties;
+import com.smart.rag.infrastructure.web.service.CaptchaService;
+import com.smart.rag.infrastructure.web.service.TokenCacheService;
+import com.smart.rag.infrastructure.web.util.JwtTokenProvider;
 import com.smart.rag.user.dto.LoginResponse;
 import com.smart.rag.user.dto.UserUpdateRequest;
 import com.smart.rag.user.entity.SysRole;

@@ -1,6 +1,6 @@
 package com.smart.rag.team.controller;
 
-import com.smart.rag.common.response.GlobalResponse;
+import com.smart.rag.infrastructure.response.GlobalResponse;
 import com.smart.rag.team.dto.*;
 import com.smart.rag.team.service.TeamService;
 import jakarta.validation.Valid;

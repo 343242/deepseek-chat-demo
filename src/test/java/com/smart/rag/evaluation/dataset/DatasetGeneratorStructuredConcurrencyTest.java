@@ -1,11 +1,11 @@
 package com.smart.rag.evaluation.dataset;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.smart.rag.common.concurrent.DefaultScopedTasks;
-import com.smart.rag.common.concurrent.ScopeOptions;
-import com.smart.rag.common.concurrent.ScopePolicy;
-import com.smart.rag.common.concurrent.ScopedTasks;
-import com.smart.rag.common.concurrent.TaskScope;
+import com.smart.rag.infrastructure.concurrent.DefaultScopedTasks;
+import com.smart.rag.infrastructure.concurrent.ScopeOptions;
+import com.smart.rag.infrastructure.concurrent.ScopePolicy;
+import com.smart.rag.infrastructure.concurrent.ScopedTasks;
+import com.smart.rag.infrastructure.concurrent.TaskScope;
 import com.smart.rag.evaluation.config.EvaluationProperties;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;

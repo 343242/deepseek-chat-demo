@@ -1,8 +1,8 @@
 package com.smart.rag.team.controller;
 
-import com.smart.rag.common.request.PageRequest;
-import com.smart.rag.common.response.GlobalResponse;
-import com.smart.rag.common.response.PagedResult;
+import com.smart.rag.infrastructure.request.PageRequest;
+import com.smart.rag.infrastructure.response.GlobalResponse;
+import com.smart.rag.infrastructure.response.PagedResult;
 import com.smart.rag.team.dto.MemberRoleUpdateRequest;
 import com.smart.rag.team.dto.MemberUploadLimitRequest;
 import com.smart.rag.team.dto.TeamMemberVO;

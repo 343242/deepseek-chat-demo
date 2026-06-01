@@ -1,8 +1,8 @@
 package com.smart.rag.user.service.impl;
 
-import com.smart.rag.common.errorcode.ErrorCode;
-import com.smart.rag.exception.BusinessException;
-import com.smart.rag.security.service.TokenCacheService;
+import com.smart.rag.infrastructure.exception.errorcode.ErrorCode;
+import com.smart.rag.infrastructure.exception.BusinessException;
+import com.smart.rag.infrastructure.web.service.TokenCacheService;
 import com.smart.rag.user.entity.SysPermission;
 import com.smart.rag.user.entity.SysRole;
 import com.smart.rag.user.entity.SysRolePermission;

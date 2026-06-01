@@ -1,6 +1,6 @@
 package com.smart.rag.chat.mode;
 
-import com.smart.rag.infrastructure.ai.advisor.ConversationContextAdvisor;
+import com.smart.rag.infrastructure.advisor.ConversationContextAdvisor;
 import com.smart.rag.chat.service.AdvisorChainContext;
 import com.smart.rag.chat.service.AdvisorInfrastructure;
 import com.smart.rag.chat.service.ChatConversationHelper;

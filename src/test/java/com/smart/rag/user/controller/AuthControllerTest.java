@@ -1,10 +1,10 @@
 package com.smart.rag.user.controller;
 
-import com.smart.rag.exception.BusinessException;
-import com.smart.rag.exception.GlobalExceptionHandler;
-import com.smart.rag.security.dto.CaptchaResult;
-import com.smart.rag.security.service.CaptchaService;
-import com.smart.rag.security.token.CookieTokenManager;
+import com.smart.rag.infrastructure.exception.BusinessException;
+import com.smart.rag.infrastructure.exception.GlobalExceptionHandler;
+import com.smart.rag.infrastructure.web.dto.CaptchaResult;
+import com.smart.rag.infrastructure.web.service.CaptchaService;
+import com.smart.rag.infrastructure.web.token.CookieTokenManager;
 import com.smart.rag.user.dto.LoginRequest;
 import com.smart.rag.user.dto.LoginResponse;
 import com.smart.rag.user.dto.RegisterRequest;

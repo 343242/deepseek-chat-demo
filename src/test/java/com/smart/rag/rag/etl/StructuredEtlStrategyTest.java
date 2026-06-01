@@ -1,9 +1,6 @@
 package com.smart.rag.rag.etl;
 
-import com.smart.rag.common.concurrent.DefaultScopedTasks;
-import com.smart.rag.common.concurrent.ScopeOptions;
-import com.smart.rag.common.concurrent.ScopedTasks;
-import com.smart.rag.common.concurrent.TaskScope;
+import com.smart.rag.infrastructure.concurrent.*;
 import com.smart.rag.rag.config.EtlFastTrackProperties;
 import com.smart.rag.rag.mapper.VectorStoreMapper;
 import org.junit.jupiter.api.DisplayName;
@@ -135,7 +132,7 @@ class StructuredEtlStrategyTest {
         }
 
         @Override
-        public TaskScope open(String name, com.smart.rag.common.concurrent.ScopePolicy policy) {
+        public TaskScope open(String name, ScopePolicy policy) {
             scopeNames.add(name);
             return delegate.open(name, policy);
         }

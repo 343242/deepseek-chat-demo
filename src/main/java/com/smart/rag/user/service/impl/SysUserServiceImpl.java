@@ -1,12 +1,12 @@
 package com.smart.rag.user.service.impl;
 
-import com.smart.rag.common.errorcode.ErrorCode;
-import com.smart.rag.common.request.PageRequest;
-import com.smart.rag.common.response.PagedResult;
-import com.smart.rag.exception.BusinessException;
+import com.smart.rag.infrastructure.exception.errorcode.ErrorCode;
+import com.smart.rag.infrastructure.request.PageRequest;
+import com.smart.rag.infrastructure.response.PagedResult;
+import com.smart.rag.infrastructure.exception.BusinessException;
 import com.smart.rag.user.dto.*;
 import com.smart.rag.user.enums.UserStatus;
-import com.smart.rag.security.service.TokenCacheService;
+import com.smart.rag.infrastructure.web.service.TokenCacheService;
 import com.smart.rag.user.entity.SysRole;
 import com.smart.rag.user.entity.SysUser;
 import com.smart.rag.user.entity.SysUserRole;

@@ -2,9 +2,9 @@ package com.smart.rag.team.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
-import com.smart.rag.common.errorcode.ErrorCode;
-import com.smart.rag.exception.BusinessException;
-import com.smart.rag.security.util.SecurityUtils;
+import com.smart.rag.infrastructure.exception.errorcode.ErrorCode;
+import com.smart.rag.infrastructure.exception.BusinessException;
+import com.smart.rag.infrastructure.web.util.SecurityUtils;
 import com.smart.rag.team.config.TeamProperties;
 import com.smart.rag.team.dto.TeamCreateRequest;
 import com.smart.rag.team.dto.TeamDetailVO;

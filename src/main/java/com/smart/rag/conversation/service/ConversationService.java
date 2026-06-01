@@ -1,6 +1,6 @@
 package com.smart.rag.conversation.service;
 
-import com.smart.rag.common.response.PagedResult;
+import com.smart.rag.infrastructure.response.PagedResult;
 import com.smart.rag.conversation.dto.ConversationCreateRequest;
 import com.smart.rag.conversation.dto.ConversationDetail;
 import com.smart.rag.conversation.dto.ConversationSummary;

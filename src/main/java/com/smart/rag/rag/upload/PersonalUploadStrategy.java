@@ -1,8 +1,8 @@
 package com.smart.rag.rag.upload;
 
-import com.smart.rag.common.errorcode.ErrorCode;
+import com.smart.rag.infrastructure.exception.errorcode.ErrorCode;
 import com.smart.rag.common.upload.UploadStrategy;
-import com.smart.rag.exception.BusinessException;
+import com.smart.rag.infrastructure.exception.BusinessException;
 import com.smart.rag.rag.event.DocumentCreatedEvent;
 import com.smart.rag.rag.dto.DocumentUploadResponse;
 import com.smart.rag.rag.etl.EtlCandidate;

@@ -1,11 +1,11 @@
 package com.smart.rag.rag.etl;
 
-import com.smart.rag.common.concurrent.ExecutorMode;
-import com.smart.rag.common.concurrent.ScopeJoiner;
-import com.smart.rag.common.concurrent.ScopeOptions;
-import com.smart.rag.common.concurrent.ScopePolicy;
-import com.smart.rag.common.concurrent.ScopedTasks;
-import com.smart.rag.common.concurrent.TaskScope;
+import com.smart.rag.infrastructure.concurrent.ExecutorMode;
+import com.smart.rag.infrastructure.concurrent.ScopeJoiner;
+import com.smart.rag.infrastructure.concurrent.ScopeOptions;
+import com.smart.rag.infrastructure.concurrent.ScopePolicy;
+import com.smart.rag.infrastructure.concurrent.ScopedTasks;
+import com.smart.rag.infrastructure.concurrent.TaskScope;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.document.Document;

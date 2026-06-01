@@ -4,8 +4,8 @@ import com.smart.rag.chat.service.AdvisorChainContext;
 import com.smart.rag.chat.service.ModeChainResult;
 import com.smart.rag.chat.service.StrategyExecuteResult;
 import com.smart.rag.chat.service.StrategyExecutionContext;
-import com.smart.rag.exception.BusinessException;
-import com.smart.rag.common.errorcode.ErrorCode;
+import com.smart.rag.infrastructure.exception.BusinessException;
+import com.smart.rag.infrastructure.exception.errorcode.ErrorCode;
 import reactor.core.publisher.Flux;
 
 /**

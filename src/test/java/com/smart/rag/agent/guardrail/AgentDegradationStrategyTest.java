@@ -1,6 +1,6 @@
 package com.smart.rag.agent.guardrail;
 
-import com.smart.rag.exception.BusinessException;
+import com.smart.rag.infrastructure.exception.BusinessException;
 import com.smart.rag.agent.config.AgentRagProperties;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;

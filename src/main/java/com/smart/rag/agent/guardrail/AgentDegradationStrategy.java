@@ -1,6 +1,6 @@
 package com.smart.rag.agent.guardrail;
 
-import com.smart.rag.exception.BusinessException;
+import com.smart.rag.infrastructure.exception.BusinessException;
 import com.smart.rag.agent.config.AgentRagProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

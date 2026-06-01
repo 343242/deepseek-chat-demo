@@ -4,7 +4,7 @@ import com.smart.rag.chat.dto.TokenUsageDTO;
 import com.smart.rag.chat.dto.UsageStats;
 import com.smart.rag.chat.entity.TokenUsage;
 import com.smart.rag.chat.mapper.TokenUsageMapper;
-import com.smart.rag.exception.BusinessException;
+import com.smart.rag.infrastructure.exception.BusinessException;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -13,7 +13,7 @@ import org.mockito.Mock;
 import org.mockito.MockedStatic;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.transaction.support.TransactionTemplate;
-import com.smart.rag.common.conversation.ConversationIdUtil;
+import com.smart.rag.common.util.ConversationIdUtil;
 
 import java.util.List;
 

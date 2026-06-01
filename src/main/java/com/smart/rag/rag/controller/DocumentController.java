@@ -1,6 +1,6 @@
 package com.smart.rag.rag.controller;
 
-import com.smart.rag.common.response.GlobalResponse;
+import com.smart.rag.infrastructure.response.GlobalResponse;
 import com.smart.rag.rag.dto.DocumentDTO;
 import com.smart.rag.rag.dto.DocumentUploadResponse;
 import com.smart.rag.rag.service.DocumentApplicationService;

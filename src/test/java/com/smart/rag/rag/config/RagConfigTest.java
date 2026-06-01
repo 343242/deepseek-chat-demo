@@ -1,7 +1,7 @@
 package com.smart.rag.rag.config;
 
-import com.smart.rag.infrastructure.ai.provider.ModelProvider;
-import com.smart.rag.infrastructure.ai.provider.ProviderRegistry;
+import com.smart.rag.infrastructure.provider.ModelProvider;
+import com.smart.rag.infrastructure.provider.ProviderRegistry;
 import com.smart.rag.chat.service.ModelRegistryRefresher;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;

@@ -3,7 +3,7 @@ package com.smart.rag.chat.controller;
 import com.smart.rag.chat.dto.SystemPromptDTO;
 import com.smart.rag.chat.dto.SystemPromptUpdateRequest;
 import com.smart.rag.chat.service.SystemPromptService;
-import com.smart.rag.common.response.GlobalResponse;
+import com.smart.rag.infrastructure.response.GlobalResponse;
 import jakarta.validation.Valid;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;

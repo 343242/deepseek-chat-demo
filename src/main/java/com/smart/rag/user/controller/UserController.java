@@ -1,7 +1,7 @@
 package com.smart.rag.user.controller;
 
-import com.smart.rag.common.response.GlobalResponse;
-import com.smart.rag.common.response.PagedResult;
+import com.smart.rag.infrastructure.response.GlobalResponse;
+import com.smart.rag.infrastructure.response.PagedResult;
 import com.smart.rag.user.dto.*;
 import com.smart.rag.user.service.SysUserService;
 import jakarta.validation.Valid;

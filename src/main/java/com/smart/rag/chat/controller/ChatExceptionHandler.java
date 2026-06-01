@@ -1,12 +1,12 @@
 package com.smart.rag.chat.controller;
 
-import com.smart.rag.common.errorcode.ErrorCode;
-import com.smart.rag.common.response.GlobalResponse;
-import com.smart.rag.exception.BusinessException;
-import com.smart.rag.exception.ContentFilteredException;
-import com.smart.rag.exception.ModelNotFoundException;
-import com.smart.rag.exception.ProviderNotFoundException;
-import com.smart.rag.exception.RateLimitExceededException;
+import com.smart.rag.infrastructure.exception.errorcode.ErrorCode;
+import com.smart.rag.infrastructure.response.GlobalResponse;
+import com.smart.rag.infrastructure.exception.BusinessException;
+import com.smart.rag.infrastructure.exception.ContentFilteredException;
+import com.smart.rag.infrastructure.exception.ModelNotFoundException;
+import com.smart.rag.infrastructure.exception.ProviderNotFoundException;
+import com.smart.rag.infrastructure.exception.RateLimitExceededException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;

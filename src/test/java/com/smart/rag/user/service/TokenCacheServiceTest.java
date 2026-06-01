@@ -1,7 +1,7 @@
 package com.smart.rag.user.service;
 
-import com.smart.rag.security.config.JwtProperties;
-import com.smart.rag.security.service.TokenCacheService;
+import com.smart.rag.infrastructure.web.config.JwtProperties;
+import com.smart.rag.infrastructure.web.service.TokenCacheService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;

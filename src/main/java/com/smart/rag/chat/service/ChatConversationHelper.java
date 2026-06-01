@@ -3,7 +3,7 @@ package com.smart.rag.chat.service;
 import com.smart.rag.conversation.entity.Message;
 import com.smart.rag.conversation.service.ConversationMessageService;
 import com.smart.rag.conversation.service.ConversationService;
-import com.smart.rag.common.conversation.ConversationIdUtil;
+import com.smart.rag.common.util.ConversationIdUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.memory.ChatMemory;

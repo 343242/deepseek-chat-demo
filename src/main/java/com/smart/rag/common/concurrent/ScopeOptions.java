@@ -10,6 +10,7 @@ public record ScopeOptions(
         int maxConcurrency,
         Duration defaultTimeout,
         Duration closeTimeout,
+        int quorumSuccessCount,
         boolean executorOwnedByScope,
         boolean inheritMdc,
         boolean inheritSecurityContext,
@@ -34,6 +35,12 @@ public record ScopeOptions(
         if (closeTimeout.isZero() || closeTimeout.isNegative()) {
             throw new ScopeViolationException("closeTimeout must be positive");
         }
+        if (quorumSuccessCount < 0) {
+            throw new ScopeViolationException("quorumSuccessCount must be greater than or equal to 0");
+        }
+        if (policy == ScopePolicy.QUORUM_SUCCESS && quorumSuccessCount <= 0) {
+            throw new ScopeViolationException("quorumSuccessCount must be positive for QUORUM_SUCCESS");
+        }
     }
 
     public static ScopeOptions shutdownOnFailure(String name) {
@@ -46,7 +53,7 @@ public record ScopeOptions(
 
     public ScopeOptions withPolicy(ScopePolicy policy) {
         return new ScopeOptions(name, policy, executorMode, maxConcurrency,
-                defaultTimeout, closeTimeout, executorOwnedByScope,
+                defaultTimeout, closeTimeout, quorumSuccessCount, executorOwnedByScope,
                 inheritMdc, inheritSecurityContext, inheritRequestContext);
     }
 
@@ -58,6 +65,7 @@ public record ScopeOptions(
         private int maxConcurrency;
         private Duration defaultTimeout = Duration.ZERO;
         private Duration closeTimeout = Duration.ofSeconds(5);
+        private int quorumSuccessCount = 1;
         private boolean executorOwnedByScope = true;
         private boolean inheritMdc = true;
         private boolean inheritSecurityContext;
@@ -92,6 +100,11 @@ public record ScopeOptions(
             return this;
         }
 
+        public Builder quorumSuccessCount(int quorumSuccessCount) {
+            this.quorumSuccessCount = quorumSuccessCount;
+            return this;
+        }
+
         public Builder executorOwnedByScope(boolean executorOwnedByScope) {
             this.executorOwnedByScope = executorOwnedByScope;
             return this;
@@ -120,6 +133,7 @@ public record ScopeOptions(
                     maxConcurrency,
                     defaultTimeout,
                     closeTimeout,
+                    quorumSuccessCount,
                     executorOwnedByScope,
                     inheritMdc,
                     inheritSecurityContext,

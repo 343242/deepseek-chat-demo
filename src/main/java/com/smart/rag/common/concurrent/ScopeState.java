@@ -29,6 +29,12 @@ public final class ScopeState {
                 .toList();
     }
 
+    public long successCount() {
+        return subtasks.stream()
+                .filter(subtask -> subtask.state() == TaskState.SUCCESS)
+                .count();
+    }
+
     public boolean allTerminal() {
         return subtasks.stream().allMatch(DefaultSubtask::isTerminal);
     }

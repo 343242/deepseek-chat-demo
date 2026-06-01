@@ -49,6 +49,7 @@ class DefaultScopedTasksPhase3Test {
             properties.setMaxConcurrency(3);
             properties.setDefaultTimeout(Duration.ofMillis(250));
             properties.setCloseTimeout(Duration.ofSeconds(2));
+            properties.setQuorumSuccessCount(2);
             properties.setInheritMdc(false);
             properties.setInheritSecurityContext(true);
             properties.setInheritRequestContext(true);
@@ -66,6 +67,7 @@ class DefaultScopedTasksPhase3Test {
             assertThat(options.maxConcurrency()).isEqualTo(3);
             assertThat(options.defaultTimeout()).isEqualTo(Duration.ofMillis(250));
             assertThat(options.closeTimeout()).isEqualTo(Duration.ofSeconds(2));
+            assertThat(options.quorumSuccessCount()).isEqualTo(2);
             assertThat(options.inheritMdc()).isFalse();
             assertThat(options.inheritSecurityContext()).isTrue();
             assertThat(options.inheritRequestContext()).isTrue();
@@ -99,6 +101,9 @@ class DefaultScopedTasksPhase3Test {
             assertThatThrownBy(() -> properties.setSharedExecutor(null))
                     .isInstanceOf(IllegalArgumentException.class)
                     .hasMessageContaining("sharedExecutor");
+            assertThatThrownBy(() -> properties.setQuorumSuccessCount(-1))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("quorumSuccessCount");
 
             pool.setCorePoolSize(4);
             assertThatThrownBy(() -> pool.setMaxPoolSize(3))

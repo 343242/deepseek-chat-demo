@@ -26,6 +26,11 @@ public interface TaskScope extends AutoCloseable {
 
     void joinUntil(Duration timeout);
 
+    default <R> R join(ScopeJoiner<R> joiner) {
+        join();
+        return joiner.collect(subtasks());
+    }
+
     void throwIfFailed();
 
     List<Subtask<?>> subtasks();

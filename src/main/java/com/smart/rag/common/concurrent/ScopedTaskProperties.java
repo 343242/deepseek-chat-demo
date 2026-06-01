@@ -12,6 +12,7 @@ public class ScopedTaskProperties {
     private int maxConcurrency;
     private Duration defaultTimeout = Duration.ZERO;
     private Duration closeTimeout = Duration.ofSeconds(5);
+    private int quorumSuccessCount = 1;
     private boolean inheritMdc = true;
     private boolean inheritSecurityContext;
     private boolean inheritRequestContext;
@@ -25,6 +26,7 @@ public class ScopedTaskProperties {
                 .maxConcurrency(maxConcurrency)
                 .defaultTimeout(defaultTimeout)
                 .closeTimeout(closeTimeout)
+                .quorumSuccessCount(quorumSuccessCount)
                 .executorOwnedByScope(executorMode.ownsExecutor())
                 .inheritMdc(inheritMdc)
                 .inheritSecurityContext(inheritSecurityContext)
@@ -70,6 +72,17 @@ public class ScopedTaskProperties {
 
     public void setCloseTimeout(Duration closeTimeout) {
         this.closeTimeout = closeTimeout;
+    }
+
+    public int getQuorumSuccessCount() {
+        return quorumSuccessCount;
+    }
+
+    public void setQuorumSuccessCount(int quorumSuccessCount) {
+        if (quorumSuccessCount < 0) {
+            throw new IllegalArgumentException("quorumSuccessCount must be >= 0");
+        }
+        this.quorumSuccessCount = quorumSuccessCount;
     }
 
     public boolean isInheritMdc() {

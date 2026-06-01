@@ -119,7 +119,7 @@ final class DefaultTaskScope implements TaskScope {
 | Phase 1 | 建立最小结构化并发作用域 | 必做 | 小型测试服务通过 owner、fork、join、timeout、cancel、MDC、异常聚合测试 |
 | Phase 2 | 迁移第一个真实业务场景 | 已完成 | `HybridSearchService` 在保持 partial-success 行为的前提下完成迁移 |
 | Phase 3 | 扩展上下文、executor 和观测能力 | 已完成 | 配置属性、平台/共享 executor、Security/Request carrier 和 scope observer 已落地 |
-| Phase 4 | 补充高级策略和流式边界能力 | 延后 | 有竞速成功、复杂 partial success 或 Reactor 深度整合需求 |
+| Phase 4 | 补充高级策略和流式边界能力 | 已完成 | 高级策略、强类型结果收集、Flux 取消边界和嵌套违规检测已落地 |
 | Phase 5 | 对齐未来稳定 JDK API | 延后 | JDK 结构化并发转正且项目 JVM 可升级 |
 
 ### 4.1 Phase 1：最小可用闭环
@@ -180,7 +180,7 @@ Phase 2 落地结果：
 - 策略使用 `COLLECT_ALL`，等待后读取每个 `Subtask.exception()` 判断分支是否失败。
 - vector 或 BM25 单分支失败时降级为空列表继续融合；两者都失败时抛 `BusinessException("向量检索和 BM25 检索均不可用")`。
 - 回归测试覆盖 vector 成功 + BM25 成功、vector 失败 + BM25 成功、vector 成功 + BM25 失败、两者都失败。
-- 暂不新增 `PARTIAL_SUCCESS_OR_THROW`，直到第二个真实业务场景出现相同模式。
+- Phase 2 迁移仍保留 `COLLECT_ALL` + 调用方显式判断的实现；Phase 4 已提供 `PARTIAL_SUCCESS_OR_THROW`，后续只有在业务语义完全匹配时再迁移该链路。
 
 ### 4.3 Phase 3：上下文、executor 和观测扩展
 
@@ -207,7 +207,7 @@ Phase 3 当前落地结果：
 - `PLATFORM_THREAD_POOL` 和 `SHARED_EXECUTOR` 已启用：平台线程池由 scope 拥有并在 close 时关闭；共享 executor 由 `DefaultScopeExecutorFactory` 持有，调用方必须使用 `executorOwnedByScope=false`。
 - `SecurityContextCarrier` 和 `RequestContextCarrier` 已启用，但默认仍为关闭，必须显式设置 `inheritSecurityContext(true)` / `inheritRequestContext(true)` 或通过配置开启。
 - `ScopeObserver` / `ScopeReport` 已作为无依赖观测扩展点落地；当前不新增 Micrometer 依赖，后续如引入 actuator，可通过 `ScopeObserver` 适配 `MeterRegistry`。
-- 暂不新增 `SHUTDOWN_ON_SUCCESS`、`PARTIAL_SUCCESS_OR_THROW`、`ScopeJoiner<R>` 或 Reactor 生命周期绑定；这些仍属于 Phase 4。
+- `SHUTDOWN_ON_SUCCESS`、`PARTIAL_SUCCESS_OR_THROW`、`QUORUM_SUCCESS`、`ScopeJoiner<R>`、`ScopedFlux` 和嵌套 scope 结构违规检测已作为 Phase 4 落地。
 
 ### 4.4 Phase 4：高级策略和流式边界
 
@@ -220,7 +220,15 @@ Phase 4 处理高级并发模式：
 - Reactor `Flux` / SSE 与 scope 生命周期绑定。
 - 更完整的嵌套 scope 结构违规检测。
 
-这些能力 Phase 1 不做。只有当业务明确需要竞速成功、强类型聚合结果或流式深度整合时再实现。
+Phase 4 当前落地结果：
+
+- `ScopePolicy` 已新增 `SHUTDOWN_ON_SUCCESS`、`PARTIAL_SUCCESS_OR_THROW` 和 `QUORUM_SUCCESS`。
+- `SHUTDOWN_ON_SUCCESS` 在任一任务成功后取消未完成任务；如果全部任务失败，`throwIfFailed()` 聚合全部失败。
+- `PARTIAL_SUCCESS_OR_THROW` 等待全部任务结束；至少一个成功时允许调用方读取成功结果并按业务处理失败分支，全部失败时抛 `ScopeExecutionException`。
+- `QUORUM_SUCCESS` 通过 `ScopeOptions.quorumSuccessCount` 配置成功阈值；达到阈值后取消剩余任务，未达到阈值时失败仍会聚合抛出。
+- `TaskScope.join(ScopeJoiner<R>)` 已提供强类型结果收集入口，当前内置 `ScopeJoiner.successfulResults(Class<T>)`。
+- `ScopedFlux.using(...)` 已提供 Reactor 边界绑定：subscription 取消、完成或失败都会关闭 scope；完整流式业务仍应依赖 Reactor 的 `doFinally` / backpressure 语义，不把长连接强行变成短生命周期同步调用。
+- 嵌套 scope 违规检测已补充：父 scope 活跃时，手动新建线程不能打开脱离父任务树的 scope；scope 管理的子任务内部可以打开内层 scope。
 
 ### 4.5 Phase 5：JDK 稳定 API 适配
 
@@ -441,14 +449,20 @@ Phase 3 已启用 `inheritSecurityContext` 和 `inheritRequestContext`。两者�
 ```java
 public enum ScopePolicy {
     SHUTDOWN_ON_FAILURE,
-    COLLECT_ALL
+    SHUTDOWN_ON_SUCCESS,
+    COLLECT_ALL,
+    PARTIAL_SUCCESS_OR_THROW,
+    QUORUM_SUCCESS
 }
 ```
 
 | 策略 | 语义 | 适用场景 |
 |------|------|----------|
 | `SHUTDOWN_ON_FAILURE` | 任一任务失败后取消其它未完成任务 | 多个必要子任务并行，任一失败都无法继续 |
+| `SHUTDOWN_ON_SUCCESS` | 任一任务成功后取消其它未完成任务；全部失败时聚合失败 | 多镜像/多 provider 竞速，任一成功即可继续 |
 | `COLLECT_ALL` | 等待全部结束，不自动 fail-fast | 批量评估、ETL 多候选处理、允许部分降级的检索 |
+| `PARTIAL_SUCCESS_OR_THROW` | 等待全部结束，至少一个成功即可继续，全部失败才抛错 | 复杂 partial success 且调用方需要统一失败门槛 |
+| `QUORUM_SUCCESS` | 达到配置的成功阈值后取消剩余任务 | 至少 N 个候选成功即可继续 |
 
 Phase 1 建议 `open(String name)` 默认使用 `SHUTDOWN_ON_FAILURE`，但迁移现有代码时必须按当前业务语义选择策略。允许部分成功继续的链路不能直接套用 fail-fast。
 
@@ -460,7 +474,7 @@ log.warn("TaskScope '{}' closed with {} unhandled failure(s). "
     name, unhandledFailureCount);
 ```
 
-`SHUTDOWN_ON_SUCCESS` 属于 Phase 4 高级策略，Phase 1 不进入 `ScopePolicy` 生产枚举。未来引入时必须满足以下完整语义，不能只实现“任一成功即取消”的 happy path：
+`SHUTDOWN_ON_SUCCESS` 属于 Phase 4 高级策略，已进入 `ScopePolicy` 生产枚举。它必须满足以下完整语义，不能只实现“任一成功即取消”的 happy path：
 
 | 条件 | `throwIfFailed()` | 成功结果读取 |
 |------|-------------------|--------------|
@@ -491,9 +505,12 @@ interface ScopePolicyHandler {
 ```text
 ShutdownOnFailurePolicy
 CollectAllPolicy
+ShutdownOnSuccessPolicy
+PartialSuccessOrThrowPolicy
+QuorumSuccessPolicy
 ```
 
-Phase 1 只实现 `ShutdownOnFailurePolicy` 和 `CollectAllPolicy`。后续如果出现“任一成功即可返回”或“至少 N 个任务成功即可返回”的需求，可以新增 `ShutdownOnSuccessPolicy`、`QuorumSuccessPolicy`，而不修改 `DefaultTaskScope` 主流程。
+Phase 1 只实现 `ShutdownOnFailurePolicy` 和 `CollectAllPolicy`。Phase 4 已补充 `ShutdownOnSuccessPolicy`、`PartialSuccessOrThrowPolicy` 和 `QuorumSuccessPolicy`，且仍通过策略处理器接入，不在 `DefaultTaskScope` 主流程中硬编码业务策略。
 
 `onTimeout()` 是策略的一部分，而不是 `joinUntil()` 的硬编码分支。不同策略的超时含义不同：
 
@@ -502,22 +519,23 @@ Phase 1 只实现 `ShutdownOnFailurePolicy` 和 `CollectAllPolicy`。后续如�
 | `SHUTDOWN_ON_FAILURE` | 超时视为 scope 失败，取消未完成任务并抛出 `ScopeTimeoutException` |
 | `COLLECT_ALL` | 取消未完成任务，保留已完成结果和已知失败，调用方继续按收集结果处理 |
 
-Phase 4 引入 `SHUTDOWN_ON_SUCCESS` 时，其超时语义必须是：如果已有成功结果，则取消未完成任务并允许读取成功结果；否则抛出 `ScopeTimeoutException`。
+Phase 4 的 `SHUTDOWN_ON_SUCCESS` 超时语义是：如果已有成功结果，则取消未完成任务并允许读取成功结果；否则抛出 `ScopeTimeoutException`。
 
-如果未来需要让策略直接返回强类型结果，可以在当前 `ScopePolicyHandler` 之外新增 `ScopeJoiner<R>` 抽象，借鉴 JEP Joiner 的“策略与结果收集一体化”设计。但 Phase 1 不引入该复杂度。
+Phase 4 已在当前 `ScopePolicyHandler` 之外新增 `ScopeJoiner<R>` 抽象，借鉴 JEP Joiner 的“策略与结果收集一体化”设计；它只负责在 `join()` 之后收集结果，不改变 scope 生命周期。
 
 ### 6.3 部分成功策略扩展点
 
 当前项目已经存在“部分成功即可继续”的业务语义，例如混合检索中 vector 和 BM25 任一分支失败时降级为空列表，两者都失败时才抛业务异常。该语义不能用 `SHUTDOWN_ON_FAILURE` 表达。
 
-后续可新增：
+Phase 4 当前枚举：
 
 ```java
 public enum ScopePolicy {
     SHUTDOWN_ON_FAILURE,
     SHUTDOWN_ON_SUCCESS,
     COLLECT_ALL,
-    PARTIAL_SUCCESS_OR_THROW
+    PARTIAL_SUCCESS_OR_THROW,
+    QUORUM_SUCCESS
 }
 ```
 
@@ -1096,11 +1114,18 @@ src/main/java/com/smart/rag/common/concurrent/context/
 └── SecurityContextCarrier.java
 ```
 
-Phase 4 才允许补充高级策略实现：
+Phase 4 已补充高级策略和边界工具：
 
 ```text
 src/main/java/com/smart/rag/common/concurrent/policy/
-└── ShutdownOnSuccessPolicy.java
+├── ShutdownOnSuccessPolicy.java
+├── PartialSuccessOrThrowPolicy.java
+└── QuorumSuccessPolicy.java
+
+src/main/java/com/smart/rag/common/concurrent/
+├── ScopeJoiner.java
+├── ScopedFlux.java
+└── ScopeNestingGuard.java
 ```
 
 ## 16. 设计模式总结
@@ -1157,13 +1182,13 @@ Phase 3 只处理复用后出现的基础设施扩展：
 
 ### 17.4 Phase 4 范围
 
-Phase 4 才允许引入高级策略：
+Phase 4 已引入高级策略和流式边界：
 
 - `SHUTDOWN_ON_SUCCESS`。
 - `PARTIAL_SUCCESS_OR_THROW`。
-- quorum / race 类策略。
+- `QUORUM_SUCCESS` / race 类策略。
 - `ScopeJoiner<R>`。
-- Reactor 生命周期整合。
+- `ScopedFlux` Reactor subscription 边界绑定。
 
 ### 17.5 Phase 5 范围
 
@@ -1288,7 +1313,7 @@ Phase 2 必须补业务回归测试：
 - `ContextAwareCallable` 管 ThreadLocal 类上下文传递。
 - `ScopeExecutorFactory` 管虚拟线程和线程池选择。
 
-Phase 1 应小步实现，并优先在测试服务中锁定并发、失败、取消、超时和上下文传递语义。等工具的核心语义被测试锁住后，再进入 Phase 2 迁移真实业务。
+Phase 1 到 Phase 4 已按小步方式落地，并通过测试锁定并发、失败、取消、超时、上下文传递、高级策略和流式边界语义。后续 Phase 5 只处理 JDK 稳定结构化并发 API 的适配评估。
 
 ## 22. JEP 演进参考与本项目取舍
 

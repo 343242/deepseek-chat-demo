@@ -24,6 +24,8 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import reactor.core.Disposable;
+import reactor.core.publisher.Flux;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
@@ -843,6 +845,188 @@ class DefaultTaskScopeTest {
 
             assertThat(innerTask.get()).isNotNull();
             assertThat(innerTask.get().state()).isEqualTo(TaskState.CANCELLED);
+        }
+    }
+
+    @Nested
+    @DisplayName("phase 4 policies")
+    class Phase4Policies {
+
+        @Test
+        @DisplayName("shutdown on success cancels unfinished tasks after first success")
+        void shutdownOnSuccess_cancelsUnfinishedTasksAfterFirstSuccess() throws Exception {
+            CountDownLatch slowStarted = new CountDownLatch(1);
+            AtomicBoolean slowInterrupted = new AtomicBoolean();
+
+            try (TaskScope scope = scopedTasks.open("race-success", ScopePolicy.SHUTDOWN_ON_SUCCESS)) {
+                Subtask<String> slow = scope.fork("slow", () -> {
+                    slowStarted.countDown();
+                    try {
+                        Thread.sleep(Duration.ofSeconds(10));
+                    } catch (InterruptedException ex) {
+                        slowInterrupted.set(true);
+                        throw ex;
+                    }
+                    return "slow";
+                });
+                Subtask<String> winner = scope.fork("winner", () -> {
+                    assertThat(slowStarted.await(1, TimeUnit.SECONDS)).isTrue();
+                    return "winner";
+                });
+
+                scope.join();
+                scope.throwIfFailed();
+
+                assertThat(winner.result()).isEqualTo("winner");
+                assertThat(slow.state()).isEqualTo(TaskState.CANCELLED);
+                assertThat(slowInterrupted).isTrue();
+            }
+        }
+
+        @Test
+        @DisplayName("shutdown on success aggregates all failures when no task succeeds")
+        void shutdownOnSuccess_aggregatesAllFailuresWhenNoTaskSucceeds() {
+            try (TaskScope scope = scopedTasks.open("race-all-fail", ScopePolicy.SHUTDOWN_ON_SUCCESS)) {
+                scope.fork("first", () -> {
+                    throw new IllegalStateException("first");
+                });
+                scope.fork("second", () -> {
+                    throw new IllegalArgumentException("second");
+                });
+
+                scope.join();
+
+                assertThatThrownBy(scope::throwIfFailed)
+                        .isInstanceOf(ScopeExecutionException.class)
+                        .satisfies(ex -> assertThat(((ScopeExecutionException) ex).allFailures()).hasSize(2));
+            }
+        }
+
+        @Test
+        @DisplayName("partial success throws only when every task fails")
+        void partialSuccessOrThrow_throwsOnlyWhenEveryTaskFails() {
+            try (TaskScope scope = scopedTasks.open("partial-success", ScopePolicy.PARTIAL_SUCCESS_OR_THROW)) {
+                Subtask<String> success = scope.fork("success", () -> "ok");
+                Subtask<String> failure = scope.fork("failure", () -> {
+                    throw new IllegalStateException("degraded");
+                });
+
+                scope.join();
+                scope.throwIfFailed();
+
+                assertThat(success.result()).isEqualTo("ok");
+                assertThat(failure.exception()).isInstanceOf(IllegalStateException.class);
+            }
+
+            try (TaskScope scope = scopedTasks.open("partial-all-fail", ScopePolicy.PARTIAL_SUCCESS_OR_THROW)) {
+                scope.fork("first", () -> {
+                    throw new IllegalStateException("first");
+                });
+                scope.fork("second", () -> {
+                    throw new IllegalArgumentException("second");
+                });
+
+                scope.join();
+
+                assertThatThrownBy(scope::throwIfFailed)
+                        .isInstanceOf(ScopeExecutionException.class)
+                        .satisfies(ex -> assertThat(((ScopeExecutionException) ex).allFailures()).hasSize(2));
+            }
+        }
+
+        @Test
+        @DisplayName("quorum success cancels remaining tasks once success threshold is reached")
+        void quorumSuccess_cancelsRemainingTasksAfterThreshold() throws Exception {
+            ScopeOptions options = ScopeOptions.builder("quorum")
+                    .policy(ScopePolicy.QUORUM_SUCCESS)
+                    .quorumSuccessCount(2)
+                    .build();
+            CountDownLatch slowStarted = new CountDownLatch(1);
+            AtomicBoolean slowInterrupted = new AtomicBoolean();
+
+            try (TaskScope scope = scopedTasks.open("quorum", options)) {
+                Subtask<String> first = scope.fork("first", () -> "first");
+                Subtask<String> second = scope.fork("second", () -> "second");
+                Subtask<String> slow = scope.fork("slow", () -> {
+                    slowStarted.countDown();
+                    try {
+                        Thread.sleep(Duration.ofSeconds(10));
+                    } catch (InterruptedException ex) {
+                        slowInterrupted.set(true);
+                        throw ex;
+                    }
+                    return "slow";
+                });
+                assertThat(slowStarted.await(1, TimeUnit.SECONDS)).isTrue();
+
+                scope.join();
+                scope.throwIfFailed();
+
+                assertThat(first.result()).isEqualTo("first");
+                assertThat(second.result()).isEqualTo("second");
+                assertThat(slow.state()).isEqualTo(TaskState.CANCELLED);
+                assertThat(slowInterrupted).isTrue();
+            }
+        }
+
+        @Test
+        @DisplayName("scope joiner returns a strongly typed aggregate after join")
+        void scopeJoiner_returnsTypedAggregate() {
+            try (TaskScope scope = scopedTasks.open("typed-joiner", ScopePolicy.COLLECT_ALL)) {
+                scope.fork("alpha", () -> "a");
+                scope.fork("bravo", () -> "b");
+
+                List<String> values = scope.join(ScopeJoiner.successfulResults(String.class));
+
+                assertThat(values).containsExactlyInAnyOrder("a", "b");
+            }
+        }
+    }
+
+    @Nested
+    @DisplayName("phase 4 stream boundary")
+    class Phase4StreamBoundary {
+
+        @Test
+        @DisplayName("scoped flux closes scope when subscription is cancelled")
+        void scopedFlux_closesScopeWhenSubscriptionIsCancelled() {
+            AtomicBoolean closed = new AtomicBoolean();
+
+            Flux<Integer> flux = ScopedFlux.using(
+                    () -> scopedTasks.open("stream-boundary"),
+                    scope -> Flux.<Integer>never(),
+                    scope -> closed.set(true)
+            );
+
+            Disposable subscription = flux.subscribe();
+            subscription.dispose();
+
+            assertThat(closed).isTrue();
+        }
+    }
+
+    @Nested
+    @DisplayName("phase 4 nested scope violations")
+    class Phase4NestedScopeViolations {
+
+        @Test
+        @DisplayName("child thread cannot open a detached scope while parent scope is active")
+        void childThread_cannotOpenDetachedScopeWhileParentScopeIsActive() throws Exception {
+            AtomicReference<Throwable> error = new AtomicReference<>();
+
+            try (TaskScope outer = scopedTasks.open("outer-active")) {
+                Thread child = Thread.startVirtualThread(() -> captureThrowable(
+                        () -> scopedTasks.open("detached-child").close(),
+                        error
+                ));
+
+                child.join();
+
+                assertThat(error.get())
+                        .isInstanceOf(ScopeViolationException.class)
+                        .hasMessageContaining("Nested TaskScope");
+                outer.join();
+            }
         }
     }
 

@@ -58,6 +58,7 @@ public final class DefaultScopedTasks implements ScopedTasks {
         if (!name.equals(options.name())) {
             throw new ScopeViolationException("scope name and options.name must match");
         }
+        ScopeNestingGuard.ensureOpenAllowed(name);
         return new DefaultTaskScope(options, executorFactory.create(options), carriers(options), scopeObserver);
     }
 

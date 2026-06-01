@@ -4,8 +4,11 @@ import com.smart.rag.common.concurrent.context.ContextAwareCallable;
 import com.smart.rag.common.concurrent.context.ContextCarrier;
 import com.smart.rag.common.concurrent.context.ContextSnapshot;
 import com.smart.rag.common.concurrent.policy.CollectAllPolicy;
+import com.smart.rag.common.concurrent.policy.PartialSuccessOrThrowPolicy;
+import com.smart.rag.common.concurrent.policy.QuorumSuccessPolicy;
 import com.smart.rag.common.concurrent.policy.ScopePolicyHandler;
 import com.smart.rag.common.concurrent.policy.ShutdownOnFailurePolicy;
+import com.smart.rag.common.concurrent.policy.ShutdownOnSuccessPolicy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -63,10 +66,14 @@ public final class DefaultTaskScope implements TaskScope {
         this.scopeObserver = Objects.requireNonNull(scopeObserver, "scopeObserver must not be null");
         this.policyHandler = switch (options.policy()) {
             case SHUTDOWN_ON_FAILURE -> new ShutdownOnFailurePolicy();
+            case SHUTDOWN_ON_SUCCESS -> new ShutdownOnSuccessPolicy();
             case COLLECT_ALL -> new CollectAllPolicy();
+            case PARTIAL_SUCCESS_OR_THROW -> new PartialSuccessOrThrowPolicy();
+            case QUORUM_SUCCESS -> new QuorumSuccessPolicy(options.quorumSuccessCount());
         };
         this.concurrencyLimit = options.maxConcurrency() > 0 ? new Semaphore(options.maxConcurrency()) : null;
         this.cleanable = CLEANER.register(this, new ScopeCleanup(options.name(), closed));
+        ScopeNestingGuard.scopeOpened();
     }
 
     @Override
@@ -84,7 +91,7 @@ public final class DefaultTaskScope implements TaskScope {
         Callable<T> contextAware = new ContextAwareCallable<>(task, snapshot);
         Callable<T> observed = new ObservedCallable<>(options.name(), withConcurrencyLimit(contextAware), subtask);
         state.add(subtask);
-        Future<T> future = executor.submit(observed);
+        Future<T> future = executor.submit(ScopeNestingGuard.scopedSubtask(observed));
         subtask.attachFuture(future);
         return subtask;
     }
@@ -112,7 +119,7 @@ public final class DefaultTaskScope implements TaskScope {
     public void throwIfFailed() {
         ensureOwner("throwIfFailed");
         failuresHandled.set(true);
-        List<Throwable> failures = state.failures();
+        List<Throwable> failures = unacceptableFailures();
         if (!failures.isEmpty()) {
             throw new ScopeExecutionException(options.name(), failures);
         }
@@ -151,6 +158,7 @@ public final class DefaultTaskScope implements TaskScope {
             if (options.executorOwnedByScope()) {
                 shutdownOwnedExecutor(closeDeadlineNanos);
             }
+            ScopeNestingGuard.scopeClosed();
             cleanable.clean();
         }
     }
@@ -216,9 +224,32 @@ public final class DefaultTaskScope implements TaskScope {
         waitForTermination(options.closeTimeout(), false);
         drainCompletedSignalsOnOwnerThread();
         log.warn("TaskScope '{}' timed out after {}", options.name(), timeout);
-        if (options.policy() == ScopePolicy.SHUTDOWN_ON_FAILURE) {
+        if (shouldTimeoutThrow()) {
             throw new ScopeTimeoutException(options.name(), timeout, state.failures());
         }
+    }
+
+    private boolean shouldTimeoutThrow() {
+        return switch (options.policy()) {
+            case SHUTDOWN_ON_FAILURE -> true;
+            case SHUTDOWN_ON_SUCCESS, PARTIAL_SUCCESS_OR_THROW -> state.successCount() == 0;
+            case QUORUM_SUCCESS -> state.successCount() < options.quorumSuccessCount();
+            case COLLECT_ALL -> false;
+        };
+    }
+
+    private List<Throwable> unacceptableFailures() {
+        List<Throwable> failures = state.failures();
+        if (failures.isEmpty()) {
+            return List.of();
+        }
+        return switch (options.policy()) {
+            case SHUTDOWN_ON_FAILURE, COLLECT_ALL -> failures;
+            case SHUTDOWN_ON_SUCCESS, PARTIAL_SUCCESS_OR_THROW ->
+                    state.successCount() > 0 ? List.of() : failures;
+            case QUORUM_SUCCESS ->
+                    state.successCount() >= options.quorumSuccessCount() ? List.of() : failures;
+        };
     }
 
     private <T> Callable<T> withConcurrencyLimit(Callable<T> delegate) {

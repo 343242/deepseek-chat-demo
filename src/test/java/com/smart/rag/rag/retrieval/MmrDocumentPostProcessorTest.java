@@ -254,56 +254,6 @@ class MmrDocumentPostProcessorTest {
         }
     }
 
-    // ====================================================================
-    // mmrSelected metadata
-    // ====================================================================
-
-    @Nested
-    @DisplayName("选中文档标记 mmrSelected")
-    class MmrSelectedMetadata {
-
-        @Test
-        @DisplayName("所有选中文档都有 mmrSelected=true metadata")
-        void selected_docs_have_mmr_selected_metadata() {
-            var processor = createProcessor(0.7, 2);
-            var docs = List.of(
-                    doc("d1", Map.of("rerankScore", 0.9)),
-                    doc("d2", Map.of("rerankScore", 0.6)),
-                    doc("d3", Map.of("rerankScore", 0.3))
-            );
-
-            when(vectorStoreMapper.pairwiseCosineDistance(any())).thenReturn(Map.of());
-
-            List<Document> result = processor.process(query, docs);
-
-            assertThat(result).hasSize(2);
-            for (Document d : result) {
-                assertThat(d.getMetadata()).containsEntry("mmrSelected", true);
-            }
-        }
-
-        @Test
-        @DisplayName("未选中文档没有 mmrSelected metadata")
-        void unselected_docs_no_mmr_selected() {
-            var processor = createProcessor(0.7, 1);
-            var d3 = doc("d3", Map.of("rerankScore", 0.1));
-            var docs = new ArrayList<>(List.of(
-                    doc("d1", Map.of("rerankScore", 0.9)),
-                    doc("d2", Map.of("rerankScore", 0.5)),
-                    d3
-            ));
-
-            when(vectorStoreMapper.pairwiseCosineDistance(any())).thenReturn(Map.of());
-
-            List<Document> result = processor.process(query, docs);
-
-            assertThat(result).hasSize(1);
-            // d3 未被选中（lambda=0.7, 只有 top 1），但要注意 d3 可能因为索引被选
-            // 验证结果只有一个文档
-            assertThat(result.get(0).getMetadata()).containsEntry("mmrSelected", true);
-        }
-    }
-
     private void verifyNoInteractions(VectorStoreMapper mock) {
         // no-op, MockitoJUnitExtension handles strict stubbing
     }

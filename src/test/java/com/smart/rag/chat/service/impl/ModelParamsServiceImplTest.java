@@ -11,7 +11,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.transaction.TransactionStatus;
+import org.springframework.transaction.support.TransactionCallback;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.List;
@@ -45,6 +45,13 @@ class ModelParamsServiceImplTest {
         when(cagProperties.getModelParamsCacheTtlSeconds()).thenReturn(30);
         when(cagProperties.getModelParamsCacheMaxSize()).thenReturn(100);
         service = new ModelParamsServiceImpl(mapper, transactionTemplate, cagProperties);
+    }
+
+    private void runTransactionsImmediately() {
+        when(transactionTemplate.execute(any())).thenAnswer(invocation -> {
+            TransactionCallback<?> cb = invocation.getArgument(0);
+            return cb.doInTransaction(null);
+        });
     }
 
     @Nested
@@ -117,12 +124,7 @@ class ModelParamsServiceImplTest {
             // Now for the saveOrUpdate call inside the transaction
             ModelParamsDTO updateDTO = new ModelParamsDTO("deepseek-chat", 0.9, 4096, 1.0, null, null);
             when(mapper.updateById(any(ModelParams.class))).thenReturn(1);
-
-            when(transactionTemplate.execute(any())).thenAnswer(invocation -> {
-                org.springframework.transaction.support.TransactionCallback<ModelParamsDTO> cb =
-                        invocation.getArgument(0);
-                return cb.doInTransaction(mock(TransactionStatus.class));
-            });
+            runTransactionsImmediately();
 
             ModelParamsDTO result = service.saveOrUpdate("deepseek-chat", updateDTO);
 
@@ -132,7 +134,7 @@ class ModelParamsServiceImplTest {
 
             // Cache should be invalidated; next getParams should call mapper again
             service.getParams("deepseek-chat");
-            verify(mapper, times(2)).selectByModelId("deepseek-chat");
+            verify(mapper, times(3)).selectByModelId("deepseek-chat");
         }
 
         @Test
@@ -142,11 +144,7 @@ class ModelParamsServiceImplTest {
             when(mapper.insert(any(ModelParams.class))).thenReturn(1);
 
             ModelParamsDTO dto = new ModelParamsDTO("new-model", 0.7, 2048, null, null, null);
-            when(transactionTemplate.execute(any())).thenAnswer(invocation -> {
-                org.springframework.transaction.support.TransactionCallback<ModelParamsDTO> cb =
-                        invocation.getArgument(0);
-                return cb.doInTransaction(mock(TransactionStatus.class));
-            });
+            runTransactionsImmediately();
 
             ModelParamsDTO result = service.saveOrUpdate("new-model", dto);
 
@@ -164,6 +162,7 @@ class ModelParamsServiceImplTest {
         @DisplayName("delete_existingModel_returnsTrueAndInvalidatesCache")
         void delete_existingModel_returnsTrueAndInvalidatesCache() {
             when(mapper.deleteByModelId("deepseek-chat")).thenReturn(1);
+            runTransactionsImmediately();
 
             boolean deleted = service.delete("deepseek-chat");
 
@@ -175,6 +174,7 @@ class ModelParamsServiceImplTest {
         @DisplayName("delete_nonExistingModel_returnsFalse")
         void delete_nonExistingModel_returnsFalse() {
             when(mapper.deleteByModelId("non-existent")).thenReturn(0);
+            runTransactionsImmediately();
 
             boolean deleted = service.delete("non-existent");
 

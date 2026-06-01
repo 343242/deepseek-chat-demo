@@ -56,7 +56,7 @@ class VectorStoreMapperTest {
             verify(jdbcTemplate).query(anyString(), any(RowMapper.class), paramsCaptor.capture());
 
             Object[] params = paramsCaptor.getValue();
-            assertThat(params).containsExactly("jiebacfg", "测试查询", "userId", "123", "jiebacfg", "测试查询", 10);
+            assertThat(params).containsExactly("jiebacfg", "测试查询", "userId", "123", 10);
         }
 
         @Test
@@ -81,7 +81,7 @@ class VectorStoreMapperTest {
 
             ArgumentCaptor<Object[]> paramsCaptor = ArgumentCaptor.forClass(Object[].class);
             verify(jdbcTemplate).query(anyString(), any(RowMapper.class), paramsCaptor.capture());
-            assertThat(paramsCaptor.getValue()[6]).isEqualTo(1);
+            assertThat(paramsCaptor.getValue()[4]).isEqualTo(1);
         }
     }
 

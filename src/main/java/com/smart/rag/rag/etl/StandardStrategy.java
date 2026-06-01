@@ -1,13 +1,21 @@
 package com.smart.rag.rag.etl;
 
+import com.smart.rag.common.concurrent.ExecutorMode;
+import com.smart.rag.common.concurrent.ScopeJoiner;
+import com.smart.rag.common.concurrent.ScopeOptions;
+import com.smart.rag.common.concurrent.ScopePolicy;
+import com.smart.rag.common.concurrent.ScopedTasks;
+import com.smart.rag.common.concurrent.TaskScope;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.document.Document;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.stereotype.Component;
 
-import java.util.*;
-import java.util.concurrent.CompletableFuture;
+import java.time.Duration;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ExecutorService;
 import java.util.stream.Collectors;
 
 /**
@@ -29,19 +37,22 @@ public class StandardStrategy implements EtlRouteStrategy {
     private final EtlStatusManager statusManager;
     private final ThreadPoolTaskExecutor ioExecutor;
     private final ThreadPoolTaskExecutor cpuExecutor;
+    private final ScopedTasks scopedTasks;
 
     public StandardStrategy(Extractor extractor,
                             Transformer transformer,
                             Loader loader,
                             EtlStatusManager statusManager,
                             ThreadPoolTaskExecutor etlIoExecutor,
-                            ThreadPoolTaskExecutor etlCpuExecutor) {
+                            ThreadPoolTaskExecutor etlCpuExecutor,
+                            ScopedTasks scopedTasks) {
         this.extractor = extractor;
         this.transformer = transformer;
         this.loader = loader;
         this.statusManager = statusManager;
         this.ioExecutor = etlIoExecutor;
         this.cpuExecutor = etlCpuExecutor;
+        this.scopedTasks = scopedTasks;
     }
 
     @Override
@@ -76,8 +87,9 @@ public class StandardStrategy implements EtlRouteStrategy {
     // ==================== Extract ====================
 
     private Map<Long, List<Document>> extractAll(List<EtlCandidate> candidates) {
-        List<CompletableFuture<ExtractOutput>> futures = candidates.stream()
-                .map(c -> CompletableFuture.supplyAsync(() -> {
+        try (TaskScope scope = openExternalScope("standard-extract", ioExecutor.getThreadPoolExecutor())) {
+            for (EtlCandidate c : candidates) {
+                scope.fork("extract-" + c.documentId(), () -> {
                     try {
                         statusManager.updateStatus(c.documentId(), EtlStatus.PARSING);
                         List<Document> docs = extractor.extract(c.bucket(), c.objectKey(), c.mimeType());
@@ -87,80 +99,74 @@ public class StandardStrategy implements EtlRouteStrategy {
                         statusManager.failDocument(c.documentId(), e);
                         return new ExtractOutput(c.documentId(), List.of(), e);
                     }
-                }, ioExecutor))
-                .toList();
+                });
+            }
 
-        joinAll(futures);
-
-        return futures.stream()
-                .map(CompletableFuture::join)
-                .filter(o -> o.error == null)
-                .collect(Collectors.toMap(ExtractOutput::documentId, ExtractOutput::documents));
+            return scope.join(ScopeJoiner.successfulResults(ExtractOutput.class)).stream()
+                    .filter(o -> o.error == null)
+                    .collect(Collectors.toMap(ExtractOutput::documentId, ExtractOutput::documents));
+        }
     }
 
     // ==================== Transform ====================
 
     private Map<Long, List<Document>> transformAll(List<EtlCandidate> candidates,
                                                     Map<Long, List<Document>> extractedMap) {
-        List<CompletableFuture<TransformOutput>> futures = candidates.stream()
-                .filter(c -> extractedMap.containsKey(c.documentId()))
-                .map(c -> CompletableFuture.supplyAsync(() -> {
-                    try {
-                        statusManager.updateStatus(c.documentId(), EtlStatus.CHUNKING);
-                        List<Document> chunks = transformer.transform(extractedMap.get(c.documentId()), c.fileName());
-                        String docIdStr = String.valueOf(c.documentId());
-                        String userIdStr = String.valueOf(c.userId());
-                        String teamIdStr = c.teamId() != null ? String.valueOf(c.teamId()) : null;
-                        for (Document chunk : chunks) {
-                            chunk.getMetadata().put("documentId", docIdStr);
-                            chunk.getMetadata().put("userId", userIdStr);
-                            if (teamIdStr != null) {
-                                chunk.getMetadata().put("teamId", teamIdStr);
+        try (TaskScope scope = openExternalScope("standard-transform", cpuExecutor.getThreadPoolExecutor())) {
+            candidates.stream()
+                    .filter(c -> extractedMap.containsKey(c.documentId()))
+                    .forEach(c -> scope.fork("transform-" + c.documentId(), () -> {
+                        try {
+                            statusManager.updateStatus(c.documentId(), EtlStatus.CHUNKING);
+                            List<Document> chunks = transformer.transform(extractedMap.get(c.documentId()), c.fileName());
+                            String docIdStr = String.valueOf(c.documentId());
+                            String userIdStr = String.valueOf(c.userId());
+                            String teamIdStr = c.teamId() != null ? String.valueOf(c.teamId()) : null;
+                            for (Document chunk : chunks) {
+                                chunk.getMetadata().put("documentId", docIdStr);
+                                chunk.getMetadata().put("userId", userIdStr);
+                                if (teamIdStr != null) {
+                                    chunk.getMetadata().put("teamId", teamIdStr);
+                                }
                             }
+                            return new TransformOutput(c.documentId(), chunks, null);
+                        } catch (Exception e) {
+                            log.error("Transform failed: id={}, file={}", c.documentId(), c.fileName(), e);
+                            statusManager.failDocument(c.documentId(), e);
+                            return new TransformOutput(c.documentId(), List.of(), e);
                         }
-                        return new TransformOutput(c.documentId(), chunks, null);
-                    } catch (Exception e) {
-                        log.error("Transform failed: id={}, file={}", c.documentId(), c.fileName(), e);
-                        statusManager.failDocument(c.documentId(), e);
-                        return new TransformOutput(c.documentId(), List.of(), e);
-                    }
-                }, cpuExecutor))
-                .toList();
+                    }));
 
-        joinAll(futures);
-
-        return futures.stream()
-                .map(CompletableFuture::join)
-                .filter(o -> o.error == null)
-                .collect(Collectors.toMap(TransformOutput::documentId, TransformOutput::chunks));
+            return scope.join(ScopeJoiner.successfulResults(TransformOutput.class)).stream()
+                    .filter(o -> o.error == null)
+                    .collect(Collectors.toMap(TransformOutput::documentId, TransformOutput::chunks));
+        }
     }
 
     // ==================== Load ====================
 
     private Map<Long, Integer> loadAll(List<EtlCandidate> candidates,
                                         Map<Long, List<Document>> chunkMap) {
-        List<CompletableFuture<LoadOutput>> futures = candidates.stream()
-                .filter(c -> chunkMap.containsKey(c.documentId()))
-                .map(c -> CompletableFuture.supplyAsync(() -> {
-                    try {
-                        statusManager.updateStatus(c.documentId(), EtlStatus.VECTORIZING);
-                        List<Document> chunks = chunkMap.get(c.documentId());
-                        loader.load(chunks);
-                        statusManager.completeDocument(c.documentId(), chunks.size());
-                        return new LoadOutput(c.documentId(), chunks.size(), null);
-                    } catch (Exception e) {
-                        log.error("Load failed: id={}, file={}", c.documentId(), c.fileName(), e);
-                        statusManager.failDocument(c.documentId(), e);
-                        return new LoadOutput(c.documentId(), 0, e);
-                    }
-                }, ioExecutor))
-                .toList();
+        try (TaskScope scope = openExternalScope("standard-load", ioExecutor.getThreadPoolExecutor())) {
+            candidates.stream()
+                    .filter(c -> chunkMap.containsKey(c.documentId()))
+                    .forEach(c -> scope.fork("load-" + c.documentId(), () -> {
+                        try {
+                            statusManager.updateStatus(c.documentId(), EtlStatus.VECTORIZING);
+                            List<Document> chunks = chunkMap.get(c.documentId());
+                            loader.load(chunks);
+                            statusManager.completeDocument(c.documentId(), chunks.size());
+                            return new LoadOutput(c.documentId(), chunks.size(), null);
+                        } catch (Exception e) {
+                            log.error("Load failed: id={}, file={}", c.documentId(), c.fileName(), e);
+                            statusManager.failDocument(c.documentId(), e);
+                            return new LoadOutput(c.documentId(), 0, e);
+                        }
+                    }));
 
-        joinAll(futures);
-
-        return futures.stream()
-                .map(CompletableFuture::join)
-                .collect(Collectors.toMap(LoadOutput::documentId, LoadOutput::chunkCount));
+            return scope.join(ScopeJoiner.successfulResults(LoadOutput.class)).stream()
+                    .collect(Collectors.toMap(LoadOutput::documentId, LoadOutput::chunkCount));
+        }
     }
 
     // ==================== 结果汇总 ====================
@@ -182,13 +188,14 @@ public class StandardStrategy implements EtlRouteStrategy {
         return EtlResult.success(c.documentId(), chunkCount);
     }
 
-    /**
-     * 等待所有 Future 完成（不吞异常，异常由各阶段内部处理）
-     */
-    private void joinAll(List<? extends CompletableFuture<?>> futures) {
-        CompletableFuture.allOf(futures.toArray(CompletableFuture[]::new))
-                .orTimeout(5, java.util.concurrent.TimeUnit.MINUTES)
-                .join();
+    private TaskScope openExternalScope(String name, ExecutorService executor) {
+        ScopeOptions options = ScopeOptions.builder(name)
+                .policy(ScopePolicy.COLLECT_ALL)
+                .executorMode(ExecutorMode.SHARED_EXECUTOR)
+                .executorOwnedByScope(false)
+                .defaultTimeout(Duration.ofMinutes(5))
+                .build();
+        return scopedTasks.open(name, options, executor);
     }
 
     private record ExtractOutput(Long documentId, List<Document> documents, Exception error) {}

@@ -1,5 +1,11 @@
 package com.smart.rag.rag.etl;
 
+import com.smart.rag.common.concurrent.ExecutorMode;
+import com.smart.rag.common.concurrent.ScopeJoiner;
+import com.smart.rag.common.concurrent.ScopeOptions;
+import com.smart.rag.common.concurrent.ScopePolicy;
+import com.smart.rag.common.concurrent.ScopedTasks;
+import com.smart.rag.common.concurrent.TaskScope;
 import com.smart.rag.rag.config.EtlFastTrackProperties;
 import com.smart.rag.rag.mapper.VectorStoreMapper;
 import org.jspecify.annotations.Nullable;
@@ -9,10 +15,14 @@ import org.springframework.ai.document.Document;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.stereotype.Component;
 
-import java.util.*;
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.ExecutorService;
 import java.util.stream.Collectors;
 
 /**
@@ -42,6 +52,7 @@ public class FastTrackStrategy implements EtlRouteStrategy {
     private final VectorStoreMapper vectorStoreMapper;
     private final ThreadPoolTaskExecutor ioExecutor;
     private final ThreadPoolTaskExecutor cpuExecutor;
+    private final ScopedTasks scopedTasks;
 
     /** 追踪进行中的异步向量化任务，支持优雅停机 */
     private final Set<CompletableFuture<?>> activeAsyncTasks = ConcurrentHashMap.newKeySet();
@@ -53,7 +64,8 @@ public class FastTrackStrategy implements EtlRouteStrategy {
                              EtlFastTrackProperties fastTrackProperties,
                              VectorStoreMapper vectorStoreMapper,
                              ThreadPoolTaskExecutor etlIoExecutor,
-                             ThreadPoolTaskExecutor etlCpuExecutor) {
+                             ThreadPoolTaskExecutor etlCpuExecutor,
+                             ScopedTasks scopedTasks) {
         this.extractor = extractor;
         this.transformer = transformer;
         this.loader = loader;
@@ -62,6 +74,7 @@ public class FastTrackStrategy implements EtlRouteStrategy {
         this.vectorStoreMapper = vectorStoreMapper;
         this.ioExecutor = etlIoExecutor;
         this.cpuExecutor = etlCpuExecutor;
+        this.scopedTasks = scopedTasks;
     }
 
     @Override
@@ -157,23 +170,28 @@ public class FastTrackStrategy implements EtlRouteStrategy {
      */
     private void asyncVectorize(EtlCandidate c, List<Document> docs) {
         CompletableFuture<Void> future = CompletableFuture
-                .supplyAsync(() -> {
-                    // CPU 池：Transform
-                    List<Document> chunks = transformer.transform(docs, c.fileName());
-                    String docIdStr = String.valueOf(c.documentId());
-                    String userIdStr = String.valueOf(c.userId());
-                    String teamIdStr = c.teamId() != null ? String.valueOf(c.teamId()) : null;
-                    for (Document chunk : chunks) {
-                        chunk.getMetadata().put("documentId", docIdStr);
-                        chunk.getMetadata().put("userId", userIdStr);
-                        if (teamIdStr != null) {
-                            chunk.getMetadata().put("teamId", teamIdStr);
-                        }
+                .runAsync(() -> {
+                    List<Document> chunks;
+                    try (TaskScope scope = openExternalScope("fast-track-vectorize", cpuExecutor.getThreadPoolExecutor())) {
+                        scope.fork("transform-" + c.documentId(), () -> {
+                            List<Document> transformed = transformer.transform(docs, c.fileName());
+                            String docIdStr = String.valueOf(c.documentId());
+                            String userIdStr = String.valueOf(c.userId());
+                            String teamIdStr = c.teamId() != null ? String.valueOf(c.teamId()) : null;
+                            for (Document chunk : transformed) {
+                                chunk.getMetadata().put("documentId", docIdStr);
+                                chunk.getMetadata().put("userId", userIdStr);
+                                if (teamIdStr != null) {
+                                    chunk.getMetadata().put("teamId", teamIdStr);
+                                }
+                            }
+                            return transformed;
+                        });
+                        chunks = scope.join(ScopeJoiner.successfulResults(List.class)).stream()
+                                .flatMap(List::stream)
+                                .toList();
                     }
-                    return chunks;
-                }, cpuExecutor)
-                .thenAcceptAsync(chunks -> {
-                    // IO 池：Load
+
                     loader.load(chunks);
                     vectorStoreMapper.deleteFastTrackRows(c.documentId());
                     statusManager.updateChunkCount(c.documentId(), chunks.size());
@@ -192,8 +210,9 @@ public class FastTrackStrategy implements EtlRouteStrategy {
     // ==================== Extract ====================
 
     private Map<Long, List<Document>> extractAll(List<EtlCandidate> candidates) {
-        List<CompletableFuture<ExtractOutput>> futures = candidates.stream()
-                .map(c -> CompletableFuture.supplyAsync(() -> {
+        try (TaskScope scope = openExternalScope("fast-track-extract", ioExecutor.getThreadPoolExecutor())) {
+            for (EtlCandidate c : candidates) {
+                scope.fork("extract-" + c.documentId(), () -> {
                     try {
                         statusManager.updateStatus(c.documentId(), EtlStatus.PARSING);
                         List<Document> docs = extractor.extract(c.bucket(), c.objectKey(), c.mimeType());
@@ -203,17 +222,23 @@ public class FastTrackStrategy implements EtlRouteStrategy {
                         statusManager.failDocument(c.documentId(), e);
                         return new ExtractOutput(c.documentId(), null);
                     }
-                }, ioExecutor))
-                .toList();
+                });
+            }
 
-        CompletableFuture.allOf(futures.toArray(CompletableFuture[]::new))
-                .orTimeout(5, TimeUnit.MINUTES)
-                .join();
+            return scope.join(ScopeJoiner.successfulResults(ExtractOutput.class)).stream()
+                    .filter(o -> o.documents != null)
+                    .collect(Collectors.toMap(ExtractOutput::documentId, ExtractOutput::documents));
+        }
+    }
 
-        return futures.stream()
-                .map(CompletableFuture::join)
-                .filter(o -> o.documents != null)
-                .collect(Collectors.toMap(ExtractOutput::documentId, ExtractOutput::documents));
+    private TaskScope openExternalScope(String name, ExecutorService executor) {
+        ScopeOptions options = ScopeOptions.builder(name)
+                .policy(ScopePolicy.COLLECT_ALL)
+                .executorMode(ExecutorMode.SHARED_EXECUTOR)
+                .executorOwnedByScope(false)
+                .defaultTimeout(Duration.ofMinutes(5))
+                .build();
+        return scopedTasks.open(name, options, executor);
     }
 
     private record ExtractOutput(Long documentId, List<Document> documents) {}

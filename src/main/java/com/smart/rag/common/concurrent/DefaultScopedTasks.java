@@ -10,6 +10,7 @@ import com.smart.rag.common.concurrent.executor.ScopeExecutorFactory;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.ExecutorService;
 
 public final class DefaultScopedTasks implements ScopedTasks {
 
@@ -55,11 +56,16 @@ public final class DefaultScopedTasks implements ScopedTasks {
 
     @Override
     public TaskScope open(String name, ScopeOptions options) {
+        return open(name, options, executorFactory.create(options));
+    }
+
+    @Override
+    public TaskScope open(String name, ScopeOptions options, ExecutorService executor) {
         if (!name.equals(options.name())) {
             throw new ScopeViolationException("scope name and options.name must match");
         }
         ScopeNestingGuard.ensureOpenAllowed(name);
-        return new DefaultTaskScope(options, executorFactory.create(options), carriers(options), scopeObserver);
+        return new DefaultTaskScope(options, executor, carriers(options), scopeObserver);
     }
 
     private List<ContextCarrier<?>> carriers(ScopeOptions options) {

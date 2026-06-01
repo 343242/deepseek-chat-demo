@@ -190,6 +190,33 @@ class DefaultScopedTasksPhase3Test {
         }
 
         @Test
+        @DisplayName("open with external executor creates non-owned shared scope")
+        void openWithExternalExecutor_createsNonOwnedSharedScope() {
+            ExecutorService executor = Executors.newSingleThreadExecutor();
+            ScopedTasks scopedTasks = new DefaultScopedTasks();
+
+            try {
+                ScopeOptions options = ScopeOptions.builder("external")
+                        .policy(ScopePolicy.COLLECT_ALL)
+                        .executorMode(ExecutorMode.SHARED_EXECUTOR)
+                        .executorOwnedByScope(false)
+                        .build();
+
+                try (TaskScope scope = scopedTasks.open("external", options, executor)) {
+                    Subtask<String> task = scope.fork("value", () -> "ok");
+
+                    scope.join();
+
+                    assertThat(task.result()).isEqualTo("ok");
+                }
+
+                assertThat(executor.isShutdown()).isFalse();
+            } finally {
+                executor.shutdownNow();
+            }
+        }
+
+        @Test
         @DisplayName("factory close waits for shared executor using subsecond closeTimeout")
         void factoryClose_waitsForSharedExecutorWithSubsecondTimeout() throws Exception {
             ScopedTaskProperties properties = new ScopedTaskProperties();

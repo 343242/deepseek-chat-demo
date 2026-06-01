@@ -1,7 +1,11 @@
 package com.smart.rag.rag.evaluation.dataset;
 
 import com.smart.rag.common.util.JsonExtractor;
-import com.smart.rag.config.NamedThreadFactory;
+import com.smart.rag.common.concurrent.ScopeJoiner;
+import com.smart.rag.common.concurrent.ScopeOptions;
+import com.smart.rag.common.concurrent.ScopePolicy;
+import com.smart.rag.common.concurrent.ScopedTasks;
+import com.smart.rag.common.concurrent.TaskScope;
 import com.smart.rag.rag.evaluation.config.EvaluationProperties;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -12,17 +16,13 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 import org.springframework.context.annotation.Profile;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.concurrent.ArrayBlockingQueue;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.ThreadPoolExecutor;
-import java.util.concurrent.TimeUnit;
 
 /**
  * LLM 自动生成评估数据集
@@ -42,17 +42,20 @@ public class DatasetGenerator {
     private final EvaluationProperties props;
     private final DatasetRepository datasetRepo;
     private final ObjectMapper objectMapper;
+    private final ScopedTasks scopedTasks;
 
     public DatasetGenerator(JdbcTemplate jdbc,
                             ChatClient.Builder chatClientBuilder,
                             EvaluationProperties props,
                             DatasetRepository datasetRepo,
-                            ObjectMapper objectMapper) {
+                            ObjectMapper objectMapper,
+                            ScopedTasks scopedTasks) {
         this.jdbc = jdbc;
         this.chatClientBuilder = chatClientBuilder;
         this.props = props;
         this.datasetRepo = datasetRepo;
         this.objectMapper = objectMapper;
+        this.scopedTasks = scopedTasks;
     }
 
     /**
@@ -88,22 +91,20 @@ public class DatasetGenerator {
         // 3. 对每个 chunk 并发生成问题（最大并发数从配置读取）
         ChatClient chatClient = chatClientBuilder.build();
         int concurrency = props.getRunner().getConcurrency();
-        ExecutorService executor = new ThreadPoolExecutor(
-                concurrency, concurrency, 60L, TimeUnit.SECONDS,
-                new ArrayBlockingQueue<>(concurrency * 10),
-                new NamedThreadFactory("eval-dataset"),
-                new ThreadPoolExecutor.CallerRunsPolicy());
+        ScopeOptions options = ScopeOptions.builder("dataset-generate")
+                .policy(ScopePolicy.COLLECT_ALL)
+                .maxConcurrency(concurrency)
+                .defaultTimeout(Duration.ofMinutes(10))
+                .build();
 
-        try {
-            List<CompletableFuture<List<EvaluationDatasetItem>>> futures = new ArrayList<>();
-            int[] seqCounter = {0};
-
+        try (TaskScope scope = scopedTasks.open("dataset-generate", options)) {
+            int seq = 0;
             for (Map<String, Object> chunk : chunks) {
                 String chunkId = String.valueOf(chunk.get("id"));
                 String content = (String) chunk.get("content");
-                int seq = seqCounter[0]++;
+                int itemSeq = seq++;
 
-                futures.add(CompletableFuture.supplyAsync(() -> {
+                scope.fork("generate-questions-" + chunkId, () -> {
                     try {
                         List<GeneratedQuestion> questions = generateQuestions(chatClient, content);
                         List<EvaluationDatasetItem> items = new ArrayList<>();
@@ -111,22 +112,21 @@ public class DatasetGenerator {
                             items.add(new EvaluationDatasetItem(
                                     null, datasetId, q.question(), q.groundTruthAnswer(),
                                     new HashSet<>(List.of(chunkId)), content,
-                                    List.of(q.difficulty(), q.tag()), null, seq));
+                                    List.of(q.difficulty(), q.tag()), null, itemSeq));
                         }
                         return items;
                     } catch (Exception e) {
                         log.error("Failed to generate questions for chunk {}: {}", chunkId, e.getMessage(), e);
                         return Collections.<EvaluationDatasetItem>emptyList();
                     }
-                }, executor));
+                });
             }
 
-            CompletableFuture.allOf(futures.toArray(CompletableFuture[]::new))
-                    .orTimeout(10, TimeUnit.MINUTES)
-                    .join();
+            @SuppressWarnings("unchecked")
+            List<List<EvaluationDatasetItem>> generatedItems = (List<List<EvaluationDatasetItem>>) (List<?>)
+                    scope.join(ScopeJoiner.successfulResults(List.class));
 
-            List<EvaluationDatasetItem> allItems = futures.stream()
-                    .map(CompletableFuture::join)
+            List<EvaluationDatasetItem> allItems = generatedItems.stream()
                     .flatMap(List::stream)
                     .filter(Objects::nonNull)
                     .toList();
@@ -143,8 +143,6 @@ public class DatasetGenerator {
 
             log.info("Generated dataset '{}' with {} items", name, allItems.size());
             return dataset;
-        } finally {
-            executor.shutdown();
         }
     }
 

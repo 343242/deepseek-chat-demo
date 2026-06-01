@@ -10,6 +10,8 @@ import com.smart.rag.chat.dto.FallbackMeta;
 import com.smart.rag.infrastructure.fallback.ChatFallbackProperties;
 import com.smart.rag.infrastructure.fallback.FallbackChainProvider;
 import com.smart.rag.infrastructure.fallback.FallbackEligibility;
+import com.smart.rag.infrastructure.fallback.ModelCircuitOpenException;
+import com.smart.rag.infrastructure.fallback.ModelCircuitBreakerRegistry;
 import com.smart.rag.infrastructure.fallback.StreamRetryHandler;
 import com.smart.rag.chat.mode.ChatModeStrategy;
 import com.smart.rag.chat.mode.ModeRouter;
@@ -17,6 +19,7 @@ import com.smart.rag.infrastructure.provider.ModelRouter;
 import com.smart.rag.chat.service.ChatConversationHelper;
 import com.smart.rag.chat.service.ChatService;
 import com.smart.rag.chat.service.ChatUsageTracker;
+import com.smart.rag.chat.service.SseStreamBridge;
 import com.smart.rag.chat.service.StrategyExecuteResult;
 import com.smart.rag.chat.service.StrategyExecutionContext;
 import com.smart.rag.infrastructure.exception.errorcode.ErrorCode;
@@ -29,7 +32,9 @@ import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.stereotype.Service;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.SignalType;
 
 import java.util.List;
 import java.util.Map;
@@ -52,6 +57,8 @@ public class ChatServiceImpl implements ChatService {
     private final FallbackChainProvider fallbackChainProvider;
     private final FallbackEligibility fallbackEligibility;
     private final StreamRetryHandler streamRetryHandler;
+    private final ModelCircuitBreakerRegistry circuitBreakers;
+    private final SseStreamBridge sseStreamBridge;
     private final RequestContextManager cagContextManager;
     private final CagProperties cagProperties;
 
@@ -64,6 +71,8 @@ public class ChatServiceImpl implements ChatService {
                            FallbackChainProvider fallbackChainProvider,
                            FallbackEligibility fallbackEligibility,
                            StreamRetryHandler streamRetryHandler,
+                           ModelCircuitBreakerRegistry circuitBreakers,
+                           SseStreamBridge sseStreamBridge,
                            RequestContextManager cagContextManager,
                            CagProperties cagProperties) {
         this.registry = registry;
@@ -75,6 +84,8 @@ public class ChatServiceImpl implements ChatService {
         this.fallbackChainProvider = fallbackChainProvider;
         this.fallbackEligibility = fallbackEligibility;
         this.streamRetryHandler = streamRetryHandler;
+        this.circuitBreakers = circuitBreakers;
+        this.sseStreamBridge = sseStreamBridge;
         this.cagContextManager = cagContextManager;
         this.cagProperties = cagProperties;
     }
@@ -93,6 +104,10 @@ public class ChatServiceImpl implements ChatService {
         for (int i = 0; i < chain.size(); i++) {
             String candidateModel = chain.get(i);
             boolean isFallback = i > 0;
+            if (!circuitBreakers.isCallAllowed(candidateModel)) {
+                log.warn("Skipping model '{}' because circuit breaker is open", candidateModel);
+                continue;
+            }
 
             try {
                 ChatRequest candidateRequest = isFallback
@@ -104,6 +119,7 @@ public class ChatServiceImpl implements ChatService {
                         : null;
 
                 ChatResponse response = doChat(candidateRequest, meta);
+                circuitBreakers.recordSuccess(candidateModel);
 
                 if (isFallback) {
                     log.info("Fallback succeeded: '{}' -> '{}' (attempt {}/{})",
@@ -114,6 +130,7 @@ public class ChatServiceImpl implements ChatService {
                 if (!fallbackEligibility.isEligible(e)) {
                     throw e;
                 }
+                circuitBreakers.recordFailure(candidateModel);
                 lastException = e;
                 log.warn("Chat attempt {}/{} failed for model '{}': {}",
                         i + 1, chain.size(), candidateModel, e.getMessage());
@@ -128,7 +145,14 @@ public class ChatServiceImpl implements ChatService {
     // ==================== 流式聊天 ====================
 
     @Override
-    public Flux<String> chatStream(ChatRequest request) {
+    public SseEmitter chatStream(ChatRequest request) {
+        Flux<String> stream = fallbackProperties.enabled()
+                ? fallbackStream(request)
+                : doStream(request.model(), request);
+        return sseStreamBridge.bridge(stream);
+    }
+
+    private Flux<String> fallbackStream(ChatRequest request) {
         if (!fallbackProperties.enabled()) {
             return doStream(request.model(), request);
         }
@@ -137,6 +161,10 @@ public class ChatServiceImpl implements ChatService {
         String requestedModel = request.model();
 
         return streamRetryHandler.execute(chain, 0, 0, modelId -> {
+            if (!circuitBreakers.isCallAllowed(modelId)) {
+                log.warn("Skipping stream model '{}' because circuit breaker is open", modelId);
+                return Flux.error(new ModelCircuitOpenException(modelId));
+            }
             boolean isFallback = !modelId.equals(requestedModel);
             ChatRequest candidateRequest = isFallback
                     ? request.withModel(modelId)
@@ -146,7 +174,18 @@ public class ChatServiceImpl implements ChatService {
                 log.info("Stream fallback: '{}' -> '{}'", requestedModel, modelId);
             }
 
-            return doStream(modelId, candidateRequest);
+            return doStream(modelId, candidateRequest)
+                    .doOnComplete(() -> circuitBreakers.recordSuccess(modelId))
+                    .doOnError(e -> {
+                        if (fallbackEligibility.isEligible(e)) {
+                            circuitBreakers.recordFailure(modelId);
+                        }
+                    })
+                    .doFinally(signal -> {
+                        if (signal == SignalType.CANCEL) {
+                            circuitBreakers.releaseProbe(modelId);
+                        }
+                    });
         });
     }
 

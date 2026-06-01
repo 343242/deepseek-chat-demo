@@ -4,6 +4,7 @@ import com.smart.rag.infrastructure.model.ModelInfo;
 import com.smart.rag.infrastructure.model.ModelsResponse;
 import com.smart.rag.infrastructure.model.ModelOptionSettings;
 import com.smart.rag.config.MiniMaxProperties;
+import com.smart.rag.infrastructure.stream.ModelStreamRequest;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.model.ChatModel;
@@ -145,5 +146,20 @@ public class MiniMaxModelProvider extends AbstractModelProvider {
         if (options.presencePenalty() != null) builder.presencePenalty(options.presencePenalty());
 
         return builder.build();
+    }
+
+    @Override
+    public ModelStreamRequest createStreamRequest(ModelRouter.Route route,
+                                                  String prompt,
+                                                  ModelOptionSettings options) {
+        Double temperature = options != null && options.temperature() != null
+                ? options.temperature()
+                : properties.chat().temperature();
+        Integer maxTokens = options != null && options.maxTokens() != null
+                ? options.maxTokens()
+                : properties.chat().maxTokens();
+        return new ModelStreamRequest(
+                route, prompt, properties.baseUrl(), "/chat/completions",
+                properties.apiKey(), temperature, maxTokens);
     }
 }

@@ -9,6 +9,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.web.client.RestClient;
+import okhttp3.OkHttpClient;
 
 import java.net.http.HttpClient;
 import java.time.Duration;
@@ -66,6 +67,21 @@ public class ModelProviderAutoConfiguration {
     @Bean("miniMaxRestClient")
     public RestClient miniMaxRestClient(MiniMaxProperties properties) {
         return buildProviderRestClient(properties.baseUrl(), properties.apiKey());
+    }
+
+    /**
+     * 模型流式调用专用 OkHttpClient。
+     * <p>
+     * readTimeout 为 0，避免长 SSE 流在正常生成过程中被客户端读超时截断。
+     */
+    @Bean
+    public OkHttpClient modelStreamOkHttpClient() {
+        return new OkHttpClient.Builder()
+                .connectTimeout(Duration.ofSeconds(10))
+                .writeTimeout(Duration.ofSeconds(30))
+                .readTimeout(Duration.ZERO)
+                .callTimeout(Duration.ZERO)
+                .build();
     }
 
     // ==================== Startup ====================

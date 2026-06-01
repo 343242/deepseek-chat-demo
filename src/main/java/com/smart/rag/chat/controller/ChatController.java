@@ -11,7 +11,7 @@ import org.springframework.http.MediaType;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.*;
-import reactor.core.publisher.Flux;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.List;
 
@@ -46,7 +46,7 @@ public class ChatController {
      * SSE 流式聊天 — 不走 GlobalResponse 包装，保持 text/event-stream 原样
      */
     @PostMapping(value = "/chat/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public Flux<String> chatStreamPost(@Valid @RequestBody ChatRequest request) {
+    public SseEmitter chatStreamPost(@Valid @RequestBody ChatRequest request) {
         return chatService.chatStream(request);
     }
 

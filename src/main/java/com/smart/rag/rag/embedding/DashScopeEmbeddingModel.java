@@ -9,9 +9,11 @@ import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.ai.embedding.EmbeddingRequest;
 import org.springframework.ai.embedding.EmbeddingResponse;
 import org.springframework.context.annotation.Primary;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
-import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.client.RestClient;
 
+import java.net.http.HttpClient;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
@@ -48,20 +50,27 @@ public class DashScopeEmbeddingModel implements EmbeddingModel {
             "/api/v1/services/embeddings/text-embedding/text-embedding";
 
     private final DashScopeEmbeddingProperties properties;
-    private final WebClient webClient;
+    private final RestClient restClient;
 
     /** 缓存的零向量（维度固定，复用避免重复创建） */
     private volatile float[] zeroVector;
 
-    public DashScopeEmbeddingModel(DashScopeEmbeddingProperties properties,
-                                   WebClient.Builder webClientBuilder) {
+    public DashScopeEmbeddingModel(DashScopeEmbeddingProperties properties) {
         this.properties = properties;
-        this.webClient = webClientBuilder
+        this.apiTimeout = Duration.ofSeconds(properties.getTimeoutSeconds());
+
+        JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(
+                HttpClient.newBuilder()
+                        .connectTimeout(Duration.ofSeconds(10))
+                        .build());
+        requestFactory.setReadTimeout(apiTimeout);
+
+        this.restClient = RestClient.builder()
                 .baseUrl(properties.getBaseUrl())
                 .defaultHeader("Authorization", "Bearer " + properties.getApiKey())
                 .defaultHeader("Content-Type", "application/json")
+                .requestFactory(requestFactory)
                 .build();
-        this.apiTimeout = Duration.ofSeconds(properties.getTimeoutSeconds());
         log.info("DashScopeEmbeddingModel initialized: model={}, dimensions={}, baseUrl={}, " +
                  "textType={}, instruct='{}', timeout={}s",
                 properties.getModel(), properties.getDimensions(), properties.getBaseUrl(),
@@ -211,13 +220,11 @@ public class DashScopeEmbeddingModel implements EmbeddingModel {
         Exception lastException = null;
         for (int attempt = 1; attempt <= MAX_RETRIES; attempt++) {
             try {
-                DashScopeEmbeddingApi.Response response = webClient.post()
+                DashScopeEmbeddingApi.Response response = restClient.post()
                         .uri(EMBEDDING_PATH)
-                        .bodyValue(request)
+                        .body(request)
                         .retrieve()
-                        .bodyToMono(DashScopeEmbeddingApi.Response.class)
-                        .timeout(apiTimeout)
-                        .block();
+                        .body(DashScopeEmbeddingApi.Response.class);
 
                 if (response == null) {
                     throw new RuntimeException("DashScope embedding API returned null response");

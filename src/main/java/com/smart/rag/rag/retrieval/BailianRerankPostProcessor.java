@@ -1,18 +1,17 @@
 package com.smart.rag.rag.retrieval;
 
 import com.smart.rag.config.NamedThreadFactory;
-import io.netty.channel.ChannelOption;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.rag.Query;
 import org.springframework.ai.rag.postretrieval.document.DocumentPostProcessor;
 import org.springframework.beans.factory.DisposableBean;
-import org.springframework.http.client.reactive.ReactorClientHttpConnector;
-import org.springframework.web.reactive.function.client.WebClient;
-import reactor.netty.http.client.HttpClient;
-import reactor.util.retry.Retry;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
+import org.springframework.web.client.RestClient;
+import org.springframework.web.client.RestClientResponseException;
 
+import java.net.http.HttpClient;
 import java.time.Duration;
 import java.util.*;
 import java.util.concurrent.*;
@@ -45,7 +44,6 @@ import java.util.stream.Collectors;
 public class BailianRerankPostProcessor implements DocumentPostProcessor, DisposableBean {
 
     private static final Logger log = LoggerFactory.getLogger(BailianRerankPostProcessor.class);
-    private static final Duration TIMEOUT = Duration.ofSeconds(30);
     private static final int MAX_RETRIES = 3;
     private static final Duration INITIAL_BACKOFF = Duration.ofMillis(500);
     private static final long RERANK_TIMEOUT_SECONDS = 15;
@@ -53,7 +51,7 @@ public class BailianRerankPostProcessor implements DocumentPostProcessor, Dispos
     /** 问答检索任务指令 */
     private static final String DEFAULT_INSTRUCT = "Given a web search query, retrieve relevant passages that answer the query.";
 
-    private final WebClient webClient;
+    private final RestClient restClient;
     private final String model;
     private final int topN;
 
@@ -64,15 +62,17 @@ public class BailianRerankPostProcessor implements DocumentPostProcessor, Dispos
         this.model = model;
         this.topN = topN;
 
-        HttpClient httpClient = HttpClient.create()
-                .option(ChannelOption.CONNECT_TIMEOUT_MILLIS, 5000)
-                .responseTimeout(Duration.ofSeconds(15)); // L1 修复：Netty 层读超时
+        JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(
+                HttpClient.newBuilder()
+                        .connectTimeout(Duration.ofSeconds(5))
+                        .build());
+        requestFactory.setReadTimeout(Duration.ofSeconds(15));
 
-        this.webClient = WebClient.builder()
+        this.restClient = RestClient.builder()
                 .baseUrl(baseUrl)
                 .defaultHeader("Authorization", "Bearer " + apiKey)
                 .defaultHeader("Content-Type", "application/json")
-                .clientConnector(new ReactorClientHttpConnector(httpClient))
+                .requestFactory(requestFactory)
                 .build();
 
         // 遵循项目线程池规约：全 7 参数 + NamedThreadFactory + CallerRunsPolicy
@@ -110,7 +110,7 @@ public class BailianRerankPostProcessor implements DocumentPostProcessor, Dispos
         try {
             Map<String, Object> requestBody = buildRequestBody(queryText, docTexts);
 
-            // H4 修复：在独立线程池中执行阻塞调用，避免占 Reactor 线程
+            // 在独立线程池中执行阻塞调用，避免占请求线程
             future = rerankExecutor.submit(() -> callWithRetry(requestBody));
 
             Map<String, Object> response = future.get(RERANK_TIMEOUT_SECONDS, TimeUnit.SECONDS);
@@ -136,7 +136,7 @@ public class BailianRerankPostProcessor implements DocumentPostProcessor, Dispos
             return reranked;
 
         } catch (TimeoutException e) {
-            // 超时后取消任务，释放线程池资源（mayInterruptIfRunning=true 中断 WebClient block）
+            // 超时后取消任务，释放线程池资源
             if (future != null) {
                 future.cancel(true);
             }
@@ -234,23 +234,40 @@ public class BailianRerankPostProcessor implements DocumentPostProcessor, Dispos
 
     /**
      * 带重试的 Rerank API 调用。
-     * 使用 Reactor retryWhen 实现指数退避：500ms → 1000ms → 2000ms。
+     * 使用同步 RestClient + 手动指数退避：500ms → 1000ms → 2000ms。
      */
     @SuppressWarnings("unchecked")
     private Map<String, Object> callWithRetry(Map<String, Object> requestBody) {
-        return webClient.post()
-                .uri("/reranks")
-                .bodyValue(requestBody)
-                .retrieve()
-                .bodyToMono(Map.class)
-                .timeout(TIMEOUT)
-                .retryWhen(Retry.backoff(MAX_RETRIES, INITIAL_BACKOFF)
-                        .maxBackoff(Duration.ofSeconds(2))
-                        .filter(this::isRetryable)
-                        .doBeforeRetry(signal ->
-                                log.warn("Rerank API call failed (attempt {}), retrying: {}",
-                                        signal.totalRetries() + 1, signal.failure().getMessage())))
-                .block();
+        RuntimeException last = null;
+        for (int attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+            try {
+                return restClient.post()
+                        .uri("/reranks")
+                        .body(requestBody)
+                        .retrieve()
+                        .body(Map.class);
+            } catch (RuntimeException e) {
+                last = e;
+                if (attempt >= MAX_RETRIES || !isRetryable(e)) {
+                    throw e;
+                }
+                sleepBeforeRetry(attempt, e);
+            }
+        }
+        throw last;
+    }
+
+    private void sleepBeforeRetry(int attempt, RuntimeException e) {
+        long backoffMs = Math.min(
+                INITIAL_BACKOFF.toMillis() * (1L << (attempt - 1)),
+                Duration.ofSeconds(2).toMillis());
+        log.warn("Rerank API call failed (attempt {}), retrying: {}", attempt, e.getMessage());
+        try {
+            Thread.sleep(backoffMs);
+        } catch (InterruptedException interrupted) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException("Rerank retry interrupted", interrupted);
+        }
     }
 
     private boolean isRetryable(Throwable t) {
@@ -260,14 +277,10 @@ public class BailianRerankPostProcessor implements DocumentPostProcessor, Dispos
     private boolean isRetryable0(Throwable t, int depth) {
         if (t == null || depth > 10) return false;
 
-        // 解包 Reactor retry 包装的异常
         Throwable e = t;
-        while (e != null && e.getClass().getName().startsWith("reactor.")) {
-            e = e.getCause();
-        }
         if (e == null) return false;
 
-        if (e instanceof org.springframework.web.reactive.function.client.WebClientResponseException webEx) {
+        if (e instanceof RestClientResponseException webEx) {
             var status = webEx.getStatusCode();
             return status == org.springframework.http.HttpStatus.TOO_MANY_REQUESTS
                     || status == org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE;

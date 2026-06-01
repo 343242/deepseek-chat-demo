@@ -14,7 +14,10 @@ import org.springframework.context.annotation.Configuration;
  * 和 {@link FallbackEligibility} 已通过 {@code @Component} 自动注册。
  */
 @Configuration
-@EnableConfigurationProperties(ChatFallbackProperties.class)
+@EnableConfigurationProperties({
+        ChatFallbackProperties.class,
+        ModelCircuitBreakerProperties.class
+})
 public class FallbackAutoConfiguration {
 
     @Bean

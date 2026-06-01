@@ -4,9 +4,11 @@ import com.smart.rag.chat.service.AdvisorChainContext;
 import com.smart.rag.chat.service.AdvisorInfrastructure;
 import com.smart.rag.chat.service.ChatRequestSpecFactory;
 import com.smart.rag.chat.service.ChatUsageTracker;
+import com.smart.rag.chat.service.ModelStreamRequestFactory;
 import com.smart.rag.chat.service.ModeChainResult;
 import com.smart.rag.chat.service.StrategyExecuteResult;
 import com.smart.rag.chat.service.StrategyExecutionContext;
+import com.smart.rag.infrastructure.stream.OkHttpSseModelStreamClient;
 import org.springframework.ai.chat.client.advisor.api.Advisor;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.model.Generation;
@@ -16,7 +18,6 @@ import reactor.core.publisher.Flux;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * SIMPLE 模式策略 -- 单轮对话，无记忆、无上下文
@@ -27,13 +28,19 @@ public class SimpleModeStrategy implements ChatModeStrategy {
     private final AdvisorInfrastructure infra;
     private final ChatRequestSpecFactory requestSpecFactory;
     private final ChatUsageTracker usageTracker;
+    private final ModelStreamRequestFactory streamRequestFactory;
+    private final OkHttpSseModelStreamClient streamClient;
 
     public SimpleModeStrategy(AdvisorInfrastructure infra,
                               ChatRequestSpecFactory requestSpecFactory,
-                              ChatUsageTracker usageTracker) {
+                              ChatUsageTracker usageTracker,
+                              ModelStreamRequestFactory streamRequestFactory,
+                              OkHttpSseModelStreamClient streamClient) {
         this.infra = infra;
         this.requestSpecFactory = requestSpecFactory;
         this.usageTracker = usageTracker;
+        this.streamRequestFactory = streamRequestFactory;
+        this.streamClient = streamClient;
     }
 
     @Override
@@ -76,43 +83,17 @@ public class SimpleModeStrategy implements ChatModeStrategy {
 
     @Override
     public Flux<String> executeStream(StrategyExecutionContext ctx) {
-        AdvisorChainContext chainCtx = new AdvisorChainContext(
-            ctx.conversationId(), ctx.request(), ctx.userId(),
-            ctx.cagContext(), ctx.route());
-        ModeChainResult result = buildAdvisorChain(chainCtx);
-
-        AtomicReference<ChatResponse> lastAiResponse = new AtomicReference<>();
-        StringBuilder collectedContent = new StringBuilder();
-        final int maxContentLength = 1 << 20;
         AtomicBoolean usageRecorded = new AtomicBoolean(false);
 
-        return requestSpecFactory.createSpec(
-            ctx.chatClient(), ctx.route(), ctx.request(),
-            ctx.conversationId(), result.chain(), ctx.cagContext()
-        )
-        .stream()
-        .chatResponse()
-        .mapNotNull(aiResponse -> {
-            lastAiResponse.set(aiResponse);
-            Generation gen = aiResponse.getResult();
-            if (gen == null || gen.getOutput() == null) {
-                return null;
-            }
-            String text = gen.getOutput().getText();
-            if (text != null && collectedContent.length() < maxContentLength) {
-                int remaining = maxContentLength - collectedContent.length();
-                collectedContent.append(text, 0, Math.min(text.length(), remaining));
-            }
-            return text;
-        })
-        .doFinally(signal -> {
-            // SIMPLE: 不持久化消息
+        return streamClient.stream(streamRequestFactory.create(ctx.route(), ctx.request()))
+                .doFinally(signal -> {
+                    // SIMPLE: 不持久化消息
 
-            // usage 记录 -- 所有信号都执行
-            if (usageRecorded.compareAndSet(false, true)) {
-                recordUsage(usageTracker, ctx, lastAiResponse.get());
-            }
-        });
+                    // OkHttp SSE 不返回最终 Spring AI ChatResponse，usage 降级为耗时记录
+                    if (usageRecorded.compareAndSet(false, true)) {
+                        recordUsage(usageTracker, ctx, null);
+                    }
+                });
     }
 
     /**

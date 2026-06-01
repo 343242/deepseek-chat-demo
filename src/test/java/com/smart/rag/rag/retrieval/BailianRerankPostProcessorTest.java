@@ -6,7 +6,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.rag.Query;
-import org.springframework.web.reactive.function.client.WebClientResponseException;
+import org.springframework.web.client.RestClientResponseException;
 
 import java.lang.reflect.Method;
 import java.net.ConnectException;
@@ -19,7 +19,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * BailianRerankPostProcessor 单元测试
  * <p>
- * 由于 WebClient 在构造器中直接创建，无法方便地 mock 链式调用。
+ * 由于 RestClient 在构造器中直接创建，无法方便地 mock 链式调用。
  * 因此重点测试：
  * 1. 空/null 输入处理
  * 2. isRetryable 方法（通过反射访问 private 方法）
@@ -84,8 +84,8 @@ class BailianRerankPostProcessorTest {
         @Test
         @DisplayName("429 Too Many Requests 可重试")
         void retryable_on_429() throws Exception {
-            var ex = WebClientResponseException.create(
-                    429, "Too Many Requests", null, null, null);
+            var ex = new RestClientResponseException(
+                    "Too Many Requests", 429, "Too Many Requests", null, null, null);
             boolean result = (boolean) isRetryableMethod.invoke(processor, ex);
             assertThat(result).isTrue();
         }
@@ -93,8 +93,8 @@ class BailianRerankPostProcessorTest {
         @Test
         @DisplayName("503 Service Unavailable 可重试")
         void retryable_on_503() throws Exception {
-            var ex = WebClientResponseException.create(
-                    503, "Service Unavailable", null, null, null);
+            var ex = new RestClientResponseException(
+                    "Service Unavailable", 503, "Service Unavailable", null, null, null);
             boolean result = (boolean) isRetryableMethod.invoke(processor, ex);
             assertThat(result).isTrue();
         }
@@ -118,8 +118,8 @@ class BailianRerankPostProcessorTest {
         @Test
         @DisplayName("400 Bad Request 不可重试")
         void not_retryable_on_400() throws Exception {
-            var ex = WebClientResponseException.create(
-                    400, "Bad Request", null, null, null);
+            var ex = new RestClientResponseException(
+                    "Bad Request", 400, "Bad Request", null, null, null);
             boolean result = (boolean) isRetryableMethod.invoke(processor, ex);
             assertThat(result).isFalse();
         }
@@ -127,8 +127,8 @@ class BailianRerankPostProcessorTest {
         @Test
         @DisplayName("500 Internal Server Error 不可重试")
         void not_retryable_on_500() throws Exception {
-            var ex = WebClientResponseException.create(
-                    500, "Internal Server Error", null, null, null);
+            var ex = new RestClientResponseException(
+                    "Internal Server Error", 500, "Internal Server Error", null, null, null);
             boolean result = (boolean) isRetryableMethod.invoke(processor, ex);
             assertThat(result).isFalse();
         }

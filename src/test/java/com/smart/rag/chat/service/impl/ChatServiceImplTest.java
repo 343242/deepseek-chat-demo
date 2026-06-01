@@ -6,9 +6,11 @@ import com.smart.rag.chat.context.RequestContextManager;
 import com.smart.rag.chat.dto.ChatRequest;
 import com.smart.rag.chat.dto.ChatResponse;
 import com.smart.rag.infrastructure.fallback.ChatFallbackProperties;
+import com.smart.rag.infrastructure.fallback.ModelCircuitBreakerRegistry;
 import com.smart.rag.infrastructure.fallback.FallbackChainProvider;
 import com.smart.rag.infrastructure.fallback.FallbackEligibility;
 import com.smart.rag.infrastructure.fallback.StreamRetryHandler;
+import com.smart.rag.chat.service.SseStreamBridge;
 import com.smart.rag.chat.mode.ChatMode;
 import com.smart.rag.chat.mode.ChatModeStrategy;
 import com.smart.rag.chat.mode.ModeRouter;
@@ -56,6 +58,8 @@ class ChatServiceImplTest {
     @Mock private FallbackChainProvider fallbackChainProvider;
     @Mock private FallbackEligibility fallbackEligibility;
     @Mock private StreamRetryHandler streamRetryHandler;
+    @Mock private ModelCircuitBreakerRegistry circuitBreakers;
+    @Mock private SseStreamBridge sseStreamBridge;
     @Mock private RequestContextManager cagContextManager;
     @Mock private CagProperties cagProperties;
     @Mock private ChatClient chatClient;
@@ -73,7 +77,7 @@ class ChatServiceImplTest {
         return new ChatServiceImpl(
                 registry, modelRouter, modeRouter, usageTracker, conversationHelper,
                 fallbackProperties, fallbackChainProvider, fallbackEligibility,
-                streamRetryHandler, cagContextManager, cagProperties);
+                streamRetryHandler, circuitBreakers, sseStreamBridge, cagContextManager, cagProperties);
     }
 
     private void setupCommonMocks(ChatRequest request) {
@@ -84,12 +88,28 @@ class ChatServiceImplTest {
         when(modeRouter.route(request.mode())).thenReturn(modeStrategy);
         when(modeStrategy.getMode()).thenReturn(ChatMode.SIMPLE);
 
-        ModelRouter.Route route = new ModelRouter.Route("deepseek", "deepseek-chat");
-        when(modelRouter.resolve(request.model())).thenReturn(route);
-        when(registry.get("deepseek/deepseek-chat")).thenReturn(chatClient);
+        setupModelMocks(request.model(), "deepseek", "deepseek-chat");
 
         doNothing().when(conversationHelper).ensureConversationExists(eq(USER_ID), eq(ISOLATED_CONV_ID), anyString());
         when(cagProperties.isEnabled()).thenReturn(false);
+    }
+
+    private void setupRequestContextOnly(ChatRequest request) {
+        securityUtilsMock.when(SecurityUtils::getCurrentUserId).thenReturn(USER_ID);
+        conversationIdUtilMock.when(() -> ConversationIdUtil.buildIsolatedId(USER_ID, RAW_CONV_ID))
+                .thenReturn(ISOLATED_CONV_ID);
+
+        when(modeRouter.route(request.mode())).thenReturn(modeStrategy);
+        when(modeStrategy.getMode()).thenReturn(ChatMode.SIMPLE);
+        doNothing().when(conversationHelper).ensureConversationExists(eq(USER_ID), eq(ISOLATED_CONV_ID), anyString());
+        when(cagProperties.isEnabled()).thenReturn(false);
+    }
+
+    private void setupModelMocks(String requestedModel, String providerId, String modelId) {
+        ModelRouter.Route route = new ModelRouter.Route(providerId, modelId);
+        String compositeId = providerId + "/" + modelId;
+        when(modelRouter.resolve(requestedModel)).thenReturn(route);
+        when(registry.get(compositeId)).thenReturn(chatClient);
     }
 
     private StrategyExecuteResult buildStandardResult(String content) {
@@ -153,12 +173,14 @@ class ChatServiceImplTest {
                     .thenReturn(buildStandardResult("OK"));
             when(fallbackProperties.enabled()).thenReturn(true);
             when(fallbackChainProvider.resolve(MODEL_ID)).thenReturn(List.of(MODEL_ID));
+            when(circuitBreakers.isCallAllowed(MODEL_ID)).thenReturn(true);
 
             ChatServiceImpl service = createService();
             ChatResponse response = service.chat(request);
 
             assertEquals("OK", response.content());
             assertNull(response.fallback());
+            verify(circuitBreakers).recordSuccess(MODEL_ID);
         }
 
         @Test
@@ -183,6 +205,8 @@ class ChatServiceImplTest {
             when(fallbackChainProvider.resolve(MODEL_ID))
                     .thenReturn(List.of(MODEL_ID, fallbackModel));
             when(fallbackEligibility.isEligible(any(RuntimeException.class))).thenReturn(true);
+            when(circuitBreakers.isCallAllowed(MODEL_ID)).thenReturn(true);
+            when(circuitBreakers.isCallAllowed(fallbackModel)).thenReturn(true);
 
             ChatServiceImpl service = createService();
             ChatResponse response = service.chat(request);
@@ -191,6 +215,37 @@ class ChatServiceImplTest {
             assertNotNull(response.fallback());
             assertEquals(MODEL_ID, response.fallback().requestedModel());
             assertTrue(response.fallback().fallback());
+            verify(circuitBreakers).recordFailure(MODEL_ID);
+            verify(circuitBreakers).recordSuccess(fallbackModel);
+        }
+
+        @Test
+        @DisplayName("chat_fallbackEnabled_openBreaker_skipsModelAndUsesNextCandidate")
+        void chat_fallbackEnabled_openBreaker_skipsModelAndUsesNextCandidate() {
+            securityUtilsMock = mockStatic(SecurityUtils.class);
+            conversationIdUtilMock = mockStatic(ConversationIdUtil.class);
+
+            ChatRequest request = new ChatRequest(MODEL_ID, "hello", RAW_CONV_ID, false, "SIMPLE", false, null);
+            String fallbackModel = "zhipu/glm-4-flash";
+            setupRequestContextOnly(request);
+            setupModelMocks(fallbackModel, "zhipu", "glm-4-flash");
+            when(modeStrategy.execute(any(StrategyExecutionContext.class)))
+                    .thenReturn(buildStandardResult("Fallback OK"));
+            when(fallbackProperties.enabled()).thenReturn(true);
+            when(fallbackChainProvider.resolve(MODEL_ID))
+                    .thenReturn(List.of(MODEL_ID, fallbackModel));
+            when(circuitBreakers.isCallAllowed(MODEL_ID)).thenReturn(false);
+            when(circuitBreakers.isCallAllowed(fallbackModel)).thenReturn(true);
+
+            ChatServiceImpl service = createService();
+            ChatResponse response = service.chat(request);
+
+            assertEquals("Fallback OK", response.content());
+            assertNotNull(response.fallback());
+            assertEquals(MODEL_ID, response.fallback().requestedModel());
+            verify(modelRouter, never()).resolve(MODEL_ID);
+            verify(circuitBreakers, never()).recordFailure(MODEL_ID);
+            verify(circuitBreakers).recordSuccess(fallbackModel);
         }
 
         @Test
@@ -209,9 +264,11 @@ class ChatServiceImplTest {
             when(fallbackChainProvider.resolve(MODEL_ID))
                     .thenReturn(List.of(MODEL_ID, "zhipu/glm-4-flash"));
             when(fallbackEligibility.isEligible(any(BusinessException.class))).thenReturn(false);
+            when(circuitBreakers.isCallAllowed(MODEL_ID)).thenReturn(true);
 
             ChatServiceImpl service = createService();
             assertThrows(BusinessException.class, () -> service.chat(request));
+            verify(circuitBreakers, never()).recordFailure(MODEL_ID);
         }
 
         @Test
@@ -222,6 +279,7 @@ class ChatServiceImplTest {
 
             ChatRequest request = new ChatRequest(MODEL_ID, "hello", RAW_CONV_ID, false, "SIMPLE", false, null);
             setupCommonMocks(request);
+            setupModelMocks("zhipu/glm-4-flash", "zhipu", "glm-4-flash");
 
             when(modeStrategy.execute(any(StrategyExecutionContext.class)))
                     .thenThrow(new RuntimeException("timeout"));
@@ -230,10 +288,13 @@ class ChatServiceImplTest {
             when(fallbackChainProvider.resolve(MODEL_ID))
                     .thenReturn(List.of(MODEL_ID, "zhipu/glm-4-flash"));
             when(fallbackEligibility.isEligible(any(RuntimeException.class))).thenReturn(true);
+            when(circuitBreakers.isCallAllowed(anyString())).thenReturn(true);
 
             ChatServiceImpl service = createService();
             BusinessException ex = assertThrows(BusinessException.class, () -> service.chat(request));
             assertEquals(ErrorCode.PROVIDER_NOT_FOUND, ex.getErrorCode());
+            verify(circuitBreakers).recordFailure(MODEL_ID);
+            verify(circuitBreakers).recordFailure("zhipu/glm-4-flash");
         }
     }
 }

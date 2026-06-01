@@ -2,6 +2,8 @@ package com.smart.rag.infrastructure.provider;
 
 import com.smart.rag.infrastructure.model.ModelInfo;
 import com.smart.rag.infrastructure.model.ModelOptionSettings;
+import com.smart.rag.infrastructure.stream.ModelStreamException;
+import com.smart.rag.infrastructure.stream.ModelStreamRequest;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.prompt.ChatOptions;
@@ -115,4 +117,15 @@ public interface ModelProvider {
      * @return 厂商特定的 ChatOptions，params 为 null 时返回 null
      */
     ChatOptions buildOptions(ModelOptionSettings options);
+
+    /**
+     * 构建 OkHttp 流式请求配置。
+     * <p>
+     * 默认不支持，具体 Provider 按自己的 API 兼容性覆写。
+     */
+    default ModelStreamRequest createStreamRequest(ModelRouter.Route route,
+                                                   String prompt,
+                                                   ModelOptionSettings options) {
+        throw new ModelStreamException("模型厂商暂不支持 OkHttp 流式调用: " + getProviderId());
+    }
 }

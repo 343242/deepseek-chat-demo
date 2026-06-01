@@ -37,18 +37,6 @@
             </exclusions>
         </dependency>
 
-        <!-- Spring Boot WebFlux（排除默认 Logback） -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-webflux</artifactId>
-            <exclusions>
-                <exclusion>
-                    <groupId>org.springframework.boot</groupId>
-                    <artifactId>spring-boot-starter-logging</artifactId>
-                </exclusion>
-            </exclusions>
-        </dependency>
-
         <!-- Spring AI DeepSeek Starter -->
         <dependency>
             <groupId>org.springframework.ai</groupId>
@@ -377,7 +365,7 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-surefire-plugin</artifactId>
                 <configuration>
-                    <argLine>${argLine} -Djava.awt.headless=true</argLine>
+                    <argLine>${argLine} -javaagent:${settings.localRepository}/org/mockito/mockito-core/${mockito.version}/mockito-core-${mockito.version}.jar -Djava.awt.headless=true</argLine>
                 </configuration>
             </plugin>
         </plugins>

@@ -3,6 +3,7 @@ package com.smart.rag.infrastructure.provider;
 import com.smart.rag.infrastructure.model.ModelInfo;
 import com.smart.rag.infrastructure.model.ModelOptionSettings;
 import com.smart.rag.config.ZhipuProperties;
+import com.smart.rag.infrastructure.stream.ModelStreamRequest;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.prompt.ChatOptions;
 import org.springframework.ai.zhipuai.ZhiPuAiChatModel;
@@ -130,5 +131,20 @@ public class ZhipuModelProvider extends AbstractModelProvider {
         if (options.topP() != null) builder.topP(options.topP());
 
         return builder.build();
+    }
+
+    @Override
+    public ModelStreamRequest createStreamRequest(ModelRouter.Route route,
+                                                  String prompt,
+                                                  ModelOptionSettings options) {
+        Double temperature = options != null && options.temperature() != null
+                ? options.temperature()
+                : properties.chat().temperature();
+        Integer maxTokens = options != null && options.maxTokens() != null
+                ? options.maxTokens()
+                : properties.chat().maxTokens();
+        return new ModelStreamRequest(
+                route, prompt, properties.baseUrl(), "/chat/completions",
+                properties.apiKey(), temperature, maxTokens);
     }
 }

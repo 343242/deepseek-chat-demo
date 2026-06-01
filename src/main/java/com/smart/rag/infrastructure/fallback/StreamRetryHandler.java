@@ -6,6 +6,7 @@ import org.slf4j.LoggerFactory;
 import reactor.core.publisher.Flux;
 
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * 流式重试处理器
@@ -65,8 +66,22 @@ public class StreamRetryHandler {
 
         String currentModel = chain.get(chainIndex);
 
-        return Flux.defer(() -> streamFactory.create(currentModel))
+        return Flux.defer(() -> {
+            AtomicBoolean emitted = new AtomicBoolean(false);
+            return streamFactory.create(currentModel)
+                    .doOnNext(ignored -> emitted.set(true))
                 .onErrorResume(e -> {
+                    if (emitted.get()) {
+                        log.warn("Stream failed after emitting data for model '{}'; not retrying or falling back",
+                                currentModel);
+                        return Flux.error(e);
+                    }
+
+                    if (e instanceof ModelCircuitOpenException) {
+                        log.warn("Stream model '{}' skipped by circuit breaker, falling back", currentModel);
+                        return execute(chain, chainIndex + 1, 0, streamFactory);
+                    }
+
                     // 不可降级的异常 — 直接传播，不重试不切换
                     if (!eligibility.isEligible(e)) {
                         return Flux.error(e);
@@ -84,6 +99,7 @@ public class StreamRetryHandler {
                             currentModel, maxRetries);
                     return execute(chain, chainIndex + 1, 0, streamFactory);
                 });
+        });
     }
 
     /**

@@ -6,9 +6,11 @@ import com.smart.rag.chat.service.AdvisorInfrastructure;
 import com.smart.rag.chat.service.ChatConversationHelper;
 import com.smart.rag.chat.service.ChatRequestSpecFactory;
 import com.smart.rag.chat.service.ChatUsageTracker;
+import com.smart.rag.chat.service.ModelStreamRequestFactory;
 import com.smart.rag.chat.service.ModeChainResult;
 import com.smart.rag.chat.service.StrategyExecuteResult;
 import com.smart.rag.chat.service.StrategyExecutionContext;
+import com.smart.rag.infrastructure.stream.OkHttpSseModelStreamClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
@@ -22,7 +24,6 @@ import reactor.core.publisher.SignalType;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * MULTI_TURN 模式策略 -- 多轮对话，自动维护记忆和上下文
@@ -36,15 +37,21 @@ public class MultiTurnModeStrategy implements ChatModeStrategy {
     private final ChatRequestSpecFactory requestSpecFactory;
     private final ChatUsageTracker usageTracker;
     private final ChatConversationHelper conversationHelper;
+    private final ModelStreamRequestFactory streamRequestFactory;
+    private final OkHttpSseModelStreamClient streamClient;
 
     public MultiTurnModeStrategy(AdvisorInfrastructure infra,
                                  ChatRequestSpecFactory requestSpecFactory,
                                  ChatUsageTracker usageTracker,
-                                 ChatConversationHelper conversationHelper) {
+                                 ChatConversationHelper conversationHelper,
+                                 ModelStreamRequestFactory streamRequestFactory,
+                                 OkHttpSseModelStreamClient streamClient) {
         this.infra = infra;
         this.requestSpecFactory = requestSpecFactory;
         this.usageTracker = usageTracker;
         this.conversationHelper = conversationHelper;
+        this.streamRequestFactory = streamRequestFactory;
+        this.streamClient = streamClient;
     }
 
     @Override
@@ -91,42 +98,24 @@ public class MultiTurnModeStrategy implements ChatModeStrategy {
 
     @Override
     public Flux<String> executeStream(StrategyExecutionContext ctx) {
-        AdvisorChainContext chainCtx = new AdvisorChainContext(
-            ctx.conversationId(), ctx.request(), ctx.userId(),
-            ctx.cagContext(), ctx.route());
-        ModeChainResult result = buildAdvisorChain(chainCtx);
-
-        AtomicReference<ChatResponse> lastAiResponse = new AtomicReference<>();
         StringBuilder collectedContent = new StringBuilder();
         final int maxContentLength = 1 << 20;
         AtomicBoolean usageRecorded = new AtomicBoolean(false);
 
-        return requestSpecFactory.createSpec(
-            ctx.chatClient(), ctx.route(), ctx.request(),
-            ctx.conversationId(), result.chain(), ctx.cagContext()
-        )
-        .stream()
-        .chatResponse()
-        .mapNotNull(aiResponse -> {
-            lastAiResponse.set(aiResponse);
-            Generation gen = aiResponse.getResult();
-            if (gen == null || gen.getOutput() == null) {
-                return null;
-            }
-            String text = gen.getOutput().getText();
+        return streamClient.stream(streamRequestFactory.create(ctx.route(), ctx.request()))
+        .doOnNext(text -> {
             if (text != null && collectedContent.length() < maxContentLength) {
                 int remaining = maxContentLength - collectedContent.length();
                 collectedContent.append(text, 0, Math.min(text.length(), remaining));
             }
-            return text;
         })
         .doFinally(signal -> {
             // 消息持久化 — ON_COMPLETE 完整保存，ON_ERROR/CANCEL partial 保存
-            onStreamComplete(ctx, collectedContent.toString(), lastAiResponse.get(), signal);
+            onStreamComplete(ctx, collectedContent.toString(), null, signal);
 
-            // usage 记录 -- 所有信号都执行
+            // OkHttp SSE 不返回最终 Spring AI ChatResponse，usage 降级为耗时记录
             if (usageRecorded.compareAndSet(false, true)) {
-                SimpleModeStrategy.recordUsage(usageTracker, ctx, lastAiResponse.get());
+                SimpleModeStrategy.recordUsage(usageTracker, ctx, null);
             }
         });
     }

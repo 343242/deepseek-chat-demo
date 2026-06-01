@@ -1,9 +1,9 @@
 package com.smart.rag.infrastructure.web.filter;
 
+import com.smart.rag.infrastructure.web.auth.UserPermissionProvider;
 import com.smart.rag.infrastructure.web.service.TokenCacheService;
 import com.smart.rag.infrastructure.web.util.JwtTokenProvider;
 import com.smart.rag.infrastructure.web.util.SecurityUtils;
-import com.smart.rag.user.service.AuthService;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -40,14 +40,14 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private final JwtTokenProvider jwtTokenProvider;
     private final TokenCacheService tokenCacheService;
-    private final AuthService authService;
+    private final UserPermissionProvider userPermissionProvider;
 
     public JwtAuthenticationFilter(JwtTokenProvider jwtTokenProvider,
                                     TokenCacheService tokenCacheService,
-                                    AuthService authService) {
+                                    UserPermissionProvider userPermissionProvider) {
         this.jwtTokenProvider = jwtTokenProvider;
         this.tokenCacheService = tokenCacheService;
-        this.authService = authService;
+        this.userPermissionProvider = userPermissionProvider;
     }
 
     @Override
@@ -83,7 +83,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 // Get permissions (prefer Redis cache)
                 Set<String> permissions = tokenCacheService.getUserPermissions(userId);
                 if (permissions == null) {
-                    permissions = authService.loadUserPermissions(userId);
+                    permissions = userPermissionProvider.loadUserPermissions(userId);
                 }
 
                 // Build authorities from permissions

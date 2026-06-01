@@ -3,8 +3,6 @@ package com.smart.rag.user.service;
 import com.smart.rag.user.dto.LoginResponse;
 import com.smart.rag.user.dto.UserUpdateRequest;
 
-import java.util.Set;
-
 public interface AuthService {
 
     record TokenPair(String accessToken, String refreshToken) {}
@@ -30,11 +28,6 @@ public interface AuthService {
     void changePassword(Long userId, String oldPassword, String newPassword);
 
     void revokeAllUserTokens(Long userId);
-
-    /**
-     * P0-1 修复：使用 permissionName 而非 resourceKey 作为 GrantedAuthority
-     */
-    Set<String> loadUserPermissions(Long userId);
 
     LoginResponse.UserInfo updateProfile(Long userId, UserUpdateRequest request);
 }

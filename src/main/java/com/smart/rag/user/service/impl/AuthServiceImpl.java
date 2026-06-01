@@ -8,13 +8,13 @@ import com.smart.rag.infrastructure.web.config.JwtProperties;
 import com.smart.rag.infrastructure.web.service.CaptchaService;
 import com.smart.rag.infrastructure.web.service.TokenCacheService;
 import com.smart.rag.infrastructure.web.util.JwtTokenProvider;
+import com.smart.rag.infrastructure.web.auth.UserPermissionProvider;
 import com.smart.rag.user.dto.LoginResponse;
 import com.smart.rag.user.dto.UserUpdateRequest;
 import com.smart.rag.user.entity.SysRole;
 import com.smart.rag.user.entity.SysUser;
 import com.smart.rag.user.entity.SysUserRole;
 import com.smart.rag.user.mapper.SysRoleMapper;
-import com.smart.rag.user.mapper.SysRolePermissionMapper;
 import com.smart.rag.user.mapper.SysUserMapper;
 import com.smart.rag.user.mapper.SysUserRoleMapper;
 import com.smart.rag.user.service.AuthService;
@@ -40,35 +40,35 @@ public class AuthServiceImpl implements AuthService {
 
     private final SysUserMapper sysUserMapper;
     private final SysUserRoleMapper sysUserRoleMapper;
-    private final SysRolePermissionMapper sysRolePermissionMapper;
     private final SysRoleMapper sysRoleMapper;
     private final JwtTokenProvider jwtTokenProvider;
     private final JwtProperties jwtProperties;
     private final TokenCacheService tokenCacheService;
     private final CaptchaService captchaService;
+    private final UserPermissionProvider userPermissionProvider;
     private final SnowflakeIdGenerator idGenerator;
     private final TransactionTemplate transactionTemplate;
     private final PasswordEncoder passwordEncoder;
 
     public AuthServiceImpl(SysUserMapper sysUserMapper,
                        SysUserRoleMapper sysUserRoleMapper,
-                       SysRolePermissionMapper sysRolePermissionMapper,
                        SysRoleMapper sysRoleMapper,
                        JwtTokenProvider jwtTokenProvider,
                        JwtProperties jwtProperties,
                        TokenCacheService tokenCacheService,
                        CaptchaService captchaService,
+                       UserPermissionProvider userPermissionProvider,
                        SnowflakeIdGenerator idGenerator,
                        TransactionTemplate transactionTemplate,
                        PasswordEncoder passwordEncoder) {
         this.sysUserMapper = sysUserMapper;
         this.sysUserRoleMapper = sysUserRoleMapper;
-        this.sysRolePermissionMapper = sysRolePermissionMapper;
         this.sysRoleMapper = sysRoleMapper;
         this.jwtTokenProvider = jwtTokenProvider;
         this.jwtProperties = jwtProperties;
         this.tokenCacheService = tokenCacheService;
         this.captchaService = captchaService;
+        this.userPermissionProvider = userPermissionProvider;
         this.idGenerator = idGenerator;
         this.transactionTemplate = transactionTemplate;
         this.passwordEncoder = passwordEncoder;
@@ -117,7 +117,7 @@ public class AuthServiceImpl implements AuthService {
         tokenCacheService.storeAccessToken(user.getId(), tokenId, roleNames);
         tokenCacheService.storeRefreshToken(refreshToken, user.getId());
 
-        loadUserPermissions(user.getId());
+        userPermissionProvider.loadUserPermissions(user.getId());
 
         TokenPair tokenPair = new TokenPair(accessToken, refreshToken);
         LoginResponse response = new LoginResponse(
@@ -240,7 +240,7 @@ public class AuthServiceImpl implements AuthService {
 
         Set<String> permissions = tokenCacheService.getUserPermissions(userId);
         if (permissions == null) {
-            loadUserPermissions(userId);
+            userPermissionProvider.loadUserPermissions(userId);
         }
 
         return new LoginResponse.UserInfo(
@@ -276,26 +276,6 @@ public class AuthServiceImpl implements AuthService {
         tokenCacheService.revokeAllTokens(userId);
         tokenCacheService.evictUserPermissions(userId);
         tokenCacheService.markUserStatus(userId, "disabled");
-    }
-
-    @Override
-    public Set<String> loadUserPermissions(Long userId) {
-        List<Long> roleIds = sysUserRoleMapper.selectRoleIdsByUserId(userId);
-        if (roleIds == null || roleIds.isEmpty()) {
-            tokenCacheService.cacheUserPermissions(userId, Set.of());
-            return Set.of();
-        }
-
-        Set<String> permissions = new HashSet<>();
-        var perms = sysRolePermissionMapper.selectPermissionsByRoleIds(roleIds);
-        for (var p : perms) {
-            if (p.getPermissionName() != null) {
-                permissions.add(p.getPermissionName());
-            }
-        }
-
-        tokenCacheService.cacheUserPermissions(userId, permissions);
-        return permissions;
     }
 
     @Override

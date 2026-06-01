@@ -2,7 +2,6 @@ package com.smart.rag.infrastructure.concurrent;
 
 import com.smart.rag.infrastructure.concurrent.context.ContextCarrier;
 import com.smart.rag.infrastructure.concurrent.context.MdcContextCarrier;
-import com.smart.rag.infrastructure.concurrent.context.RequestContextCarrier;
 import com.smart.rag.infrastructure.concurrent.context.SecurityContextCarrier;
 import com.smart.rag.infrastructure.concurrent.executor.DefaultScopeExecutorFactory;
 import com.smart.rag.infrastructure.concurrent.executor.ScopeExecutorFactory;
@@ -17,6 +16,7 @@ public final class DefaultScopedTasks implements ScopedTasks {
     private final ScopeExecutorFactory executorFactory;
     private final ScopedTaskProperties properties;
     private final ScopeObserver scopeObserver;
+    private final List<ContextCarrier<?>> requestContextCarriers;
 
     public DefaultScopedTasks() {
         this(new ScopedTaskProperties());
@@ -39,9 +39,20 @@ public final class DefaultScopedTasks implements ScopedTasks {
             ScopedTaskProperties properties,
             ScopeObserver scopeObserver
     ) {
+        this(executorFactory, properties, scopeObserver, List.of());
+    }
+
+    public DefaultScopedTasks(
+            ScopeExecutorFactory executorFactory,
+            ScopedTaskProperties properties,
+            ScopeObserver scopeObserver,
+            List<ContextCarrier<?>> requestContextCarriers
+    ) {
         this.executorFactory = Objects.requireNonNull(executorFactory, "executorFactory must not be null");
         this.properties = Objects.requireNonNull(properties, "properties must not be null");
         this.scopeObserver = Objects.requireNonNull(scopeObserver, "scopeObserver must not be null");
+        this.requestContextCarriers = List.copyOf(
+                Objects.requireNonNull(requestContextCarriers, "requestContextCarriers must not be null"));
     }
 
     @Override
@@ -77,7 +88,7 @@ public final class DefaultScopedTasks implements ScopedTasks {
             carriers.add(new SecurityContextCarrier());
         }
         if (options.inheritRequestContext()) {
-            carriers.add(new RequestContextCarrier());
+            carriers.addAll(requestContextCarriers);
         }
         return List.copyOf(carriers);
     }

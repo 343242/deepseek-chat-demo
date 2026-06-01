@@ -6,6 +6,7 @@ import com.smart.rag.chat.context.RequestContextHolder;
 import com.smart.rag.chat.context.SessionContext;
 import com.smart.rag.chat.context.UserContext;
 import com.smart.rag.infrastructure.concurrent.*;
+import com.smart.rag.infrastructure.concurrent.context.ContextCarrier;
 import com.smart.rag.infrastructure.concurrent.executor.DefaultScopeExecutorFactory;
 import com.smart.rag.infrastructure.concurrent.executor.ScopeExecutorFactory;
 import org.junit.jupiter.api.AfterEach;
@@ -281,15 +282,22 @@ class DefaultScopedTasksPhase3Test {
         }
 
         @Test
-        @DisplayName("RequestContext is inherited only when enabled and restored afterwards")
-        void requestContext_inheritedWhenEnabledAndRestored() {
+        @DisplayName("RequestContext carrier is injected by owning module and restored afterwards")
+        void requestContext_injectedCarrierInheritedWhenEnabledAndRestored() {
             RequestContext ownerContext = requestContext(1L, "owner");
             RequestContextHolder.set(ownerContext);
             ScopeOptions options = ScopeOptions.builder("request-context")
                     .inheritRequestContext(true)
                     .build();
 
-            try (TaskScope scope = new DefaultScopedTasks().open("request-context", options)) {
+            ScopedTasks scopedTasks = new DefaultScopedTasks(
+                    new DefaultScopeExecutorFactory(new ScopedTaskProperties()),
+                    new ScopedTaskProperties(),
+                    ScopeObserver.NOOP,
+                    List.of(requestContextCarrier())
+            );
+
+            try (TaskScope scope = scopedTasks.open("request-context", options)) {
                 Subtask<RequestContext> captured = scope.fork("read-request-context", () -> {
                     RequestContext value = RequestContextHolder.get();
                     RequestContextHolder.set(requestContext(2L, "child"));
@@ -322,6 +330,27 @@ class DefaultScopedTasksPhase3Test {
                 assertThat(request.result()).isNull();
             }
         }
+    }
+
+    private static ContextCarrier<RequestContext> requestContextCarrier() {
+        return new ContextCarrier<>() {
+            @Override
+            public RequestContext capture() {
+                return RequestContextHolder.get();
+            }
+
+            @Override
+            public RequestContext restore(RequestContext snapshot) {
+                RequestContext previous = RequestContextHolder.get();
+                RequestContextHolder.set(snapshot);
+                return previous;
+            }
+
+            @Override
+            public void clear(RequestContext previous) {
+                RequestContextHolder.set(previous);
+            }
+        };
     }
 
     @Nested

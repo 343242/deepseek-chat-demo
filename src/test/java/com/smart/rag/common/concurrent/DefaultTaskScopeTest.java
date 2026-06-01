@@ -1028,6 +1028,27 @@ class DefaultTaskScopeTest {
                 outer.join();
             }
         }
+
+        @Test
+        @DisplayName("pooled thread created inside parent scope can open detached scope after parent closes")
+        void pooledThreadCreatedInsideParentScope_canOpenDetachedScopeAfterParentCloses() throws Exception {
+            AtomicReference<Throwable> error = new AtomicReference<>();
+
+            try (ExecutorService executor = Executors.newSingleThreadExecutor()) {
+                try (TaskScope outer = scopedTasks.open("outer-active")) {
+                    executor.submit(() -> {
+                    }).get();
+                    outer.join();
+                }
+
+                executor.submit(() -> captureThrowable(
+                        () -> scopedTasks.open("detached-after-parent-close").close(),
+                        error
+                )).get();
+            }
+
+            assertThat(error.get()).isNull();
+        }
     }
 
     private static void captureThrowable(CheckedRunnable action, AtomicReference<Throwable> target) {

@@ -23,8 +23,24 @@ src/main/java/com/demo/chat/
 │   │   └── SnowflakeConfiguration.java       #     Spring Bean 注册
 │   ├── upload/                                #   文档上传策略接口（OCP）
 │   │   └── UploadStrategy.java                #     upload/uploadBatch 方法定义
+│   ├── conversation/                          #   conversationId 跨模块工具
+│   │   └── ConversationIdUtil.java            #     用户隔离 ID 构建/解析/脱敏
 │   └── uuid/                                 #   UUIDv7 生成器
 │       └── UuidV7.java                       #     RFC 9562 — 基于 Unix 毫秒时间戳的有序 UUID
+│
+├── infrastructure/                           # 与业务语义无关的技术基础设施
+│   └── ai/
+│       ├── advisor/                          #   Spring AI Advisor 链、限流、内容过滤
+│       ├── client/                           #   ChatClient 注册中心
+│       ├── content/                          #   内容安全技术适配
+│       ├── fallback/                         #   模型调用重试/降级支撑
+│       ├── memory/                           #   ChatMemoryRepository 技术实现
+│       ├── model/                            #   厂商 API/模型选项等纯技术值对象
+│       │   ├── ModelInfo.java
+│       │   ├── ModelsResponse.java
+│       │   ├── ProviderModelInfo.java
+│       │   └── ModelOptionSettings.java
+│       └── provider/                         #   模型厂商 Provider 适配
 │
 ├── config/                                   # 基础配置
 │   ├── ModelProviderAutoConfiguration.java   #   多厂商自动配置
@@ -124,36 +140,12 @@ src/main/java/com/demo/chat/
 │   ├── service/                              #   接口层
 │   │   ├── ConversationService.java          #     会话 CRUD（面向前端 API）
 │   │   └── ConversationMessageService.java   #     消息管理（树构建/保存/删除）
-│   ├── service/impl/
-│   │   ├── ConversationServiceImpl.java      #     会话管理（UUIDv7 + 并发安全 + 编程式事务）
-│   │   └── ConversationMessageServiceImpl.java # 消息树（单次全量查 + 内存分组）
-│   └── util/
-│       └── ConversationIdUtil.java           #     conversationId 用户隔离工具（u_{userId}_{rawId}）
+│   └── service/impl/
+│       ├── ConversationServiceImpl.java      #     会话管理（UUIDv7 + 并发安全 + 编程式事务）
+│       └── ConversationMessageServiceImpl.java # 消息树（单次全量查 + 内存分组）
 │
 │   │
 ├── chat/                                     # 聊天核心模块
-│   ├── provider/                             #   ★ 多厂商 Provider 抽象层
-│   │   ├── ModelProvider.java                #     Provider 接口（策略模式）
-│   │   ├── DeepSeekModelProvider.java        #     DeepSeek 实现
-│   │   ├── ZhipuModelProvider.java           #     智谱 AI 实现
-│   │   ├── MiniMaxModelProvider.java         #     MiniMax 实现
-│   │   ├── ProviderRegistry.java             #     厂商注册中心（服务定位模式）
-│   │   └── ModelRouter.java                  #     模型 ID 路由解析器
-│   │
-│   ├── client/
-│   │   └── ChatClientRegistry.java           #     ChatClient 注册中心
-│   │
-│   ├── advisor/                              #   Spring AI Advisor 链
-│   │   ├── RateLimiter.java                  #     限流器接口
-│   │   ├── TokenBucketLimiter.java           #     令牌桶实现
-│   │   ├── RateLimitAdvisor.java             #     限流 Advisor (order=0)
-│   │   ├── ContentFilterAdvisor.java         #     内容安全 Advisor (order=1)
-│   │   └── ConversationContextAdvisor.java   #     对话上下文注入 Advisor
-│   │
-│   ├── content/                              #   内容安全
-│   │   ├── ContentFilterService.java         #     过滤服务接口
-│   │   └── SensitiveWordFilterService.java   #     sensitive-word DFA 实现
-│   │
 │   ├── mode/                                 #   ★ 对话模式路由（策略模式）
 │   │   ├── ChatMode.java                     #     模式枚举（SIMPLE / MULTI_TURN）
 │   │   ├── ChatModeStrategy.java             #     策略接口
@@ -207,9 +199,6 @@ src/main/java/com/demo/chat/
 │   └── dto/                                  #   数据传输对象（全部 record）
 │       ├── ChatRequest.java
 │       ├── ChatResponse.java
-│       ├── ModelInfo.java
-│       ├── ProviderModelInfo.java
-│       ├── ModelsResponse.java
 │       ├── ModelParamsDTO.java
 │       ├── SystemPromptDTO.java
 │       ├── SystemPromptUpdateRequest.java

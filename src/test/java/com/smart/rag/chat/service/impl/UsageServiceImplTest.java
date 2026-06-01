@@ -13,7 +13,7 @@ import org.mockito.Mock;
 import org.mockito.MockedStatic;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.transaction.support.TransactionTemplate;
-import com.smart.rag.conversation.util.ConversationIdUtil;
+import com.smart.rag.common.conversation.ConversationIdUtil;
 
 import java.util.List;
 

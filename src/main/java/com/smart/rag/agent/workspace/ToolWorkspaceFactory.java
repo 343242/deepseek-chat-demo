@@ -1,4 +1,4 @@
-package com.smart.rag.infrastructure.agent.workspace;
+package com.smart.rag.agent.workspace;
 
 import org.jspecify.annotations.Nullable;
 import org.springframework.stereotype.Component;

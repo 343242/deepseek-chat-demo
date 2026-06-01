@@ -1,6 +1,6 @@
 package com.smart.rag.chat.service;
 
-import com.smart.rag.chat.dto.ProviderModelInfo;
+import com.smart.rag.infrastructure.ai.model.ProviderModelInfo;
 
 import java.util.List;
 

@@ -6,7 +6,7 @@ import com.smart.rag.agent.tool.*;
 import com.smart.rag.agent.tool.dto.AgentEventLookupRequest;
 import com.smart.rag.agent.tool.dto.DocDetailRequest;
 import com.smart.rag.agent.tool.dto.NoInput;
-import com.smart.rag.infrastructure.agent.workspace.ToolWorkspace;
+import com.smart.rag.agent.workspace.ToolWorkspace;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.tool.ToolCallback;

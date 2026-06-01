@@ -1,7 +1,7 @@
 package com.smart.rag.chat.service;
 
 import com.smart.rag.infrastructure.ai.client.ChatClientRegistry;
-import com.smart.rag.chat.dto.ModelInfo;
+import com.smart.rag.infrastructure.ai.model.ModelInfo;
 import com.smart.rag.infrastructure.ai.provider.ModelProvider;
 import com.smart.rag.infrastructure.ai.provider.ProviderRegistry;
 import com.smart.rag.common.concurrent.DefaultScopedTasks;

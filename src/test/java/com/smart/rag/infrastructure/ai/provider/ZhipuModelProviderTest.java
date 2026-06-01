@@ -1,6 +1,6 @@
 package com.smart.rag.infrastructure.ai.provider;
 
-import com.smart.rag.chat.entity.ModelParams;
+import com.smart.rag.infrastructure.ai.model.ModelOptionSettings;
 import com.smart.rag.config.ZhipuProperties;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -117,9 +117,7 @@ class ZhipuModelProviderTest {
         @Test
         @DisplayName("映射 temperature + maxTokens")
         void mapsParams() {
-            ModelParams params = new ModelParams("glm-4.5-air");
-            params.setTemperature(0.5);
-            params.setMaxTokens(500);
+            ModelOptionSettings params = new ModelOptionSettings(0.5, 500, null, null, null);
 
             ChatOptions options = providerWithKey.buildOptions(params);
             assertNotNull(options);

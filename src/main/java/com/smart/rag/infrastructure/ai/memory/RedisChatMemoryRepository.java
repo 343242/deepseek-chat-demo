@@ -19,7 +19,7 @@ import org.springframework.util.Assert;
 
 import com.smart.rag.common.errorcode.ErrorCode;
 import com.smart.rag.exception.BusinessException;
-import com.smart.rag.conversation.util.ConversationIdUtil;
+import com.smart.rag.common.conversation.ConversationIdUtil;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;

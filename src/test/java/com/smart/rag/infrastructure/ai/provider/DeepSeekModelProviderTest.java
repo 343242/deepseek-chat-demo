@@ -1,7 +1,7 @@
 package com.smart.rag.infrastructure.ai.provider;
 
-import com.smart.rag.chat.dto.ModelInfo;
-import com.smart.rag.chat.entity.ModelParams;
+import com.smart.rag.infrastructure.ai.model.ModelInfo;
+import com.smart.rag.infrastructure.ai.model.ModelOptionSettings;
 import com.smart.rag.config.DeepSeekProperties;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -92,10 +92,7 @@ class DeepSeekModelProviderTest {
         @Test
         @DisplayName("映射 temperature + maxTokens + topP")
         void mapsCoreParams() {
-            ModelParams params = new ModelParams("deepseek-chat");
-            params.setTemperature(0.5);
-            params.setMaxTokens(1000);
-            params.setTopP(0.9);
+            ModelOptionSettings params = new ModelOptionSettings(0.5, 1000, 0.9, null, null);
 
             ChatOptions options = provider.buildOptions(params);
             assertNotNull(options);
@@ -107,8 +104,7 @@ class DeepSeekModelProviderTest {
         @Test
         @DisplayName("部分字段为 null → 不报错")
         void partialParams_ok() {
-            ModelParams params = new ModelParams("deepseek-chat");
-            params.setTemperature(0.8);
+            ModelOptionSettings params = new ModelOptionSettings(0.8, null, null, null, null);
 
             ChatOptions options = provider.buildOptions(params);
             assertNotNull(options);

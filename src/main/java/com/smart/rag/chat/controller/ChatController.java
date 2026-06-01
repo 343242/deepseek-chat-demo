@@ -2,7 +2,7 @@ package com.smart.rag.chat.controller;
 
 import com.smart.rag.chat.dto.ChatRequest;
 import com.smart.rag.chat.dto.ChatResponse;
-import com.smart.rag.chat.dto.ProviderModelInfo;
+import com.smart.rag.infrastructure.ai.model.ProviderModelInfo;
 import com.smart.rag.chat.service.ChatService;
 import com.smart.rag.chat.service.ModelService;
 import com.smart.rag.common.response.GlobalResponse;

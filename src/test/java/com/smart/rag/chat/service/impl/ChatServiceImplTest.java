@@ -18,7 +18,7 @@ import com.smart.rag.chat.service.ChatUsageTracker;
 import com.smart.rag.chat.service.StrategyExecuteResult;
 import com.smart.rag.chat.service.StrategyExecutionContext;
 import com.smart.rag.common.errorcode.ErrorCode;
-import com.smart.rag.conversation.util.ConversationIdUtil;
+import com.smart.rag.common.conversation.ConversationIdUtil;
 import com.smart.rag.exception.BusinessException;
 import com.smart.rag.security.util.SecurityUtils;
 import org.junit.jupiter.api.AfterEach;

@@ -1,4 +1,4 @@
-package com.smart.rag.infrastructure.agent.trace;
+package com.smart.rag.agent.trace;
 
 import org.jspecify.annotations.Nullable;
 

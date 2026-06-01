@@ -1,7 +1,7 @@
 package com.smart.rag.infrastructure.ai.provider;
 
-import com.smart.rag.chat.dto.ModelInfo;
-import com.smart.rag.chat.entity.ModelParams;
+import com.smart.rag.infrastructure.ai.model.ModelInfo;
+import com.smart.rag.infrastructure.ai.model.ModelOptionSettings;
 import com.smart.rag.config.ZhipuProperties;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.prompt.ChatOptions;
@@ -119,15 +119,15 @@ public class ZhipuModelProvider extends AbstractModelProvider {
      * @return ZhiPuAiChatOptions 实例，params 为 null 时返回 null
      */
     @Override
-    public ChatOptions buildOptions(ModelParams params) {
-        if (params == null) {
+    public ChatOptions buildOptions(ModelOptionSettings options) {
+        if (options == null) {
             return null;
         }
 
         ZhiPuAiChatOptions.Builder builder = ZhiPuAiChatOptions.builder();
-        if (params.getTemperature() != null) builder.temperature(params.getTemperature());
-        if (params.getMaxTokens() != null) builder.maxTokens(params.getMaxTokens());
-        if (params.getTopP() != null) builder.topP(params.getTopP());
+        if (options.temperature() != null) builder.temperature(options.temperature());
+        if (options.maxTokens() != null) builder.maxTokens(options.maxTokens());
+        if (options.topP() != null) builder.topP(options.topP());
 
         return builder.build();
     }

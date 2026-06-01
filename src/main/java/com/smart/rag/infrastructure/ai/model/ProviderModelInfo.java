@@ -1,4 +1,4 @@
-package com.smart.rag.chat.dto;
+package com.smart.rag.infrastructure.ai.model;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
 

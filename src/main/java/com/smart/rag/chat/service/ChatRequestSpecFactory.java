@@ -7,6 +7,7 @@ import com.smart.rag.chat.entity.ModelParams;
 import com.smart.rag.infrastructure.ai.provider.ModelProvider;
 import com.smart.rag.infrastructure.ai.provider.ModelRouter;
 import com.smart.rag.infrastructure.ai.provider.ProviderRegistry;
+import com.smart.rag.infrastructure.ai.model.ModelOptionSettings;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.client.advisor.api.Advisor;
 import org.springframework.ai.chat.prompt.ChatOptions;
@@ -120,6 +121,15 @@ public class ChatRequestSpecFactory {
             return null;
         }
         ModelProvider provider = providerRegistry.get(route.providerId());
-        return provider.buildOptions(params);
+        return provider.buildOptions(toOptionSettings(params));
+    }
+
+    private ModelOptionSettings toOptionSettings(ModelParams params) {
+        return new ModelOptionSettings(
+                params.getTemperature(),
+                params.getMaxTokens(),
+                params.getTopP(),
+                params.getFrequencyPenalty(),
+                params.getPresencePenalty());
     }
 }

@@ -1,4 +1,4 @@
-package com.smart.rag.infrastructure.agent.workspace;
+package com.smart.rag.agent.workspace;
 
 import java.util.Map;
 

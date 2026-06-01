@@ -1,7 +1,7 @@
 package com.smart.rag.infrastructure.ai.provider;
 
-import com.smart.rag.chat.dto.ModelInfo;
-import com.smart.rag.chat.entity.ModelParams;
+import com.smart.rag.infrastructure.ai.model.ModelInfo;
+import com.smart.rag.infrastructure.ai.model.ModelOptionSettings;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.prompt.ChatOptions;
@@ -105,14 +105,14 @@ public interface ModelProvider {
     record ClientAndModel(ChatClient client, ChatModel chatModel) {}
 
     /**
-     * 将统一的 ModelParams 转换为厂商特定的 ChatOptions
+     * 将统一的模型选项转换为厂商特定的 ChatOptions
      * <p>
      * 关键封装点：调用方（ChatService）不需要知道具体是
      * DeepSeekChatOptions 还是 ZhiPuAiChatOptions。
      * 每个厂商映射自己支持的参数，不支持的参数静默忽略。
      *
-     * @param params 统一的模型参数，可能为 null
+     * @param options 统一的模型选项，可能为 null
      * @return 厂商特定的 ChatOptions，params 为 null 时返回 null
      */
-    ChatOptions buildOptions(ModelParams params);
+    ChatOptions buildOptions(ModelOptionSettings options);
 }

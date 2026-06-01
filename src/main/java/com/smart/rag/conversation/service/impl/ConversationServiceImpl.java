@@ -16,7 +16,7 @@ import com.smart.rag.conversation.enums.TitleSource;
 import com.smart.rag.conversation.mapper.ConversationMapper;
 import com.smart.rag.conversation.service.ConversationMessageService;
 import com.smart.rag.conversation.service.ConversationService;
-import com.smart.rag.conversation.util.ConversationIdUtil;
+import com.smart.rag.common.conversation.ConversationIdUtil;
 import com.smart.rag.common.errorcode.ErrorCode;
 import com.smart.rag.exception.BusinessException;
 import org.slf4j.Logger;

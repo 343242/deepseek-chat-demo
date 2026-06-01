@@ -2,8 +2,8 @@ package com.smart.rag.agent.tool;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smart.rag.agent.dto.ToolResult;
-import com.smart.rag.infrastructure.agent.workspace.RetrievedDocument;
-import com.smart.rag.infrastructure.agent.workspace.ToolWorkspace;
+import com.smart.rag.agent.workspace.RetrievedDocument;
+import com.smart.rag.agent.workspace.ToolWorkspace;
 import com.smart.rag.rag.retrieval.BailianRerankPostProcessor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

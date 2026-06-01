@@ -6,7 +6,7 @@ import com.smart.rag.chat.dto.UsageStats;
 import com.smart.rag.chat.entity.TokenUsage;
 import com.smart.rag.chat.service.UsageService;
 import com.smart.rag.common.errorcode.ErrorCode;
-import com.smart.rag.conversation.util.ConversationIdUtil;
+import com.smart.rag.common.conversation.ConversationIdUtil;
 import com.smart.rag.exception.BusinessException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;

@@ -1,8 +1,8 @@
 package com.smart.rag.infrastructure.ai.provider;
 
-import com.smart.rag.chat.dto.ModelInfo;
-import com.smart.rag.chat.dto.ModelsResponse;
-import com.smart.rag.chat.entity.ModelParams;
+import com.smart.rag.infrastructure.ai.model.ModelInfo;
+import com.smart.rag.infrastructure.ai.model.ModelsResponse;
+import com.smart.rag.infrastructure.ai.model.ModelOptionSettings;
 import com.smart.rag.config.DeepSeekProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -134,17 +134,17 @@ public class DeepSeekModelProvider extends AbstractModelProvider {
      * @return DeepSeekChatOptions 实例，params 为 null 时返回 null
      */
     @Override
-    public ChatOptions buildOptions(ModelParams params) {
-        if (params == null) {
+    public ChatOptions buildOptions(ModelOptionSettings options) {
+        if (options == null) {
             return null;
         }
 
         DeepSeekChatOptions.Builder builder = DeepSeekChatOptions.builder();
-        if (params.getTemperature() != null) builder.temperature(params.getTemperature());
-        if (params.getMaxTokens() != null) builder.maxTokens(params.getMaxTokens());
-        if (params.getTopP() != null) builder.topP(params.getTopP());
-        if (params.getFrequencyPenalty() != null) builder.frequencyPenalty(params.getFrequencyPenalty());
-        if (params.getPresencePenalty() != null) builder.presencePenalty(params.getPresencePenalty());
+        if (options.temperature() != null) builder.temperature(options.temperature());
+        if (options.maxTokens() != null) builder.maxTokens(options.maxTokens());
+        if (options.topP() != null) builder.topP(options.topP());
+        if (options.frequencyPenalty() != null) builder.frequencyPenalty(options.frequencyPenalty());
+        if (options.presencePenalty() != null) builder.presencePenalty(options.presencePenalty());
 
         return builder.build();
     }

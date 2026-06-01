@@ -1,6 +1,6 @@
 package com.smart.rag.infrastructure.ai.provider;
 
-import com.smart.rag.chat.entity.ModelParams;
+import com.smart.rag.infrastructure.ai.model.ModelOptionSettings;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.prompt.ChatOptions;
@@ -45,7 +45,7 @@ public abstract class AbstractModelProvider implements ModelProvider {
      * @return 厂商特定的 ChatOptions，params 为 null 时返回 null
      */
     @Override
-    public abstract ChatOptions buildOptions(ModelParams params);
+    public abstract ChatOptions buildOptions(ModelOptionSettings options);
 
     /**
      * 为指定模型创建 ChatClient

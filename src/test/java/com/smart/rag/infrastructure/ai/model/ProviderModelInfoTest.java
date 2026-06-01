@@ -1,7 +1,7 @@
-package com.smart.rag.infrastructure.ai.provider;
+package com.smart.rag.infrastructure.ai.model;
 
-import com.smart.rag.chat.dto.ModelInfo;
-import com.smart.rag.chat.dto.ProviderModelInfo;
+import com.smart.rag.infrastructure.ai.model.ModelInfo;
+import com.smart.rag.infrastructure.ai.model.ProviderModelInfo;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 

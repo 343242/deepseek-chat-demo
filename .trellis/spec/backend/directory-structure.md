@@ -18,6 +18,7 @@ src/main/java/com/smart/rag/
 │
 ├── common/                               # 通用工具和跨模块基础能力
 │   ├── concurrent/                       #   结构化并发基础设施
+│   ├── conversation/                     #   conversationId 格式、脱敏等跨模块工具
 │   ├── request/                          #   通用请求对象
 │   ├── response/                         #   通用响应对象
 │   └── util/                             #   通用工具
@@ -28,18 +29,15 @@ src/main/java/com/smart/rag/
 │   ├── RedisConfig.java                  #   Redis 序列化
 │   └── TransactionConfig.java            #   TransactionTemplate Bean
 │
-├── infrastructure/                       # 与业务无关的技术基础设施
-│   ├── ai/                               #   Spring AI/模型厂商/Advisor/记忆/降级
-│   │   ├── advisor/
-│   │   ├── client/
-│   │   ├── content/
-│   │   ├── fallback/
-│   │   ├── memory/
-│   │   └── provider/
-│   └── agent/                            #   Agent 运行时支撑能力
-│       ├── guardrail/
-│       ├── trace/
-│       └── workspace/
+├── infrastructure/                       # 与业务语义无关的技术基础设施
+│   └── ai/                               #   Spring AI/模型厂商/Advisor/记忆/降级
+│       ├── advisor/
+│       ├── client/
+│       ├── content/
+│       ├── fallback/
+│       ├── memory/
+│       ├── model/                        #   厂商 API/模型选项等纯技术值对象
+│       └── provider/
 │
 ├── security/                             # 安全模块（认证/授权/验证码）
 │   ├── config/                           #   SecurityConfig, JwtProperties
@@ -97,8 +95,8 @@ src/main/java/com/smart/rag/
 | 类型 | 位置 | 示例 |
 |------|------|------|
 | 功能模块（有独立 entity/mapper/service/controller） | `src/.../模块名/` | `user/`, `chat/`, `rag/`, `evaluation/` |
-| 业务无关技术基础设施 | `infrastructure/` | `infrastructure/ai/provider/`, `infrastructure/agent/workspace/` |
-| 跨模块通用工具/值对象 | `common/` | `common/concurrent/`, `common/response/` |
+| 业务无关技术基础设施 | `infrastructure/` | `infrastructure/ai/provider/`, `infrastructure/ai/memory/` |
+| 跨模块通用工具/值对象 | `common/` | `common/concurrent/`, `common/conversation/`, `common/response/` |
 | 安全相关 | `security/` | JWT, 验证码, 过滤器 |
 | Spring AI 技术支撑 | `infrastructure/ai/` | Advisor 链, ChatClient 注册, Provider, 记忆, 降级 |
 | 异常 | `exception/` | 全局异常处理 |
@@ -108,6 +106,8 @@ src/main/java/com/smart/rag/
 - Entity 不暴露给前端，通过 DTO 隔离
 - 一个功能模块的 entity/mapper/service/dto/controller 放在同一个包下
 - 与业务语义无关、会被多个模块复用的技术对象放入 `infrastructure/`，不要藏在 `chat/`、`rag/`、`agent/` 等业务模块下
+- 包含业务语义或请求运行态的对象留在对应业务模块；例如 Agent 的 workspace、guardrail、trace 属于 `agent/`，不能放在 `infrastructure/`
+- `infrastructure/` 不依赖 `agent/`、`chat/`、`rag/`、`team/`、`user/`、`conversation/` 等业务包；业务层在边界处把 Entity/DTO 转换为 infrastructure 的纯技术值对象
 - `evaluation/` 是顶层业务域，不放在 `rag/evaluation/` 下；它可以依赖 RAG 业务服务，但自身的数据集、指标、运行记录和控制器保持独立包边界
 
 ---

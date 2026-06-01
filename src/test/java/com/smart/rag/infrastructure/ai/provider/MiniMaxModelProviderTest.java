@@ -1,7 +1,7 @@
 package com.smart.rag.infrastructure.ai.provider;
 
-import com.smart.rag.chat.dto.ModelInfo;
-import com.smart.rag.chat.entity.ModelParams;
+import com.smart.rag.infrastructure.ai.model.ModelInfo;
+import com.smart.rag.infrastructure.ai.model.ModelOptionSettings;
 import com.smart.rag.config.MiniMaxProperties;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -115,8 +115,7 @@ class MiniMaxModelProviderTest {
         @Test
         @DisplayName("映射 temperature")
         void mapsTemperature() {
-            ModelParams params = new ModelParams("MiniMax-M2.1");
-            params.setTemperature(0.5);
+            ModelOptionSettings params = new ModelOptionSettings(0.5, null, null, null, null);
             ChatOptions options = providerWithKey.buildOptions(params);
             assertNotNull(options);
             assertEquals(0.5, options.getTemperature());

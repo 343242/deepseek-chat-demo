@@ -9,7 +9,7 @@ import com.smart.rag.conversation.dto.ConversationSummary;
 import com.smart.rag.conversation.dto.ConversationUpdateRequest;
 import com.smart.rag.conversation.dto.MessageVO;
 import com.smart.rag.conversation.service.ConversationService;
-import com.smart.rag.conversation.util.ConversationIdUtil;
+import com.smart.rag.common.conversation.ConversationIdUtil;
 import com.smart.rag.security.util.SecurityUtils;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;

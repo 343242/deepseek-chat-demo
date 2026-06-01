@@ -1,4 +1,4 @@
-package com.smart.rag.infrastructure.agent.guardrail;
+package com.smart.rag.agent.guardrail;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

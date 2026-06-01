@@ -1,4 +1,4 @@
-package com.smart.rag.infrastructure.agent.guardrail;
+package com.smart.rag.agent.guardrail;
 
 import com.smart.rag.exception.BusinessException;
 import com.smart.rag.agent.config.AgentRagProperties;

@@ -1,4 +1,4 @@
-package com.smart.rag.conversation.util;
+package com.smart.rag.common.conversation;
 
 /**
  * 对话 ID 工具类

@@ -1,7 +1,7 @@
 package com.smart.rag.infrastructure.ai.client;
 
 import com.smart.rag.exception.ModelNotFoundException;
-import com.smart.rag.chat.dto.ModelInfo;
+import com.smart.rag.infrastructure.ai.model.ModelInfo;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;

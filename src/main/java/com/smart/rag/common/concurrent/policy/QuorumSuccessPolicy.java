@@ -20,7 +20,12 @@ public final class QuorumSuccessPolicy implements ScopePolicyHandler {
 
     @Override
     public void onFailure(DefaultSubtask<?> task, Throwable error, ScopeState state) {
-        // Keep waiting; remaining tasks may still satisfy the success quorum.
+        long pending = state.internalSubtasks().stream()
+                .filter(t -> !t.isTerminal())
+                .count();
+        if (state.successCount() + pending < requiredSuccessCount) {
+            state.requestStop();
+        }
     }
 
     @Override

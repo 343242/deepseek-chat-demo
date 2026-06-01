@@ -48,16 +48,18 @@ final class ScopeNestingGuard {
         int capturedLocalDepth = LOCAL_SCOPE_DEPTH.get();
         int capturedInheritedDepth = INHERITED_SCOPE_DEPTH.get();
         return () -> {
-            Boolean previous = SCOPED_SUBTASK.get();
+            Boolean previousScoped = SCOPED_SUBTASK.get();
+            int previousLocal = LOCAL_SCOPE_DEPTH.get();
+            int previousInherited = INHERITED_SCOPE_DEPTH.get();
             SCOPED_SUBTASK.set(true);
             LOCAL_SCOPE_DEPTH.set(capturedLocalDepth);
             INHERITED_SCOPE_DEPTH.set(capturedInheritedDepth);
             try {
                 return delegate.call();
             } finally {
-                SCOPED_SUBTASK.set(previous);
-                LOCAL_SCOPE_DEPTH.remove();
-                INHERITED_SCOPE_DEPTH.remove();
+                SCOPED_SUBTASK.set(previousScoped);
+                LOCAL_SCOPE_DEPTH.set(previousLocal);
+                INHERITED_SCOPE_DEPTH.set(previousInherited);
             }
         };
     }

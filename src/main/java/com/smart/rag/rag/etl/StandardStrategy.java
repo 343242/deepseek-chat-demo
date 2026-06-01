@@ -104,7 +104,7 @@ public class StandardStrategy implements EtlRouteStrategy {
 
             return scope.join(ScopeJoiner.successfulResults(ExtractOutput.class)).stream()
                     .filter(o -> o.error == null)
-                    .collect(Collectors.toMap(ExtractOutput::documentId, ExtractOutput::documents));
+                    .collect(Collectors.toMap(ExtractOutput::documentId, ExtractOutput::documents, (a, b) -> a));
         }
     }
 
@@ -139,7 +139,7 @@ public class StandardStrategy implements EtlRouteStrategy {
 
             return scope.join(ScopeJoiner.successfulResults(TransformOutput.class)).stream()
                     .filter(o -> o.error == null)
-                    .collect(Collectors.toMap(TransformOutput::documentId, TransformOutput::chunks));
+                    .collect(Collectors.toMap(TransformOutput::documentId, TransformOutput::chunks, (a, b) -> a));
         }
     }
 
@@ -165,7 +165,8 @@ public class StandardStrategy implements EtlRouteStrategy {
                     }));
 
             return scope.join(ScopeJoiner.successfulResults(LoadOutput.class)).stream()
-                    .collect(Collectors.toMap(LoadOutput::documentId, LoadOutput::chunkCount));
+                    .filter(o -> o.error == null)
+                    .collect(Collectors.toMap(LoadOutput::documentId, LoadOutput::chunkCount, (a, b) -> a));
         }
     }
 

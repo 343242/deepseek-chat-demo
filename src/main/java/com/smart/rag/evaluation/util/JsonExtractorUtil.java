@@ -1,4 +1,4 @@
-package com.smart.rag.common.util;
+package com.smart.rag.evaluation.util;
 
 import java.util.regex.Pattern;
 
@@ -9,11 +9,11 @@ import java.util.regex.Pattern;
  * 从 LlmJudgeImpl 提取为公共工具类，供评估模块各 Scorer 复用。
  * </p>
  */
-public final class JsonExtractor {
+public final class JsonExtractorUtil {
 
     private static final Pattern MARKDOWN_JSON = Pattern.compile("```json\\s*\\n([\\s\\S]*?)\\n\\s*```");
 
-    private JsonExtractor() {}
+    private JsonExtractorUtil() {}
 
     /**
      * 从 LLM 响应中提取 JSON 字符串

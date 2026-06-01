@@ -1,6 +1,4 @@
 spring:
-  main:
-    # allow-circular-references removed — fix circular deps at the source
   servlet:
     multipart:
       max-request-size: 55MB

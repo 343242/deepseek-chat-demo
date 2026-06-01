@@ -1,6 +1,6 @@
 package com.smart.rag.rag.service.impl;
 
-import com.smart.rag.common.uuid.UuidV7;
+import com.smart.rag.common.util.UuidGeneratorUtil;
 import com.smart.rag.rag.event.DocumentCreatedEvent;
 import com.smart.rag.rag.event.EtlCompletedEvent;
 import com.smart.rag.rag.etl.Loader;
@@ -177,7 +177,7 @@ public class DocumentSupersedeService {
     }
 
     private void assignNewGroupId(Long documentId) {
-        String groupId = UuidV7.generateCompact();
+        String groupId = UuidGeneratorUtil.generateCompact();
         ragDocumentMapper.updateGroupId(documentId, groupId);
         log.debug("New document group assigned: docId={}, groupId={}", documentId, groupId);
     }
@@ -200,7 +200,7 @@ public class DocumentSupersedeService {
 
                 String groupId = oldDocGroupId;
                 if (groupId == null) {
-                    groupId = UuidV7.generateCompact();
+                    groupId = UuidGeneratorUtil.generateCompact();
                 }
                 final String finalGroupId = groupId;
                 final int nextVersion = oldDocVersion + 1;

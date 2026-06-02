@@ -21,10 +21,10 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
  * 统一将各类异常转换为 {@link GlobalResponse} 格式，避免异常堆栈泄漏到客户端。
  * <ul>
  *   <li>{@link BusinessException} — 返回 ErrorCode 对应的错误码和消息</li>
- *   <li>{@link ContentFilteredException} — 返回 40004 内容过滤错误</li>
- *   <li>{@link RateLimitExceededException} — 返回 429 限流错误</li>
- *   <li>{@link ModelNotFoundException} — 返回 40002 模型不存在</li>
- *   <li>{@link ProviderNotFoundException} — 返回 40003 厂商未配置</li>
+ *   <li>{@link ContentFilteredException} — 400 + 40004 内容过滤错误</li>
+ *   <li>{@link RateLimitExceededException} — 429 限流错误</li>
+ *   <li>{@link ModelNotFoundException} — 404 + 40002 模型不存在</li>
+ *   <li>{@link ProviderNotFoundException} — 503 + 40003 厂商未配置</li>
  *   <li>通用 {@link Exception} — 记录日志，返回脱敏的 500 错误</li>
  * </ul>
  * <p>
@@ -46,7 +46,8 @@ public class ChatExceptionHandler {
     @ExceptionHandler(ContentFilteredException.class)
     public ResponseEntity<GlobalResponse<Void>> handleContentFilteredException(ContentFilteredException e) {
         log.warn("Content filtered: {}", e.getMessage());
-        return ResponseEntity.ok(GlobalResponse.error(ErrorCode.CONTENT_FILTERED, e.getMessage()));
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(GlobalResponse.error(ErrorCode.CONTENT_FILTERED, e.getMessage()));
     }
 
     @ExceptionHandler(RateLimitExceededException.class)
@@ -59,13 +60,15 @@ public class ChatExceptionHandler {
     @ExceptionHandler(ModelNotFoundException.class)
     public ResponseEntity<GlobalResponse<Void>> handleModelNotFoundException(ModelNotFoundException e) {
         log.warn("Model not found: modelId={}, message={}", e.getModelId(), e.getMessage());
-        return ResponseEntity.ok(GlobalResponse.error(ErrorCode.MODEL_NOT_FOUND, e.getMessage()));
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(GlobalResponse.error(ErrorCode.MODEL_NOT_FOUND, e.getMessage()));
     }
 
     @ExceptionHandler(ProviderNotFoundException.class)
     public ResponseEntity<GlobalResponse<Void>> handleProviderNotFoundException(ProviderNotFoundException e) {
         log.warn("Provider not found: providerId={}, message={}", e.getProviderId(), e.getMessage());
-        return ResponseEntity.ok(GlobalResponse.error(ErrorCode.PROVIDER_NOT_FOUND, e.getMessage()));
+        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
+                .body(GlobalResponse.error(ErrorCode.PROVIDER_NOT_FOUND, e.getMessage()));
     }
 
     @ExceptionHandler(Exception.class)
@@ -79,8 +82,8 @@ public class ChatExceptionHandler {
     /**
      * 将 ErrorCode 映射为 HTTP 状态码
      * <p>
-     * 大部分业务错误返回 200 + 非零 code（前端通过 code 字段判断），
-     * 仅认证/权限相关错误返回对应 HTTP 状态码。
+     * 语义异常返回对应 HTTP 状态码（前端通过 GlobalResponse.code 判断业务错误类型），
+     * 其余业务错误返回 200 + 非零 code。
      */
     private HttpStatus mapHttpStatus(ErrorCode errorCode) {
         return switch (errorCode) {

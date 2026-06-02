@@ -38,11 +38,11 @@ public class SseStreamBridge {
     }
 
     private void sendChunk(SseEmitter emitter, String chunk, AtomicBoolean terminated) {
-        if (terminated.get()) {
-            return;
-        }
         try {
             synchronized (emitter) {
+                if (terminated.get()) {
+                    return;
+                }
                 emitter.send(SseEmitter.event().data(chunk));
             }
         } catch (IOException | IllegalStateException e) {

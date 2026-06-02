@@ -40,9 +40,13 @@ class ChatConversationHelperTest {
     @Mock
     private ChatMemory chatMemory;
 
+    @Mock
+    private MessageDeadLetterQueue deadLetterQueue;
+
     private ChatConversationHelper createHelper() {
         return new ChatConversationHelper(
-                conversationService, conversationMessageService, transactionTemplate, chatMemory);
+                conversationService, conversationMessageService, transactionTemplate, chatMemory,
+                deadLetterQueue);
     }
 
     @SuppressWarnings("unchecked")

@@ -11,6 +11,8 @@ import com.github.benmanes.caffeine.cache.Caffeine;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Duration;
@@ -96,20 +98,31 @@ public class SystemPromptServiceImpl implements SystemPromptService {
                 entity = new SystemPrompt(modelId, promptText);
                 mapper.insert(entity);
             }
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    promptCache.invalidate(modelId);
+                }
+            });
             return toDTO(entity);
         });
-        promptCache.invalidate(modelId);
         return dto;
     }
 
     @Override
     public boolean delete(String modelId) {
-        boolean deleted = Boolean.TRUE.equals(transactionTemplate.execute(status ->
-                mapper.deleteByModelId(modelId) > 0));
-        if (deleted) {
-            promptCache.invalidate(modelId);
-        }
-        return deleted;
+        return Boolean.TRUE.equals(transactionTemplate.execute(status -> {
+            boolean deleted = mapper.deleteByModelId(modelId) > 0;
+            if (deleted) {
+                TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                    @Override
+                    public void afterCommit() {
+                        promptCache.invalidate(modelId);
+                    }
+                });
+            }
+            return deleted;
+        }));
     }
 
     private SystemPromptDTO toDTO(SystemPrompt entity) {

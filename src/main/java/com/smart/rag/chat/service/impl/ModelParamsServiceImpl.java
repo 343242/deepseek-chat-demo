@@ -8,6 +8,8 @@ import com.smart.rag.chat.context.CagProperties;
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Duration;
@@ -70,20 +72,31 @@ public class ModelParamsServiceImpl implements ModelParamsService {
                         dto.frequencyPenalty(), dto.presencePenalty());
                 mapper.insert(entity);
             }
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    paramsCache.invalidate(modelId);
+                }
+            });
             return toDTO(entity);
         });
-        paramsCache.invalidate(modelId);
         return result;
     }
 
     @Override
     public boolean delete(String modelId) {
-        boolean deleted = Boolean.TRUE.equals(transactionTemplate.execute(status ->
-                mapper.deleteByModelId(modelId) > 0));
-        if (deleted) {
-            paramsCache.invalidate(modelId);
-        }
-        return deleted;
+        return Boolean.TRUE.equals(transactionTemplate.execute(status -> {
+            boolean deleted = mapper.deleteByModelId(modelId) > 0;
+            if (deleted) {
+                TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                    @Override
+                    public void afterCommit() {
+                        paramsCache.invalidate(modelId);
+                    }
+                });
+            }
+            return deleted;
+        }));
     }
 
     private ModelParamsDTO toDTO(ModelParams entity) {

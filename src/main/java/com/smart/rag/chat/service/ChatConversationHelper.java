@@ -32,16 +32,19 @@ public class ChatConversationHelper {
     private final ConversationMessageService conversationMessageService;
     private final TransactionTemplate transactionTemplate;
     private final ChatMemory chatMemory;
+    private final MessageDeadLetterQueue deadLetterQueue;
 
     public ChatConversationHelper(
             ConversationService conversationService,
             ConversationMessageService conversationMessageService,
             TransactionTemplate transactionTemplate,
-            ChatMemory chatMemory) {
+            ChatMemory chatMemory,
+            MessageDeadLetterQueue deadLetterQueue) {
         this.conversationService = conversationService;
         this.conversationMessageService = conversationMessageService;
         this.transactionTemplate = transactionTemplate;
         this.chatMemory = chatMemory;
+        this.deadLetterQueue = deadLetterQueue;
     }
 
     /**
@@ -120,6 +123,14 @@ public class ChatConversationHelper {
             // 消息持久化失败不影响已返回给用户的响应，但必须记录完整异常栈
             log.error("Failed to save message records: conversationId={}, model={}",
                     ConversationIdUtil.mask(conversationId), modelId, e);
+
+            int totalTokens = -1;
+            if (aiResponse != null && aiResponse.getMetadata() != null && aiResponse.getMetadata().getUsage() != null) {
+                Usage usage = aiResponse.getMetadata().getUsage();
+                totalTokens = usage.getTotalTokens() != null ? usage.getTotalTokens().intValue() : -1;
+            }
+            deadLetterQueue.enqueue(new DeadLetterEntry(
+                    conversationId, userContent, assistantContent, modelId, totalTokens, durationMs));
         }
     }
 

@@ -4,8 +4,6 @@ import com.smart.rag.chat.service.AdvisorChainContext;
 import com.smart.rag.chat.service.ModeChainResult;
 import com.smart.rag.chat.service.StrategyExecuteResult;
 import com.smart.rag.chat.service.StrategyExecutionContext;
-import com.smart.rag.infrastructure.exception.BusinessException;
-import com.smart.rag.infrastructure.exception.errorcode.ErrorCode;
 import reactor.core.publisher.Flux;
 
 /**
@@ -39,7 +37,7 @@ public interface ChatModeStrategy {
      * 返回 StrategyExecuteResult，由 ChatServiceImpl 统一后续处理。
      */
     default StrategyExecuteResult execute(StrategyExecutionContext ctx) {
-        throw new BusinessException(ErrorCode.UNSUPPORTED_OPERATION,
+        throw new UnsupportedOperationException(
             getMode() + " mode does not implement execute()");
     }
 
@@ -49,7 +47,7 @@ public interface ChatModeStrategy {
      * doFinally 中完成消息持久化。
      */
     default Flux<String> executeStream(StrategyExecutionContext ctx) {
-        throw new BusinessException(ErrorCode.UNSUPPORTED_OPERATION,
+        throw new UnsupportedOperationException(
             getMode() + " mode does not support streaming in this version.");
     }
 }

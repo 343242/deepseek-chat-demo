@@ -60,7 +60,7 @@ public class ToolRegistry {
      * @return 不可变数组副本，可能为空
      */
     public ToolCallback[] getToolCallbacks() {
-        return callbacks;
+        return callbacks.clone();
     }
 
     /**

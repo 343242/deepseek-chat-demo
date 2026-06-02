@@ -8,7 +8,7 @@ import com.smart.rag.infrastructure.exception.BusinessException;
 import com.smart.rag.chat.mode.ChatMode;
 import com.smart.rag.chat.mode.ChatModeStrategy;
 import com.smart.rag.chat.mode.MultiTurnModeStrategy;
-import com.smart.rag.chat.mode.SimpleModeStrategy;
+import com.smart.rag.chat.mode.AbstractModeStrategy;
 import com.smart.rag.infrastructure.provider.ModelRouter;
 import com.smart.rag.chat.service.AdvisorChainContext;
 import com.smart.rag.chat.service.AdvisorInfrastructure;
@@ -239,7 +239,7 @@ public class AgentModeStrategy implements ChatModeStrategy {
                 .call()
                 .chatResponse();
 
-            String content = SimpleModeStrategy.extractContent(springResponse);
+            String content = AbstractModeStrategy.extractContent(springResponse);
             Map<String, Object> agentMetadata = buildAgentMetadata(result);
             return StrategyExecuteResult.agent(springResponse, content, agentMetadata);
 

@@ -11,6 +11,7 @@ import com.smart.rag.infrastructure.fallback.FallbackChainProvider;
 import com.smart.rag.infrastructure.fallback.FallbackEligibility;
 import com.smart.rag.infrastructure.fallback.StreamRetryHandler;
 import com.smart.rag.chat.service.SseStreamBridge;
+import com.smart.rag.chat.service.UserContextProvider;
 import com.smart.rag.chat.mode.ChatMode;
 import com.smart.rag.chat.mode.ChatModeStrategy;
 import com.smart.rag.chat.mode.ModeRouter;
@@ -22,7 +23,6 @@ import com.smart.rag.chat.service.StrategyExecutionContext;
 import com.smart.rag.infrastructure.exception.errorcode.ErrorCode;
 import com.smart.rag.common.util.ConversationIdUtil;
 import com.smart.rag.infrastructure.exception.BusinessException;
-import com.smart.rag.infrastructure.web.util.SecurityUtils;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -43,7 +43,7 @@ import static org.mockito.Mockito.*;
  * ChatServiceImpl 单元测试
  * <p>
  * 测试阻塞式聊天的模式路由、降级链行为。
- * SecurityUtils.getCurrentUserId() 使用 MockedStatic 模拟。
+ * UserContextProvider 注入 mock 替代静态 SecurityUtils 调用。
  */
 @ExtendWith(MockitoExtension.class)
 @DisplayName("ChatServiceImpl 单元测试")
@@ -62,10 +62,10 @@ class ChatServiceImplTest {
     @Mock private SseStreamBridge sseStreamBridge;
     @Mock private RequestContextManager cagContextManager;
     @Mock private CagProperties cagProperties;
+    @Mock private UserContextProvider userContextProvider;
     @Mock private ChatClient chatClient;
     @Mock private ChatModeStrategy modeStrategy;
 
-    private MockedStatic<SecurityUtils> securityUtilsMock;
     private MockedStatic<ConversationIdUtil> conversationIdUtilMock;
 
     private static final Long USER_ID = 42L;
@@ -77,11 +77,12 @@ class ChatServiceImplTest {
         return new ChatServiceImpl(
                 registry, modelRouter, modeRouter, usageTracker, conversationHelper,
                 fallbackProperties, fallbackChainProvider, fallbackEligibility,
-                streamRetryHandler, null, circuitBreakers, sseStreamBridge, cagContextManager, cagProperties);
+                streamRetryHandler, null, circuitBreakers, sseStreamBridge, cagContextManager, cagProperties,
+                userContextProvider);
     }
 
     private void setupCommonMocks(ChatRequest request) {
-        securityUtilsMock.when(SecurityUtils::getCurrentUserId).thenReturn(USER_ID);
+        when(userContextProvider.getCurrentUserId()).thenReturn(USER_ID);
         conversationIdUtilMock.when(() -> ConversationIdUtil.buildIsolatedId(USER_ID, RAW_CONV_ID))
                 .thenReturn(ISOLATED_CONV_ID);
 
@@ -95,7 +96,7 @@ class ChatServiceImplTest {
     }
 
     private void setupRequestContextOnly(ChatRequest request) {
-        securityUtilsMock.when(SecurityUtils::getCurrentUserId).thenReturn(USER_ID);
+        when(userContextProvider.getCurrentUserId()).thenReturn(USER_ID);
         conversationIdUtilMock.when(() -> ConversationIdUtil.buildIsolatedId(USER_ID, RAW_CONV_ID))
                 .thenReturn(ISOLATED_CONV_ID);
 
@@ -118,7 +119,6 @@ class ChatServiceImplTest {
 
     @AfterEach
     void tearDown() {
-        if (securityUtilsMock != null) securityUtilsMock.close();
         if (conversationIdUtilMock != null) conversationIdUtilMock.close();
     }
 
@@ -129,7 +129,6 @@ class ChatServiceImplTest {
         @Test
         @DisplayName("chat_fallbackDisabled_delegatesToStrategy")
         void chat_fallbackDisabled_delegatesToStrategy() {
-            securityUtilsMock = mockStatic(SecurityUtils.class);
             conversationIdUtilMock = mockStatic(ConversationIdUtil.class);
 
             ChatRequest request = new ChatRequest(MODEL_ID, "hello", RAW_CONV_ID, false, "SIMPLE", false, null);
@@ -163,7 +162,6 @@ class ChatServiceImplTest {
         @Test
         @DisplayName("chat_fallbackEnabled_successOnFirstModel")
         void chat_fallbackEnabled_successOnFirstModel() {
-            securityUtilsMock = mockStatic(SecurityUtils.class);
             conversationIdUtilMock = mockStatic(ConversationIdUtil.class);
 
             ChatRequest request = new ChatRequest(MODEL_ID, "hello", RAW_CONV_ID, false, "SIMPLE", false, null);
@@ -186,7 +184,6 @@ class ChatServiceImplTest {
         @Test
         @DisplayName("chat_fallbackEnabled_firstFails_secondSucceeds")
         void chat_fallbackEnabled_firstFails_secondSucceeds() {
-            securityUtilsMock = mockStatic(SecurityUtils.class);
             conversationIdUtilMock = mockStatic(ConversationIdUtil.class);
 
             ChatRequest request = new ChatRequest(MODEL_ID, "hello", RAW_CONV_ID, false, "SIMPLE", false, null);
@@ -222,7 +219,6 @@ class ChatServiceImplTest {
         @Test
         @DisplayName("chat_fallbackEnabled_openBreaker_skipsModelAndUsesNextCandidate")
         void chat_fallbackEnabled_openBreaker_skipsModelAndUsesNextCandidate() {
-            securityUtilsMock = mockStatic(SecurityUtils.class);
             conversationIdUtilMock = mockStatic(ConversationIdUtil.class);
 
             ChatRequest request = new ChatRequest(MODEL_ID, "hello", RAW_CONV_ID, false, "SIMPLE", false, null);
@@ -251,7 +247,6 @@ class ChatServiceImplTest {
         @Test
         @DisplayName("chat_fallbackEnabled_ineligibleException_propagatesImmediately")
         void chat_fallbackEnabled_ineligibleException_propagatesImmediately() {
-            securityUtilsMock = mockStatic(SecurityUtils.class);
             conversationIdUtilMock = mockStatic(ConversationIdUtil.class);
 
             ChatRequest request = new ChatRequest(MODEL_ID, "hello", RAW_CONV_ID, false, "SIMPLE", false, null);
@@ -274,7 +269,6 @@ class ChatServiceImplTest {
         @Test
         @DisplayName("chat_fallbackEnabled_allExhausted_throwsBusinessException")
         void chat_fallbackEnabled_allExhausted_throwsBusinessException() {
-            securityUtilsMock = mockStatic(SecurityUtils.class);
             conversationIdUtilMock = mockStatic(ConversationIdUtil.class);
 
             ChatRequest request = new ChatRequest(MODEL_ID, "hello", RAW_CONV_ID, false, "SIMPLE", false, null);

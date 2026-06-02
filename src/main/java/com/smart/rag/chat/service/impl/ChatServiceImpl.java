@@ -20,17 +20,17 @@ import com.smart.rag.infrastructure.provider.ModelRouter;
 import com.smart.rag.chat.service.ChatConversationHelper;
 import com.smart.rag.chat.service.ChatService;
 import com.smart.rag.chat.service.ChatUsageTracker;
+import com.smart.rag.chat.service.MdcPropagator;
 import com.smart.rag.chat.service.SseStreamBridge;
+import com.smart.rag.chat.service.UserContextProvider;
 import com.smart.rag.chat.service.StrategyExecuteResult;
 import com.smart.rag.chat.service.StrategyExecutionContext;
 import com.smart.rag.infrastructure.exception.errorcode.ErrorCode;
 import com.smart.rag.common.util.UuidGeneratorUtil;
 import com.smart.rag.common.util.ConversationIdUtil;
 import com.smart.rag.infrastructure.exception.BusinessException;
-import com.smart.rag.infrastructure.web.util.SecurityUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.slf4j.MDC;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Service;
@@ -64,6 +64,7 @@ public class ChatServiceImpl implements ChatService {
     private final SseStreamBridge sseStreamBridge;
     private final RequestContextManager cagContextManager;
     private final CagProperties cagProperties;
+    private final UserContextProvider userContextProvider;
 
     public ChatServiceImpl(ChatClientRegistry registry,
                            ModelRouter modelRouter,
@@ -78,7 +79,8 @@ public class ChatServiceImpl implements ChatService {
                            ModelCircuitBreakerRegistry circuitBreakers,
                            SseStreamBridge sseStreamBridge,
                            RequestContextManager cagContextManager,
-                           CagProperties cagProperties) {
+                           CagProperties cagProperties,
+                           UserContextProvider userContextProvider) {
         this.registry = registry;
         this.modelRouter = modelRouter;
         this.modeRouter = modeRouter;
@@ -93,6 +95,7 @@ public class ChatServiceImpl implements ChatService {
         this.sseStreamBridge = sseStreamBridge;
         this.cagContextManager = cagContextManager;
         this.cagProperties = cagProperties;
+        this.userContextProvider = userContextProvider;
     }
     // ==================== 阻塞式聊天 ====================
 
@@ -145,7 +148,7 @@ public class ChatServiceImpl implements ChatService {
         log.error("All fallback attempts exhausted for model '{}', tried: {}",
                 requestedModel, chain, lastException);
         throw new BusinessException(ErrorCode.PROVIDER_NOT_FOUND,
-                "所有模型均不可用，请稍后重试（已尝试 " + chain.size() + " 个模型）");
+                "所有模型均不可用，请稍后重试（已尝试 " + chain.size() + " 个模型）", lastException);
     }
     // ==================== 流式聊天 ====================
 
@@ -223,13 +226,11 @@ public class ChatServiceImpl implements ChatService {
     private Flux<String> doStream(String modelId, ChatRequest request) {
         ChatContext ctx = prepareContext(request);
         StrategyExecutionContext execCtx = buildExecutionContext(ctx, request);
-        // 在 Flux 订阅时恢复调用方的 MDC 上下文（如 traceId），流结束时清理。
-        // TODO: 启用 io.micrometer:context-propagation 后可改用 .contextWrite() 实现自动传播
-        Map<String, String> parentMdc = MDC.getCopyOfContextMap();
+        Map<String, String> parentMdc = MdcPropagator.capture();
         Flux<String> flux = ctx.modeStrategy.executeStream(execCtx);
         if (parentMdc != null) {
-            flux = flux.doOnSubscribe(s -> MDC.setContextMap(parentMdc))
-                       .doFinally(signal -> MDC.clear());
+            flux = flux.doOnSubscribe(s -> MdcPropagator.restore(parentMdc))
+                       .doFinally(signal -> MdcPropagator.clear());
         }
         return flux;
     }
@@ -275,7 +276,7 @@ public class ChatServiceImpl implements ChatService {
 
     /** 预处理请求上下文：用户隔离、模式路由、模型路由 */
     private ChatContext prepareContext(ChatRequest request) {
-        Long userId = SecurityUtils.getCurrentUserId();
+        Long userId = userContextProvider.getCurrentUserId();
         ChatModeStrategy modeStrategy = modeRouter.route(request.mode());
 
         String rawConversationId = request.conversationId();

@@ -77,7 +77,7 @@ class ChatServiceImplTest {
         return new ChatServiceImpl(
                 registry, modelRouter, modeRouter, usageTracker, conversationHelper,
                 fallbackProperties, fallbackChainProvider, fallbackEligibility,
-                streamRetryHandler, circuitBreakers, sseStreamBridge, cagContextManager, cagProperties);
+                streamRetryHandler, null, circuitBreakers, sseStreamBridge, cagContextManager, cagProperties);
     }
 
     private void setupCommonMocks(ChatRequest request) {
@@ -172,7 +172,7 @@ class ChatServiceImplTest {
             when(modeStrategy.execute(any(StrategyExecutionContext.class)))
                     .thenReturn(buildStandardResult("OK"));
             when(fallbackProperties.enabled()).thenReturn(true);
-            when(fallbackChainProvider.resolve(MODEL_ID)).thenReturn(List.of(MODEL_ID));
+            when(fallbackChainProvider.resolve(MODEL_ID, false)).thenReturn(List.of(MODEL_ID));
             when(circuitBreakers.isCallAllowed(MODEL_ID)).thenReturn(true);
 
             ChatServiceImpl service = createService();
@@ -202,7 +202,7 @@ class ChatServiceImplTest {
                     .thenReturn(buildStandardResult("Fallback OK"));
 
             when(fallbackProperties.enabled()).thenReturn(true);
-            when(fallbackChainProvider.resolve(MODEL_ID))
+            when(fallbackChainProvider.resolve(MODEL_ID, false))
                     .thenReturn(List.of(MODEL_ID, fallbackModel));
             when(fallbackEligibility.isEligible(any(RuntimeException.class))).thenReturn(true);
             when(circuitBreakers.isCallAllowed(MODEL_ID)).thenReturn(true);
@@ -232,7 +232,7 @@ class ChatServiceImplTest {
             when(modeStrategy.execute(any(StrategyExecutionContext.class)))
                     .thenReturn(buildStandardResult("Fallback OK"));
             when(fallbackProperties.enabled()).thenReturn(true);
-            when(fallbackChainProvider.resolve(MODEL_ID))
+            when(fallbackChainProvider.resolve(MODEL_ID, false))
                     .thenReturn(List.of(MODEL_ID, fallbackModel));
             when(circuitBreakers.isCallAllowed(MODEL_ID)).thenReturn(false);
             when(circuitBreakers.isCallAllowed(fallbackModel)).thenReturn(true);
@@ -261,7 +261,7 @@ class ChatServiceImplTest {
                     .thenThrow(new BusinessException(ErrorCode.CONTENT_FILTERED));
 
             when(fallbackProperties.enabled()).thenReturn(true);
-            when(fallbackChainProvider.resolve(MODEL_ID))
+            when(fallbackChainProvider.resolve(MODEL_ID, false))
                     .thenReturn(List.of(MODEL_ID, "zhipu/glm-4-flash"));
             when(fallbackEligibility.isEligible(any(BusinessException.class))).thenReturn(false);
             when(circuitBreakers.isCallAllowed(MODEL_ID)).thenReturn(true);
@@ -285,7 +285,7 @@ class ChatServiceImplTest {
                     .thenThrow(new RuntimeException("timeout"));
 
             when(fallbackProperties.enabled()).thenReturn(true);
-            when(fallbackChainProvider.resolve(MODEL_ID))
+            when(fallbackChainProvider.resolve(MODEL_ID, false))
                     .thenReturn(List.of(MODEL_ID, "zhipu/glm-4-flash"));
             when(fallbackEligibility.isEligible(any(RuntimeException.class))).thenReturn(true);
             when(circuitBreakers.isCallAllowed(anyString())).thenReturn(true);

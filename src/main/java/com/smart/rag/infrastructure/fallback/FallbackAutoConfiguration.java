@@ -45,6 +45,7 @@ public class FallbackAutoConfiguration {
     }
 
     @Bean
+    @ConditionalOnProperty(prefix = "app.chat.candidates", name = "probe-enabled", havingValue = "true", matchIfMissing = false)
     public ProbeStreamHandler probeStreamHandler(ChatCandidatesProperties props,
                                                   ModelCircuitBreakerRegistry breakers) {
         return new ProbeStreamHandler(props, breakers);

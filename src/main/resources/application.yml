@@ -32,7 +32,14 @@ app:
     candidates:
       probe-enabled: false
       probe-timeout-seconds: 10
-      list: []
+      # list: populate to activate DynamicModelSelector + ProbeStreamHandler
+      # list:
+      #   - id: example
+      #     provider: provider-name
+      #     model: model-name
+      #     priority: 1
+      #     enabled: true
+      #     supports-thinking: false
   rag:
     fts-config: ${RAG_FTS_CONFIG:jiebacfg}
   cag:

@@ -26,6 +26,9 @@ public interface FallbackChainProvider {
 
     /**
      * 构建降级候选链（带思考模式提示）
+     * <p>
+     * 默认实现忽略 {@code requiresThinking} 参数，等价于 {@link #resolve(String)}。
+     * 需要思考模式感知的实现（如 {@link DynamicModelSelector}）必须覆写此方法。
      *
      * @param requestedModel   用户原始请求的模型 ID
      * @param requiresThinking 是否需要支持思考模式的模型

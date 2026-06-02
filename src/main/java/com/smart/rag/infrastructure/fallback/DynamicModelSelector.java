@@ -3,6 +3,7 @@ package com.smart.rag.infrastructure.fallback;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -52,13 +53,9 @@ public class DynamicModelSelector implements FallbackChainProvider {
         // 请求模型优先：即使不支持 thinking 也放在第一位（保留显式用户选择）
         if (requestedModel != null && !requestedModel.isBlank()) {
             candidates.removeIf(c -> c.compositeId().equals(requestedModel));
-            ModelCandidate requested = props.list().stream()
-                    .filter(c -> c.compositeId().equals(requestedModel))
-                    .findFirst()
-                    .orElse(null);
 
             // 过滤掉熔断器 OPEN 的模型
-            List<String> result = new java.util.ArrayList<>();
+            List<String> result = new ArrayList<>();
             result.add(requestedModel);
 
             for (ModelCandidate c : candidates) {

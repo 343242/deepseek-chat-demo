@@ -32,6 +32,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import reactor.core.publisher.Flux;
@@ -73,7 +74,7 @@ public class ChatServiceImpl implements ChatService {
                            FallbackChainProvider fallbackChainProvider,
                            FallbackEligibility fallbackEligibility,
                            StreamRetryHandler streamRetryHandler,
-                           ProbeStreamHandler probeStreamHandler,
+                           @Nullable ProbeStreamHandler probeStreamHandler,
                            ModelCircuitBreakerRegistry circuitBreakers,
                            SseStreamBridge sseStreamBridge,
                            RequestContextManager cagContextManager,
@@ -178,20 +179,22 @@ public class ChatServiceImpl implements ChatService {
                 log.info("Stream fallback: '{}' -> '{}'", requestedModel, modelId);
             }
 
-            return probeStreamHandler.wrapWithProbe(modelId,
-                    doStream(modelId, candidateRequest)
-                        .doOnComplete(() -> circuitBreakers.recordSuccess(modelId))
-                        .doOnError(e -> {
-                            if (fallbackEligibility.isEligible(e)) {
-                                circuitBreakers.recordFailure(modelId);
-                            }
-                        })
-                        .doFinally(signal -> {
-                            if (signal == SignalType.CANCEL) {
-                                circuitBreakers.releaseProbe(modelId);
-                            }
-                        })
-                );
+            Flux<String> rawStream = doStream(modelId, candidateRequest)
+                    .doOnComplete(() -> circuitBreakers.recordSuccess(modelId))
+                    .doOnError(e -> {
+                        if (fallbackEligibility.isEligible(e)) {
+                            circuitBreakers.recordFailure(modelId);
+                        }
+                    })
+                    .doFinally(signal -> {
+                        if (signal == SignalType.CANCEL) {
+                            circuitBreakers.releaseProbe(modelId);
+                        }
+                    });
+
+            return probeStreamHandler != null
+                    ? probeStreamHandler.wrapWithProbe(modelId, rawStream)
+                    : rawStream;
         });
     }
 

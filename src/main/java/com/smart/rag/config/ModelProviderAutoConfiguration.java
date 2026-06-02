@@ -10,6 +10,7 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.web.client.RestClient;
 import okhttp3.OkHttpClient;
+import okhttp3.Call;
 
 import java.net.http.HttpClient;
 import java.time.Duration;
@@ -75,7 +76,7 @@ public class ModelProviderAutoConfiguration {
      * readTimeout 为 0，避免长 SSE 流在正常生成过程中被客户端读超时截断。
      */
     @Bean
-    public OkHttpClient modelStreamOkHttpClient() {
+    public Call.Factory modelStreamOkHttpClient() {
         return new OkHttpClient.Builder()
                 .connectTimeout(Duration.ofSeconds(10))
                 .writeTimeout(Duration.ofSeconds(30))

@@ -1,5 +1,7 @@
 package com.smart.rag.infrastructure.fallback;
 
+import com.smart.rag.infrastructure.provider.ModelProvider;
+import com.smart.rag.infrastructure.provider.ProviderRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -38,9 +40,12 @@ public class FallbackChainResolver implements FallbackChainProvider {
     private static final int MAX_CHAIN_SIZE = 15;
 
     private final ChatFallbackProperties properties;
+    private final ProviderRegistry providerRegistry;
 
-    public FallbackChainResolver(ChatFallbackProperties properties) {
+    public FallbackChainResolver(ChatFallbackProperties properties,
+                                 ProviderRegistry providerRegistry) {
         this.properties = properties;
+        this.providerRegistry = providerRegistry;
     }
 
     /**
@@ -56,7 +61,11 @@ public class FallbackChainResolver implements FallbackChainProvider {
      */
     public List<String> resolve(String requestedModel) {
         if (requestedModel == null || requestedModel.isBlank()) {
-            return properties.defaultChain();
+            List<String> defaultChain = properties.defaultChain();
+            if (!defaultChain.isEmpty()) {
+                return defaultChain;
+            }
+            return aggregateProviderCandidates();
         }
 
         Set<String> seen = new LinkedHashSet<>(MAX_CHAIN_SIZE);
@@ -92,6 +101,17 @@ public class FallbackChainResolver implements FallbackChainProvider {
         }
 
         return result;
+    }
+
+    /**
+     * 从所有已注册 Provider 聚合降级默认候选
+     */
+    private List<String> aggregateProviderCandidates() {
+        return providerRegistry.getAll().stream()
+                .filter(ModelProvider::isAvailable)
+                .flatMap(p -> p.getFallbackCandidates().stream())
+                .limit(MAX_CHAIN_SIZE)
+                .toList();
     }
 
     /**

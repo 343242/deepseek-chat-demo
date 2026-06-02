@@ -119,6 +119,20 @@ public interface ModelProvider {
     ChatOptions buildOptions(ModelOptionSettings options);
 
     /**
+     * 该 Provider 提供的降级默认候选模型
+     * <p>
+     * 当全局 default-chain 未配置时，FallbackChainResolver 会从所有
+     * 已注册 Provider 聚合此列表，形成隐式的降级链。
+     * <p>
+     * 返回的模型 ID 应使用复合格式 "{providerId}/{modelId}"。
+     *
+     * @return 候选模型列表，默认为空
+     */
+    default List<String> getFallbackCandidates() {
+        return List.of();
+    }
+
+    /**
      * 构建 OkHttp 流式请求配置。
      * <p>
      * 默认不支持，具体 Provider 按自己的 API 兼容性覆写。

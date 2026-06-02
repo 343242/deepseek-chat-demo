@@ -6,6 +6,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.util.*;
+import java.util.LinkedHashMap;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -39,11 +40,14 @@ public class ProviderRegistry {
      * @param providerList Spring 容器中所有 ModelProvider 实现
      */
     public ProviderRegistry(List<ModelProvider> providerList) {
-        this.providers = providerList.stream()
-                .filter(ModelProvider::isAvailable)
-                .collect(Collectors.toUnmodifiableMap(
-                        ModelProvider::getProviderId,
-                        Function.identity()));
+        this.providers = Collections.unmodifiableMap(
+                providerList.stream()
+                        .filter(ModelProvider::isAvailable)
+                        .collect(Collectors.toMap(
+                                ModelProvider::getProviderId,
+                                Function.identity(),
+                                (a, b) -> a,
+                                LinkedHashMap::new)));
 
         if (providers.isEmpty()) {
             log.warn("No model providers available — check API key configuration");

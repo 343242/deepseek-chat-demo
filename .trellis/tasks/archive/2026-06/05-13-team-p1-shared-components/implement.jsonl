@@ -1,0 +1,8 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend overview + pre-dev checklist"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Design principles (OCP/策略模式/SRP), forbidden patterns, DTO rules"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "MyBatis-Plus entity/mapper 约定, 枚举映射, 事务规则"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "BusinessException 统一异常, ErrorCode 枚举规范"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "模块分包规则, 命名约定"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "SLF4J 参数化日志, INFO 审计日志"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "跨层数据流边界定义"}
+{"file": "docs/TEAM-FEATURE-PRD.md", "reason": "完整 PRD，§8.1 DocumentOwnershipChecker + §8.2 ETL 管道改造清单"}

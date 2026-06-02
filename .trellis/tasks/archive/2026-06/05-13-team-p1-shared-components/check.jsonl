@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "设计原则合规、Security Checklist、Forbidden Patterns"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Entity 约定、枚举映射、列定义约定"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "ErrorCode 分段规范、BusinessException 使用"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "日志级别、参数化格式"}
+{"file": "docs/TEAM-FEATURE-PRD.md", "reason": "PRD 验收标准对照"}
+{"file": "docs/reviews/team-prd-trellis-compliance.md", "reason": "合规审查报告，55 项检查标准"}

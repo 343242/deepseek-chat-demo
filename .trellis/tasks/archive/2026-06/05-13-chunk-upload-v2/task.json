@@ -1,0 +1,32 @@
+{
+  "id": "chunk-upload-v2",
+  "name": "chunk-upload-v2",
+  "title": "分片上传与断点续传",
+  "description": "",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "instant",
+  "assignee": "instant",
+  "createdAt": "2026-05-13",
+  "completedAt": "2026-06-03",
+  "branch": null,
+  "base_branch": "rag-dev",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "05-13-chunk-p1-infra",
+    "05-13-chunk-p2-core-service",
+    "05-13-chunk-p3-controller",
+    "05-13-chunk-p4-merge-cleanup",
+    "05-13-chunk-p5-test"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

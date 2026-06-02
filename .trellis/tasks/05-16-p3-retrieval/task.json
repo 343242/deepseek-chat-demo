@@ -1,0 +1,11 @@
+{
+  "id": "05-16-p3-retrieval",
+  "name": "05-16-p3-retrieval",
+  "title": "Phase 3: 检索评估",
+  "description": "RetrievalMetricsCalculator(Recall@K/Precision@K/MRR/NDCG/ContextPrecision) + PipelineInstrumenter + EvaluationRunner检索侧 + EvaluationResultRepository",
+  "status": "completed",
+  "priority": "P0",
+  "parent": "05-16-rag-evaluation",
+  "creator": "instant",
+  "createdAt": "2026-05-16"
+}

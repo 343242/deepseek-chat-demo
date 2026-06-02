@@ -1,0 +1,11 @@
+{
+  "id": "05-16-p5-integration",
+  "name": "05-16-p5-integration",
+  "title": "Phase 5: 集成验证",
+  "description": "编译通过 + 214 个测试全部通过 + 无侵入现有代码 + git push",
+  "status": "completed",
+  "priority": "P1",
+  "parent": "05-16-rag-evaluation",
+  "creator": "instant",
+  "createdAt": "2026-05-16"
+}

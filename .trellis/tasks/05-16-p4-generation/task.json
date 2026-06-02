@@ -1,0 +1,11 @@
+{
+  "id": "05-16-p4-generation",
+  "name": "05-16-p4-generation",
+  "title": "Phase 4: 生成评估",
+  "description": "FaithfulnessScorer + ContextRecallScorer + AnswerRelevanceScorer + ContextRelevanceScorer + GenerationMetricsCalculator + EvaluationRunner集成生成指标 + EvaluationRunController REST API",
+  "status": "completed",
+  "priority": "P0",
+  "parent": "05-16-rag-evaluation",
+  "creator": "instant",
+  "createdAt": "2026-05-16"
+}

@@ -1,0 +1,11 @@
+{
+  "id": "05-16-p2-dataset",
+  "name": "05-16-p2-dataset",
+  "title": "Phase 2: 数据集管理",
+  "description": "EvaluationDataset/Item 实体 + DatasetRepository + DatasetGenerator(LLM生成) + DatasetExporter + DatasetController REST API",
+  "status": "completed",
+  "priority": "P0",
+  "parent": "05-16-rag-evaluation",
+  "creator": "instant",
+  "createdAt": "2026-05-16"
+}

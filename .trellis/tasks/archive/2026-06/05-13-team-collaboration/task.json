@@ -1,0 +1,31 @@
+{
+  "id": "team-collaboration",
+  "name": "team-collaboration",
+  "title": "团队协作功能",
+  "description": "",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "instant",
+  "assignee": "instant",
+  "createdAt": "2026-05-13",
+  "completedAt": "2026-06-03",
+  "branch": "rag-dev",
+  "base_branch": "rag-dev",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "05-13-team-p1-shared-components",
+    "05-13-team-p2-strategy-regression",
+    "05-13-team-p3-team-module",
+    "05-13-team-p4-rag-retrieval"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

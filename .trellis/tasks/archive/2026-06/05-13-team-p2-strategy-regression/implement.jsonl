@@ -1,0 +1,8 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend overview + pre-dev checklist"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "OCP 强制 — 新功能=新增类, 策略模式优先, 封装彻底"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "MyBatis-Plus 用法, TransactionTemplate"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "BusinessException, ErrorCode"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "模块分包, 命名约定"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "上传链路跨层数据流（Controller→Strategy→MinIO→DB→ETL）"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "避免代码克隆 — PersonalUploadStrategy 封装后必须删除旧代码"}
+{"file": "docs/TEAM-FEATURE-PRD.md", "reason": "§4.3.1 策略模式设计 + §7.2 DocumentApplicationServiceImpl 改动清单"}

@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "C-2/C-1 修复异常链传递、E-1 修改 HTTP status mapping、M-3 改 UnsupportedOperationException"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "X-1 MDC 传播修复、T-1 MdcPropagator 封装"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "M-1 策略模式重构、T-1 构造器参数精简、C-3 防御性拷贝"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "M-1 抽取 AbstractModeStrategy 模板方法"}
+{"file": "docs/reviews/2026-06-02-chat-module-full-review.md", "reason": "审查报告原文，所有修复项的来源依据"}

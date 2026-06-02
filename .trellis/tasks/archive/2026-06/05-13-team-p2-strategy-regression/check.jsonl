@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "OCP 验证 — 上传链路零 if/else, 策略模式路由"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "错误处理合规"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "无代码克隆 — 旧上传代码已删除"}
+{"file": "docs/TEAM-FEATURE-PRD.md", "reason": "§14 OCP 验证清单"}
+{"file": "docs/reviews/team-prd-trellis-compliance.md", "reason": "合规审查报告"}

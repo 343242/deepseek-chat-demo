@@ -1,0 +1,55 @@
+{
+  "id": "05-17-rag-module-review",
+  "title": "RAG 模块 Code Review 修复（排除 evaluation）",
+  "status": "completed",
+  "priority": "high",
+  "created": "2026-05-17T03:15:00+08:00",
+  "description": "对 RAG 模块 7 个子包、22 个核心文件进行 code review，发现 4 个 CRITICAL 和 7 个 SUGGESTION 需要修复",
+  "files": [
+    "src/main/java/com/demo/chat/rag/retrieval/BailianRerankPostProcessor.java",
+    "src/main/java/com/demo/chat/rag/retrieval/HybridDocumentRetriever.java",
+    "src/main/java/com/demo/chat/rag/retrieval/MmrDocumentPostProcessor.java",
+    "src/main/java/com/demo/chat/rag/config/RagAdvisorFactory.java",
+    "src/main/java/com/demo/chat/rag/config/RagConfig.java",
+    "src/main/java/com/demo/chat/rag/config/RagRetrievalProperties.java",
+    "src/main/java/com/demo/chat/rag/config/DocumentProperties.java",
+    "src/main/java/com/demo/chat/rag/mapper/VectorStoreMapper.java",
+    "src/main/java/com/demo/chat/rag/etl/FastTrackStrategy.java",
+    "src/main/java/com/demo/chat/rag/chunk/ParentDocumentPostProcessor.java",
+    "src/main/java/com/demo/chat/rag/upload/ChunkUploadServiceImpl.java",
+    "src/main/java/com/demo/chat/rag/upload/PersonalUploadStrategy.java",
+    "src/main/java/com/demo/chat/rag/upload/OrphanChunkCleaner.java",
+    "src/main/java/com/demo/chat/rag/upload/BucketResolver.java",
+    "src/main/java/com/demo/chat/rag/parser/OpenDataLoaderPdfParser.java",
+    "src/main/java/com/demo/chat/rag/parser/PdfDocumentParser.java",
+    "src/main/java/com/demo/chat/rag/parser/DocxDocumentParser.java",
+    "src/main/java/com/demo/chat/rag/parser/PptDocumentParser.java",
+    "src/main/java/com/demo/chat/rag/parser/ExcelDocumentParser.java"
+  ],
+  "phases": [
+    {
+      "name": "Phase 1: CRITICAL",
+      "items": [
+        "C1",
+        "C2",
+        "C3",
+        "C4"
+      ],
+      "status": "pending"
+    },
+    {
+      "name": "Phase 2: SUGGESTION",
+      "items": [
+        "S1",
+        "S2",
+        "S3",
+        "S4",
+        "S5",
+        "S6",
+        "S7"
+      ],
+      "status": "pending"
+    }
+  ],
+  "completedAt": "2026-06-03"
+}

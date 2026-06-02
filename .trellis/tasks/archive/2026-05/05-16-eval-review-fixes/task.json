@@ -1,0 +1,60 @@
+{
+  "id": "05-16-eval-review-fixes",
+  "name": "05-16-eval-review-fixes",
+  "title": "RAG 评估系统审查修复",
+  "description": "基于 CODE-REVIEW.md 审查报告修复 RAG 评估系统：正确性 Bug、项目模式对齐、安全健壮性、改进",
+  "status": "completed",
+  "priority": "P0",
+  "creator": "instant",
+  "assignee": "instant",
+  "createdAt": "2026-05-16",
+  "base_branch": "eval-rag-dev",
+  "parentTask": "05-16-rag-evaluation",
+  "relatedFiles": [
+    ".trellis/tasks/05-16-rag-evaluation/CODE-REVIEW.md",
+    "src/main/java/com/demo/chat/rag/evaluation/"
+  ],
+  "phases": [
+    {
+      "phase": 1,
+      "name": "正确性 Bug 修复",
+      "status": "completed",
+      "items": [
+        "P2-3→P0: judgeModel 未生效",
+        "P0-2: PreparedStatement/ResultSet 资源泄漏"
+      ]
+    },
+    {
+      "phase": 2,
+      "name": "项目模式对齐",
+      "status": "completed",
+      "items": [
+        "P0-5+P0-6: Repository 模式决策+实体改 record",
+        "P0-3+P1-10: DTO 规范+Provider 路由",
+        "P0-4: extractJson 抽取公共工具类"
+      ]
+    },
+    {
+      "phase": 3,
+      "name": "安全与健壮性",
+      "status": "completed",
+      "items": [
+        "P1-7: Controller 权限控制 @PreAuthorize",
+        "P1-9: status 枚举约束",
+        "P0-1: 抽取 EvaluationExecutionService + 事务"
+      ]
+    },
+    {
+      "phase": 4,
+      "name": "改进与测试",
+      "status": "completed",
+      "items": [
+        "P1-6: DatasetGenerator 并发优化",
+        "P1-1: Runner 依赖拆分",
+        "P2-6: 单元测试",
+        "P2-5/P2-7: 异常处理"
+      ]
+    }
+  ],
+  "completedAt": "2026-05-28"
+}

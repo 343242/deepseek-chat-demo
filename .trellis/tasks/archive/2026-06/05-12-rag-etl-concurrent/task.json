@@ -1,0 +1,33 @@
+{
+  "id": "05-12-rag-etl-concurrent",
+  "name": "05-12-rag-etl-concurrent",
+  "title": "RAG ETL 并发改造 + 智能路由",
+  "description": "RAG ETL 并发改造：多线程批量解析/切片/向量化 + 小文档快速通道（BM25全文检索先行，向量化异步）",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P1",
+  "creator": "instant",
+  "assignee": "instant",
+  "createdAt": "2026-05-11",
+  "completedAt": "2026-06-03",
+  "branch": null,
+  "base_branch": "rag-dev",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "05-12-p1-executor-infra",
+    "05-12-p2-etl-route-strategy",
+    "05-12-p3-concurrent-etl",
+    "05-12-p4-fast-track-bm25",
+    "05-12-p5-integration",
+    "05-12-p6-config-verify"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

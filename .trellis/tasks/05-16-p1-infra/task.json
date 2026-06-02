@@ -1,0 +1,11 @@
+{
+  "id": "05-16-p1-infra",
+  "name": "05-16-p1-infra",
+  "title": "Phase 1: 基础设施",
+  "description": "EvaluationProperties + EvaluationConfig + Flyway 迁移脚本 + application-evaluation.yml + LlmJudge 接口/实现",
+  "status": "completed",
+  "priority": "P0",
+  "parent": "05-16-rag-evaluation",
+  "creator": "instant",
+  "createdAt": "2026-05-16"
+}

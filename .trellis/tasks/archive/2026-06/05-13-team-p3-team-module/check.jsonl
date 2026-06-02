@@ -1,0 +1,8 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "完整 Security Checklist + Forbidden Patterns + DTO Rules"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Schema 合规 — partial index, status=1 过滤, TransactionTemplate"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "错误码 55xxx 段验证"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "审计日志完整性"}
+{"file": "docs/TEAM-FEATURE-PRD.md", "reason": "全部验收标准对照"}
+{"file": "docs/reviews/team-prd-arch-review-main.md", "reason": "架构审查 — 并发保护 (SELECT FOR UPDATE + 乐观锁)"}
+{"file": "docs/reviews/team-prd-arch-review-deepseek.md", "reason": "架构审查 — 分片上传二次校验、秒传 teamId 隔离、解散并发"}
+{"file": "docs/reviews/team-prd-trellis-compliance.md", "reason": "55 项合规标准"}

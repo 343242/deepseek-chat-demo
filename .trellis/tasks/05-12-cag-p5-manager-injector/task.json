@@ -1,0 +1,10 @@
+{
+  "id": "05-12-cag-p5-manager-injector",
+  "name": "p5-manager-injector",
+  "title": "P5: RequestContextManager + ContextPromptInjector",
+  "description": "上下文管理器核心：接口定义 + 默认实现（组合三个策略，resolveSafe 降级） + prompt 注入器（含 sanitize）",
+  "status": "completed",
+  "parent": null,
+  "createdAt": "2026-05-12",
+  "completedAt": "2026-06-03"
+}

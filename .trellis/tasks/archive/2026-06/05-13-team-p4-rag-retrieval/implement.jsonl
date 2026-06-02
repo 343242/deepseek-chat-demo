@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend overview"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "OCP — 隔离维度参数化不改旧逻辑, 封装彻底"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "改动文件归属"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "RAG 检索链路：ChatRequest → Factory → Retriever → VectorStore，四层边界"}
+{"file": "docs/TEAM-FEATURE-PRD.md", "reason": "§6.5 ChatRequest 变更 + §8.3 RagAdvisorFactory 改造 + §8.2 ETL metadata 写入"}
+{"file": "docs/reviews/team-prd-arch-review-main.md", "reason": "AR-1 缓存冲突方案 + AR-3 metadata 缺失方案 + OM-1/OM-2 BM25 改造"}

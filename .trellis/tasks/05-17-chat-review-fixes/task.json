@@ -1,0 +1,21 @@
+{
+  "id": "05-17-chat-review-fixes",
+  "title": "Chat 模块 Code Review 修复（Mimo 审查 → 核查后 6 项）",
+  "status": "completed",
+  "created": "2026-05-17T03:17:00+08:00",
+  "completed": "2026-05-17T03:21:00+08:00",
+  "commit": "abf925f",
+  "phases": [
+    {"id": "C1", "desc": "TokenBucketLimiter synchronized → ReentrantLock", "status": "done"},
+    {"id": "C2", "desc": "ChatController 废弃 GET /chat/stream 接口", "status": "done"},
+    {"id": "S1", "desc": "RateLimitAdvisor conversationId 泄露脱敏", "status": "done"},
+    {"id": "S2", "desc": "SandboxService 临时文件路径泄露脱敏", "status": "done"},
+    {"id": "S4", "desc": "FallbackChainResolver 环检测加 WARN 日志", "status": "done"},
+    {"id": "S5", "desc": "ContentFilterAdvisor 过滤后添加 contentFiltered 标记", "status": "done"}
+  ],
+  "rejected": [
+    {"id": "C3", "desc": "StringBuilder 线程安全 — 误报，Reactor mapNotNull 串行执行"},
+    {"id": "S3", "desc": "DuplicateKeyException 破坏事务 — 不成立，调用链无外层事务"},
+    {"id": "S6", "desc": "FAIL_ON_UNKNOWN_PROPERTIES — 升级兼容风险大，保持默认"}
+  ]
+}

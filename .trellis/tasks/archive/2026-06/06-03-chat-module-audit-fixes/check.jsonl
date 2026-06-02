@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "验证 E-1 HTTP status 语义正确、C-2 异常链完整、M-3 不再抛 BusinessException"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "验证 M-1 重构后策略模式符合项目质量标准"}

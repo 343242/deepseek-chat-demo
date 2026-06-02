@@ -1,0 +1,10 @@
+{
+  "id": "05-12-cag-p8-tests",
+  "name": "p8-tests",
+  "title": "P8: 单元测试（Resolver + Manager + Injector + 降级逻辑）",
+  "description": "为所有 CAG 组件编写单元测试：UserProfileResolver（Mock Mapper）、SessionContextResolver、PolicyConstraintResolver、RequestContextManager（resolveSafe 降级）、ContextPromptInjector（sanitize）",
+  "status": "completed",
+  "parent": null,
+  "createdAt": "2026-05-12",
+  "completedAt": "2026-06-03"
+}

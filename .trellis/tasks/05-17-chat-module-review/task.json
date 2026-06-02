@@ -1,0 +1,43 @@
+{
+  "id": "05-17-chat-module-review",
+  "title": "Chat 模块 Code Review 修复",
+  "status": "completed",
+  "priority": "high",
+  "created": "2026-05-17T03:02:00+08:00",
+  "description": "对 chat 模块 22 个核心文件进行 code review，发现 3 个 CRITICAL 和 6 个 SUGGESTION 需要修复",
+  "files": [
+    "src/main/java/com/demo/chat/chat/advisor/TokenBucketLimiter.java",
+    "src/main/java/com/demo/chat/chat/controller/ChatController.java",
+    "src/main/java/com/demo/chat/chat/service/impl/ChatServiceImpl.java",
+    "src/main/java/com/demo/chat/chat/advisor/RateLimitAdvisor.java",
+    "src/main/java/com/demo/chat/chat/tool/sandbox/SandboxService.java",
+    "src/main/java/com/demo/chat/chat/service/ChatConversationHelper.java",
+    "src/main/java/com/demo/chat/chat/fallback/FallbackChainResolver.java",
+    "src/main/java/com/demo/chat/chat/advisor/ContentFilterAdvisor.java",
+    "src/main/java/com/demo/chat/chat/memory/RedisChatMemoryRepository.java"
+  ],
+  "phases": [
+    {
+      "name": "Phase 1: CRITICAL",
+      "items": [
+        "C1",
+        "C2",
+        "C3"
+      ],
+      "status": "pending"
+    },
+    {
+      "name": "Phase 2: SUGGESTION",
+      "items": [
+        "S1",
+        "S2",
+        "S3",
+        "S4",
+        "S5",
+        "S6"
+      ],
+      "status": "pending"
+    }
+  ],
+  "completedAt": "2026-06-03"
+}

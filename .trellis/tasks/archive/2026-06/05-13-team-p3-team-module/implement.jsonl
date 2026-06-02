@@ -1,0 +1,9 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend overview + pre-dev checklist"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "设计原则 (OCP/SRP/DTO隔离), Security Checklist, 状态枚举, 唯一约束"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "建表约定 (TIMESTAMPTZ/SMALLINT/partial index/TableLogic), Flyway 幂等, 事务"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "55xxx 错误码, BusinessException, 参数校验 @Valid"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "team/ 模块分包 entity/enums/mapper/service/dto/controller"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "审计日志 (团队创建/解散/成员变更/审批)"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "上传链路、审批链路、分片上传 teamId 穿透数据流"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "TeamMembershipVerifier 复用、DocumentValidator 复用、cascadeDelete 复用"}
+{"file": "docs/TEAM-FEATURE-PRD.md", "reason": "完整 PRD — §4 功能需求 + §5 数据库设计 + §6 API 设计 + §4.3.4 分片上传穿透 + §8.1 权限校验"}

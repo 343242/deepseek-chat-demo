@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "OCP 验证 — 不改现有检索逻辑，参数化扩展"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "teamId 从 ChatRequest 到 VectorStore 的完整传递链验证"}
+{"file": "docs/TEAM-FEATURE-PRD.md", "reason": "§8.3 改造方案验收"}
+{"file": "docs/reviews/team-prd-arch-review-main.md", "reason": "架构审查阻塞项验证（缓存/metadata/BM25）"}
+{"file": "docs/reviews/team-prd-trellis-compliance.md", "reason": "合规标准"}

@@ -1,0 +1,38 @@
+{
+  "id": "05-12-cag-context-manager",
+  "name": "05-12-cag-context-manager",
+  "title": "CAG 上下文管理器 — 上下文增强生成",
+  "description": "基于 CAG 架构模式，在 RAG 上游引入 RequestContextManager，将用户画像、会话状态、策略约束统一管理并注入 LLM system prompt，实现上下文感知的差异化回答。",
+  "status": "completed",
+  "dev_type": "feature",
+  "scope": null,
+  "package": "com.demo.chat.chat.context",
+  "priority": "P1",
+  "creator": "instant",
+  "assignee": "instant",
+  "createdAt": "2026-05-12",
+  "completedAt": "2026-06-02",
+  "branch": "rag-dev",
+  "base_branch": "rag-dev",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "05-12-cag-p0-value-objects",
+    "05-12-cag-p1-mapper-batch",
+    "05-12-cag-p2-user-resolver",
+    "05-12-cag-p3-session-resolver",
+    "05-12-cag-p4-policy-resolver",
+    "05-12-cag-p5-manager-injector",
+    "05-12-cag-p6-service-integration",
+    "05-12-cag-p7-config",
+    "05-12-cag-p8-tests"
+  ],
+  "parent": null,
+  "relatedFiles": [
+    ".trellis/tasks/05-12-cag-context-manager/design.md"
+  ],
+  "notes": "设计文档含自审 + DeepSeek V4 Pro 评审修正，共 7 项修正已合并",
+  "meta": {}
+}

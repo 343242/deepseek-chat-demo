@@ -1,6 +1,8 @@
 package com.smart.rag.infrastructure.fallback;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.util.List;
 
@@ -24,17 +26,22 @@ public record ChatCandidatesProperties(
         long preProbeIntervalMs
 ) {
 
+    private static final Logger log = LoggerFactory.getLogger(ChatCandidatesProperties.class);
+
     public ChatCandidatesProperties {
         if (list == null) {
             list = List.of();
         }
         if (probeTimeoutSeconds <= 0) {
+            log.warn("probeTimeoutSeconds={} is invalid, defaulting to 10", probeTimeoutSeconds);
             probeTimeoutSeconds = 10;
         }
         if (probeCacheTtlSeconds <= 0) {
+            log.warn("probeCacheTtlSeconds={} is invalid, defaulting to 30", probeCacheTtlSeconds);
             probeCacheTtlSeconds = 30;
         }
         if (preProbeIntervalMs <= 0) {
+            log.warn("preProbeIntervalMs={} is invalid, defaulting to 20000", preProbeIntervalMs);
             preProbeIntervalMs = 20_000L;
         }
     }

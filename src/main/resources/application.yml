@@ -32,6 +32,9 @@ app:
     candidates:
       probe-enabled: false
       probe-timeout-seconds: 10
+      probe-cache-enabled: false
+      probe-cache-ttl-seconds: 30
+      pre-probe-interval-ms: 20000
       # list: populate to activate DynamicModelSelector + ProbeStreamHandler
       # list:
       #   - id: example

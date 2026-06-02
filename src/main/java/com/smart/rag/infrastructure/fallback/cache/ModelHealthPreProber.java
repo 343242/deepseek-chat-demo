@@ -20,6 +20,9 @@ public class ModelHealthPreProber {
 
     private static final Logger log = LoggerFactory.getLogger(ModelHealthPreProber.class);
 
+    /** 缓存条目剩余 TTL 超过总 TTL 的此比例时视为"新鲜"，跳过预探测 */
+    private static final long FRESH_THRESHOLD_DIVISOR = 2L;
+
     private final ChatCandidatesProperties props;
     private final ModelHealthCache healthCache;
 
@@ -64,8 +67,9 @@ public class ModelHealthPreProber {
             HealthEntry cached = healthCache.get(modelId);
 
             if (cached != null && cached.isHealthy()) {
-                long remainingTtl = (cached.timestamp() + props.probeCacheTtlSeconds() * 1000L) - now;
-                if (remainingTtl > props.probeCacheTtlSeconds() * 500L) {
+                long totalTtlMs = props.probeCacheTtlSeconds() * 1000L;
+                long remainingTtl = (cached.timestamp() + totalTtlMs) - now;
+                if (remainingTtl > totalTtlMs / FRESH_THRESHOLD_DIVISOR) {
                     skipped++;
                     continue;
                 }

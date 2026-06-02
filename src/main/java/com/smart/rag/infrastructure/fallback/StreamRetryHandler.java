@@ -7,6 +7,7 @@ import com.smart.rag.infrastructure.fallback.probe.SharedProbeRegistry;
 import com.smart.rag.infrastructure.exception.BusinessException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.lang.Nullable;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 
@@ -37,7 +38,9 @@ public class StreamRetryHandler {
 
     private final int maxRetries;
     private final FallbackEligibility eligibility;
+    @Nullable
     private final ModelHealthCache healthCache;
+    @Nullable
     private final SharedProbeRegistry probeRegistry;
     private final int probeTimeoutSeconds;
 
@@ -46,8 +49,8 @@ public class StreamRetryHandler {
     }
 
     public StreamRetryHandler(int maxRetries, FallbackEligibility eligibility,
-                              ModelHealthCache healthCache,
-                              SharedProbeRegistry probeRegistry,
+                              @Nullable ModelHealthCache healthCache,
+                              @Nullable SharedProbeRegistry probeRegistry,
                               int probeTimeoutSeconds) {
         this.maxRetries = maxRetries;
         this.eligibility = eligibility;
@@ -82,31 +85,45 @@ public class StreamRetryHandler {
                 CompletableFuture<ProbeResult> inFlight = probeRegistry.getInFlight(currentModel);
                 if (inFlight != null) {
                     log.debug("Sharing in-flight probe for '{}'", currentModel);
-                    return Mono.fromFuture(() -> inFlight)
-                            .timeout(Duration.ofSeconds(probeTimeoutSeconds))
-                            .flatMapMany(result -> {
-                                if (result.success()) {
-                                    if (healthCache != null) {
-                                        healthCache.putHealthy(currentModel, result.latencyMs());
-                                    }
-                                    return doModelStream(currentModel, chain, chainIndex,
-                                            retryCount, streamFactory, true);
-                                }
-                                if (healthCache != null) {
-                                    healthCache.putUnhealthy(currentModel);
-                                }
-                                return execute(chain, chainIndex + 1, 0, streamFactory);
-                            })
-                            .onErrorResume(TimeoutException.class, e -> {
-                                log.warn("Shared probe wait timed out for '{}'", currentModel);
-                                return execute(chain, chainIndex + 1, 0, streamFactory);
-                            });
+                    return awaitSharedProbe(currentModel, chain, chainIndex,
+                            retryCount, streamFactory, inFlight);
                 }
             }
 
             return doModelStream(currentModel, chain, chainIndex, retryCount,
                     streamFactory, false);
         });
+    }
+
+    /**
+     * 等待共享探测结果并路由到对应策略。
+     * <p>
+     * 提取公共的 {@code Mono.fromFuture(inFlight).timeout().flatMapMany()} 逻辑，
+     * 消除 {@link #execute} 和 {@link #doModelStream} 中的重复代码。
+     */
+    private Flux<String> awaitSharedProbe(String currentModel, List<String> chain,
+                                           int chainIndex, int retryCount,
+                                           StreamFactory streamFactory,
+                                           CompletableFuture<ProbeResult> inFlight) {
+        return Mono.fromFuture(() -> inFlight)
+                .timeout(Duration.ofSeconds(probeTimeoutSeconds))
+                .flatMapMany(result -> {
+                    if (result.success()) {
+                        if (healthCache != null) {
+                            healthCache.putHealthy(currentModel, result.latencyMs());
+                        }
+                        return doModelStream(currentModel, chain, chainIndex,
+                                retryCount, streamFactory, true);
+                    }
+                    if (healthCache != null) {
+                        healthCache.putUnhealthy(currentModel);
+                    }
+                    return execute(chain, chainIndex + 1, 0, streamFactory);
+                })
+                .onErrorResume(TimeoutException.class, e -> {
+                    log.warn("Shared probe wait timed out for '{}'", currentModel);
+                    return execute(chain, chainIndex + 1, 0, streamFactory);
+                });
     }
 
     private Flux<String> doModelStream(String currentModel, List<String> chain,
@@ -120,23 +137,10 @@ public class StreamRetryHandler {
         if (!skipProbe && probeRegistry != null) {
             myProbe = probeRegistry.tryRegister(currentModel);
             if (myProbe == null) {
-                // 另一个线程刚注册了同模型探测，走共享路径
                 CompletableFuture<ProbeResult> inFlight = probeRegistry.getInFlight(currentModel);
                 if (inFlight != null) {
-                    return Mono.fromFuture(() -> inFlight)
-                            .timeout(Duration.ofSeconds(probeTimeoutSeconds))
-                            .flatMapMany(result -> {
-                                if (result.success()) {
-                                    if (healthCache != null) {
-                                        healthCache.putHealthy(currentModel, result.latencyMs());
-                                    }
-                                    return doModelStream(currentModel, chain, chainIndex,
-                                            retryCount, streamFactory, true);
-                                }
-                                return execute(chain, chainIndex + 1, 0, streamFactory);
-                            })
-                            .onErrorResume(TimeoutException.class,
-                                    e -> execute(chain, chainIndex + 1, 0, streamFactory));
+                    return awaitSharedProbe(currentModel, chain, chainIndex,
+                            retryCount, streamFactory, inFlight);
                 }
             } else {
                 probeStart = System.currentTimeMillis();
@@ -158,6 +162,11 @@ public class StreamRetryHandler {
                         if (healthCache != null) {
                             healthCache.putHealthy(currentModel, latency);
                         }
+                    }
+                })
+                .doOnComplete(() -> {
+                    if (!emitted.get() && probeFuture != null) {
+                        probeFuture.complete(ProbeResult.failure(currentModel));
                     }
                 })
                 .onErrorResume(e -> {

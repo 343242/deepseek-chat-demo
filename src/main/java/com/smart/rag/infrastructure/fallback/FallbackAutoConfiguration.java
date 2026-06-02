@@ -66,11 +66,7 @@ public class FallbackAutoConfiguration {
             havingValue = "true", matchIfMissing = false)
     public ModelHealthPreProber modelHealthPreProber(ChatCandidatesProperties props,
                                                       ModelHealthCache healthCache) {
-        // 默认探测函数：阻塞式 ping（由实际部署覆盖）
-        ModelHealthPreProber.ProbeFunction noOp = modelId -> {
-            throw new UnsupportedOperationException(
-                    "Pre-probe function not configured. Provide a ModelHealthPreProber.ProbeFunction bean.");
-        };
+        ModelHealthPreProber.ProbeFunction noOp = modelId -> -1;
         return new ModelHealthPreProber(props, healthCache, noOp);
     }
 

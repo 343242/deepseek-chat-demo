@@ -1,0 +1,32 @@
+package com.smart.rag.infrastructure.fallback;
+
+import org.springframework.boot.context.properties.ConfigurationProperties;
+
+import java.util.List;
+
+/**
+ * 动态模型候选配置
+ * <p>
+ * 启用后替代静态降级链，基于候选列表 + 熔断状态动态选择模型。
+ * 首包探测（probe）可在流式场景下对无响应模型快速超时并降级。
+ *
+ * @param list                候选模型列表
+ * @param probeEnabled        是否启用首包探测，默认 false
+ * @param probeTimeoutSeconds 首包探测超时秒数，默认 10
+ */
+@ConfigurationProperties(prefix = "app.chat.candidates")
+public record ChatCandidatesProperties(
+        List<ModelCandidate> list,
+        boolean probeEnabled,
+        int probeTimeoutSeconds
+) {
+
+    public ChatCandidatesProperties {
+        if (list == null) {
+            list = List.of();
+        }
+        if (probeTimeoutSeconds <= 0) {
+            probeTimeoutSeconds = 10;
+        }
+    }
+}

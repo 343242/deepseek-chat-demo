@@ -12,6 +12,7 @@ import com.smart.rag.infrastructure.fallback.FallbackChainProvider;
 import com.smart.rag.infrastructure.fallback.FallbackEligibility;
 import com.smart.rag.infrastructure.fallback.ModelCircuitOpenException;
 import com.smart.rag.infrastructure.fallback.ModelCircuitBreakerRegistry;
+import com.smart.rag.infrastructure.fallback.ProbeStreamHandler;
 import com.smart.rag.infrastructure.fallback.StreamRetryHandler;
 import com.smart.rag.chat.mode.ChatModeStrategy;
 import com.smart.rag.chat.mode.ModeRouter;
@@ -57,6 +58,7 @@ public class ChatServiceImpl implements ChatService {
     private final FallbackChainProvider fallbackChainProvider;
     private final FallbackEligibility fallbackEligibility;
     private final StreamRetryHandler streamRetryHandler;
+    private final ProbeStreamHandler probeStreamHandler;
     private final ModelCircuitBreakerRegistry circuitBreakers;
     private final SseStreamBridge sseStreamBridge;
     private final RequestContextManager cagContextManager;
@@ -71,6 +73,7 @@ public class ChatServiceImpl implements ChatService {
                            FallbackChainProvider fallbackChainProvider,
                            FallbackEligibility fallbackEligibility,
                            StreamRetryHandler streamRetryHandler,
+                           ProbeStreamHandler probeStreamHandler,
                            ModelCircuitBreakerRegistry circuitBreakers,
                            SseStreamBridge sseStreamBridge,
                            RequestContextManager cagContextManager,
@@ -84,6 +87,7 @@ public class ChatServiceImpl implements ChatService {
         this.fallbackChainProvider = fallbackChainProvider;
         this.fallbackEligibility = fallbackEligibility;
         this.streamRetryHandler = streamRetryHandler;
+        this.probeStreamHandler = probeStreamHandler;
         this.circuitBreakers = circuitBreakers;
         this.sseStreamBridge = sseStreamBridge;
         this.cagContextManager = cagContextManager;
@@ -97,7 +101,7 @@ public class ChatServiceImpl implements ChatService {
             return doChat(request, null);
         }
 
-        List<String> chain = fallbackChainProvider.resolve(request.model());
+        List<String> chain = fallbackChainProvider.resolve(request.model(), request.enableThinking());
         String requestedModel = request.model();
         Exception lastException = null;
 
@@ -157,7 +161,7 @@ public class ChatServiceImpl implements ChatService {
             return doStream(request.model(), request);
         }
 
-        List<String> chain = fallbackChainProvider.resolve(request.model());
+        List<String> chain = fallbackChainProvider.resolve(request.model(), request.enableThinking());
         String requestedModel = request.model();
 
         return streamRetryHandler.execute(chain, 0, 0, modelId -> {
@@ -174,18 +178,20 @@ public class ChatServiceImpl implements ChatService {
                 log.info("Stream fallback: '{}' -> '{}'", requestedModel, modelId);
             }
 
-            return doStream(modelId, candidateRequest)
-                    .doOnComplete(() -> circuitBreakers.recordSuccess(modelId))
-                    .doOnError(e -> {
-                        if (fallbackEligibility.isEligible(e)) {
-                            circuitBreakers.recordFailure(modelId);
-                        }
-                    })
-                    .doFinally(signal -> {
-                        if (signal == SignalType.CANCEL) {
-                            circuitBreakers.releaseProbe(modelId);
-                        }
-                    });
+            return probeStreamHandler.wrapWithProbe(modelId,
+                    doStream(modelId, candidateRequest)
+                        .doOnComplete(() -> circuitBreakers.recordSuccess(modelId))
+                        .doOnError(e -> {
+                            if (fallbackEligibility.isEligible(e)) {
+                                circuitBreakers.recordFailure(modelId);
+                            }
+                        })
+                        .doFinally(signal -> {
+                            if (signal == SignalType.CANCEL) {
+                                circuitBreakers.releaseProbe(modelId);
+                            }
+                        })
+                );
         });
     }
 

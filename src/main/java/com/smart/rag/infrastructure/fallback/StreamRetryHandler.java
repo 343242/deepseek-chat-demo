@@ -82,6 +82,10 @@ public class StreamRetryHandler {
                         return execute(chain, chainIndex + 1, 0, streamFactory);
                     }
 
+                    if (e instanceof ProbeTimeoutException) {
+                        return execute(chain, chainIndex + 1, 0, streamFactory);
+                    }
+
                     // 不可降级的异常 — 直接传播，不重试不切换
                     if (!eligibility.isEligible(e)) {
                         return Flux.error(e);

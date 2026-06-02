@@ -14,7 +14,6 @@ import java.util.List;
  *   <li>DIP — ChatServiceImpl 依赖此接口，不依赖具体策略实现</li>
  * </ul>
  */
-@FunctionalInterface
 public interface FallbackChainProvider {
 
     /**
@@ -24,4 +23,15 @@ public interface FallbackChainProvider {
      * @return 有序候选模型列表，至少包含请求模型本身
      */
     List<String> resolve(String requestedModel);
+
+    /**
+     * 构建降级候选链（带思考模式提示）
+     *
+     * @param requestedModel   用户原始请求的模型 ID
+     * @param requiresThinking 是否需要支持思考模式的模型
+     * @return 有序候选模型列表，至少包含请求模型本身
+     */
+    default List<String> resolve(String requestedModel, boolean requiresThinking) {
+        return resolve(requestedModel);
+    }
 }

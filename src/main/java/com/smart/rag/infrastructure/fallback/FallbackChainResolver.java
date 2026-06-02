@@ -4,7 +4,6 @@ import com.smart.rag.infrastructure.provider.ModelProvider;
 import com.smart.rag.infrastructure.provider.ProviderRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
@@ -31,7 +30,6 @@ import java.util.Set;
  *   <li>环检测 — 通过 Set 去重，防止 A→B→A 无限循环</li>
  * </ul>
  */
-@Component
 public class FallbackChainResolver implements FallbackChainProvider {
 
     private static final Logger log = LoggerFactory.getLogger(FallbackChainResolver.class);

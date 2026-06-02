@@ -29,6 +29,10 @@ app:
         minimax/MiniMax-M2.1:
           - deepseek/deepseek-v4-flash
           - zhipu/glm-4.7-flash
+    candidates:
+      probe-enabled: false
+      probe-timeout-seconds: 10
+      list: []
   rag:
     fts-config: ${RAG_FTS_CONFIG:jiebacfg}
   cag:

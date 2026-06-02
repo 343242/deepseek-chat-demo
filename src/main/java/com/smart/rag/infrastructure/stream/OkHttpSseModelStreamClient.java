@@ -10,6 +10,7 @@ import okhttp3.RequestBody;
 import okhttp3.Response;
 import okhttp3.ResponseBody;
 import okio.BufferedSource;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.FluxSink;
@@ -32,6 +33,7 @@ public class OkHttpSseModelStreamClient {
         this(callFactory, new ObjectMapper());
     }
 
+    @Autowired
     OkHttpSseModelStreamClient(Call.Factory callFactory, ObjectMapper objectMapper) {
         this.callFactory = callFactory;
         this.objectMapper = objectMapper;

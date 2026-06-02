@@ -165,36 +165,47 @@ public class ChatServiceImpl implements ChatService {
         List<String> chain = fallbackChainProvider.resolve(request.model(), request.enableThinking());
         String requestedModel = request.model();
 
-        return streamRetryHandler.execute(chain, 0, 0, modelId -> {
-            if (!circuitBreakers.isCallAllowed(modelId)) {
-                log.warn("Skipping stream model '{}' because circuit breaker is open", modelId);
-                return Flux.error(new ModelCircuitOpenException(modelId));
-            }
-            boolean isFallback = !modelId.equals(requestedModel);
-            ChatRequest candidateRequest = isFallback
-                    ? request.withModel(modelId)
-                    : request;
-
-            if (isFallback) {
-                log.info("Stream fallback: '{}' -> '{}'", requestedModel, modelId);
+        return streamRetryHandler.execute(chain, 0, 0, new StreamRetryHandler.StreamFactory() {
+            @Override
+            public Flux<String> create(String modelId) {
+                return buildProbeStream(modelId);
             }
 
-            Flux<String> rawStream = doStream(modelId, candidateRequest)
-                    .doOnComplete(() -> circuitBreakers.recordSuccess(modelId))
-                    .doOnError(e -> {
-                        if (fallbackEligibility.isEligible(e)) {
-                            circuitBreakers.recordFailure(modelId);
-                        }
-                    })
-                    .doFinally(signal -> {
-                        if (signal == SignalType.CANCEL) {
-                            circuitBreakers.releaseProbe(modelId);
-                        }
-                    });
+            @Override
+            public Flux<String> createDirect(String modelId) {
+                return buildRawStream(modelId);
+            }
 
-            return probeStreamHandler != null
-                    ? probeStreamHandler.wrapWithProbe(modelId, rawStream)
-                    : rawStream;
+            private Flux<String> buildRawStream(String modelId) {
+                if (!circuitBreakers.isCallAllowed(modelId)) {
+                    log.warn("Skipping stream model '{}' because circuit breaker is open", modelId);
+                    return Flux.error(new ModelCircuitOpenException(modelId));
+                }
+                boolean isFallback = !modelId.equals(requestedModel);
+                ChatRequest candidateRequest = isFallback ? request.withModel(modelId) : request;
+                if (isFallback) {
+                    log.info("Stream fallback: '{}' -> '{}'", requestedModel, modelId);
+                }
+                return doStream(modelId, candidateRequest)
+                        .doOnComplete(() -> circuitBreakers.recordSuccess(modelId))
+                        .doOnError(e -> {
+                            if (fallbackEligibility.isEligible(e)) {
+                                circuitBreakers.recordFailure(modelId);
+                            }
+                        })
+                        .doFinally(signal -> {
+                            if (signal == SignalType.CANCEL) {
+                                circuitBreakers.releaseProbe(modelId);
+                            }
+                        });
+            }
+
+            private Flux<String> buildProbeStream(String modelId) {
+                Flux<String> raw = buildRawStream(modelId);
+                return probeStreamHandler != null
+                        ? probeStreamHandler.wrapWithProbe(modelId, raw)
+                        : raw;
+            }
         });
     }
 

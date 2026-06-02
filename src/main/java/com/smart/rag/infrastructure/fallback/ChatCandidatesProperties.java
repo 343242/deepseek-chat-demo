@@ -18,7 +18,10 @@ import java.util.List;
 public record ChatCandidatesProperties(
         List<ModelCandidate> list,
         boolean probeEnabled,
-        int probeTimeoutSeconds
+        int probeTimeoutSeconds,
+        boolean probeCacheEnabled,
+        int probeCacheTtlSeconds,
+        long preProbeIntervalMs
 ) {
 
     public ChatCandidatesProperties {
@@ -27,6 +30,12 @@ public record ChatCandidatesProperties(
         }
         if (probeTimeoutSeconds <= 0) {
             probeTimeoutSeconds = 10;
+        }
+        if (probeCacheTtlSeconds <= 0) {
+            probeCacheTtlSeconds = 30;
+        }
+        if (preProbeIntervalMs <= 0) {
+            preProbeIntervalMs = 20_000L;
         }
     }
 }

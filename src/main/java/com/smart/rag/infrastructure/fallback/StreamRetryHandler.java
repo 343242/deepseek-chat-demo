@@ -1,11 +1,19 @@
 package com.smart.rag.infrastructure.fallback;
 
+import com.smart.rag.infrastructure.fallback.cache.HealthEntry;
+import com.smart.rag.infrastructure.fallback.cache.ModelHealthCache;
+import com.smart.rag.infrastructure.fallback.probe.ProbeResult;
+import com.smart.rag.infrastructure.fallback.probe.SharedProbeRegistry;
 import com.smart.rag.infrastructure.exception.BusinessException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
 
+import java.time.Duration;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -17,10 +25,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
  *   <li>阶段二：降级切换到下一个备选模型（同样享有阶段一）</li>
  * </ol>
  * <p>
- * 设计原则：
+ * 可选集成探测缓存优化：
  * <ul>
- *   <li>SRP — 只负责流式重试和降级的 Flux 编排，不关心 ChatClient 如何构建</li>
- *   <li>递归深度保护 — 已尝试模型不重复，总尝试次数硬上限</li>
+ *   <li>策略 A：{@link SharedProbeRegistry} 共享探测去重</li>
+ *   <li>策略 B：{@link ModelHealthCache} Redis 健康缓存</li>
  * </ul>
  */
 public class StreamRetryHandler {
@@ -29,33 +37,25 @@ public class StreamRetryHandler {
 
     private final int maxRetries;
     private final FallbackEligibility eligibility;
+    private final ModelHealthCache healthCache;
+    private final SharedProbeRegistry probeRegistry;
+    private final int probeTimeoutSeconds;
 
-    /**
-     * @param maxRetries   同模型最大重试次数（含首次请求）
-     * @param eligibility  异常可降级判定器
-     */
     public StreamRetryHandler(int maxRetries, FallbackEligibility eligibility) {
-        this.maxRetries = maxRetries;
-        this.eligibility = eligibility;
+        this(maxRetries, eligibility, null, null, 10);
     }
 
-    /**
-     * 构建带重试 + 降级的流式 Flux
-     * <p>
-     * 对每个候选模型：
-     * <ol>
-     *   <li>尝试调用，失败时同模型重试（最多 maxRetries 次）</li>
-     *   <li>重试全部失败后，切换到下一个候选模型</li>
-     * </ol>
-     * <p>
-     * 每次重试/切换都丢弃之前已收集的部分回复，重新发送完整 prompt。
-     *
-     * @param chain       降级候选链（有序模型 ID 列表）
-     * @param chainIndex  当前候选在链中的索引
-     * @param retryCount  当前模型已重试次数
-     * @param streamFactory  流式调用工厂（接收模型 ID，返回 Flux）
-     * @return SSE 文本流
-     */
+    public StreamRetryHandler(int maxRetries, FallbackEligibility eligibility,
+                              ModelHealthCache healthCache,
+                              SharedProbeRegistry probeRegistry,
+                              int probeTimeoutSeconds) {
+        this.maxRetries = maxRetries;
+        this.eligibility = eligibility;
+        this.healthCache = healthCache;
+        this.probeRegistry = probeRegistry;
+        this.probeTimeoutSeconds = probeTimeoutSeconds;
+    }
+
     public Flux<String> execute(List<String> chain, int chainIndex, int retryCount,
                                 StreamFactory streamFactory) {
         if (chainIndex >= chain.size()) {
@@ -67,9 +67,99 @@ public class StreamRetryHandler {
         String currentModel = chain.get(chainIndex);
 
         return Flux.defer(() -> {
-            AtomicBoolean emitted = new AtomicBoolean(false);
-            return streamFactory.create(currentModel)
-                    .doOnNext(ignored -> emitted.set(true))
+            // 策略 B：Redis 健康缓存查询
+            if (healthCache != null) {
+                HealthEntry cached = healthCache.get(currentModel);
+                if (cached != null && cached.isHealthy()) {
+                    log.debug("Health cache HIT for '{}', skipping probe", currentModel);
+                    return doModelStream(currentModel, chain, chainIndex, retryCount,
+                            streamFactory, true);
+                }
+            }
+
+            // 策略 A：共享探测去重
+            if (probeRegistry != null) {
+                CompletableFuture<ProbeResult> inFlight = probeRegistry.getInFlight(currentModel);
+                if (inFlight != null) {
+                    log.debug("Sharing in-flight probe for '{}'", currentModel);
+                    return Mono.fromFuture(() -> inFlight)
+                            .timeout(Duration.ofSeconds(probeTimeoutSeconds))
+                            .flatMapMany(result -> {
+                                if (result.success()) {
+                                    if (healthCache != null) {
+                                        healthCache.putHealthy(currentModel, result.latencyMs());
+                                    }
+                                    return doModelStream(currentModel, chain, chainIndex,
+                                            retryCount, streamFactory, true);
+                                }
+                                if (healthCache != null) {
+                                    healthCache.putUnhealthy(currentModel);
+                                }
+                                return execute(chain, chainIndex + 1, 0, streamFactory);
+                            })
+                            .onErrorResume(TimeoutException.class, e -> {
+                                log.warn("Shared probe wait timed out for '{}'", currentModel);
+                                return execute(chain, chainIndex + 1, 0, streamFactory);
+                            });
+                }
+            }
+
+            return doModelStream(currentModel, chain, chainIndex, retryCount,
+                    streamFactory, false);
+        });
+    }
+
+    private Flux<String> doModelStream(String currentModel, List<String> chain,
+                                        int chainIndex, int retryCount,
+                                        StreamFactory streamFactory, boolean skipProbe) {
+        AtomicBoolean emitted = new AtomicBoolean(false);
+
+        CompletableFuture<ProbeResult> myProbe = null;
+        long probeStart = 0;
+
+        if (!skipProbe && probeRegistry != null) {
+            myProbe = probeRegistry.tryRegister(currentModel);
+            if (myProbe == null) {
+                // 另一个线程刚注册了同模型探测，走共享路径
+                CompletableFuture<ProbeResult> inFlight = probeRegistry.getInFlight(currentModel);
+                if (inFlight != null) {
+                    return Mono.fromFuture(() -> inFlight)
+                            .timeout(Duration.ofSeconds(probeTimeoutSeconds))
+                            .flatMapMany(result -> {
+                                if (result.success()) {
+                                    if (healthCache != null) {
+                                        healthCache.putHealthy(currentModel, result.latencyMs());
+                                    }
+                                    return doModelStream(currentModel, chain, chainIndex,
+                                            retryCount, streamFactory, true);
+                                }
+                                return execute(chain, chainIndex + 1, 0, streamFactory);
+                            })
+                            .onErrorResume(TimeoutException.class,
+                                    e -> execute(chain, chainIndex + 1, 0, streamFactory));
+                }
+            } else {
+                probeStart = System.currentTimeMillis();
+            }
+        }
+
+        Flux<String> stream = skipProbe
+                ? streamFactory.createDirect(currentModel)
+                : streamFactory.create(currentModel);
+
+        final CompletableFuture<ProbeResult> probeFuture = myProbe;
+        final long startTime = probeStart;
+
+        return stream
+                .doOnNext(item -> {
+                    if (emitted.compareAndSet(false, true) && probeFuture != null) {
+                        long latency = System.currentTimeMillis() - startTime;
+                        probeFuture.complete(ProbeResult.success(currentModel, latency));
+                        if (healthCache != null) {
+                            healthCache.putHealthy(currentModel, latency);
+                        }
+                    }
+                })
                 .onErrorResume(e -> {
                     if (emitted.get()) {
                         log.warn("Stream failed after emitting data for model '{}'; not retrying or falling back",
@@ -83,34 +173,43 @@ public class StreamRetryHandler {
                     }
 
                     if (e instanceof ProbeTimeoutException) {
+                        if (probeFuture != null) {
+                            probeFuture.complete(ProbeResult.failure(currentModel));
+                        }
+                        if (healthCache != null) {
+                            healthCache.putUnhealthy(currentModel);
+                        }
                         return execute(chain, chainIndex + 1, 0, streamFactory);
                     }
 
-                    // 不可降级的异常 — 直接传播，不重试不切换
                     if (!eligibility.isEligible(e)) {
                         return Flux.error(e);
                     }
 
-                    // 阶段一：同模型重试
                     if (retryCount + 1 < maxRetries) {
                         log.warn("Stream retry {}/{} for model '{}': {}",
                                 retryCount + 2, maxRetries, currentModel, e.getMessage());
                         return execute(chain, chainIndex, retryCount + 1, streamFactory);
                     }
 
-                    // 阶段二：降级切换到下一个候选
                     log.warn("Stream retries exhausted for model '{}' ({} attempts), falling back",
                             currentModel, maxRetries);
                     return execute(chain, chainIndex + 1, 0, streamFactory);
                 });
-        });
     }
 
     /**
-     * 流式调用工厂 — 将模型 ID 转换为 Flux<String>
+     * 流式调用工厂 — 将模型 ID 转换为 Flux&lt;String&gt;
      */
     @FunctionalInterface
     public interface StreamFactory {
         Flux<String> create(String modelId);
+
+        /**
+         * 创建不带探测包装的直连流（缓存命中时使用）
+         */
+        default Flux<String> createDirect(String modelId) {
+            return create(modelId);
+        }
     }
 }

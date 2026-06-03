@@ -1,8 +1,10 @@
 package com.smart.rag.user.service.impl;
 
 import com.smart.rag.common.snowflake.SnowflakeIdGenerator;
-import com.smart.rag.infrastructure.exception.errorcode.ErrorCode;
-import com.smart.rag.infrastructure.exception.BusinessException;
+import com.smart.rag.infrastructure.exception.ClientException;
+import com.smart.rag.infrastructure.exception.ServiceException;
+import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;
+import com.smart.rag.infrastructure.exception.errorcode.ServiceErrorCode;
 import com.smart.rag.infrastructure.exception.RateLimitExceededException;
 import com.smart.rag.infrastructure.web.config.JwtProperties;
 import com.smart.rag.infrastructure.web.service.CaptchaService;
@@ -88,22 +90,22 @@ public class AuthServiceImpl implements AuthService {
 
         // 3. Query user
         SysUser user = sysUserMapper.selectByUsername(username)
-                .orElseThrow(() -> new BusinessException(ErrorCode.LOGIN_FAILED));
+                .orElseThrow(() -> new ClientException(ClientErrorCode.LOGIN_FAILED));
 
         // 4. Verify password
         if (!passwordEncoder.matches(password, user.getPassword())) {
-            throw new BusinessException(ErrorCode.LOGIN_FAILED);
+            throw new ClientException(ClientErrorCode.LOGIN_FAILED);
         }
 
         // 5. Check user status
         if (user.getStatus() != null && user.getStatus() != 1) {
-            throw new BusinessException(ErrorCode.LOGIN_FAILED);
+            throw new ClientException(ClientErrorCode.LOGIN_FAILED);
         }
 
         // 6. Check Redis status
         String redisStatus = tokenCacheService.getUserStatus(user.getId());
         if ("disabled".equals(redisStatus) || "deleted".equals(redisStatus)) {
-            throw new BusinessException(ErrorCode.LOGIN_FAILED);
+            throw new ClientException(ClientErrorCode.LOGIN_FAILED);
         }
 
         // 7. Query roles & generate tokens
@@ -138,7 +140,7 @@ public class AuthServiceImpl implements AuthService {
         String normalizedEmail = email.trim().toLowerCase(Locale.ROOT);
 
         if (!isPasswordComplexEnough(password)) {
-            throw new BusinessException(ErrorCode.PASSWORD_RULE_ERROR);
+            throw new ClientException(ClientErrorCode.PASSWORD_RULE_ERROR);
         }
 
         String encodedPassword = passwordEncoder.encode(password);
@@ -165,7 +167,7 @@ public class AuthServiceImpl implements AuthService {
                 return user;
             });
         } catch (DuplicateKeyException e) {
-            throw new BusinessException(ErrorCode.USERNAME_EXISTS, "用户名或邮箱已存在");
+            throw new ClientException(ClientErrorCode.USERNAME_EXISTS, "用户名或邮箱已存在");
         }
 
         if (newUser == null) {
@@ -181,27 +183,27 @@ public class AuthServiceImpl implements AuthService {
     @Override
     public LoginResult refreshToken(String refreshToken) {
         if (!jwtTokenProvider.validateToken(refreshToken)) {
-            throw new BusinessException(ErrorCode.TOKEN_REFRESH_INVALID);
+            throw new ClientException(ClientErrorCode.TOKEN_REFRESH_INVALID);
         }
 
         if (!"refresh".equals(jwtTokenProvider.getTokenType(refreshToken))) {
-            throw new BusinessException(ErrorCode.TOKEN_NOT_REFRESH);
+            throw new ClientException(ClientErrorCode.TOKEN_NOT_REFRESH);
         }
 
         Long userId = tokenCacheService.rotateRefreshToken(refreshToken);
         if (userId == null) {
-            throw new BusinessException(ErrorCode.TOKEN_REFRESH_EXPIRED);
+            throw new ClientException(ClientErrorCode.TOKEN_REFRESH_EXPIRED);
         }
 
         SysUser user = sysUserMapper.selectActiveById(userId)
-                .orElseThrow(() -> new BusinessException(ErrorCode.USER_STATUS_ABNORMAL));
+                .orElseThrow(() -> new ClientException(ClientErrorCode.USER_STATUS_ABNORMAL));
         if (user.getStatus() != null && user.getStatus() != 1) {
-            throw new BusinessException(ErrorCode.USER_STATUS_ABNORMAL);
+            throw new ClientException(ClientErrorCode.USER_STATUS_ABNORMAL);
         }
 
         String redisStatus = tokenCacheService.getUserStatus(userId);
         if ("disabled".equals(redisStatus) || "deleted".equals(redisStatus)) {
-            throw new BusinessException(ErrorCode.USER_DISABLED);
+            throw new ClientException(ClientErrorCode.USER_DISABLED);
         }
 
         List<Long> roleIds = sysUserRoleMapper.selectRoleIdsByUserId(userId);
@@ -233,7 +235,7 @@ public class AuthServiceImpl implements AuthService {
     @Override
     public LoginResponse.UserInfo getCurrentUser(Long userId) {
         SysUser user = sysUserMapper.selectActiveById(userId)
-                .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
+                .orElseThrow(() -> new ServiceException(ServiceErrorCode.USER_NOT_FOUND));
 
         List<Long> roleIds = sysUserRoleMapper.selectRoleIdsByUserId(userId);
         List<String> roleNames = getRoleNames(roleIds);
@@ -253,15 +255,15 @@ public class AuthServiceImpl implements AuthService {
     public void changePassword(Long userId, String oldPassword, String newPassword) {
         SysUser user = sysUserMapper.selectById(userId);
         if (user == null) {
-            throw new BusinessException(ErrorCode.USER_NOT_FOUND);
+            throw new ServiceException(ServiceErrorCode.USER_NOT_FOUND);
         }
 
         if (!passwordEncoder.matches(oldPassword, user.getPassword())) {
-            throw new BusinessException(ErrorCode.OLD_PASSWORD_ERROR);
+            throw new ClientException(ClientErrorCode.OLD_PASSWORD_ERROR);
         }
 
         if (!isPasswordComplexEnough(newPassword)) {
-            throw new BusinessException(ErrorCode.PASSWORD_RULE_ERROR);
+            throw new ClientException(ClientErrorCode.PASSWORD_RULE_ERROR);
         }
 
         user.setPassword(passwordEncoder.encode(newPassword));
@@ -281,14 +283,14 @@ public class AuthServiceImpl implements AuthService {
     @Override
     public LoginResponse.UserInfo updateProfile(Long userId, UserUpdateRequest request) {
         SysUser user = sysUserMapper.selectActiveById(userId)
-                .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
+                .orElseThrow(() -> new ServiceException(ServiceErrorCode.USER_NOT_FOUND));
 
         if (request.nickname() != null) user.setNickname(request.nickname().trim());
         if (request.email() != null) {
             String normalizedEmail = request.email().trim().toLowerCase(Locale.ROOT);
             if (!normalizedEmail.equals(user.getEmail())) {
                 sysUserMapper.selectByEmailExcludingId(normalizedEmail, userId)
-                        .ifPresent(existing -> { throw new BusinessException(ErrorCode.EMAIL_USED); });
+                        .ifPresent(existing -> { throw new ClientException(ClientErrorCode.EMAIL_USED); });
             }
             user.setEmail(normalizedEmail);
         }
@@ -314,16 +316,16 @@ public class AuthServiceImpl implements AuthService {
 
     private void validateCaptcha(String captchaId, String captchaCode) {
         if (captchaId == null || captchaCode == null) {
-            throw new BusinessException(ErrorCode.CAPTCHA_PARAM_MISSING);
+            throw new ClientException(ClientErrorCode.CAPTCHA_PARAM_MISSING);
         }
         int submittedX;
         try {
             submittedX = Integer.parseInt(captchaCode);
         } catch (NumberFormatException e) {
-            throw new BusinessException(ErrorCode.CAPTCHA_FORMAT_ERROR);
+            throw new ClientException(ClientErrorCode.CAPTCHA_FORMAT_ERROR);
         }
         if (!captchaService.validate(captchaId, submittedX)) {
-            throw new BusinessException(ErrorCode.CAPTCHA_INVALID);
+            throw new ClientException(ClientErrorCode.CAPTCHA_INVALID);
         }
     }
 

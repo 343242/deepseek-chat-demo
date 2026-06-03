@@ -1,8 +1,10 @@
 package com.smart.rag.rag.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.smart.rag.infrastructure.exception.errorcode.ErrorCode;
-import com.smart.rag.infrastructure.exception.BusinessException;
+import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;
+import com.smart.rag.infrastructure.exception.errorcode.ServiceErrorCode;
+import com.smart.rag.infrastructure.exception.ClientException;
+import com.smart.rag.infrastructure.exception.ServiceException;
 import com.smart.rag.rag.dto.DocumentDTO;
 import com.smart.rag.rag.dto.DocumentUploadResponse;
 import com.smart.rag.rag.etl.EtlStatus;
@@ -131,13 +133,13 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
     public DocumentUploadResponse retry(Long id) {
         RagDocument doc = verifyAccess(id);
         if (doc == null) {
-            throw new BusinessException(ErrorCode.DOCUMENT_NOT_FOUND, "文档不存在: " + id);
+            throw new ServiceException(ServiceErrorCode.DOCUMENT_NOT_FOUND, "文档不存在: " + id);
         }
         if (doc.getSupersededBy() != null) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "文档已被新版本替代，无法重试");
+            throw new ClientException(ClientErrorCode.BAD_REQUEST, "文档已被新版本替代，无法重试");
         }
         if (doc.getStatus() != EtlStatus.FAILED && doc.getStatus() != EtlStatus.VECTOR_FAILED) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST,
+            throw new ClientException(ClientErrorCode.BAD_REQUEST,
                     "仅 FAILED / VECTOR_FAILED 状态的文档可以重试，当前状态: " + doc.getStatus());
         }
 
@@ -159,7 +161,7 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
     public List<DocumentDTO> getHistory(Long id) {
         RagDocument doc = verifyAccess(id);
         if (doc == null) {
-            throw new BusinessException(ErrorCode.DOCUMENT_NOT_FOUND, "文档不存在: " + id);
+            throw new ServiceException(ServiceErrorCode.DOCUMENT_NOT_FOUND, "文档不存在: " + id);
         }
         String groupId = doc.getDocumentGroupId();
         if (groupId == null) {

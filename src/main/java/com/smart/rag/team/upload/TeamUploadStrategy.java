@@ -1,8 +1,8 @@
 package com.smart.rag.team.upload;
 
-import com.smart.rag.infrastructure.exception.errorcode.ErrorCode;
+import com.smart.rag.infrastructure.exception.ClientException;
+import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;
 import com.smart.rag.common.upload.UploadStrategy;
-import com.smart.rag.infrastructure.exception.BusinessException;
 import com.smart.rag.rag.event.DocumentCreatedEvent;
 import com.smart.rag.rag.dto.DocumentUploadResponse;
 import com.smart.rag.rag.etl.EtlStatus;
@@ -179,7 +179,7 @@ public class TeamUploadStrategy implements UploadStrategy {
         if (usedBytes + extraSize > limitBytes) {
             log.warn("Upload quota exceeded: teamId={}, userId={}, used={}MB, limit={}MB, requested={}MB",
                     teamId, userId, usedBytes / 1024 / 1024, member.getUploadLimitMb(), extraSize / 1024 / 1024);
-            throw new BusinessException(ErrorCode.UPLOAD_QUOTA_EXCEEDED);
+            throw new ClientException(ClientErrorCode.UPLOAD_QUOTA_EXCEEDED);
         }
     }
 

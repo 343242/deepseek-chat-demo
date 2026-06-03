@@ -17,8 +17,8 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.lang.Nullable;
 import org.springframework.util.Assert;
 
-import com.smart.rag.infrastructure.exception.errorcode.ErrorCode;
-import com.smart.rag.infrastructure.exception.BusinessException;
+import com.smart.rag.infrastructure.exception.ServiceException;
+import com.smart.rag.infrastructure.exception.errorcode.ServiceErrorCode;
 import com.smart.rag.common.util.ConversationIdUtil;
 
 import java.nio.charset.StandardCharsets;
@@ -157,7 +157,7 @@ public class RedisChatMemoryRepository implements ChatMemoryRepository {
                     try {
                         return objectMapper.writeValueAsString(toDocument(msg));
                     } catch (JsonProcessingException e) {
-                        throw new BusinessException(ErrorCode.SERIALIZATION_FAILED,
+                        throw new ServiceException(ServiceErrorCode.SERIALIZATION_FAILED,
                                 "Failed to serialize message for conversation " + conversationId, e);
                     }
                 })

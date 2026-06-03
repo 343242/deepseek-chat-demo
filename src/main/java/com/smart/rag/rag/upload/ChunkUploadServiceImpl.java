@@ -1,7 +1,10 @@
 package com.smart.rag.rag.upload;
 
-import com.smart.rag.infrastructure.exception.errorcode.ErrorCode;
-import com.smart.rag.infrastructure.exception.BusinessException;
+import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;
+import com.smart.rag.infrastructure.exception.errorcode.ServiceErrorCode;
+import com.smart.rag.infrastructure.exception.AbstractException;
+import com.smart.rag.infrastructure.exception.ClientException;
+import com.smart.rag.infrastructure.exception.ServiceException;
 import com.smart.rag.rag.config.DocumentProperties;
 import com.smart.rag.rag.event.DocumentCreatedEvent;
 import com.smart.rag.rag.entity.RagDocument;
@@ -146,10 +149,10 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         int totalChunks = Integer.parseInt(session.get("totalChunks"));
 
         if (chunkIndex < 0 || chunkIndex >= totalChunks) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "分片序号超出范围: " + chunkIndex);
+            throw new ClientException(ClientErrorCode.BAD_REQUEST, "分片序号超出范围: " + chunkIndex);
         }
         if (chunkData.length > 50 * 1024 * 1024) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "单分片大小不能超过50MB");
+            throw new ClientException(ClientErrorCode.BAD_REQUEST, "单分片大小不能超过50MB");
         }
 
         // 幂等检查
@@ -165,7 +168,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         if (!actualChunkMd5.equalsIgnoreCase(chunkMd5)) {
             log.warn("Chunk MD5 mismatch: uploadId={}, index={}, expected={}, actual={}",
                     uploadId, chunkIndex, chunkMd5, actualChunkMd5);
-            throw new BusinessException(ErrorCode.UPLOAD_CHUNK_MD5_MISMATCH);
+            throw new ClientException(ClientErrorCode.UPLOAD_CHUNK_MD5_MISMATCH);
         }
 
         // 上传分片到 MinIO 临时路径
@@ -195,7 +198,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
             mergeExecutor.execute(() -> {
                 try {
                     performMerge(uploadId);
-                } catch (BusinessException e) {
+                } catch (AbstractException e) {
                     // 业务异常（如团队解散）：清理 __merging 标记，前端可感知
                     log.warn("Auto-merge rejected: uploadId={}, reason={}", uploadId, e.getMessage());
                     redisTemplate.opsForHash().delete(UploadRedisConstants.partsKey(uploadId), UploadRedisConstants.MERGING_FIELD);
@@ -254,7 +257,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
                 log.info("Complete idempotent: uploadId={} already merged as docId={}", uploadId, doc.getId());
                 return doc.getId();
             }
-            throw new BusinessException(ErrorCode.UPLOAD_SESSION_NOT_FOUND);
+            throw new ServiceException(ServiceErrorCode.UPLOAD_SESSION_NOT_FOUND);
         }
 
         Map<String, String> session = toStringMap(rawSession);
@@ -264,7 +267,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         Long teamId = session.get("teamId") != null ? Long.parseLong(session.get("teamId")) : null;
 
         if (!fileMd5.equalsIgnoreCase(session.get("fileMd5"))) {
-            throw new BusinessException(ErrorCode.UPLOAD_FILE_MD5_MISMATCH, "声明的文件MD5与会话不匹配");
+            throw new ClientException(ClientErrorCode.UPLOAD_FILE_MD5_MISMATCH, "声明的文件MD5与会话不匹配");
         }
 
         // 防止 autoMerge 进行中重复触发：检查 __merging 标记
@@ -277,7 +280,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
             if (existing != null) {
                 return existing.getId();
             }
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "文件合并正在进行中，请稍后重试");
+            throw new ClientException(ClientErrorCode.BAD_REQUEST, "文件合并正在进行中，请稍后重试");
         }
 
         performMerge(uploadId);
@@ -341,7 +344,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
                 String bucket = session.get("bucket");
                 cleanupTempChunks(bucket, session.get("objectName"), Integer.parseInt(session.get("totalChunks")));
                 cleanupRedis(uploadId, session.get("userId"), session.get("fileMd5"));
-                throw new BusinessException(ErrorCode.TEAM_NOT_FOUND, "团队已解散，上传已取消");
+                throw new ServiceException(ServiceErrorCode.TEAM_NOT_FOUND, "团队已解散，上传已取消");
             }
         }
 
@@ -376,7 +379,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
             deleteFromMinio(bucket, targetObjectKey);
             cleanupTempChunks(bucket, basePath, totalChunks);
             redisTemplate.opsForHash().delete(UploadRedisConstants.partsKey(uploadId), UploadRedisConstants.MERGING_FIELD);
-            throw new BusinessException(ErrorCode.UPLOAD_FILE_MD5_MISMATCH, "文件校验失败");
+            throw new ClientException(ClientErrorCode.UPLOAD_FILE_MD5_MISMATCH, "文件校验失败");
         }
 
         // 5. 持久化 rag_document
@@ -413,14 +416,14 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
     private void validateMimeType(String mimeType) {
         Set<String> allowed = Set.of(documentProperties.getAllowedMimeTypes().split(","));
         if (!allowed.contains(mimeType)) {
-            throw new BusinessException(ErrorCode.UPLOAD_MIME_UNSUPPORTED, "不支持的文件类型: " + mimeType);
+            throw new ClientException(ClientErrorCode.UPLOAD_MIME_UNSUPPORTED, "不支持的文件类型: " + mimeType);
         }
     }
 
     private void validateFileSize(Long fileSize) {
         long maxBytes = DataSize.parse(documentProperties.getMaxFileSize()).toBytes();
         if (fileSize > maxBytes) {
-            throw new BusinessException(ErrorCode.UPLOAD_FILE_TOO_LARGE,
+            throw new ClientException(ClientErrorCode.UPLOAD_FILE_TOO_LARGE,
                     String.format("文件大小 %d MB 超过上限 %s",
                             fileSize / (1024 * 1024), documentProperties.getMaxFileSize()));
         }
@@ -438,7 +441,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
                 List.of(rateKey),
                 String.valueOf(UploadRedisConstants.RATE_WINDOW.getSeconds()));
         if (count != null && count > UploadRedisConstants.RATE_LIMIT) {
-            throw new BusinessException(ErrorCode.RATE_LIMITED, "上传初始化请求过于频繁");
+            throw new ClientException(ClientErrorCode.RATE_LIMITED, "上传初始化请求过于频繁");
         }
     }
 
@@ -543,12 +546,12 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
     private Map<String, String> validateSession(String uploadId, Long userId) {
         // 格式校验：防止路径遍历
         if (uploadId == null || !uploadId.matches("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")) {
-            throw new BusinessException(ErrorCode.BAD_REQUEST, "无效的上传会话ID");
+            throw new ClientException(ClientErrorCode.BAD_REQUEST, "无效的上传会话ID");
         }
         String sessionKey = UploadRedisConstants.sessionKey(uploadId);
         Map<Object, Object> rawSession = redisTemplate.opsForHash().entries(sessionKey);
         if (rawSession.isEmpty()) {
-            throw new BusinessException(ErrorCode.UPLOAD_SESSION_NOT_FOUND);
+            throw new ServiceException(ServiceErrorCode.UPLOAD_SESSION_NOT_FOUND);
         }
         Map<String, String> session = toStringMap(rawSession);
         validateOwner(session, userId);
@@ -559,7 +562,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         Long owner = Long.parseLong(session.get("userId"));
         if (!owner.equals(userId)) {
             log.warn("Upload owner mismatch: expected={}, actual={}", owner, userId);
-            throw new BusinessException(ErrorCode.FORBIDDEN);
+            throw new ClientException(ClientErrorCode.FORBIDDEN);
         }
     }
 
@@ -578,7 +581,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
             log.debug("Uploaded chunk to MinIO: {}/{}", bucket, objectKey);
         } catch (Exception e) {
             log.error("MinIO putObject error: bucket={}, object={}", bucket, objectKey, e);
-            throw new BusinessException(ErrorCode.UPLOAD_FAILED, "存储服务异常");
+            throw new ClientException(ClientErrorCode.UPLOAD_FAILED, "存储服务异常");
         }
     }
 
@@ -595,7 +598,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
             log.info("Composed object: {}/{} from {} parts, contentType={}", bucket, targetObjectKey, sources.size(), contentType);
         } catch (Exception e) {
             log.error("MinIO composeObject error: bucket={}, target={}", bucket, targetObjectKey, e);
-            throw new BusinessException(ErrorCode.UPLOAD_FAILED, "合并分片失败");
+            throw new ClientException(ClientErrorCode.UPLOAD_FAILED, "合并分片失败");
         }
     }
 
@@ -630,7 +633,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
             return hexFormat(md.digest());
         } catch (Exception e) {
             log.error("Failed to compute file MD5 from MinIO: bucket={}, object={}", bucket, objectName, e);
-            throw new BusinessException(ErrorCode.UPLOAD_FAILED, "文件校验失败");
+            throw new ClientException(ClientErrorCode.UPLOAD_FAILED, "文件校验失败");
         }
     }
 

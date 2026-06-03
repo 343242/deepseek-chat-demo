@@ -1,7 +1,9 @@
 package com.smart.rag.user.service.impl;
 
-import com.smart.rag.infrastructure.exception.errorcode.ErrorCode;
-import com.smart.rag.infrastructure.exception.BusinessException;
+import com.smart.rag.infrastructure.exception.ClientException;
+import com.smart.rag.infrastructure.exception.ServiceException;
+import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;
+import com.smart.rag.infrastructure.exception.errorcode.ServiceErrorCode;
 import com.smart.rag.infrastructure.web.service.TokenCacheService;
 import com.smart.rag.user.entity.SysPermission;
 import com.smart.rag.user.entity.SysRole;
@@ -51,7 +53,7 @@ public class SysRoleServiceImpl implements SysRoleService {
     public RoleDetailVO getRoleDetail(Long roleId) {
         SysRole role = roleMapper.selectById(roleId);
         if (role == null) {
-            throw new BusinessException(ErrorCode.ROLE_NOT_FOUND);
+            throw new ServiceException(ServiceErrorCode.ROLE_NOT_FOUND);
         }
         List<SysPermission> permissions = rolePermissionMapper.selectPermissionsByRoleId(roleId);
         return new RoleDetailVO(role, permissions);
@@ -60,7 +62,7 @@ public class SysRoleServiceImpl implements SysRoleService {
     @Override
     public SysRole createRole(String roleName, String roleDesc) {
         roleMapper.selectByRoleName(roleName)
-                .ifPresent(existing -> { throw new BusinessException(ErrorCode.ROLE_NAME_EXISTS); });
+                .ifPresent(existing -> { throw new ClientException(ClientErrorCode.ROLE_NAME_EXISTS); });
 
         SysRole role = new SysRole();
         role.setRoleName(roleName);
@@ -74,7 +76,7 @@ public class SysRoleServiceImpl implements SysRoleService {
     public SysRole updateRole(Long roleId, String roleDesc) {
         SysRole role = roleMapper.selectById(roleId);
         if (role == null) {
-            throw new BusinessException(ErrorCode.ROLE_NOT_FOUND);
+            throw new ServiceException(ServiceErrorCode.ROLE_NOT_FOUND);
         }
         role.setRoleDesc(roleDesc);
         roleMapper.updateById(role);
@@ -85,7 +87,7 @@ public class SysRoleServiceImpl implements SysRoleService {
     public void deleteRole(Long roleId) {
         SysRole role = roleMapper.selectById(roleId);
         if (role == null) {
-            throw new BusinessException(ErrorCode.ROLE_NOT_FOUND);
+            throw new ServiceException(ServiceErrorCode.ROLE_NOT_FOUND);
         }
 
         List<Long> userIds = userRoleMapper.selectUserIdsByRoleId(roleId);
@@ -102,7 +104,7 @@ public class SysRoleServiceImpl implements SysRoleService {
     public void assignPermissions(Long roleId, List<Long> permissionIds) {
         SysRole role = roleMapper.selectById(roleId);
         if (role == null) {
-            throw new BusinessException(ErrorCode.ROLE_NOT_FOUND);
+            throw new ServiceException(ServiceErrorCode.ROLE_NOT_FOUND);
         }
 
         List<Long> uniquePermIds = permissionIds.stream().distinct().toList();
@@ -111,7 +113,7 @@ public class SysRoleServiceImpl implements SysRoleService {
         if (existingPerms.size() != uniquePermIds.size()) {
             Set<Long> found = existingPerms.stream().map(SysPermission::getId).collect(Collectors.toSet());
             List<Long> missing = uniquePermIds.stream().filter(pid -> !found.contains(pid)).toList();
-            throw new BusinessException(ErrorCode.PERMISSION_NOT_FOUND, "权限不存在: " + missing);
+            throw new ServiceException(ServiceErrorCode.PERMISSION_NOT_FOUND, "权限不存在: " + missing);
         }
 
         transactionTemplate.executeWithoutResult(status -> {

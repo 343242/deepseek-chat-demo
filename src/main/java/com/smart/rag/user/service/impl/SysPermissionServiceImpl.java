@@ -1,7 +1,9 @@
 package com.smart.rag.user.service.impl;
 
-import com.smart.rag.infrastructure.exception.errorcode.ErrorCode;
-import com.smart.rag.infrastructure.exception.BusinessException;
+import com.smart.rag.infrastructure.exception.ClientException;
+import com.smart.rag.infrastructure.exception.ServiceException;
+import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;
+import com.smart.rag.infrastructure.exception.errorcode.ServiceErrorCode;
 import com.smart.rag.user.entity.SysPermission;
 import com.smart.rag.user.mapper.SysPermissionMapper;
 import com.smart.rag.user.service.SysPermissionService;
@@ -27,10 +29,10 @@ public class SysPermissionServiceImpl implements SysPermissionService {
     public SysPermission createPermission(String permissionName, String permissionDesc,
                                            String resourceType, String resourceKey) {
         permissionMapper.selectByPermissionName(permissionName)
-                .ifPresent(existing -> { throw new BusinessException(ErrorCode.PERMISSION_NAME_EXISTS, "权限名称已存在: " + permissionName); });
+                .ifPresent(existing -> { throw new ClientException(ClientErrorCode.PERMISSION_NAME_EXISTS, "权限名称已存在: " + permissionName); });
 
         permissionMapper.selectByResourceKey(resourceKey)
-                .ifPresent(existing -> { throw new BusinessException(ErrorCode.PERMISSION_KEY_EXISTS, "权限标识已存在: " + resourceKey); });
+                .ifPresent(existing -> { throw new ClientException(ClientErrorCode.PERMISSION_KEY_EXISTS, "权限标识已存在: " + resourceKey); });
 
         SysPermission perm = new SysPermission();
         perm.setPermissionName(permissionName);
@@ -46,7 +48,7 @@ public class SysPermissionServiceImpl implements SysPermissionService {
     public void deletePermission(Long permissionId) {
         SysPermission perm = permissionMapper.selectById(permissionId);
         if (perm == null) {
-            throw new BusinessException(ErrorCode.PERMISSION_NOT_FOUND);
+            throw new ServiceException(ServiceErrorCode.PERMISSION_NOT_FOUND);
         }
         permissionMapper.deleteById(permissionId);
     }

@@ -1,7 +1,7 @@
 package com.smart.rag.infrastructure.provider;
 
-import com.smart.rag.infrastructure.exception.errorcode.ErrorCode;
-import com.smart.rag.infrastructure.exception.BusinessException;
+import com.smart.rag.infrastructure.exception.ClientException;
+import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -58,7 +58,7 @@ public class ModelRouter {
      */
     public Route resolve(String rawModelId) {
         if (rawModelId == null || rawModelId.isBlank()) {
-            throw new BusinessException(ErrorCode.MODEL_EMPTY);
+            throw new ClientException(ClientErrorCode.MODEL_EMPTY);
         }
 
         int slashIndex = rawModelId.indexOf(SEPARATOR);

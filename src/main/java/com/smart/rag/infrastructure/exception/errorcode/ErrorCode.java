@@ -13,7 +13,7 @@ package com.smart.rag.infrastructure.exception.errorcode;
  *   <li>RAG 50xxx：文档/检索</li>
  * </ul>
  */
-public enum ErrorCode {
+public enum ErrorCode implements IErrorCode {
 
     // ==================== 通用 ====================
     SUCCESS(0, "ok"),

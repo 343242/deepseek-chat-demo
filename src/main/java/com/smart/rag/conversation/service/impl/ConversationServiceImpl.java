@@ -17,8 +17,8 @@ import com.smart.rag.conversation.mapper.ConversationMapper;
 import com.smart.rag.conversation.service.ConversationMessageService;
 import com.smart.rag.conversation.service.ConversationService;
 import com.smart.rag.common.util.ConversationIdUtil;
-import com.smart.rag.infrastructure.exception.errorcode.ErrorCode;
-import com.smart.rag.infrastructure.exception.BusinessException;
+import com.smart.rag.infrastructure.exception.ServiceException;
+import com.smart.rag.infrastructure.exception.errorcode.ServiceErrorCode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.memory.ChatMemoryRepository;
@@ -210,10 +210,10 @@ public class ConversationServiceImpl implements ConversationService {
     private Conversation findAndVerify(Long userId, String conversationId) {
         Conversation conv = findByConversationId(conversationId);
         if (conv == null || conv.getStatus() == ConversationStatus.DELETED) {
-            throw new BusinessException(ErrorCode.CONVERSATION_NOT_FOUND);
+            throw new ServiceException(ServiceErrorCode.CONVERSATION_NOT_FOUND);
         }
         if (!conv.getUserId().equals(userId)) {
-            throw new BusinessException(ErrorCode.CONVERSATION_ACCESS_DENIED);
+            throw new ServiceException(ServiceErrorCode.CONVERSATION_ACCESS_DENIED);
         }
         return conv;
     }

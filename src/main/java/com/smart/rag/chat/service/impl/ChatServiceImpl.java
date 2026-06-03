@@ -25,10 +25,9 @@ import com.smart.rag.chat.service.SseStreamBridge;
 import com.smart.rag.chat.service.UserContextProvider;
 import com.smart.rag.chat.service.StrategyExecuteResult;
 import com.smart.rag.chat.service.StrategyExecutionContext;
-import com.smart.rag.infrastructure.exception.errorcode.ErrorCode;
+import com.smart.rag.infrastructure.exception.ProviderNotFoundException;
 import com.smart.rag.common.util.UuidGeneratorUtil;
 import com.smart.rag.common.util.ConversationIdUtil;
-import com.smart.rag.infrastructure.exception.BusinessException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
@@ -147,8 +146,8 @@ public class ChatServiceImpl implements ChatService {
 
         log.error("All fallback attempts exhausted for model '{}', tried: {}",
                 requestedModel, chain, lastException);
-        throw new BusinessException(ErrorCode.PROVIDER_NOT_FOUND,
-                "所有模型均不可用，请稍后重试（已尝试 " + chain.size() + " 个模型）", lastException);
+        throw new ProviderNotFoundException(requestedModel,
+                "所有模型均不可用，请稍后重试（已尝试 " + chain.size() + " 个模型）");
     }
     // ==================== 流式聊天 ====================
 

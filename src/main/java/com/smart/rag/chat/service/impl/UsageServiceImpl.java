@@ -5,9 +5,9 @@ import com.smart.rag.chat.dto.TokenUsageDTO;
 import com.smart.rag.chat.dto.UsageStats;
 import com.smart.rag.chat.entity.TokenUsage;
 import com.smart.rag.chat.service.UsageService;
-import com.smart.rag.infrastructure.exception.errorcode.ErrorCode;
+import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;
 import com.smart.rag.common.util.ConversationIdUtil;
-import com.smart.rag.infrastructure.exception.BusinessException;
+import com.smart.rag.infrastructure.exception.ClientException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -56,7 +56,7 @@ public class UsageServiceImpl implements UsageService {
             String prefix = ConversationIdUtil.buildLikePrefix(userId);
             return getByModelAndUser(model, prefix);
         }
-        throw new BusinessException(ErrorCode.USAGE_PARAM_MISSING);
+        throw new ClientException(ClientErrorCode.USAGE_PARAM_MISSING);
     }
 
     @Override

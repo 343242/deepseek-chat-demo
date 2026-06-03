@@ -20,9 +20,9 @@ import com.smart.rag.chat.service.ChatConversationHelper;
 import com.smart.rag.chat.service.ChatUsageTracker;
 import com.smart.rag.chat.service.StrategyExecuteResult;
 import com.smart.rag.chat.service.StrategyExecutionContext;
-import com.smart.rag.infrastructure.exception.errorcode.ErrorCode;
 import com.smart.rag.common.util.ConversationIdUtil;
-import com.smart.rag.infrastructure.exception.BusinessException;
+import com.smart.rag.infrastructure.exception.ContentFilteredException;
+import com.smart.rag.infrastructure.exception.ProviderNotFoundException;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -253,22 +253,22 @@ class ChatServiceImplTest {
             setupCommonMocks(request);
 
             when(modeStrategy.execute(any(StrategyExecutionContext.class)))
-                    .thenThrow(new BusinessException(ErrorCode.CONTENT_FILTERED));
+                    .thenThrow(new ContentFilteredException("content filtered"));
 
             when(fallbackProperties.enabled()).thenReturn(true);
             when(fallbackChainProvider.resolve(MODEL_ID, false))
                     .thenReturn(List.of(MODEL_ID, "zhipu/glm-4-flash"));
-            when(fallbackEligibility.isEligible(any(BusinessException.class))).thenReturn(false);
+            when(fallbackEligibility.isEligible(any(ContentFilteredException.class))).thenReturn(false);
             when(circuitBreakers.isCallAllowed(MODEL_ID)).thenReturn(true);
 
             ChatServiceImpl service = createService();
-            assertThrows(BusinessException.class, () -> service.chat(request));
+            assertThrows(ContentFilteredException.class, () -> service.chat(request));
             verify(circuitBreakers, never()).recordFailure(MODEL_ID);
         }
 
         @Test
-        @DisplayName("chat_fallbackEnabled_allExhausted_throwsBusinessException")
-        void chat_fallbackEnabled_allExhausted_throwsBusinessException() {
+        @DisplayName("chat_fallbackEnabled_allExhausted_throwsProviderNotFoundException")
+        void chat_fallbackEnabled_allExhausted_throwsProviderNotFoundException() {
             conversationIdUtilMock = mockStatic(ConversationIdUtil.class);
 
             ChatRequest request = new ChatRequest(MODEL_ID, "hello", RAW_CONV_ID, false, "SIMPLE", false, null);
@@ -285,8 +285,8 @@ class ChatServiceImplTest {
             when(circuitBreakers.isCallAllowed(anyString())).thenReturn(true);
 
             ChatServiceImpl service = createService();
-            BusinessException ex = assertThrows(BusinessException.class, () -> service.chat(request));
-            assertEquals(ErrorCode.PROVIDER_NOT_FOUND, ex.getErrorCode());
+            ProviderNotFoundException ex = assertThrows(ProviderNotFoundException.class, () -> service.chat(request));
+            assertNotNull(ex.getErrorCode());
             verify(circuitBreakers).recordFailure(MODEL_ID);
             verify(circuitBreakers).recordFailure("zhipu/glm-4-flash");
         }

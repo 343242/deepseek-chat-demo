@@ -1,10 +1,12 @@
 package com.smart.rag.team.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.smart.rag.infrastructure.exception.errorcode.ErrorCode;
+import com.smart.rag.infrastructure.exception.ClientException;
+import com.smart.rag.infrastructure.exception.ServiceException;
+import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;
+import com.smart.rag.infrastructure.exception.errorcode.ServiceErrorCode;
 import com.smart.rag.infrastructure.request.PageRequest;
 import com.smart.rag.infrastructure.response.PagedResult;
-import com.smart.rag.infrastructure.exception.BusinessException;
 import com.smart.rag.infrastructure.web.util.SecurityUtils;
 import com.smart.rag.team.config.TeamProperties;
 import com.smart.rag.team.dto.MemberRoleUpdateRequest;
@@ -65,15 +67,15 @@ public class TeamMemberServiceImpl implements TeamMemberService {
         // 校验操作者权限（创建者或管理员）
         TeamMember operator = teamMemberMapper.selectByTeamAndUser(teamId, operatorId);
         if (operator == null) {
-            throw new BusinessException(ErrorCode.NOT_TEAM_MEMBER);
+            throw new ServiceException(ServiceErrorCode.NOT_TEAM_MEMBER);
         }
         if (operator.getRole() != TeamMemberRole.CREATOR && operator.getRole() != TeamMemberRole.ADMIN) {
-            throw new BusinessException(ErrorCode.NOT_TEAM_ADMIN);
+            throw new ServiceException(ServiceErrorCode.NOT_TEAM_ADMIN);
         }
 
         // 校验目标用户存在
         SysUser targetUser = sysUserMapper.selectActiveById(targetUserId)
-                .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
+                .orElseThrow(() -> new ServiceException(ServiceErrorCode.USER_NOT_FOUND));
 
         return txTemplate.execute(status -> {
             // 校验团队人数上限（事务内防 TOCTOU）
@@ -82,7 +84,7 @@ public class TeamMemberServiceImpl implements TeamMemberService {
                             .eq(TeamMember::getTeamId, teamId)
                             .eq(TeamMember::getStatus, 1));
             if (memberCount >= teamProperties.getMaxMembersPerTeam()) {
-                throw new BusinessException(ErrorCode.TEAM_MEMBER_LIMIT_EXCEEDED);
+                throw new ClientException(ClientErrorCode.TEAM_MEMBER_LIMIT_EXCEEDED);
             }
 
             // 校验目标用户加入团队数上限
@@ -91,14 +93,14 @@ public class TeamMemberServiceImpl implements TeamMemberService {
                             .eq(TeamMember::getUserId, targetUserId)
                             .eq(TeamMember::getStatus, 1));
             if (joinedCount >= teamProperties.getMaxTeamsPerUser()) {
-                throw new BusinessException(ErrorCode.TEAM_LIMIT_EXCEEDED);
+                throw new ClientException(ClientErrorCode.TEAM_LIMIT_EXCEEDED);
             }
 
             // 查找是否有历史记录（曾经加入过又退出的）
             TeamMember existing = teamMemberMapper.selectLatestByTeamAndUser(teamId, targetUserId);
 
             if (existing != null && existing.getStatus() == 1) {
-                throw new BusinessException(ErrorCode.ALREADY_TEAM_MEMBER);
+                throw new ClientException(ClientErrorCode.ALREADY_TEAM_MEMBER);
             }
 
             TeamMember member;
@@ -122,7 +124,7 @@ public class TeamMemberServiceImpl implements TeamMemberService {
                 try {
                     teamMemberMapper.insert(member);
                 } catch (DuplicateKeyException e) {
-                    throw new BusinessException(ErrorCode.ALREADY_TEAM_MEMBER);
+                    throw new ClientException(ClientErrorCode.ALREADY_TEAM_MEMBER);
                 }
             }
 
@@ -140,28 +142,28 @@ public class TeamMemberServiceImpl implements TeamMemberService {
 
         // 不能移除自己（用 leave）
         if (operatorId.equals(targetUserId)) {
-            throw new BusinessException(ErrorCode.CANNOT_REMOVE_SELF);
+            throw new ClientException(ClientErrorCode.CANNOT_REMOVE_SELF);
         }
 
         // 校验操作者权限
         TeamMember operator = teamMemberMapper.selectByTeamAndUser(teamId, operatorId);
         if (operator == null || (operator.getRole() != TeamMemberRole.CREATOR && operator.getRole() != TeamMemberRole.ADMIN)) {
-            throw new BusinessException(ErrorCode.NOT_TEAM_ADMIN);
+            throw new ServiceException(ServiceErrorCode.NOT_TEAM_ADMIN);
         }
 
         TeamMember target = teamMemberMapper.selectByTeamAndUser(teamId, targetUserId);
         if (target == null) {
-            throw new BusinessException(ErrorCode.NOT_TEAM_MEMBER);
+            throw new ServiceException(ServiceErrorCode.NOT_TEAM_MEMBER);
         }
 
         // 不能移除创建者
         if (target.getRole() == TeamMemberRole.CREATOR) {
-            throw new BusinessException(ErrorCode.CANNOT_REMOVE_CREATOR);
+            throw new ClientException(ClientErrorCode.CANNOT_REMOVE_CREATOR);
         }
 
         // 管理员不能移除管理员（只有创建者可以）
         if (operator.getRole() == TeamMemberRole.ADMIN && target.getRole() == TeamMemberRole.ADMIN) {
-            throw new BusinessException(ErrorCode.ADMIN_CANNOT_REMOVE_ADMIN);
+            throw new ClientException(ClientErrorCode.ADMIN_CANNOT_REMOVE_ADMIN);
         }
 
         target.setStatus(0);
@@ -178,12 +180,12 @@ public class TeamMemberServiceImpl implements TeamMemberService {
 
         TeamMember member = teamMemberMapper.selectByTeamAndUser(teamId, userId);
         if (member == null) {
-            throw new BusinessException(ErrorCode.NOT_TEAM_MEMBER);
+            throw new ServiceException(ServiceErrorCode.NOT_TEAM_MEMBER);
         }
 
         // 创建者不能退出（只能解散）
         if (member.getRole() == TeamMemberRole.CREATOR) {
-            throw new BusinessException(ErrorCode.CREATOR_CANNOT_LEAVE);
+            throw new ClientException(ClientErrorCode.CREATOR_CANNOT_LEAVE);
         }
 
         member.setStatus(0);
@@ -201,27 +203,27 @@ public class TeamMemberServiceImpl implements TeamMemberService {
         // 仅创建者可改角色
         TeamMember operator = teamMemberMapper.selectByTeamAndUser(teamId, operatorId);
         if (operator == null || operator.getRole() != TeamMemberRole.CREATOR) {
-            throw new BusinessException(ErrorCode.NOT_TEAM_CREATOR);
+            throw new ServiceException(ServiceErrorCode.NOT_TEAM_CREATOR);
         }
 
         // 不能改自己的角色
         if (operatorId.equals(targetUserId)) {
-            throw new BusinessException(ErrorCode.CANNOT_CHANGE_OWN_ROLE);
+            throw new ClientException(ClientErrorCode.CANNOT_CHANGE_OWN_ROLE);
         }
 
         TeamMember target = teamMemberMapper.selectByTeamAndUser(teamId, targetUserId);
         if (target == null) {
-            throw new BusinessException(ErrorCode.NOT_TEAM_MEMBER);
+            throw new ServiceException(ServiceErrorCode.NOT_TEAM_MEMBER);
         }
 
         // 不能改为 CREATOR（创建者只能通过转让团队变更）
         if (request.targetRole() == TeamMemberRole.CREATOR) {
-            throw new BusinessException(ErrorCode.CANNOT_ASSIGN_CREATOR);
+            throw new ClientException(ClientErrorCode.CANNOT_ASSIGN_CREATOR);
         }
 
         // 不能修改创建者的角色
         if (target.getRole() == TeamMemberRole.CREATOR) {
-            throw new BusinessException(ErrorCode.CANNOT_CHANGE_CREATOR_ROLE);
+            throw new ClientException(ClientErrorCode.CANNOT_CHANGE_CREATOR_ROLE);
         }
 
         target.setRole(request.targetRole());
@@ -239,12 +241,12 @@ public class TeamMemberServiceImpl implements TeamMemberService {
 
         TeamMember operator = teamMemberMapper.selectByTeamAndUser(teamId, operatorId);
         if (operator == null || (operator.getRole() != TeamMemberRole.CREATOR && operator.getRole() != TeamMemberRole.ADMIN)) {
-            throw new BusinessException(ErrorCode.NOT_TEAM_ADMIN);
+            throw new ServiceException(ServiceErrorCode.NOT_TEAM_ADMIN);
         }
 
         TeamMember target = teamMemberMapper.selectByTeamAndUser(teamId, targetUserId);
         if (target == null) {
-            throw new BusinessException(ErrorCode.NOT_TEAM_MEMBER);
+            throw new ServiceException(ServiceErrorCode.NOT_TEAM_MEMBER);
         }
 
         target.setUploadLimitMb(request.uploadLimitMb());
@@ -263,7 +265,7 @@ public class TeamMemberServiceImpl implements TeamMemberService {
         // 必须是成员才能查看
         TeamMember me = teamMemberMapper.selectByTeamAndUser(teamId, userId);
         if (me == null) {
-            throw new BusinessException(ErrorCode.NOT_TEAM_MEMBER);
+            throw new ServiceException(ServiceErrorCode.NOT_TEAM_MEMBER);
         }
 
         // 分页查询成员
@@ -300,7 +302,7 @@ public class TeamMemberServiceImpl implements TeamMemberService {
     private Team getActiveTeam(Long teamId) {
         Team team = teamMapper.selectById(teamId);
         if (team == null || team.getDeleted() != 0) {
-            throw new BusinessException(ErrorCode.TEAM_NOT_FOUND);
+            throw new ServiceException(ServiceErrorCode.TEAM_NOT_FOUND);
         }
         return team;
     }

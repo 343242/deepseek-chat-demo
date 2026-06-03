@@ -1,0 +1,4 @@
+{"file": ".trellis/tasks/06-03-refactor-exception-hierarchy/prd.md", "reason": "PRD: 完整的需求、5 个 ADR 决策、实施步骤、异常映射表、码值区间规划"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "当前错误处理规约，实现时需同步更新为三层异常体系"}
+{"file": "docs/ragent-design-reflection/framework-infrastructure-layer.md", "reason": "参考设计报告前七章：三层异常体系、IErrorCode、全局异常处理器、SSE 封装、幂等控制"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "日志策略规约，异常处理器日志级别需遵循"}

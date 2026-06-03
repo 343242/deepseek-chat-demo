@@ -1,7 +1,7 @@
 package com.smart.rag.rag.service.impl;
 
-import com.smart.rag.infrastructure.exception.errorcode.ErrorCode;
-import com.smart.rag.infrastructure.exception.BusinessException;
+import com.smart.rag.infrastructure.exception.errorcode.ServiceErrorCode;
+import com.smart.rag.infrastructure.exception.ServiceException;
 import com.smart.rag.rag.etl.EtlStatus;
 import com.smart.rag.rag.etl.EtlStatusManager;
 import com.smart.rag.rag.etl.Extractor;
@@ -65,7 +65,7 @@ public class EtlPipelineServiceImpl implements EtlPipelineService {
 
         RagDocument doc = ragDocumentMapper.selectById(documentId);
         if (doc == null) {
-            throw new BusinessException(ErrorCode.DOCUMENT_NOT_FOUND, "文档不存在: " + documentId);
+            throw new ServiceException(ServiceErrorCode.DOCUMENT_NOT_FOUND, "文档不存在: " + documentId);
         }
 
         try {
@@ -100,7 +100,7 @@ public class EtlPipelineServiceImpl implements EtlPipelineService {
 
         } catch (Exception e) {
             statusManager.failDocument(documentId, e);
-            throw new BusinessException(ErrorCode.ETL_FAILED, "文档处理失败: " + fileName);
+            throw new ServiceException(ServiceErrorCode.ETL_FAILED, "文档处理失败: " + fileName);
         }
     }
 }

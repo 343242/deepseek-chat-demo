@@ -4,7 +4,7 @@ import com.smart.rag.chat.dto.TokenUsageDTO;
 import com.smart.rag.chat.dto.UsageStats;
 import com.smart.rag.chat.entity.TokenUsage;
 import com.smart.rag.chat.mapper.TokenUsageMapper;
-import com.smart.rag.infrastructure.exception.BusinessException;
+import com.smart.rag.infrastructure.exception.ClientException;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -99,7 +99,7 @@ class UsageServiceImplTest {
         void getRecords_withoutConversationOrModel_throwsUsageParamMissing() {
             UsageServiceImpl svc = createService();
 
-            BusinessException ex = assertThrows(BusinessException.class,
+            ClientException ex = assertThrows(ClientException.class,
                     () -> svc.getRecords(USER_ID, null, null));
             assertTrue(ex.getMessage().contains("model") || ex.getMessage().contains("conversation"));
         }
@@ -109,7 +109,7 @@ class UsageServiceImplTest {
         void getRecords_blankConversationAndModel_throwsUsageParamMissing() {
             UsageServiceImpl svc = createService();
 
-            assertThrows(BusinessException.class,
+            assertThrows(ClientException.class,
                     () -> svc.getRecords(USER_ID, "   ", "   "));
         }
 

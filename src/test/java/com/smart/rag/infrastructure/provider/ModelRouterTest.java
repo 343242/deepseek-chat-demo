@@ -4,7 +4,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
-import com.smart.rag.infrastructure.exception.BusinessException;
+import com.smart.rag.infrastructure.exception.ClientException;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -82,21 +82,21 @@ class ModelRouterTest {
     class EdgeCaseTests {
 
         @Test
-        @DisplayName("null → BusinessException")
+        @DisplayName("null → ClientException")
         void resolve_null_throwsException() {
-            assertThrows(BusinessException.class, () -> router.resolve(null));
+            assertThrows(ClientException.class, () -> router.resolve(null));
         }
 
         @Test
-        @DisplayName("空字符串 → BusinessException")
+        @DisplayName("空字符串 → ClientException")
         void resolve_blank_throwsException() {
-            assertThrows(BusinessException.class, () -> router.resolve(""));
+            assertThrows(ClientException.class, () -> router.resolve(""));
         }
 
         @Test
-        @DisplayName("纯空格 → BusinessException")
+        @DisplayName("纯空格 → ClientException")
         void resolve_whitespace_throwsException() {
-            assertThrows(BusinessException.class, () -> router.resolve("   "));
+            assertThrows(ClientException.class, () -> router.resolve("   "));
         }
 
         @Test

@@ -1,8 +1,8 @@
 package com.smart.rag.rag.upload;
 
-import com.smart.rag.infrastructure.exception.errorcode.ErrorCode;
+import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;
 import com.smart.rag.infrastructure.response.GlobalResponse;
-import com.smart.rag.infrastructure.exception.BusinessException;
+import com.smart.rag.infrastructure.exception.ClientException;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -64,7 +64,7 @@ public class ChunkUploadController {
             @RequestHeader("X-Chunk-MD5") String chunkMd5,
             @RequestBody byte[] chunkData) {
         if (chunkMd5 == null || !chunkMd5.matches("^[0-9a-fA-F]{32}$")) {
-            throw new BusinessException(ErrorCode.VALIDATION_ERROR, "分片MD5格式错误");
+            throw new ClientException(ClientErrorCode.VALIDATION_ERROR, "分片MD5格式错误");
         }
         return GlobalResponse.ok(chunkUploadService.uploadChunk(uploadId, chunkIndex, chunkMd5, chunkData));
     }

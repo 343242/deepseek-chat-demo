@@ -1,6 +1,7 @@
 package com.smart.rag.agent.guardrail;
 
-import com.smart.rag.infrastructure.exception.BusinessException;
+import com.smart.rag.infrastructure.exception.ClientException;
+import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;
 import com.smart.rag.agent.config.AgentRagProperties;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -85,9 +86,9 @@ class AgentDegradationStrategyTest {
         private final AgentDegradationStrategy strategy = new AgentDegradationStrategy(enabledConfig());
 
         @Test
-        @DisplayName("BusinessException 不应降级")
-        void businessException_shouldNotDegrade() {
-            assertThat(strategy.shouldDegrade(new BusinessException("参数错误"))).isFalse();
+        @DisplayName("ClientException 不应降级")
+        void clientException_shouldNotDegrade() {
+            assertThat(strategy.shouldDegrade(new ClientException(ClientErrorCode.BAD_REQUEST))).isFalse();
         }
 
         @Test

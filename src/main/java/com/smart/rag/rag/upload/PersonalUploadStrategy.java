@@ -1,8 +1,8 @@
 package com.smart.rag.rag.upload;
 
-import com.smart.rag.infrastructure.exception.errorcode.ErrorCode;
+import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;
 import com.smart.rag.common.upload.UploadStrategy;
-import com.smart.rag.infrastructure.exception.BusinessException;
+import com.smart.rag.infrastructure.exception.ClientException;
 import com.smart.rag.rag.event.DocumentCreatedEvent;
 import com.smart.rag.rag.dto.DocumentUploadResponse;
 import com.smart.rag.rag.etl.EtlCandidate;
@@ -97,7 +97,7 @@ public class PersonalUploadStrategy implements UploadStrategy {
     @Override
     public List<DocumentUploadResponse> uploadBatch(List<MultipartFile> files, @Nullable Long teamId, @Nullable Long replaceDocumentId, Long userId) {
         if (files == null || files.isEmpty()) {
-            throw new BusinessException(ErrorCode.UPLOAD_LIST_EMPTY);
+            throw new ClientException(ClientErrorCode.UPLOAD_LIST_EMPTY);
         }
 
         String bucket = bucketResolver.resolve(null);

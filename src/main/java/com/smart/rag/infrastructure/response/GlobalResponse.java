@@ -1,6 +1,6 @@
 package com.smart.rag.infrastructure.response;
 
-import com.smart.rag.infrastructure.exception.errorcode.ErrorCode;
+import com.smart.rag.infrastructure.exception.errorcode.IErrorCode;
 import com.fasterxml.jackson.annotation.JsonInclude;
 
 /**
@@ -9,7 +9,7 @@ import com.fasterxml.jackson.annotation.JsonInclude;
  * 所有非流式接口统一返回此格式：
  * <pre>
  * 成功: {"code":0, "message":"ok", "data":{...}}
- * 失败: {"code":40001, "message":"用户名已存在", "data":null}
+ * 失败: {"code":200001, "message":"用户名已存在", "data":null}
  * </pre>
  *
  * @param code    状态码，0=成功，非0=错误码
@@ -42,14 +42,14 @@ public record GlobalResponse<T>(
 
     // ==================== 失败 ====================
 
-    public static <T> GlobalResponse<T> error(ErrorCode errorCode) {
+    public static <T> GlobalResponse<T> error(IErrorCode errorCode) {
         return new GlobalResponse<>(errorCode.getCode(), errorCode.getMessage(), null);
     }
 
     /**
      * 覆盖默认错误消息（用于需要动态 detail 的场景）
      */
-    public static <T> GlobalResponse<T> error(ErrorCode errorCode, String detail) {
+    public static <T> GlobalResponse<T> error(IErrorCode errorCode, String detail) {
         return new GlobalResponse<>(errorCode.getCode(), detail, null);
     }
 }

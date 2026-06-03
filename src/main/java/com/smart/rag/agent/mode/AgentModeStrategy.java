@@ -3,8 +3,8 @@ package com.smart.rag.agent.mode;
 import com.smart.rag.infrastructure.advisor.ConversationContextAdvisor;
 import com.smart.rag.infrastructure.client.ChatClientRegistry;
 import com.smart.rag.chat.context.ContextPromptInjector;
-import com.smart.rag.infrastructure.exception.errorcode.ErrorCode;
-import com.smart.rag.infrastructure.exception.BusinessException;
+import com.smart.rag.infrastructure.exception.ClientException;
+import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;
 import com.smart.rag.chat.mode.ChatMode;
 import com.smart.rag.chat.mode.ChatModeStrategy;
 import com.smart.rag.chat.mode.MultiTurnModeStrategy;
@@ -266,7 +266,7 @@ public class AgentModeStrategy implements ChatModeStrategy {
 
     @Override
     public Flux<String> executeStream(StrategyExecutionContext ctx) {
-        throw new BusinessException(ErrorCode.UNSUPPORTED_OPERATION,
+        throw new ClientException(ClientErrorCode.UNSUPPORTED_OPERATION,
             "Agent mode does not support streaming in this version. Use blocking call instead.");
     }
 

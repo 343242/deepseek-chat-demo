@@ -1,7 +1,8 @@
 package com.smart.rag.infrastructure.advisor;
 
 import com.smart.rag.config.AdvisorAutoConfiguration;
-import com.smart.rag.infrastructure.exception.BusinessException;
+import com.smart.rag.infrastructure.exception.ClientException;
+import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -44,9 +45,9 @@ public class TokenBucketLimiter implements RateLimiter {
      * @param maxIdle   桶最大空闲时间，超时清理
      */
     public TokenBucketLimiter(long maxTokens, double refillRate, Duration maxIdle) {
-        if (maxTokens <= 0) throw new BusinessException("令牌桶容量必须大于 0，当前值: " + maxTokens);
-        if (refillRate <= 0) throw new BusinessException("令牌补充速率必须大于 0，当前值: " + refillRate);
-        if (maxIdle == null) throw new BusinessException("令牌桶最大空闲时间不能为空");
+        if (maxTokens <= 0) throw new ClientException(ClientErrorCode.BAD_REQUEST, "令牌桶容量必须大于 0，当前值: " + maxTokens);
+        if (refillRate <= 0) throw new ClientException(ClientErrorCode.BAD_REQUEST, "令牌补充速率必须大于 0，当前值: " + refillRate);
+        if (maxIdle == null) throw new ClientException(ClientErrorCode.BAD_REQUEST, "令牌桶最大空闲时间不能为空");
         this.maxTokens = maxTokens;
         this.refillRate = refillRate;
         this.maxIdle = maxIdle;

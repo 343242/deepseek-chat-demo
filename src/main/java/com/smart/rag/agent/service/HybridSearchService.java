@@ -6,7 +6,8 @@ import com.smart.rag.infrastructure.concurrent.ScopePolicy;
 import com.smart.rag.infrastructure.concurrent.ScopedTasks;
 import com.smart.rag.infrastructure.concurrent.Subtask;
 import com.smart.rag.infrastructure.concurrent.TaskState;
-import com.smart.rag.infrastructure.exception.BusinessException;
+import com.smart.rag.infrastructure.exception.ServiceException;
+import com.smart.rag.infrastructure.exception.errorcode.ServiceErrorCode;
 import com.smart.rag.rag.config.RagRetrievalProperties;
 import com.smart.rag.rag.mapper.VectorStoreMapper;
 import com.smart.rag.rag.retrieval.QueryNormalizer;
@@ -109,7 +110,7 @@ public class HybridSearchService {
 
             if (vectorFailed && bm25Failed) {
                 log.error("Both vector and BM25 search failed for queryLen={}", normalized.length());
-                throw new BusinessException("向量检索和 BM25 检索均不可用");
+                throw new ServiceException(ServiceErrorCode.INTERNAL_ERROR, "向量检索和 BM25 检索均不可用");
             }
 
             if (vectorFailed || bm25Failed) {

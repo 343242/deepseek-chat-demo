@@ -1,8 +1,8 @@
 package com.smart.rag.user.controller;
 
-import com.smart.rag.infrastructure.exception.errorcode.ErrorCode;
+import com.smart.rag.infrastructure.exception.ClientException;
+import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;
 import com.smart.rag.infrastructure.response.GlobalResponse;
-import com.smart.rag.infrastructure.exception.BusinessException;
 import com.smart.rag.infrastructure.web.dto.CaptchaResult;
 import com.smart.rag.infrastructure.web.service.CaptchaService;
 import com.smart.rag.infrastructure.web.token.CookieTokenManager;
@@ -70,7 +70,7 @@ public class AuthController {
                                                   HttpServletResponse httpResponse) {
         String refreshToken = resolveRefreshToken(request, httpRequest);
         if (refreshToken == null || refreshToken.isBlank()) {
-            throw new BusinessException(ErrorCode.REFRESH_TOKEN_MISSING);
+            throw new ClientException(ClientErrorCode.REFRESH_TOKEN_MISSING);
         }
         AuthService.LoginResult result = authService.refreshToken(refreshToken);
         cookieTokenManager.setTokenCookies(httpResponse, result.tokens().accessToken(), result.tokens().refreshToken());

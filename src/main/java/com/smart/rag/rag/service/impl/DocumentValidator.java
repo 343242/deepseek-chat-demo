@@ -1,7 +1,7 @@
 package com.smart.rag.rag.service.impl;
 
-import com.smart.rag.infrastructure.exception.errorcode.ErrorCode;
-import com.smart.rag.infrastructure.exception.BusinessException;
+import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;
+import com.smart.rag.infrastructure.exception.ClientException;
 import com.smart.rag.rag.config.DocumentProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -50,16 +50,16 @@ public class DocumentValidator {
      * 校验上传文件：非空 + 大小限制 + MIME 白名单 + 服务端 MIME 校验
      *
      * @param file 上传文件
-     * @throws BusinessException 校验不通过
+     * @throws ClientException 校验不通过
      */
     public void validate(MultipartFile file) {
         if (file.isEmpty()) {
-            throw new BusinessException(ErrorCode.UPLOAD_FILE_EMPTY);
+            throw new ClientException(ClientErrorCode.UPLOAD_FILE_EMPTY);
         }
 
         long maxBytes = DataSize.parse(documentProperties.getMaxFileSize()).toBytes();
         if (file.getSize() > maxBytes) {
-            throw new BusinessException(ErrorCode.UPLOAD_FILE_TOO_LARGE,
+            throw new ClientException(ClientErrorCode.UPLOAD_FILE_TOO_LARGE,
                     String.format("文件大小超出限制: %s > %s",
                             DataSize.ofBytes(file.getSize()).toMegabytes() + "MB",
                             documentProperties.getMaxFileSize()));
@@ -68,13 +68,13 @@ public class DocumentValidator {
         String declaredMimeType = file.getContentType();
         Set<String> allowed = getAllowedMimeTypes();
         if (declaredMimeType == null || !allowed.contains(declaredMimeType)) {
-            throw new BusinessException(ErrorCode.UPLOAD_MIME_UNSUPPORTED, "不支持的文件类型: " + declaredMimeType);
+            throw new ClientException(ClientErrorCode.UPLOAD_MIME_UNSUPPORTED, "不支持的文件类型: " + declaredMimeType);
         }
 
         String detectedMimeType = detectMimeType(file);
         if (detectedMimeType != null && !allowed.contains(detectedMimeType)
                 && !isZipBasedOfficeDocument(declaredMimeType, detectedMimeType)) {
-            throw new BusinessException(ErrorCode.UPLOAD_MIME_UNSUPPORTED,
+            throw new ClientException(ClientErrorCode.UPLOAD_MIME_UNSUPPORTED,
                     String.format("文件实际类型(%s)与声明类型(%s)不匹配", detectedMimeType, declaredMimeType));
         }
     }

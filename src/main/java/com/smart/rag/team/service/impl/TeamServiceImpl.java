@@ -2,8 +2,10 @@ package com.smart.rag.team.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
-import com.smart.rag.infrastructure.exception.errorcode.ErrorCode;
-import com.smart.rag.infrastructure.exception.BusinessException;
+import com.smart.rag.infrastructure.exception.ClientException;
+import com.smart.rag.infrastructure.exception.ServiceException;
+import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;
+import com.smart.rag.infrastructure.exception.errorcode.ServiceErrorCode;
 import com.smart.rag.infrastructure.web.util.SecurityUtils;
 import com.smart.rag.team.config.TeamProperties;
 import com.smart.rag.team.dto.TeamCreateRequest;
@@ -77,7 +79,7 @@ public class TeamServiceImpl implements TeamService {
                         .eq(TeamMember::getUserId, userId)
                         .eq(TeamMember::getStatus, 1));
         if (joinedCount >= teamProperties.getMaxTeamsPerUser()) {
-            throw new BusinessException(ErrorCode.TEAM_LIMIT_EXCEEDED);
+            throw new ClientException(ClientErrorCode.TEAM_LIMIT_EXCEEDED);
         }
 
         TeamVO result = txTemplate.execute(status -> {
@@ -95,7 +97,7 @@ public class TeamServiceImpl implements TeamService {
             try {
                 teamMapper.insert(team);
             } catch (DuplicateKeyException e) {
-                throw new BusinessException(ErrorCode.TEAM_NAME_DUPLICATE);
+                throw new ClientException(ClientErrorCode.TEAM_NAME_DUPLICATE);
             }
 
             // 2. 创建者自动成为 CREATOR 成员
@@ -128,7 +130,7 @@ public class TeamServiceImpl implements TeamService {
         // 必须是成员才能查看详情
         TeamMember member = teamMemberMapper.selectByTeamAndUser(teamId, userId);
         if (member == null) {
-            throw new BusinessException(ErrorCode.NOT_TEAM_MEMBER);
+            throw new ServiceException(ServiceErrorCode.NOT_TEAM_MEMBER);
         }
 
         // 成员数
@@ -209,7 +211,7 @@ public class TeamServiceImpl implements TeamService {
         // 仅创建者可更新
         TeamMember member = teamMemberMapper.selectByTeamAndUser(teamId, userId);
         if (member == null || member.getRole() != TeamMemberRole.CREATOR) {
-            throw new BusinessException(ErrorCode.NOT_TEAM_CREATOR);
+            throw new ServiceException(ServiceErrorCode.NOT_TEAM_CREATOR);
         }
 
         if (request.teamName() != null) {
@@ -238,10 +240,10 @@ public class TeamServiceImpl implements TeamService {
             // SELECT FOR UPDATE 防并发
             Team team = teamMapper.selectByIdForUpdate(teamId);
             if (team == null || team.getDeleted() != 0) {
-                throw new BusinessException(ErrorCode.TEAM_NOT_FOUND);
+                throw new ServiceException(ServiceErrorCode.TEAM_NOT_FOUND);
             }
             if (!userId.equals(team.getCreatorId())) {
-                throw new BusinessException(ErrorCode.NOT_TEAM_CREATOR);
+                throw new ServiceException(ServiceErrorCode.NOT_TEAM_CREATOR);
             }
 
             // 软删除团队
@@ -270,7 +272,7 @@ public class TeamServiceImpl implements TeamService {
 
         // Service 层权限校验：仅创建者可设置
         if (!userId.equals(team.getCreatorId())) {
-            throw new BusinessException(ErrorCode.NOT_TEAM_CREATOR);
+            throw new ServiceException(ServiceErrorCode.NOT_TEAM_CREATOR);
         }
 
         txTemplate.executeWithoutResult(status -> {
@@ -295,7 +297,7 @@ public class TeamServiceImpl implements TeamService {
     private Team getActiveTeam(Long teamId) {
         Team team = teamMapper.selectById(teamId);
         if (team == null || team.getDeleted() != 0) {
-            throw new BusinessException(ErrorCode.TEAM_NOT_FOUND);
+            throw new ServiceException(ServiceErrorCode.TEAM_NOT_FOUND);
         }
         return team;
     }

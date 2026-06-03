@@ -1,8 +1,9 @@
 package com.smart.rag.user.service;
 
 import com.smart.rag.user.service.impl.AuthServiceImpl;
-import com.smart.rag.infrastructure.exception.BusinessException;
+import com.smart.rag.infrastructure.exception.ClientException;
 import com.smart.rag.infrastructure.exception.RateLimitExceededException;
+import com.smart.rag.infrastructure.exception.ServiceException;
 import com.smart.rag.infrastructure.web.config.JwtProperties;
 import com.smart.rag.infrastructure.web.auth.UserPermissionProvider;
 import com.smart.rag.infrastructure.web.service.CaptchaService;
@@ -115,28 +116,28 @@ class AuthServiceTest {
         }
 
         @Test
-        @DisplayName("login_invalidCaptcha: 验证码错误时抛 BusinessException")
+        @DisplayName("login_invalidCaptcha: 验证码错误时抛 ClientException")
         void login_invalidCaptcha() {
             when(tokenCacheService.isLoginRateLimited(anyString())).thenReturn(false);
             when(captchaService.validate("cap-id", 150)).thenReturn(false);
 
-            assertThrows(BusinessException.class,
+            assertThrows(ClientException.class,
                     () -> authService.login("testuser", "Password1!", "127.0.0.1", "cap-id", "150"));
         }
 
         @Test
-        @DisplayName("login_userNotFound: 用户不存在时抛 BusinessException")
+        @DisplayName("login_userNotFound: 用户不存在时抛 ClientException")
         void login_userNotFound() {
             when(tokenCacheService.isLoginRateLimited(anyString())).thenReturn(false);
             when(captchaService.validate(anyString(), anyInt())).thenReturn(true);
             when(sysUserMapper.selectByUsername(anyString())).thenReturn(Optional.empty());
 
-            assertThrows(BusinessException.class,
+            assertThrows(ClientException.class,
                     () -> authService.login("nouser", "Password1!", "127.0.0.1", "cap-id", "150"));
         }
 
         @Test
-        @DisplayName("login_wrongPassword: 密码错误时抛 BusinessException")
+        @DisplayName("login_wrongPassword: 密码错误时抛 ClientException")
         void login_wrongPassword() {
             SysUser user = buildActiveUser();
             when(tokenCacheService.isLoginRateLimited(anyString())).thenReturn(false);
@@ -144,12 +145,12 @@ class AuthServiceTest {
             when(sysUserMapper.selectByUsername(anyString())).thenReturn(Optional.of(user));
             when(passwordEncoder.matches(eq("WrongPass1!"), anyString())).thenReturn(false);
 
-            assertThrows(BusinessException.class,
+            assertThrows(ClientException.class,
                     () -> authService.login("testuser", "WrongPass1!", "127.0.0.1", "cap-id", "150"));
         }
 
         @Test
-        @DisplayName("login_userDisabled_status0: status=0 时抛 BusinessException")
+        @DisplayName("login_userDisabled_status0: status=0 时抛 ClientException")
         void login_userDisabled_status0() {
             SysUser user = buildActiveUser();
             user.setStatus(0);
@@ -158,12 +159,12 @@ class AuthServiceTest {
             when(sysUserMapper.selectByUsername(anyString())).thenReturn(Optional.of(user));
             when(passwordEncoder.matches(anyString(), anyString())).thenReturn(true);
 
-            assertThrows(BusinessException.class,
+            assertThrows(ClientException.class,
                     () -> authService.login("testuser", "Password1!", "127.0.0.1", "cap-id", "150"));
         }
 
         @Test
-        @DisplayName("login_userDisabled_redisStatus: Redis status=disabled 时抛 BusinessException")
+        @DisplayName("login_userDisabled_redisStatus: Redis status=disabled 时抛 ClientException")
         void login_userDisabled_redisStatus() {
             SysUser user = buildActiveUser();
             when(tokenCacheService.isLoginRateLimited(anyString())).thenReturn(false);
@@ -172,7 +173,7 @@ class AuthServiceTest {
             when(passwordEncoder.matches(anyString(), anyString())).thenReturn(true);
             when(tokenCacheService.getUserStatus(1L)).thenReturn("disabled");
 
-            assertThrows(BusinessException.class,
+            assertThrows(ClientException.class,
                     () -> authService.login("testuser", "Password1!", "127.0.0.1", "cap-id", "150"));
         }
     }
@@ -209,21 +210,21 @@ class AuthServiceTest {
         }
 
         @Test
-        @DisplayName("register_duplicateUsername: DuplicateKeyException → BusinessException")
+        @DisplayName("register_duplicateUsername: DuplicateKeyException → ClientException")
         void register_duplicateUsername() {
             setupRegisterMocks();
             when(transactionTemplate.execute(any())).thenThrow(new DuplicateKeyException("dup"));
 
-            assertThrows(BusinessException.class,
+            assertThrows(ClientException.class,
                     () -> authService.register("existing", "Password1!", "new@example.com", "Nick", "cap-id", "150"));
         }
 
         @Test
-        @DisplayName("register_passwordTooWeak: 密码太简单时抛 BusinessException")
+        @DisplayName("register_passwordTooWeak: 密码太简单时抛 ClientException")
         void register_passwordTooWeak() {
             when(captchaService.validate(anyString(), anyInt())).thenReturn(true);
 
-            assertThrows(BusinessException.class,
+            assertThrows(ClientException.class,
                     () -> authService.register("user", "123", "new@example.com", "Nick", "cap-id", "150"));
         }
 
@@ -250,7 +251,7 @@ class AuthServiceTest {
 
         private void assertPasswordRejected(String password) {
             when(captchaService.validate(anyString(), anyInt())).thenReturn(true);
-            assertThrows(BusinessException.class,
+            assertThrows(ClientException.class,
                     () -> authService.register("user", password, "e@e.com", "n", "c", "1"));
         }
 
@@ -292,14 +293,14 @@ class AuthServiceTest {
     class UpdateProfileTests {
 
         @Test
-        @DisplayName("updateProfile_emailDuplicate: 邮箱重复时抛 BusinessException")
+        @DisplayName("updateProfile_emailDuplicate: 邮箱重复时抛 ClientException")
         void updateProfile_emailDuplicate() {
             SysUser user = buildActiveUser();
             when(sysUserMapper.selectActiveById(1L)).thenReturn(Optional.of(user));
             when(sysUserMapper.selectByEmailExcludingId("other@example.com", 1L))
                     .thenReturn(Optional.of(buildActiveUser()));
 
-            assertThrows(BusinessException.class,
+            assertThrows(ClientException.class,
                     () -> authService.updateProfile(1L, new UserUpdateRequest(null, "other@example.com", null, null)));
         }
 
@@ -318,10 +319,10 @@ class AuthServiceTest {
         }
 
         @Test
-        @DisplayName("updateProfile_userNotFound: 抛 BusinessException")
+        @DisplayName("updateProfile_userNotFound: 抛 ServiceException")
         void updateProfile_userNotFound() {
             when(sysUserMapper.selectActiveById(999L)).thenReturn(Optional.empty());
-            assertThrows(BusinessException.class,
+            assertThrows(ServiceException.class,
                     () -> authService.updateProfile(999L, new UserUpdateRequest("nick", null, null, null)));
         }
     }

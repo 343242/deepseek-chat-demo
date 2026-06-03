@@ -1,7 +1,7 @@
 package com.smart.rag.team.service;
 
-import com.smart.rag.infrastructure.exception.errorcode.ErrorCode;
-import com.smart.rag.infrastructure.exception.BusinessException;
+import com.smart.rag.infrastructure.exception.ServiceException;
+import com.smart.rag.infrastructure.exception.errorcode.ServiceErrorCode;
 import com.smart.rag.team.entity.TeamMember;
 import com.smart.rag.team.enums.TeamMemberRole;
 import com.smart.rag.team.mapper.TeamMapper;
@@ -43,16 +43,16 @@ public class TeamMembershipVerifier {
      * @param teamId 团队 ID
      * @param userId 用户 ID
      * @return 成员实体
-     * @throws BusinessException TEAM_NOT_FOUND / NOT_TEAM_MEMBER
+     * @throws ServiceException TEAM_NOT_FOUND / NOT_TEAM_MEMBER
      */
     public TeamMember verifyMember(Long teamId, Long userId) {
         Team team = teamMapper.selectById(teamId);
         if (team == null || team.getDeleted() != 0) {
-            throw new BusinessException(ErrorCode.TEAM_NOT_FOUND);
+            throw new ServiceException(ServiceErrorCode.TEAM_NOT_FOUND);
         }
         TeamMember member = teamMemberMapper.selectByTeamAndUser(teamId, userId);
         if (member == null || member.getStatus() != 1) {
-            throw new BusinessException(ErrorCode.NOT_TEAM_MEMBER);
+            throw new ServiceException(ServiceErrorCode.NOT_TEAM_MEMBER);
         }
         return member;
     }
@@ -64,7 +64,7 @@ public class TeamMembershipVerifier {
         TeamMember member = verifyMember(teamId, userId);
         if (member.getRole() != TeamMemberRole.CREATOR
                 && member.getRole() != TeamMemberRole.ADMIN) {
-            throw new BusinessException(ErrorCode.NOT_TEAM_ADMIN);
+            throw new ServiceException(ServiceErrorCode.NOT_TEAM_ADMIN);
         }
         return member;
     }
@@ -75,7 +75,7 @@ public class TeamMembershipVerifier {
     public TeamMember verifyCreator(Long teamId, Long userId) {
         TeamMember member = verifyMember(teamId, userId);
         if (member.getRole() != TeamMemberRole.CREATOR) {
-            throw new BusinessException(ErrorCode.NOT_TEAM_CREATOR);
+            throw new ServiceException(ServiceErrorCode.NOT_TEAM_CREATOR);
         }
         return member;
     }

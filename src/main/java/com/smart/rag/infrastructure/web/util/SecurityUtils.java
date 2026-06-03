@@ -1,7 +1,7 @@
 package com.smart.rag.infrastructure.web.util;
 
-import com.smart.rag.infrastructure.exception.errorcode.ErrorCode;
-import com.smart.rag.infrastructure.exception.BusinessException;
+import com.smart.rag.infrastructure.exception.ClientException;
+import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;
 import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.security.core.Authentication;
 import org.springframework.security.core.context.SecurityContextHolder;
@@ -20,7 +20,7 @@ public final class SecurityUtils {
     public static Long getCurrentUserId() {
         Authentication auth = SecurityContextHolder.getContext().getAuthentication();
         if (auth == null || auth.getPrincipal() == null) {
-            throw new BusinessException(ErrorCode.UNAUTHORIZED);
+            throw new ClientException(ClientErrorCode.UNAUTHORIZED);
         }
         return (Long) auth.getPrincipal();
     }

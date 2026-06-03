@@ -1,64 +1,52 @@
 package com.smart.rag.infrastructure.exception;
 
 import com.smart.rag.infrastructure.exception.errorcode.ErrorCode;
+import com.smart.rag.infrastructure.exception.errorcode.IErrorCode;
 
 /**
- * 业务异常
- * <p>
- * 支持两种构造方式：
- * <ul>
- *   <li>{@code new BusinessException(ErrorCode.XXX)} — 使用 ErrorCode 预定义消息</li>
- *   <li>{@code new BusinessException(ErrorCode.XXX, "动态详情")} — 覆盖默认消息</li>
- *   <li>{@code new BusinessException("消息")} — 兼容旧代码，自动映射到 BAD_REQUEST</li>
- * </ul>
+ * 业务异常（旧版，逐步迁移中）
+ *
+ * @deprecated 使用 {@link ClientException}、{@link ServiceException} 或 {@link RemoteException} 替代。
+ *             保留此类仅为过渡期兼容，预计在下个大版本移除。
  */
-public class BusinessException extends RuntimeException {
+@Deprecated
+public class BusinessException extends AbstractException {
 
-    private final ErrorCode errorCode;
-    private final String detail;
+    private final ErrorCode legacyErrorCode;
 
     public BusinessException(ErrorCode errorCode) {
-        super(errorCode.getMessage());
-        this.errorCode = errorCode;
-        this.detail = null;
+        super(errorCode);
+        this.legacyErrorCode = errorCode;
     }
 
     public BusinessException(ErrorCode errorCode, String detail) {
-        super(detail != null ? detail : errorCode.getMessage());
-        this.errorCode = errorCode;
-        this.detail = detail;
+        super(errorCode, detail);
+        this.legacyErrorCode = errorCode;
     }
 
     public BusinessException(ErrorCode errorCode, String detail, Throwable cause) {
-        super(detail != null ? detail : errorCode.getMessage(), cause);
-        this.errorCode = errorCode;
-        this.detail = detail;
+        super(errorCode, detail, cause);
+        this.legacyErrorCode = errorCode;
     }
 
     /**
      * 兼容旧代码：纯 message 构造，映射到 BAD_REQUEST
      */
     public BusinessException(String message) {
-        super(message);
-        this.errorCode = ErrorCode.BAD_REQUEST;
-        this.detail = message;
+        super(ErrorCode.BAD_REQUEST, message);
+        this.legacyErrorCode = ErrorCode.BAD_REQUEST;
     }
 
     public BusinessException(String message, Throwable cause) {
-        super(message, cause);
-        this.errorCode = ErrorCode.BAD_REQUEST;
-        this.detail = message;
-    }
-
-    public ErrorCode getErrorCode() {
-        return errorCode;
+        super(ErrorCode.BAD_REQUEST, message, cause);
+        this.legacyErrorCode = ErrorCode.BAD_REQUEST;
     }
 
     /**
-     * 获取用户可见的消息。
-     * 优先使用 detail（动态覆盖），否则使用 ErrorCode 默认消息。
+     * 返回原始 ErrorCode 枚举（兼容旧调用方）。
+     * 新代码应使用 {@link #getErrorCode()} 获取 {@link IErrorCode}。
      */
-    public String getUserMessage() {
-        return detail != null ? detail : errorCode.getMessage();
+    public ErrorCode getLegacyErrorCode() {
+        return legacyErrorCode;
     }
 }

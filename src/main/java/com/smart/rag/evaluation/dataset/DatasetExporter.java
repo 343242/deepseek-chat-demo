@@ -1,6 +1,7 @@
 package com.smart.rag.evaluation.dataset;
 
-import com.smart.rag.infrastructure.exception.BusinessException;
+import com.smart.rag.infrastructure.exception.ServiceException;
+import com.smart.rag.infrastructure.exception.errorcode.ServiceErrorCode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import org.springframework.stereotype.Component;
@@ -32,7 +33,7 @@ public class DatasetExporter {
      */
     public String exportAsJson(long datasetId) {
         var dataset = datasetRepo.findDatasetById(datasetId)
-                .orElseThrow(() -> new BusinessException("Dataset not found: " + datasetId));
+                .orElseThrow(() -> new ServiceException(ServiceErrorCode.NOT_FOUND, "Dataset not found: " + datasetId));
         var items = datasetRepo.listItemsByDatasetId(datasetId);
 
         try {
@@ -42,7 +43,7 @@ public class DatasetExporter {
             );
             return objectMapper.writeValueAsString(export);
         } catch (Exception e) {
-            throw new BusinessException("Failed to export dataset", e);
+            throw new ServiceException(ServiceErrorCode.INTERNAL_ERROR, "Failed to export dataset", e);
         }
     }
 }

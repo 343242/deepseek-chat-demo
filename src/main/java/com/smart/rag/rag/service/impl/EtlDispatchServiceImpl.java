@@ -1,7 +1,7 @@
 package com.smart.rag.rag.service.impl;
 
-import com.smart.rag.infrastructure.exception.errorcode.ErrorCode;
-import com.smart.rag.infrastructure.exception.BusinessException;
+import com.smart.rag.infrastructure.exception.errorcode.ServiceErrorCode;
+import com.smart.rag.infrastructure.exception.ServiceException;
 import com.smart.rag.rag.etl.EtlCandidate;
 import com.smart.rag.rag.etl.EtlResult;
 import com.smart.rag.rag.etl.Loader;
@@ -85,13 +85,13 @@ public class EtlDispatchServiceImpl implements EtlDispatchService {
                     log.warn("ETL lock acquisition failed for document, skipping: {}", lock.getName());
                     // Release any already-acquired locks
                     locks.forEach(l -> { if (l.isHeldByCurrentThread()) l.unlock(); });
-                    throw new BusinessException(ErrorCode.ETL_FAILED, "文档正在被其他实例处理，请稍后重试");
+                    throw new ServiceException(ServiceErrorCode.ETL_FAILED, "文档正在被其他实例处理，请稍后重试");
                 }
             }
             return strategy.execute(candidates);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            throw new BusinessException(ErrorCode.ETL_FAILED, "ETL 处理被中断");
+            throw new ServiceException(ServiceErrorCode.ETL_FAILED, "ETL 处理被中断");
         } finally {
             locks.forEach(l -> { if (l.isHeldByCurrentThread()) l.unlock(); });
         }
@@ -103,12 +103,12 @@ public class EtlDispatchServiceImpl implements EtlDispatchService {
         List<EtlResult> results = dispatch(List.of(candidate));
 
         if (results.isEmpty()) {
-            throw new BusinessException(ErrorCode.ETL_NO_RESULT, "ETL 处理无结果: " + fileName);
+            throw new ServiceException(ServiceErrorCode.ETL_NO_RESULT, "ETL 处理无结果: " + fileName);
         }
 
         EtlResult result = results.getFirst();
         if (EtlStatus.FAILED.equals(result.status())) {
-            throw new BusinessException(ErrorCode.ETL_FAILED, "文档处理失败: " + fileName + " - " + result.errorMessage());
+            throw new ServiceException(ServiceErrorCode.ETL_FAILED, "文档处理失败: " + fileName + " - " + result.errorMessage());
         }
 
         return result.chunkCount();

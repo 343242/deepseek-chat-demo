@@ -4,7 +4,8 @@ import com.smart.rag.infrastructure.fallback.cache.HealthEntry;
 import com.smart.rag.infrastructure.fallback.cache.ModelHealthCache;
 import com.smart.rag.infrastructure.fallback.probe.ProbeResult;
 import com.smart.rag.infrastructure.fallback.probe.SharedProbeRegistry;
-import com.smart.rag.infrastructure.exception.BusinessException;
+import com.smart.rag.infrastructure.exception.ServiceException;
+import com.smart.rag.infrastructure.exception.errorcode.ServiceErrorCode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.lang.Nullable;
@@ -63,7 +64,7 @@ public class StreamRetryHandler {
                                 StreamFactory streamFactory) {
         if (chainIndex >= chain.size()) {
             log.error("All fallback attempts exhausted for stream, tried: {}", chain);
-            return Flux.error(new BusinessException(
+            return Flux.error(new ServiceException(ServiceErrorCode.INTERNAL_ERROR,
                     "所有模型均不可用，请稍后重试（已尝试 " + chain.size() + " 个模型）"));
         }
 

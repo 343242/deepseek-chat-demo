@@ -3,10 +3,10 @@ package com.smart.rag.team.service.impl;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
-import com.smart.rag.infrastructure.exception.errorcode.ErrorCode;
+import com.smart.rag.infrastructure.exception.ServiceException;
+import com.smart.rag.infrastructure.exception.errorcode.ServiceErrorCode;
 import com.smart.rag.infrastructure.request.PageRequest;
 import com.smart.rag.infrastructure.response.PagedResult;
-import com.smart.rag.infrastructure.exception.BusinessException;
 import com.smart.rag.rag.entity.RagDocument;
 import com.smart.rag.rag.etl.EtlStatus;
 import com.smart.rag.rag.mapper.RagDocumentMapper;
@@ -79,7 +79,7 @@ public class TeamApprovalServiceImpl implements TeamApprovalService {
         // 校验管理员/创建者权限
         TeamMember member = teamMemberMapper.selectByTeamAndUser(teamId, userId);
         if (member == null || (member.getRole() != TeamMemberRole.CREATOR && member.getRole() != TeamMemberRole.ADMIN)) {
-            throw new BusinessException(ErrorCode.NOT_TEAM_ADMIN);
+            throw new ServiceException(ServiceErrorCode.NOT_TEAM_ADMIN);
         }
 
         // 分页查询
@@ -127,7 +127,7 @@ public class TeamApprovalServiceImpl implements TeamApprovalService {
         // 校验管理员/创建者权限
         TeamMember member = teamMemberMapper.selectByTeamAndUser(teamId, reviewerId);
         if (member == null || (member.getRole() != TeamMemberRole.CREATOR && member.getRole() != TeamMemberRole.ADMIN)) {
-            throw new BusinessException(ErrorCode.NOT_TEAM_ADMIN);
+            throw new ServiceException(ServiceErrorCode.NOT_TEAM_ADMIN);
         }
 
         boolean isApprove = "APPROVE".equals(request.action());
@@ -143,7 +143,7 @@ public class TeamApprovalServiceImpl implements TeamApprovalService {
                     .set(TeamUploadApproval::getReviewComment, request.comment())
                     .set(TeamUploadApproval::getReviewedAt, OffsetDateTime.now()));
             if (updated == 0) {
-                throw new BusinessException(ErrorCode.APPROVAL_ALREADY_PROCESSED);
+                throw new ServiceException(ServiceErrorCode.APPROVAL_ALREADY_PROCESSED);
             }
 
             // 更新文档状态
@@ -171,7 +171,7 @@ public class TeamApprovalServiceImpl implements TeamApprovalService {
         // 必须是成员
         TeamMember member = teamMemberMapper.selectByTeamAndUser(teamId, userId);
         if (member == null) {
-            throw new BusinessException(ErrorCode.NOT_TEAM_MEMBER);
+            throw new ServiceException(ServiceErrorCode.NOT_TEAM_MEMBER);
         }
 
         // 分页查询
@@ -273,7 +273,7 @@ public class TeamApprovalServiceImpl implements TeamApprovalService {
     private Team getActiveTeam(Long teamId) {
         Team team = teamMapper.selectById(teamId);
         if (team == null || team.getDeleted() != 0) {
-            throw new BusinessException(ErrorCode.TEAM_NOT_FOUND);
+            throw new ServiceException(ServiceErrorCode.TEAM_NOT_FOUND);
         }
         return team;
     }

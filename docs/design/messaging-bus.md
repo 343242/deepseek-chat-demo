@@ -32,6 +32,10 @@ RocketMQ 是 Apache 基金会顶级项目，专为分布式消息场景设计，
 - **事务消息**：半消息 + 本地事务回查，为未来的分布式事务场景预留能力。
 - **专属 Dashboard + 管控工具**：成熟的运维生态。
 
+> **运维前置条件**：生产环境建议 Broker 配置主从同步复制（`brokerRole=SYNC_MASTER`）
+> 或 `flushDiskType=SYNC_FLUSH`。默认 `ASYNC_FLUSH` 下 Broker 宕机可能丢失
+> 未刷盘消息（窗口约数百毫秒）。本文档后续配置和评估均基于主从同步部署的前提。
+
 **结论**：消息总线的核心需求（可靠投递、消费组、重试、死信）全部是 RocketMQ 原生能力，
 实现仅需 3 个核心类（MessageBus + Subscription + Configuration）。
 
@@ -102,7 +106,7 @@ public record Message<T>(
     @Nullable String tag,               // 消息标签（用于 Broker 端过滤，null 表示无 Tag）
     T payload,                          // 业务载荷
     @Nullable String hashKey,           // 有序消息分区键（null 表示无序）
-    @Nullable String deduplicationKey,  // 生产端去重键（null 表示无需去重）
+    @Nullable String deduplicationKey,  // 消费端幂等键（生产端设置，消费端从 msg.getKeys() 恢复，跨重试稳定）
     Map<String, String> headers,        // 扩展头（traceId、contentType 等）
     long timestamp                      // 创建时间戳
 ) {
@@ -333,8 +337,7 @@ infrastructure/messaging/
 ├── MessagePayloadCodec.java           (序列化抽象)
 ├── JacksonMessageCodec.java           (JSON 序列化实现)
 ├── idempotent/
-│   ├── IdempotentConsume.java         (幂等消费注解)
-│   └── IdempotentConsumeAspect.java   (AOP 切面：Redis Lua 幂等检查)
+│   └── IdempotentConfig.java          (幂等配置 record)
 ├── exception/
 │   ├── MessagingException.java
 │   ├── MessagePublishException.java
@@ -483,7 +486,7 @@ private record ConcurrentlyListener<T>(
                 T payload = codec.decode(msg.getBody(), payloadType);
                 Message<T> message = new Message<>(
                     msg.getMsgId(), topic, msg.getTags(),
-                    payload, null, null,
+                    payload, null, msg.getKeys(),
                     msg.getProperties(), msg.getBornTimestamp()
                 );
                 listener.onMessage(message);
@@ -533,6 +536,31 @@ private record ConcurrentlyListener<T>(
 - 这是所有 at-least-once 系统的标准行为
 - 当前顺序（处理 → 返回成功）是正确的：崩溃仅导致重复消费，不丢消息
 ```
+
+**批量消费的部分失败**：
+
+`ConcurrentlyListener` 逐条处理 `msgs` 列表（默认 `batchSize=32`）。
+如果第 N 条消息失败，前 N-1 条已成功处理的消息随整批一起标记为 `RECONSUME_LATER`，
+Broker 重新投递整批。这是 RocketMQ Push Consumer API 的固有行为——不支持单条 ACK。
+
+缓解策略：
+- 对幂等要求严格的场景，设置 `batchSize=1`（牺牲吞吐换精确性）
+- 确保 listener 实现幂等，重复消费不产生副作用
+- 本项目 chat save 默认 `batchSize=32` 依赖 DB 唯一约束兜底，可接受
+
+**消费超时导致并发重复处理**：
+
+`consumeTimeout` 默认 15 分钟。如果消费端处理耗时超过此阈值，
+Broker 未收到 ACK 会将消息重新投递，导致同一条消息被并发处理。
+
+风险场景：
+- RAG 索引任务（`consumeTimeout=30min`）：单次 LLM 调用可能超过 30min
+- 批量消费：`batchSize` 条消息的总处理时间可能超限
+
+缓解：
+- 为耗时任务设置合理的 `consumeTimeout`（RAG 索引建议 60min）
+- 消费端实现幂等（业务层 DB 唯一约束 + 消息总线内建幂等检查，见 §5.10）
+- 监控消费耗时 P99 指标（`messaging.consume.latency`），及时调整超时配置
 
 ### 5.6 死信处理
 
@@ -593,6 +621,33 @@ consumer.registerMessageListener(new OrderlyListener<>(...));
 - **并发约束**：有序 Topic 的 `concurrency` 不应超过 Topic 的 Queue 数量（默认 4），
   超出后多余的线程空闲。
 
+**有序配置判定**：
+
+有序消费需要在消费端选择 `MessageListenerOrderly`，由配置驱动：
+
+```yaml
+app:
+  messaging:
+    ordered-topics:
+      - rag.index.document
+```
+
+```java
+// RocketMQMessageBus.hasOrderedConfig()
+private boolean hasOrderedConfig(String topic) {
+    return properties.orderedTopics().contains(topic);
+}
+```
+
+**Queue 热点问题**：
+
+默认 4 个 Queue。如果 `hashKey` 分布不均（如某些热门文档消息量大），
+会导致某个 Queue 积压而其他 Queue 空闲。缓解策略：
+- 选择高基数的 `hashKey`（如 documentId 而非 teamId）
+- 通过 `mqadmin` 预创建更多 Queue（如 16 或 32）
+- 监控各 Queue 积压量（`mqadmin topicStats`），发现热点后扩容
+- Queue 数量变更后需重启消费者生效
+
 ### 5.8 Tag 过滤
 
 ```java
@@ -642,31 +697,42 @@ void shutdown() {
 
 ### 5.10 幂等消费
 
-> at-least-once 语义下消息可能重复投递（消费者崩溃后 Broker 重新投递、网络抖动导致重复 ACK）。
-> 业务层幂等是第一道防线，`@IdempotentConsume` 切面是通用安全网。
+> at-least-once 语义下消息可能重复投递（消费者崩溃后 Broker 重新投递、
+> 网络抖动导致重复 ACK、消费超时后 Broker 重新投递）。
+> 消息总线提供内建幂等检查作为通用安全网，业务层幂等作为精确保证。
+
+**设计决策：内建集成而非 AOP**
+
+> `@IdempotentConsume` AOP 方案在本项目中不可行，原因：
+> 1. `MessageListener` 以 lambda 形式传入 `subscribe()`，Spring AOP 无法拦截 lambda。
+> 2. 重试投递时 RocketMQ 生成新的 `msgId`（消息从 `%RETRY%ConsumerGroup` Topic
+>    重发），以 `msgId` 为幂等 key 无法关联原始投递与重试投递。
+>
+> 改为在 `RocketMQMessageBus` 的 listener 包装层内集成幂等检查，
+> 使用 `deduplicationKey`（生产端设置，消费端从 `msg.getKeys()` 恢复）作为幂等 key。
+
+**幂等 Key 选择**：
+
+| 场景 | 幂等 Key 来源 | 说明 |
+|------|------------|------|
+| `Message.deduplicationKey != null` | 生产端显式指定 | 跨重试稳定，推荐 |
+| `Message.deduplicationKey == null` | 无稳定 key | 跳过总线级幂等，完全依赖业务层 |
+
+> **为什么不用 `msgId`**：RocketMQ 重试投递时将消息发往 `%RETRY%ConsumerGroup` Topic，
+> 此过程生成新的 `msgId`。原始投递 `msgId` 与重试投递 `msgId` 不同，无法关联。
+> 而 `keys` 字段（对应 `deduplicationKey`）在重试过程中保持不变。
+
+**实现方式**：
 
 ```java
-/**
- * 幂等消费注解 — 标注在 MessageListener 实现上。
- * 基于消息 ID + consumer group 在 Redis 中记录消费状态，
- * 同一消息重复投递时自动跳过。
- */
-@Target(ElementType.METHOD)
-@Retention(RetentionPolicy.RUNTIME)
-public @interface IdempotentConsume {
-    /** 幂等键 TTL，默认 24h（覆盖最大重试周期 16×2h） */
-    long ttlSeconds() default 24 * 3600;
-}
-
-// IdempotentConsumeAspect — AOP 切面
-@Aspect
-@Component
-public class IdempotentConsumeAspect {
+// RocketMQMessageBus — 幂等检查包装
+public class RocketMQMessageBus implements MessageBus {
     private final StringRedisTemplate redis;
+    private final MessagingProperties properties;
 
     /**
      * Lua 脚本：SETNX + EXPIRE 原子操作
-     * KEYS[1] = "messaging:idempotent:{groupId}:{msgId}"
+     * KEYS[1] = "messaging:idempotent:{topic}:{deduplicationKey}"
      * ARGV[1] = ttl in seconds
      * 返回 1 = 首次消费（放行），0 = 重复消费（跳过）
      */
@@ -678,40 +744,118 @@ public class IdempotentConsumeAspect {
         "  return 0 " +
         "end";
 
-    @Around("@annotation(idempotent)")
-    public Object around(ProceedingJoinPoint pjp, IdempotentConsume idempotent) {
-        Message<?> msg = extractMessage(pjp.getArgs());
-        String key = "messaging:idempotent:" + msg.topic() + ":" + msg.id();
-        Long result = redis.execute(
-            new DefaultRedisScript<>(LUA_SETNX_EXPIRE, Long.class),
-            List.of(key), String.valueOf(idempotent.ttlSeconds()));
-        if (result != null && result == 1) {
-            return pjp.proceed();  // 首次消费，放行
+    /**
+     * 包装 listener，注入幂等检查。
+     * Redis 不可用时静默放行（降级到业务层幂等），不抛异常。
+     */
+    <T> MessageListener<T> wrapWithIdempotent(
+            MessageListener<T> listener, String topic) {
+        if (!properties.idempotent().enabled()) {
+            return listener;
         }
-        log.info("Duplicate message skipped: topic={}, id={}", msg.topic(), msg.id());
-        return null;  // 重复消费，跳过
+        return msg -> {
+            String idempotentKey = msg.deduplicationKey();
+            if (idempotentKey == null || idempotentKey.isEmpty()) {
+                listener.onMessage(msg);  // 无幂等 key，直接放行
+                return;
+            }
+            String redisKey = "messaging:idempotent:" + topic + ":" + idempotentKey;
+            try {
+                Long result = redis.execute(
+                    new DefaultRedisScript<>(LUA_SETNX_EXPIRE, Long.class),
+                    List.of(redisKey),
+                    String.valueOf(properties.idempotent().ttlSeconds()));
+                if (result != null && result == 1) {
+                    listener.onMessage(msg);  // 首次消费
+                } else {
+                    log.info("Duplicate message skipped: topic={}, key={}",
+                        topic, idempotentKey);
+                }
+            } catch (Exception e) {
+                // Redis 不可用时降级到业务层幂等，不阻塞消费
+                log.warn("Idempotent check failed (Redis unavailable), " +
+                         "delegating to business-layer: topic={}", topic, e);
+                listener.onMessage(msg);
+            }
+        };
     }
+}
+```
+
+**subscribe() 集成点**：
+
+```java
+// RocketMQMessageBus.subscribe() — 幂等包装注入
+public <T> Subscription subscribe(String topic, String group,
+                                   ConsumerConfig config,
+                                   Class<T> payloadType,
+                                   MessageListener<T> listener) {
+    // 包装 listener，注入幂等检查
+    MessageListener<T> wrappedListener = wrapWithIdempotent(listener, topic);
+
+    DefaultMQPushConsumer consumer = new DefaultMQPushConsumer(group);
+    // ... consumer 配置（同 §5.4）
+    if (ordered) {
+        consumer.registerMessageListener(
+            new OrderlyListener<>(codec, payloadType, wrappedListener, topic));
+    } else {
+        consumer.registerMessageListener(
+            new ConcurrentlyListener<>(codec, payloadType, wrappedListener, topic));
+    }
+    // ...
 }
 ```
 
 **使用方式**：
 
 ```java
-// 业务消费者 — 同时依赖业务层幂等（DB 唯一约束）和通用幂等切面
+// 业务消费者 — 设置 deduplicationKey 后总线自动幂等
 messageBus.subscribe("chat.message.save", "save-group",
     ConsumerConfig.DEFAULT,
     ChatMessagePayload.class,
     (Message<ChatMessagePayload> msg) -> {
-        // @IdempotentConsume 在此处由 AOP 切面拦截
-        // 业务层幂等：conversationId + messageIndex 唯一约束
+        // 消息总线已在调用前完成幂等检查
+        // 业务层幂等（conversationId + messageIndex 唯一约束）作为兜底
         conversationHelper.saveMessagesAndNotify(...);
     });
 ```
 
-> **两层幂等的关系**：`@IdempotentConsume` 是通用去重安全网（Redis SETNX），
-> 业务层幂等（DB 唯一约束 / 自然键）是精确保证。两者互补：
-> - 切面拦截大部分重复，避免无效 DB 写入。
-> - 业务层兜底极端情况（如 Redis 故障时切面失效）。
+> **两层幂等的关系**：消息总线内建幂等（Redis SETNX）拦截大部分重复，
+> 避免无效 DB 写入。业务层幂等（DB 唯一约束 / 自然键）兜底极端情况
+>（Redis 故障、幂等 key 未设置、TTL 过期后重试）。两者互补，缺一不可。
+
+### 5.11 消费组 Rebalance
+
+**默认策略**：`AllocateMessageQueueAveragely`（均匀分配 Queue 给消费组内的各实例）。
+适用于无序消息场景，实现简单，负载均衡效果均匀。
+
+**有序消息场景的特殊考虑**：
+
+`MessageListenerOrderly` 依赖 Broker 端分布式锁保证同一 Queue 同一时刻仅被一个消费者处理。
+Rebalance 期间 Queue 从消费者 A 迁移到消费者 B 时：
+1. 消费者 A 释放 Queue 锁
+2. Broker 将 Queue 重新分配给消费者 B
+3. 消费者 B 获取 Queue 锁，开始消费
+
+此过程中该 Queue 的消息暂停处理，暂停窗口通常 20-30s。
+如果消费者 A 因 GC 或网络抖动延迟释放锁，暂停时间可能更长。
+
+**缓解措施**：
+- 有序 Topic 使用 sticky 分配策略，减少 Queue 在实例间的频繁迁移
+- 监控 Rebalance 频率，频繁 Rebalance 通常意味着消费者实例不稳定
+- 生产环境消费者实例数不应超过 Topic Queue 数量（否则多余实例空闲）
+
+**Rebalance 触发场景**：
+- 新消费者实例上线 / 下线
+- Topic Queue 数量变更
+- NameServer 元数据变更
+
+**补充监控指标**：
+
+| 指标名 | 类型 | 标签 | 说明 |
+|--------|------|------|------|
+| `messaging.rebalance.count` | Counter | group | Rebalance 发生次数 |
+| `messaging.consumer.assigned.queues` | Gauge | group, instance | 当前分配的 Queue 数量 |
 
 ## 6. Spring 集成
 
@@ -723,10 +867,23 @@ public record MessagingProperties(
     boolean enabled,             // 总开关，默认 false（需显式启用）
     String topicPrefix,          // Topic 前缀，默认 "SMART_RAG_"
     Duration shutdownTimeout,    // 关闭超时，默认 30s
+    Set<String> orderedTopics,   // 有序 Topic 集合，默认空
+    IdempotentConfig idempotent, // 幂等检查配置
     RocketMQConfig rocketmq      // RocketMQ 专属配置
 ) {
     public MessagingProperties() {
-        this(false, "SMART_RAG_", Duration.ofSeconds(30), new RocketMQConfig());
+        this(false, "SMART_RAG_", Duration.ofSeconds(30),
+             Set.of(), new IdempotentConfig(), new RocketMQConfig());
+    }
+
+    /** 幂等检查配置 */
+    public record IdempotentConfig(
+        boolean enabled,       // 是否启用总线级幂等检查，默认 true
+        long ttlSeconds        // 幂等 key TTL，默认 25h（覆盖 16 级延迟重试总跨度 ~4.5h + 余量）
+    ) {
+        public IdempotentConfig() {
+            this(true, 25 * 3600);
+        }
     }
 
     public record RocketMQConfig(
@@ -757,6 +914,11 @@ app:
     enabled: true
     topic-prefix: "SMART_RAG_"
     shutdown-timeout: 30s
+    ordered-topics:
+      - rag.index.document
+    idempotent:
+      enabled: true
+      ttl-seconds: 90000   # 25h
     rocketmq:
       name-server: ${ROCKETMQ_NAMESERVER:localhost:9876}
       producer-group: smart-rag-producer
@@ -836,7 +998,8 @@ public class ChatMessagePublisher {
         try {
             messageBus.send(Message.of("chat.message.save",
                 new ChatMessagePayload(conversationId, userMessage,
-                                       assistantContent, modelId)));
+                                       assistantContent, modelId),
+                conversationId));  // deduplicationKey = conversationId
         } catch (MessagingException e) {
             log.warn("Message bus unavailable, falling back to synchronous save", e);
             conversationHelper.saveMessagesAndNotify(
@@ -893,7 +1056,8 @@ public class ChatMessageSaveConsumer implements SmartLifecycle {
 // 发送端 — 非关键路径，失败仅记日志
 try {
     messageBus.send(Message.of("chat.usage.record",
-        new UsagePayload(conversationId, modelId, tokens, elapsedMs)));
+        new UsagePayload(conversationId, modelId, tokens, elapsedMs),
+        conversationId + ":" + modelId));  // deduplicationKey
 } catch (MessagingException e) {
     log.warn("Failed to publish usage record: {}", e.getMessage());
     // 非关键路径，不降级
@@ -913,8 +1077,10 @@ messageBus.subscribe("chat.usage.record", "usage-group",
 
 ```java
 // 发送端 — 文档上传后投递索引任务
-messageBus.send(Message.ordered("rag.index.document",
-    new IndexTask(documentId, teamId), documentId));  // hashKey = documentId
+// hashKey = documentId（有序），deduplicationKey = documentId（幂等）
+messageBus.send(new Message<>("rag.index.document", null,
+    new IndexTask(documentId, teamId), documentId, documentId,
+    Map.of(), System.currentTimeMillis()));
 
 // 消费端 — 按 LLM 调用速率消费，不阻塞上传接口
 messageBus.subscribe("rag.index.document", "index-group",
@@ -942,8 +1108,7 @@ messageBus.subscribe("rag.index.document", "index-group",
 | `infrastructure/messaging/MessagingAutoConfiguration.java` | 新增 | 条件装配 |
 | `infrastructure/messaging/NoOpMessageBus.java` | 新增 | 未启用时的空实现 |
 | `infrastructure/messaging/MessagePayloadCodec.java` | 新增 | 序列化接口 |
-| `infrastructure/messaging/idempotent/IdempotentConsume.java` | 新增 | 幂等消费注解 |
-| `infrastructure/messaging/idempotent/IdempotentConsumeAspect.java` | 新增 | AOP 幂等切面（Redis Lua） |
+| `infrastructure/messaging/idempotent/IdempotentConfig.java` | 新增 | 幂等配置 record |
 | `infrastructure/messaging/JacksonMessageCodec.java` | 新增 | JSON 序列化 |
 | `infrastructure/messaging/exception/MessagingException.java` | 新增 | 基础异常 |
 | `infrastructure/messaging/exception/MessagePublishException.java` | 新增 | 发送异常 |
@@ -1006,7 +1171,9 @@ messageBus.subscribe("rag.index.document", "index-group",
 | 风险 | 等级 | 缓解措施 |
 |------|------|----------|
 | RocketMQ 运维复杂度增加 | 高 | 引入 RocketMQ Dashboard；制定部署/监控 SOP |
-| 消息重复消费 | 中 | 消费端必须幂等；`MessageListener` 文档明确标注幂等要求 |
+| 消息重复消费 | 中 | 总线级幂等检查（Redis SETNX）+ 业务层幂等（DB 唯一约束）双层防护 |
+| 消费超时导致并发重复 | 中 | 为耗时任务设置合理的 consumeTimeout；双层幂等兜底 |
+| Rebalance 导致有序消息暂停 | 中 | 使用 sticky 分配策略；监控 Rebalance 频率；实例数 ≤ Queue 数量 |
 | NameServer 单点故障 | 中 | NameServer 集群部署（建议至少 2 节点） |
 | Broker 磁盘满导致写入失败 | 中 | 监控磁盘使用率，配置 `diskMaxUsedSpaceRatio` |
 | 消费者积压 | 低 | 监控 `messaging.consumer.lag`，配置告警 |

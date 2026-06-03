@@ -332,52 +332,53 @@ infrastructure/messaging/
 ├── NoOpMessageBus.java                (disabled 时空实现)
 ├── MessagePayloadCodec.java           (序列化抽象)
 ├── JacksonMessageCodec.java           (JSON 序列化实现)
+├── idempotent/
+│   ├── IdempotentConsume.java         (幂等消费注解)
+│   └── IdempotentConsumeAspect.java   (AOP 切面：Redis Lua 幂等检查)
 ├── exception/
 │   ├── MessagingException.java
 │   ├── MessagePublishException.java
 │   └── MessageConsumeException.java
 └── rocketmq/
-    ├── RocketMQMessageBus.java        (核心实现：Producer + Consumer 管理)
+    ├── RocketMQMessageBus.java        (核心实现：RocketMQTemplate + DefaultMQPushConsumer 管理)
     └── RocketMQSubscription.java      (订阅管理：DefaultMQPushConsumer 生命周期)
 ```
 
-> **实现复杂度**：RocketMQ 实现仅需 `RocketMQMessageBus` + `RocketMQSubscription`
-> 两个核心类——重试调度和死信路由由 Broker 原生处理。
+> **实现复杂度**：核心实现仅需 `RocketMQMessageBus` + `RocketMQSubscription`
+> 两个类。发送端委托 `RocketMQTemplate`（由 starter 自动装配），消费端使用
+> `DefaultMQPushConsumer` 程序式管理以支持 SPI `subscribe()` 动态注册。
+> 重试调度和死信路由由 Broker 原生处理。
 
 ### 5.3 发送消息
+
+> **实现选择**：发送端使用 `RocketMQTemplate`（由 `rocketmq-spring-boot-starter` 自动装配），
+> 而非直接创建 `DefaultMQProducer`。原因：
+> 1. `RocketMQTemplate` 封装了 `DefaultMQProducer` 生命周期管理，减少样板代码。
+> 2. 内置 `MessageConverter` 支持和发送重试，与 Spring 生态无缝集成。
+> 3. 事务消息 `sendMessageInTransaction()` 可直接调用，为 Phase 2 预留能力。
 
 ```java
 // RocketMQMessageBus
 public class RocketMQMessageBus implements MessageBus {
-    private final DefaultMQProducer producer;
+    private final RocketMQTemplate rocketMQTemplate;
     private final MessagingProperties properties;
     private final MessagePayloadCodec codec;
 
-    public RocketMQMessageBus(MessagingProperties properties,
+    public RocketMQMessageBus(RocketMQTemplate rocketMQTemplate,
+                               MessagingProperties properties,
                                MessagePayloadCodec codec) {
+        this.rocketMQTemplate = rocketMQTemplate;
         this.properties = properties;
         this.codec = codec;
-        this.producer = new DefaultMQProducer(
-            properties.rocketmq().producerGroup());
-        this.producer.setNamesrvAddr(properties.rocketmq().nameServer());
-        this.producer.setSendMsgTimeout(
-            (int) properties.rocketmq().sendTimeout().toMillis());
-    }
-
-    public void start() throws MessagingException {
-        try {
-            producer.start();
-        } catch (MQClientException e) {
-            throw new MessagingException("Failed to start RocketMQ producer", e);
-        }
     }
 
     @Override
     public String send(Message<?> message) {
         try {
-            org.apache.rocketmq.common.message.Message mqMsg =
-                toRocketMQMessage(message);
-            SendResult result = producer.send(mqMsg);
+            String destination = properties.topicPrefix() + message.topic();
+            org.springframework.messaging.Message<byte[]> springMsg =
+                buildSpringMessage(message);
+            SendResult result = rocketMQTemplate.syncSend(destination, springMsg);
             return result.getMsgId();
         } catch (Exception e) {
             throw new MessagePublishException(
@@ -389,9 +390,10 @@ public class RocketMQMessageBus implements MessageBus {
     public CompletableFuture<String> sendAsync(Message<?> message) {
         CompletableFuture<String> future = new CompletableFuture<>();
         try {
-            org.apache.rocketmq.common.message.Message mqMsg =
-                toRocketMQMessage(message);
-            producer.send(mqMsg, new SendCallback() {
+            String destination = properties.topicPrefix() + message.topic();
+            org.springframework.messaging.Message<byte[]> springMsg =
+                buildSpringMessage(message);
+            rocketMQTemplate.asyncSend(destination, springMsg, new SendCallback() {
                 @Override
                 public void onSuccess(SendResult result) {
                     future.complete(result.getMsgId());
@@ -411,21 +413,14 @@ public class RocketMQMessageBus implements MessageBus {
         return future;
     }
 
-    private org.apache.rocketmq.common.message.Message toRocketMQMessage(
+    private org.springframework.messaging.Message<byte[]> buildSpringMessage(
             Message<?> message) {
-        String topic = properties.topicPrefix() + message.topic();
-        byte[] body = codec.encode(message.payload());
-        org.apache.rocketmq.common.message.Message mqMsg =
-            new org.apache.rocketmq.common.message.Message(topic, body);
-
-        if (message.tag() != null) {
-            mqMsg.setTags(message.tag());
-        }
-        if (message.deduplicationKey() != null) {
-            mqMsg.setKeys(message.deduplicationKey());
-        }
-        message.headers().forEach(mqMsg::putUserProperty);
-        return mqMsg;
+        MessageBuilder<byte[]> builder = MessageBuilder
+            .withPayload(codec.encode(message.payload()))
+            .setHeader("KEYS", message.deduplicationKey())
+            .setHeader("TAGS", message.tag());
+        message.headers().forEach(builder::setHeader);
+        return builder.build();
     }
 }
 ```
@@ -640,9 +635,83 @@ void shutdown() {
 **关闭保证**：
 - **Consumer 关闭**：`DefaultMQPushConsumer.shutdown()` 等待当前处理中的消息完成。
   未确认的消息由 Broker 在超时后重新投递到其他消费者实例。
-- **Producer 关闭**：`DefaultMQProducer.shutdown()` 等待在途发送完成。
+- **Producer 关闭**：`RocketMQTemplate` 的 `DefaultMQProducer` 由 starter 管理生命周期，
+  随 ApplicationContext 关闭自动销毁。
 - **超时控制**：`MessagingProperties.shutdownTimeout`（默认 30s）。
 - **未确认消息**：关闭后未 ACK 的消息由 Broker 在超时后自动重新投递。
+
+### 5.10 幂等消费
+
+> at-least-once 语义下消息可能重复投递（消费者崩溃后 Broker 重新投递、网络抖动导致重复 ACK）。
+> 业务层幂等是第一道防线，`@IdempotentConsume` 切面是通用安全网。
+
+```java
+/**
+ * 幂等消费注解 — 标注在 MessageListener 实现上。
+ * 基于消息 ID + consumer group 在 Redis 中记录消费状态，
+ * 同一消息重复投递时自动跳过。
+ */
+@Target(ElementType.METHOD)
+@Retention(RetentionPolicy.RUNTIME)
+public @interface IdempotentConsume {
+    /** 幂等键 TTL，默认 24h（覆盖最大重试周期 16×2h） */
+    long ttlSeconds() default 24 * 3600;
+}
+
+// IdempotentConsumeAspect — AOP 切面
+@Aspect
+@Component
+public class IdempotentConsumeAspect {
+    private final StringRedisTemplate redis;
+
+    /**
+     * Lua 脚本：SETNX + EXPIRE 原子操作
+     * KEYS[1] = "messaging:idempotent:{groupId}:{msgId}"
+     * ARGV[1] = ttl in seconds
+     * 返回 1 = 首次消费（放行），0 = 重复消费（跳过）
+     */
+    private static final String LUA_SETNX_EXPIRE =
+        "if redis.call('setnx', KEYS[1], '1') == 1 then " +
+        "  redis.call('expire', KEYS[1], tonumber(ARGV[1])) " +
+        "  return 1 " +
+        "else " +
+        "  return 0 " +
+        "end";
+
+    @Around("@annotation(idempotent)")
+    public Object around(ProceedingJoinPoint pjp, IdempotentConsume idempotent) {
+        Message<?> msg = extractMessage(pjp.getArgs());
+        String key = "messaging:idempotent:" + msg.topic() + ":" + msg.id();
+        Long result = redis.execute(
+            new DefaultRedisScript<>(LUA_SETNX_EXPIRE, Long.class),
+            List.of(key), String.valueOf(idempotent.ttlSeconds()));
+        if (result != null && result == 1) {
+            return pjp.proceed();  // 首次消费，放行
+        }
+        log.info("Duplicate message skipped: topic={}, id={}", msg.topic(), msg.id());
+        return null;  // 重复消费，跳过
+    }
+}
+```
+
+**使用方式**：
+
+```java
+// 业务消费者 — 同时依赖业务层幂等（DB 唯一约束）和通用幂等切面
+messageBus.subscribe("chat.message.save", "save-group",
+    ConsumerConfig.DEFAULT,
+    ChatMessagePayload.class,
+    (Message<ChatMessagePayload> msg) -> {
+        // @IdempotentConsume 在此处由 AOP 切面拦截
+        // 业务层幂等：conversationId + messageIndex 唯一约束
+        conversationHelper.saveMessagesAndNotify(...);
+    });
+```
+
+> **两层幂等的关系**：`@IdempotentConsume` 是通用去重安全网（Redis SETNX），
+> 业务层幂等（DB 唯一约束 / 自然键）是精确保证。两者互补：
+> - 切面拦截大部分重复，避免无效 DB 写入。
+> - 业务层兜底极端情况（如 Redis 故障时切面失效）。
 
 ## 6. Spring 集成
 
@@ -710,11 +779,10 @@ public class MessagingAutoConfiguration {
     }
 
     @Bean(destroyMethod = "shutdown")
-    MessageBus rocketMQMessageBus(MessagingProperties properties,
+    MessageBus rocketMQMessageBus(RocketMQTemplate rocketMQTemplate,
+                                   MessagingProperties properties,
                                    MessagePayloadCodec codec) {
-        RocketMQMessageBus bus = new RocketMQMessageBus(properties, codec);
-        bus.start();
-        return bus;
+        return new RocketMQMessageBus(rocketMQTemplate, properties, codec);
     }
 }
 
@@ -874,6 +942,8 @@ messageBus.subscribe("rag.index.document", "index-group",
 | `infrastructure/messaging/MessagingAutoConfiguration.java` | 新增 | 条件装配 |
 | `infrastructure/messaging/NoOpMessageBus.java` | 新增 | 未启用时的空实现 |
 | `infrastructure/messaging/MessagePayloadCodec.java` | 新增 | 序列化接口 |
+| `infrastructure/messaging/idempotent/IdempotentConsume.java` | 新增 | 幂等消费注解 |
+| `infrastructure/messaging/idempotent/IdempotentConsumeAspect.java` | 新增 | AOP 幂等切面（Redis Lua） |
 | `infrastructure/messaging/JacksonMessageCodec.java` | 新增 | JSON 序列化 |
 | `infrastructure/messaging/exception/MessagingException.java` | 新增 | 基础异常 |
 | `infrastructure/messaging/exception/MessagePublishException.java` | 新增 | 发送异常 |

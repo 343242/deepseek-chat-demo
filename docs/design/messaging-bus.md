@@ -22,21 +22,18 @@
 
 ### 1.2 为什么选择 RocketMQ
 
-前一版设计使用 Redis Streams 作为 Phase 1 实现，经评估后决定直接采用 RocketMQ：
+RocketMQ 是 Apache 基金会顶级项目，专为分布式消息场景设计，与本项目需求高度匹配：
 
-| 维度 | Redis Streams | RocketMQ |
-|------|--------------|----------|
-| 消费组 | 手动 XGROUP/XREADGROUP | 原生支持 |
-| 重试机制 | 无内置，需自建 `XPENDING`+`XCLAIM` 调度器 | 内置 16 级延迟重试 |
-| 死信队列 | 手动实现死信 Stream + 管理器 | 自动 `%DLQ%ConsumerGroup` Topic |
-| 有序消息 | 单 Stream 天然有序，多分区需自行设计 | `MessageQueueSelector` 原生支持 |
-| 消息过滤 | 应用层实现 | Tag 过滤（Broker 端执行） |
-| 事务消息 | 不支持 | 半消息 + 本地事务回查 |
-| 背压控制 | 应用层实现（信号量/线程池） | 消费端流量控制 + 拉取批次 |
-| 运维工具 | Redis 通用运维，Streams 专项工具少 | 专属 Dashboard + 管控工具 |
+- **原生消费组**：Broker 自动管理消费组，多消费者实例间负载均衡。
+- **内置 16 级延迟重试**：10s→30s→1m→2m→...→2h，消费失败后自动重试，无需自建调度器。
+- **自动死信路由**：重试耗尽后消息自动进入 `%DLQ%ConsumerGroup` Topic，无需自建 DLQ 管理器。
+- **Broker 端 Tag 过滤**：减少网络传输，比应用层过滤更高效。
+- **MessageQueueSelector**：基于 hash key 的有序消息路由，原生支持。
+- **事务消息**：半消息 + 本地事务回查，为未来的分布式事务场景预留能力。
+- **专属 Dashboard + 管控工具**：成熟的运维生态。
 
-**结论**：消息总线的核心需求（可靠投递、消费组、重试、死信）在 RocketMQ 中全部是原生能力。
-无需自建重试调度器和 DLQ 管理器，实现类从 Redis Streams 方案的 5 个减少到 3 个。
+**结论**：消息总线的核心需求（可靠投递、消费组、重试、死信）全部是 RocketMQ 原生能力，
+实现仅需 3 个核心类（MessageBus + Subscription + Configuration）。
 
 ### 1.3 已有基础设施
 
@@ -344,8 +341,7 @@ infrastructure/messaging/
     └── RocketMQSubscription.java      (订阅管理：DefaultMQPushConsumer 生命周期)
 ```
 
-> **对比前版设计**：前版 Redis Streams 实现需要 5 个类（MessageBus、Subscription、Consumer、
-> RetryScheduler、DeadLetter）。RocketMQ 实现仅需 `RocketMQMessageBus` + `RocketMQSubscription`
+> **实现复杂度**：RocketMQ 实现仅需 `RocketMQMessageBus` + `RocketMQSubscription`
 > 两个核心类——重试调度和死信路由由 Broker 原生处理。
 
 ### 5.3 发送消息
@@ -529,16 +525,6 @@ private record ConcurrentlyListener<T>(
                                          完成       自动进入 %DLQ%
 ```
 
-**与 Redis Streams 的关键区别**：
-
-| 关注点 | Redis Streams（前版） | RocketMQ（本版） |
-|--------|---------------------|-----------------|
-| ACK 机制 | 显式 `XACK` 调用 | 返回 `CONSUME_SUCCESS` 隐式完成 |
-| 重试调度 | 自建 `RedisStreamRetryScheduler`（`XPENDING`+`XCLAIM`） | Broker 端自动 16 级延迟 |
-| 死信路由 | 手动 `XADD` 写入死信 Stream | 自动进入 `%DLQ%ConsumerGroup` |
-| PEL 管理 | 需监控 Pending Entry List | 不适用 |
-| 消费组创建 | 手动 `XGROUP CREATE` | Broker 自动创建 |
-
 **ACK 失败场景**（at-least-once 语义下的标准风险）：
 
 ```
@@ -556,7 +542,6 @@ private record ConcurrentlyListener<T>(
 ### 5.6 死信处理
 
 RocketMQ 消费重试超过 `maxReconsumeTimes` 后，消息自动进入 `%DLQ%ConsumerGroup` Topic。
-无需自建死信 Stream 或手动 XADD。
 
 ```java
 // RocketMQMessageBus
@@ -583,7 +568,7 @@ public DeadLetterOperations deadLetterOperations() {
 ```
 
 > **DLQ 满后行为**：RocketMQ DLQ 是普通 Topic，受 Broker `fileReservedTime`（默认 72h）控制，
-> 过期后自动清理。不会像 Redis MAXLEN 裁剪那样静默丢弃新消息。
+> 过期后自动清理。DLQ 积压通过 `messaging.dead.count` + `messaging.consumer.lag` 指标监控。
 > DLQ 积压通过 `messaging.dead.count` + `messaging.consumer.lag` 指标监控。
 
 ### 5.7 有序消息
@@ -657,7 +642,7 @@ void shutdown() {
   未确认的消息由 Broker 在超时后重新投递到其他消费者实例。
 - **Producer 关闭**：`DefaultMQProducer.shutdown()` 等待在途发送完成。
 - **超时控制**：`MessagingProperties.shutdownTimeout`（默认 30s）。
-- **对比 Redis Streams**：无需手动管理 PEL，关闭后未 ACK 的消息由 Broker 自动恢复。
+- **未确认消息**：关闭后未 ACK 的消息由 Broker 在超时后自动重新投递。
 
 ## 6. Spring 集成
 

@@ -150,8 +150,11 @@ public record Message<T>(
      * 生产端 send() 网络超时时无法确认消息是否已入队，
      * 重试会产生两条不同 ID 但相同 deduplicationKey 的消息。
      * 消费端可基于此 key 实现幂等（DB 唯一约束 / 业务自然键）。
+     * <p>
+     * 注意：使用独立方法名 deduplicated() 而非重载 of()，
+     * 因为 of(String, String, String) 在 T=String 时与 of(topic, tag, payload) 签名冲突。
      */
-    public static <T> Message<T> of(String topic, T payload, String deduplicationKey) {
+    public static <T> Message<T> deduplicated(String topic, T payload, String deduplicationKey) {
         return new Message<>(null, topic, null, payload, null, deduplicationKey, Map.of(),
             System.currentTimeMillis());
     }
@@ -322,7 +325,8 @@ public record ConsumerConfig(
  * <p>
  * SimpleConsumer：无自动重试。消费失败时不调用 ack()，
  * 消息在 invisibleDuration 后重新可见，由消费者再次 receive() 拉取。
- * maxRetries 由应用层在 receive 循环中自行控制。
+ * RocketMQMessageBus 内部维护 ConcurrentHashMap&lt;msgId, retryCount&gt;
+ * 在 receive 循环中跟踪重试次数，超过 maxRetries 后 ack 放弃。
  */
 public record RetryPolicy(
     int maxRetries             // PushConsumer: 最大投递次数（Broker 端），默认 16
@@ -428,12 +432,15 @@ public class RocketMQMessageBus implements MessageBus {
     private final MessagingProperties properties;
     private final MessagePayloadCodec codec;
     private final ClientServiceProvider provider;
+    private final ExecutorService sendExecutor;
 
     public RocketMQMessageBus(MessagingProperties properties,
                                MessagePayloadCodec codec) {
         this.properties = properties;
         this.codec = codec;
         this.provider = ClientServiceProvider.loadService();
+        this.sendExecutor = Executors.newFixedThreadPool(4,
+            r -> new Thread(r, "mq-send-async"));
 
         ClientConfiguration clientConfig = ClientConfiguration.newBuilder()
             .setEndpoints(properties.rocketmq().endpoints())
@@ -469,7 +476,7 @@ public class RocketMQMessageBus implements MessageBus {
             org.apache.rocketmq.client.apis.message.Message rmqMsg =
                 buildRocketMQMessage(message);
             // 5.x Producer 不提供 sendAsync，在独立线程池中执行同步发送
-            executorService.submit(() -> {
+            sendExecutor.submit(() -> {
                 try {
                     SendReceipt receipt = producer.send(rmqMsg);
                     future.complete(receipt.getMessageId().toString());
@@ -616,6 +623,10 @@ private <T> Subscription createSimpleSubscription(
     ScheduledExecutorService receiveExecutor = Executors.newSingleThreadScheduledExecutor(
         r -> new Thread(r, "simple-consumer-" + topic));
     AtomicBoolean running = new AtomicBoolean(true);
+    int maxRetries = config.retryPolicy().maxRetries();
+
+    // 重试计数器：msgId → 已重试次数
+    ConcurrentHashMap<String, AtomicInteger> retryCounter = new ConcurrentHashMap<>();
 
     receiveExecutor.submit(() -> {
         while (running.get()) {
@@ -623,11 +634,12 @@ private <T> Subscription createSimpleSubscription(
                 List<MessageView> messages = simpleConsumer.receive(
                     config.batchSize(), config.invisibleDuration());
                 for (MessageView messageView : messages) {
+                    String msgId = messageView.getMessageId().toString();
                     try {
                         T payload = codec.decode(
                             toByteArray(messageView.getBody()), payloadType);
                         Message<T> message = new Message<>(
-                            messageView.getMessageId().toString(),
+                            msgId,
                             topic,
                             messageView.getTag().orElse(null),
                             payload,
@@ -638,10 +650,21 @@ private <T> Subscription createSimpleSubscription(
                         );
                         listener.onMessage(message);
                         simpleConsumer.ack(messageView);
+                        retryCounter.remove(msgId);  // 成功后清除计数
                     } catch (Exception e) {
-                        log.error("Simple consume failed: topic={}, msgId={}",
-                            topic, messageView.getMessageId(), e);
-                        // 不 ack → 消息在 invisibleDuration 后重新可见
+                        int attempts = retryCounter
+                            .computeIfAbsent(msgId, k -> new AtomicInteger(0))
+                            .incrementAndGet();
+                        if (attempts >= maxRetries) {
+                            log.error("Simple consume exhausted retries ({}): topic={}, msgId={}",
+                                attempts, topic, msgId, e);
+                            simpleConsumer.ack(messageView);  // 超过重试上限，ack 并放弃
+                            retryCounter.remove(msgId);
+                        } else {
+                            log.warn("Simple consume failed ({}/{}): topic={}, msgId={}",
+                                attempts, maxRetries, topic, msgId, e);
+                            // 不 ack → 消息在 invisibleDuration 后重新可见
+                        }
                     }
                 }
             } catch (Exception e) {
@@ -889,6 +912,9 @@ void shutdown() {
     } catch (IOException e) {
         log.warn("Error closing producer", e);
     }
+    // 3. 关闭异步发送线程池
+    sendExecutor.shutdown();
+    sendExecutor.awaitTermination(timeout.toMillis(), TimeUnit.MILLISECONDS);
 }
 ```
 
@@ -1038,45 +1064,35 @@ Broker 按消息粒度分配（同一消息仅分配给一个实例）。
 ```java
 @ConfigurationProperties(prefix = "app.messaging")
 public record MessagingProperties(
-    boolean enabled,             // 总开关，默认 false（需显式启用）
-    String topicPrefix,          // Topic 前缀，默认 "SMART_RAG_"
-    Duration shutdownTimeout,    // 关闭超时，默认 30s
-    Set<String> orderedTopics,   // 有序 Topic 集合（FIFO Topic），默认空
-    IdempotentConfig idempotent, // 幂等检查配置
-    RocketMQConfig rocketmq      // RocketMQ 5.x 客户端配置
+    @DefaultValue("false") boolean enabled,
+    @DefaultValue("SMART_RAG_") String topicPrefix,
+    @DefaultValue("30s") Duration shutdownTimeout,
+    Set<String> orderedTopics,
+    @DefaultValue IdempotentConfig idempotent,
+    @DefaultValue RocketMQConfig rocketmq
 ) {
-    public MessagingProperties() {
-        this(false, "SMART_RAG_", Duration.ofSeconds(30),
-             Set.of(), new IdempotentConfig(), new RocketMQConfig());
-    }
-
     /** 幂等检查配置 */
     public record IdempotentConfig(
-        boolean enabled,       // 是否启用总线级幂等检查，默认 true
-        long ttlSeconds        // 幂等 key TTL，默认 25h（覆盖重试总跨度 + 余量）
-    ) {
-        public IdempotentConfig() {
-            this(true, 25 * 3600);
-        }
-    }
+        @DefaultValue("true") boolean enabled,
+        @DefaultValue("90000") long ttlSeconds     // 25h
+    ) {}
 
     /** RocketMQ 5.x 客户端配置 */
     public record RocketMQConfig(
-        String endpoints,               // gRPC Proxy 或 NameServer 地址，必填
-                                        // NameServer: host:9876（推荐生产环境）
-                                        // Proxy: host:8081（开发环境）
-        String producerGroup,           // 生产者组名，默认 "smart-rag-producer"
-        Duration requestTimeout,        // 客户端请求超时，默认 3s
-        int maxDeliveryAttempts,        // PushConsumer 最大投递次数（Broker 端配置参考值），默认 16
-        int maxMessageSize              // 最大消息大小（字节），默认 4MB
-    ) {
-        public RocketMQConfig() {
-            this("localhost:9876", "smart-rag-producer",
-                 Duration.ofSeconds(3), 16, 4 * 1024 * 1024);
-        }
-    }
+        String endpoints,                           // 必填，无默认值
+        @DefaultValue("smart-rag-producer") String producerGroup,
+        @DefaultValue("3s") Duration requestTimeout,
+        @DefaultValue("16") int maxDeliveryAttempts,
+        @DefaultValue("4194304") int maxMessageSize // 4MB
+    ) {}
 }
 ```
+
+> **Spring Boot record binding 注意事项**：Spring Boot 3.x 对 record 使用构造器绑定，
+> 不走 setter。`@DefaultValue` 注解为未配置的字段提供默认值。无 `@DefaultValue` 且
+> 在 YAML 中未配置的字段将为 null/0/false（原始类型）。`endpoints` 故意不设默认值，
+> 强制用户显式配置。嵌套 record 的 `@DefaultValue`（无参数）表示使用该 record 的
+> 全默认构造。
 
 **`application.yml` 配置示例**：
 
@@ -1121,6 +1137,11 @@ public class MessagingAutoConfiguration {
 /**
  * 消息总线未启用时的空实现。
  * 业务代码注入 MessageBus 后无需判空，所有操作为 no-op。
+ * <p>
+ * 行为约定：
+ * - send() / sendAsync()：记录 DEBUG 日志，返回空字符串 / 立即完成的 future
+ * - subscribe()：记录 WARN 日志，返回 NoOpSubscription（isActive()=false）
+ * - shutdown()：无操作
  */
 @Configuration
 @ConditionalOnProperty(name = "app.messaging.enabled",
@@ -1170,7 +1191,7 @@ public class ChatMessagePublisher {
                                     String assistantContent, String modelId,
                                     @Nullable ChatResponse aiResponse, long elapsedMs) {
         try {
-            messageBus.send(Message.of("chat.message.save",
+            messageBus.send(Message.deduplicated("chat.message.save",
                 new ChatMessagePayload(conversationId, userMessage,
                                        assistantContent, modelId),
                 conversationId));  // deduplicationKey = conversationId
@@ -1229,7 +1250,7 @@ public class ChatMessageSaveConsumer implements SmartLifecycle {
 ```java
 // 发送端 — 非关键路径，失败仅记日志
 try {
-    messageBus.send(Message.of("chat.usage.record",
+    messageBus.send(Message.deduplicated("chat.usage.record",
         new UsagePayload(conversationId, modelId, tokens, elapsedMs),
         conversationId + ":" + modelId));  // deduplicationKey
 } catch (MessagingException e) {

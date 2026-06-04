@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 4
-- **Last Active**: 2026-06-03
+- **Total Sessions**: 5
+- **Last Active**: 2026-06-05
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~139 | Active |
+| `journal-1.md` | ~172 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 5 | 2026-06-05 | Complete exception hierarchy migration | `4c61fa1` | `agentic-rag-dev` |
 | 4 | 2026-06-03 | Chat Module 15-Dimension Audit Fixes | `b3eb90c` | `agentic-rag-dev` |
 | 3 | 2026-06-03 | Probe cache optimization: shared dedup + Redis health cache | `07e9401` | `agentic-rag-dev` |
 | 2 | 2026-06-02 | OCR code review: fix 3 bugs in structured concurrency | `10cd850` | `structured-concurrency-feature` |

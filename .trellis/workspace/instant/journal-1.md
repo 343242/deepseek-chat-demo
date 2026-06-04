@@ -137,3 +137,36 @@ Implemented two-layer first-packet probe optimization: SharedProbeRegistry (Conc
 ### Next Steps
 
 - None - task complete
+
+
+## Session 5: Complete exception hierarchy migration
+
+**Date**: 2026-06-05
+**Task**: Complete exception hierarchy migration
+**Branch**: `agentic-rag-dev`
+
+### Summary
+
+Migrate remaining production/test files from old ErrorCode/BusinessException to three-layer exception system (ClientException/ServiceException/RemoteException). Fix FallbackEligibility instanceof regression. Add 4 test classes (46 tests). Update error-handling spec.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4c61fa1` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

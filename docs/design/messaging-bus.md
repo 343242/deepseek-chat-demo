@@ -383,6 +383,7 @@ infrastructure/messaging/
 ├── RetryPolicy.java                   (重试策略)
 ├── MessagingProperties.java           (@ConfigurationProperties)
 ├── MessagingAutoConfiguration.java    (条件装配)
+├── MessagingHealthIndicator.java      (健康检查)
 ├── NoOpMessageBus.java                (disabled 时空实现)
 ├── MessagePayloadCodec.java           (序列化抽象)
 ├── JacksonMessageCodec.java           (JSON 序列化实现)
@@ -391,7 +392,8 @@ infrastructure/messaging/
 ├── exception/
 │   ├── MessagingException.java
 │   ├── MessagePublishException.java
-│   └── MessageConsumeException.java
+│   ├── MessageConsumeException.java
+│   └── PermanentConsumeException.java
 └── rocketmq/
     ├── RocketMQMessageBus.java        (核心实现: 5.x Producer + PushConsumer/SimpleConsumer 管理)
     └── RocketMQSubscription.java      (订阅管理: PushConsumer/SimpleConsumer 生命周期)
@@ -417,6 +419,36 @@ infrastructure/messaging/
 > 发送端使用 5.x `Producer`，消费端根据 `ConsumerMode` 创建 `PushConsumer` 或 `SimpleConsumer`。
 > 重试调度和死信路由由 Broker 原生处理，无需自建调度器。
 
+### 5.2.1 异常层次
+
+```java
+/**
+ * 永久性消费异常 — 表示消息本身不可处理，重试无意义。
+ * <p>
+ * 典型场景：反序列化失败、payload schema 不匹配、消息体格式错误。
+ * <p>
+ * 消费端 listener 抛出此异常时：
+ * - PushConsumer：跳过重试计数，返回 ConsumeResult.FAILURE（Broker 在 maxDeliveryAttempts 后路由到 DLQ）
+ * - SimpleConsumer：立即 ack + 转发 DLQ（跳过重试计数器）
+ */
+public class PermanentConsumeException extends RuntimeException {
+    public PermanentConsumeException(String message) {
+        super(message);
+    }
+
+    public PermanentConsumeException(String message, Throwable cause) {
+        super(message, cause);
+    }
+}
+```
+
+**错误分类规则**：
+
+| 异常类型 | 示例 | 处理方式 |
+|----------|------|----------|
+| `PermanentConsumeException` | 反序列化失败、schema 不匹配、无效 payload | 跳过重试，直接 DLQ |
+| 其他 `RuntimeException` | DB 临时不可用、外部服务超时 | 正常重试路径 |
+
 ### 5.3 发送消息
 
 > **实现选择**：发送端直接使用 5.x `Producer`（通过 `ClientServiceProvider` 创建），
@@ -427,6 +459,8 @@ infrastructure/messaging/
 
 ```java
 // RocketMQMessageBus
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
 import org.apache.rocketmq.client.apis.ClientConfiguration;
 import org.apache.rocketmq.client.apis.ClientServiceProvider;
 import org.apache.rocketmq.client.apis.producer.Producer;
@@ -451,8 +485,13 @@ public class RocketMQMessageBus implements MessageBus {
         this.codec = codec;
         this.meterRegistry = meterRegistry;
         this.provider = ClientServiceProvider.loadService();
-        this.sendExecutor = Executors.newFixedThreadPool(4,
-            r -> new Thread(r, "mq-send-async"));
+        // 有界队列 + CallerRunsPolicy：队列满时由调用线程执行，提供自然背压，防止 OOM
+        this.sendExecutor = new ThreadPoolExecutor(
+            4, 4, 0L, TimeUnit.MILLISECONDS,
+            new ArrayBlockingQueue<>(1024),  // 有界队列，防止 OOM
+            r -> new Thread(r, "mq-send-async"),
+            new ThreadPoolExecutor.CallerRunsPolicy()  // 队列满时由调用线程执行
+        );
 
         ClientConfiguration clientConfig = ClientConfiguration.newBuilder()
             .setEndpoints(properties.rocketmq().endpoints())
@@ -470,6 +509,7 @@ public class RocketMQMessageBus implements MessageBus {
 
     @Override
     public String send(Message<?> message) {
+        validateMessage(message);
         try {
             org.apache.rocketmq.client.apis.message.Message rmqMsg =
                 buildRocketMQMessage(message);
@@ -483,6 +523,7 @@ public class RocketMQMessageBus implements MessageBus {
 
     @Override
     public CompletableFuture<String> sendAsync(Message<?> message) {
+        validateMessage(message);
         CompletableFuture<String> future = new CompletableFuture<>();
         try {
             org.apache.rocketmq.client.apis.message.Message rmqMsg =
@@ -523,6 +564,31 @@ public class RocketMQMessageBus implements MessageBus {
         message.headers().forEach(builder::addProperty);
 
         return builder.build();
+    }
+
+    /** Topic 格式：字母数字 + 下划线 + 连字符，1-64 字符 */
+    private static final java.util.regex.Pattern TOPIC_PATTERN =
+        java.util.regex.Pattern.compile("^[a-zA-Z0-9_-]{1,64}$");
+
+    /** Tag 格式：字母数字 + 下划线 + 连字符，最大 64 字符 */
+    private static final java.util.regex.Pattern TAG_PATTERN =
+        java.util.regex.Pattern.compile("^[a-zA-Z0-9_-]{1,64}$");
+
+    /**
+     * 校验消息的 topic 和 tag 格式。
+     * 在 send() 和 sendAsync() 入口调用，快速失败，避免无效消息进入发送链路。
+     */
+    private void validateMessage(Message<?> message) {
+        if (!TOPIC_PATTERN.matcher(message.topic()).matches()) {
+            throw new IllegalArgumentException(
+                "Invalid topic name: '" + message.topic()
+                + "'. Must be 1-64 chars, alphanumeric/underscore/hyphen only.");
+        }
+        if (message.tag() != null && !TAG_PATTERN.matcher(message.tag()).matches()) {
+            throw new IllegalArgumentException(
+                "Invalid tag name: '" + message.tag()
+                + "'. Must be 1-64 chars, alphanumeric/underscore/hyphen only.");
+        }
     }
 }
 ```
@@ -667,6 +733,12 @@ private <T> Subscription createPushSubscription(
             );
             listener.onMessage(message);
             return ConsumeResult.SUCCESS;
+        } catch (PermanentConsumeException e) {
+            // 永久性错误（反序列化失败、schema 不匹配等）：跳过重试，直接返回 FAILURE
+            // Broker 在 maxDeliveryAttempts 后自动路由到 %DLQ%
+            log.error("Permanent consume error, skipping retry: topic={}, msgId={}",
+                topic, messageView.getMessageId(), e);
+            return ConsumeResult.FAILURE;
         } catch (Exception e) {
             log.error("Push consume failed: topic={}, msgId={}",
                 topic, messageView.getMessageId(), e);
@@ -710,8 +782,15 @@ private <T> Subscription createSimpleSubscription(
 
     // 重试计数器：msgId → 已重试次数
     // 使用 Caffeine 替代 ConcurrentHashMap：自动过期防止 OOM，覆盖重启场景。
-    // 注意：如果 5.x MessageView 未来提供 getDeliveryAttempt()，应优先使用该 API
-    // 替代本地计数器，避免应用重启后计数丢失的问题。
+    //
+    // 限制：SimpleConsumer 重试计数器是本地/内存的。进程重启后计数重置。
+    // 对于关键路径，考虑使用 Redis 支持的计数器或接受重启后 maxRetries 可能不精确。
+    //
+    // 首选方案：RocketMQ 5.x MessageView 提供 getDeliveryAttempt() 时，
+    // 应优先使用该 Broker 端计数（权威来源），替代本地计数器：
+    //   int attempts = messageView.getDeliveryAttempt().orElse(0);
+    //   if (attempts >= maxRetries) { /* skip to DLQ */ }
+    // 详见 §5.5 SimpleConsumer 重试机制。
     Cache<String, AtomicInteger> retryCounter = Caffeine.newBuilder()
         .expireAfterWrite(config.invisibleDuration().multipliedBy(maxRetries * 2))
         .build();
@@ -750,6 +829,12 @@ private <T> Subscription createSimpleSubscription(
                             listener.onMessage(message);
                             simpleConsumer.ack(messageView);
                             retryCounter.invalidate(msgId);  // 成功后清除计数
+                        } catch (PermanentConsumeException e) {
+                            // 永久性错误：立即 ack + 转发 DLQ，跳过重试计数器
+                            log.error("Permanent consume error, forwarding to DLQ: topic={}, msgId={}",
+                                topic, msgId, e);
+                            sendToDeadLetter(messageView, topic, group);
+                            simpleConsumer.ack(messageView);
                         } catch (Exception e) {
                             int attempts = retryCounter.get(msgId, k -> new AtomicInteger(0))
                                 .incrementAndGet();
@@ -883,6 +968,8 @@ private byte[] toByteArray(ByteBuffer buffer) {
 - SimpleConsumer 无自动重试状态机，由应用层控制
 - `invisibleDuration` 决定失败后多久消息重新可见（等效于重试延迟）
 - 应用层在 receive 循环中记录重试次数，超过 `maxRetries` 时 ack 并记录日志
+- **重试计数来源**：优先使用 `MessageView.getDeliveryAttempt()`（Broker 端权威计数）；
+  若不可用则回退到本地 Caffeine 计数器（进程重启后重置，非精确保证）
 
 **ACK 失败场景**（at-least-once 语义下的标准风险）：
 
@@ -1040,26 +1127,45 @@ Tag 过滤在 Broker 端执行，减少网络传输，比应用层过滤更高�
 
 ```java
 void shutdown() {
-    Duration timeout = properties.shutdownTimeout();
+    Duration total = properties.shutdownTimeout();
     // 关闭顺序至关重要：(1) 停止接收新订阅 → (2) drain 在途发送 → (3) 停止消费者 → (4) 关闭生产者
     // 原因：如果先关 Producer，send() 会在消费端 close() 期间失败（如 fallback 写入场景）
     shutdown = true;  // 1. 停止接受新订阅
+
+    // 超时分配：sendExecutor 40%，Subscriptions 40%，Producer 20%
+    // sendExecutor 和 Subscriptions 是关闭耗时最长的两个组件，各分配 40%
+    // Producer.close() 通常较快（等待在途 RPC 完成），分配剩余 20%
+    Duration executorTimeout = total.multipliedBy(40).dividedBy(100);
+    Duration subscriptionTimeout = total.multipliedBy(40).dividedBy(100);
+    Duration producerTimeout = total.minus(executorTimeout).minus(subscriptionTimeout);
+
     // 2. 关闭异步发送线程池，等待在途发送完成
     sendExecutor.shutdown();
     try {
-        if (!sendExecutor.awaitTermination(timeout.toMillis(), TimeUnit.MILLISECONDS)) {
-            log.warn("Send executor did not terminate in time");
+        if (!sendExecutor.awaitTermination(executorTimeout.toMillis(), TimeUnit.MILLISECONDS)) {
+            sendExecutor.shutdownNow();
+            log.warn("Send executor did not terminate in time ({}ms), forced shutdown",
+                executorTimeout.toMillis());
         }
     } catch (InterruptedException e) {
+        sendExecutor.shutdownNow();
         Thread.currentThread().interrupt();
     }
-    // 3. 关闭所有 Subscription（停止消费者）
+    // 3. 关闭所有 Subscription（停止消费者），带独立超时
+    Deadline deadline = Deadline.after(subscriptionTimeout.toMillis(), TimeUnit.MILLISECONDS);
     for (RocketMQSubscription sub : activeSubscriptions) {
-        sub.close();
+        long remaining = deadline.remainingTime(TimeUnit.MILLISECONDS);
+        if (remaining <= 0) {
+            log.warn("Shutdown timeout exhausted, skipping remaining {} subscriptions",
+                activeSubscriptions.size() - activeSubscriptions.indexOf(sub));
+            break;
+        }
+        sub.close(Duration.ofMillis(remaining));
     }
     // 4. 关闭 Producer（5.x Producer 实现 AutoCloseable）
     try {
         producer.close();
+        // 注意：5.x Producer.close() 不接受超时参数，依赖客户端内部超时
     } catch (IOException e) {
         log.warn("Error closing producer", e);
     }
@@ -1072,7 +1178,7 @@ void shutdown() {
 - **SimpleConsumer 关闭**：停止后台 receive 线程，`SimpleConsumer.close()` 释放资源。
   未 ack 的消息在 `invisibleDuration` 后由 Broker 重新投递。
 - **Producer 关闭**：`Producer.close()` 等待在途消息完成发送（5.x 实现 `AutoCloseable`）。
-- **超时控制**：`MessagingProperties.shutdownTimeout`（默认 30s）。
+- **超时控制**：`MessagingProperties.shutdownTimeout`（默认 30s），按 40/40/20 比例分配给 sendExecutor、Subscriptions、Producer。超时组件强制关闭（shutdownNow），避免一个组件阻塞整个关闭流程。
 - **未确认消息**：关闭后未 ACK 的消息由 Broker 自动重新投递（两种模式均适用）。
 
 ### 5.10 幂等消费
@@ -1107,21 +1213,16 @@ public class RocketMQMessageBus implements MessageBus {
     private final MessagingProperties properties;
 
     /**
-     * Lua 脚本：SETNX + EXPIRE 原子操作
-     * KEYS[1] = "messaging:idempotent:{topic}:{deduplicationKey}"
-     * ARGV[1] = ttl in seconds
-     * 返回 1 = 首次消费（放行），0 = 重复消费（跳过）
-     */
-    private static final String LUA_SETNX_EXPIRE =
-        "if redis.call('setnx', KEYS[1], '1') == 1 then " +
-        "  redis.call('expire', KEYS[1], tonumber(ARGV[1])) " +
-        "  return 1 " +
-        "else " +
-        "  return 0 " +
-        "end";
-
-    /**
      * 包装 listener，注入幂等检查。
+     * <p>
+     * 幂等检查顺序（先执行、后标记），确保消费失败时重试不被阻断：
+     * 1. GET 检查是否已处理过（快速路径，跳过已消费消息）
+     * 2. 执行 listener.onMessage(msg)（实际消费逻辑）
+     * 3. 消费成功后 SET NX EX 标记为已处理（防止重复消费）
+     * <p>
+     * 如果 listener 抛出异常，不执行 SET → Redis 无 key → 下次重试可正常通过 GET 检查。
+     * 并发重复窗口（两个消费者同时通过 GET 检查）极小，由业务层 DB 唯一约束兜底。
+     * <p>
      * Redis 不可用时静默放行（降级到业务层幂等），不抛异常。
      */
     <T> MessageListener<T> wrapWithIdempotent(
@@ -1137,21 +1238,32 @@ public class RocketMQMessageBus implements MessageBus {
             }
             String redisKey = "messaging:idempotent:" + topic + ":" + idempotentKey;
             try {
-                Long result = redis.execute(
-                    new DefaultRedisScript<>(LUA_SETNX_EXPIRE, Long.class),
-                    List.of(redisKey),
-                    String.valueOf(properties.idempotent().ttlSeconds()));
-                if (result != null && result == 1) {
-                    listener.onMessage(msg);  // 首次消费
-                } else {
+                // 步骤 1：检查是否已处理（GET）
+                Boolean alreadyProcessed = redis.hasKey(redisKey);
+                if (Boolean.TRUE.equals(alreadyProcessed)) {
                     log.info("Duplicate message skipped: topic={}, key={}",
                         topic, idempotentKey);
+                    return;
                 }
+                // 步骤 2：执行消费逻辑
+                listener.onMessage(msg);
+                // 步骤 3：消费成功，标记为已处理（SET NX EX 原子操作）
+                redis.opsForValue().setIfAbsent(
+                    redisKey, "1",
+                    Duration.ofSeconds(properties.idempotent().ttlSeconds()));
             } catch (Exception e) {
                 // Redis 不可用时降级到业务层幂等，不阻塞消费
                 log.warn("Idempotent check failed (Redis unavailable), " +
                          "delegating to business-layer: topic={}", topic, e);
-                listener.onMessage(msg);
+                // 仅在 Redis 可用时已通过检查的情况下执行 listener
+                //（此处为 catch 路径，说明 Redis 操作失败，直接执行 listener 保证不丢消息）
+                try {
+                    listener.onMessage(msg);
+                } catch (Exception listenerEx) {
+                    log.error("Listener failed during Redis-degraded path: topic={}, key={}",
+                        topic, idempotentKey, listenerEx);
+                    throw listenerEx;
+                }
             }
         };
     }
@@ -1164,9 +1276,13 @@ public class RocketMQMessageBus implements MessageBus {
 对 PushConsumer 和 SimpleConsumer 均适用——包装后的 `MessageListener<T>`
 在内部消费循环中被调用。
 
-> **两层幂等的关系**：消息总线内建幂等（Redis SETNX）拦截大部分重复，
-> 避免无效 DB 写入。业务层幂等（DB 唯一约束 / 自然键）兜底极端情况
->（Redis 故障、幂等 key 未设置、TTL 过期后重试）。两者互补，缺一不可。
+> **两层幂等的关系与执行顺序**：消息总线内建幂等采用"先执行、后标记"策略——
+> 先调用 listener 消费消息，成功后才在 Redis 中 SET 标记已处理。
+> 这保证消费失败（listener 抛异常）时不会阻断合法重试（Redis 无 key → 重试通过）。
+> 并发重复窗口（两个消费者同时通过 GET 检查、同时执行 listener）极小，
+> 由业务层 DB 唯一约束兜底。
+> 业务层幂等（DB 唯一约束 / 自然键）覆盖所有极端情况
+> （Redis 故障、幂等 key 未设置、TTL 过期后重试、并发窗口）。两者互补，缺一不可。
 
 ### 5.11 消费组负载均衡
 
@@ -1398,6 +1514,129 @@ public interface MessagePayloadCodec {
 }
 ```
 
+**JacksonMessageCodec Schema 演进配置**：
+
+```java
+@Component
+public class JacksonMessageCodec implements MessagePayloadCodec {
+    private final ObjectMapper objectMapper;
+
+    public JacksonMessageCodec() {
+        this.objectMapper = new ObjectMapper();
+        // 忽略未知属性：新版本添加字段后，旧版本消费者不会反序列化失败
+        objectMapper.configure(
+            DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+        // 其他全局配置与项目已有 ObjectMapper 保持一致
+    }
+
+    @Override
+    public byte[] encode(Object payload) {
+        return objectMapper.writeValueAsBytes(payload);
+    }
+
+    @Override
+    public <T> T decode(byte[] data, Class<T> type) {
+        return objectMapper.readValue(data, type);
+    }
+}
+```
+
+**Schema 演进规则**：
+
+1. **仅允许加法变更**：新增字段必须提供默认值（`@DefaultValue` 或 `null`）。
+   旧消费者遇到未知字段时，`FAIL_ON_UNKNOWN_PROPERTIES=false` 会静默忽略。
+2. **禁止破坏性变更**：不重命名字段、不删除字段、不更改字段类型。
+   如需废弃字段，保留为 `@Deprecated` 并保留默认值。
+3. **Content-Type 协商**：`Message.headers` 默认包含 `"Content-Type": "application/json"`，
+   预留未来格式协商（如 `application/protobuf`）。
+   生产端在 `buildRocketMQMessage()` 中自动设置：
+
+   ```java
+   // 在 Message.of() 和 Message.deduplicated() 的默认 headers 中
+   // 已包含 "Content-Type": "application/json"
+   ```
+
+### 6.4 健康检查
+
+```java
+/**
+ * 消息总线健康检查 — 监控 Producer 连通性、订阅活跃度和熔断器状态。
+ * <p>
+ * 通过 Spring Boot Actuator /health 端点暴露，支持运维监控和告警。
+ */
+@Component
+@ConditionalOnProperty(name = "app.messaging.enabled", havingValue = "true")
+public class MessagingHealthIndicator extends AbstractHealthIndicator {
+
+    private final MessageBus messageBus;
+
+    public MessagingHealthIndicator(MessageBus messageBus) {
+        this.messageBus = messageBus;
+    }
+
+    @Override
+    protected void doHealthCheck(Health.Builder builder) throws Exception {
+        // 1. 检查 Producer 连通性
+        boolean producerHealthy = messageBus.isProducerHealthy();
+        if (!producerHealthy) {
+            builder.down()
+                .withDetail("producer", "unreachable")
+                .withDetail("action", "Check RocketMQ Broker/Proxy connectivity");
+            return;
+        }
+
+        // 2. 检查活跃订阅数
+        int activeSubscriptions = messageBus.activeSubscriptionCount();
+        if (activeSubscriptions == 0) {
+            builder.up()
+                .withDetail("producer", "healthy")
+                .withDetail("subscriptions", "none")
+                .withDetail("warning", "No active subscriptions registered");
+            return;
+        }
+
+        // 3. 检查熔断器状态
+        String circuitBreakerState = messageBus.circuitBreakerState();
+
+        builder.up()
+            .withDetail("producer", "healthy")
+            .withDetail("activeSubscriptions", activeSubscriptions)
+            .withDetail("circuitBreaker", circuitBreakerState);
+    }
+}
+```
+
+**健康检查项**：
+
+| 检查项 | 判定条件 | DOWN 触发 |
+|--------|----------|-----------|
+| Producer 连通性 | `isProducerHealthy()` 尝试发送心跳消息 | Broker/Proxy 不可达 |
+| 活跃订阅数 | `activeSubscriptionCount()` | 降级为 UP + 警告 |
+| 熔断器状态 | `circuitBreakerState()` 返回 open/closed/half-open | 仅作为 detail 展示，不单独触发 DOWN |
+
+在 `MessagingAutoConfiguration` 中注册：
+
+```java
+@Bean
+@ConditionalOnProperty(name = "app.messaging.enabled", havingValue = "true")
+HealthIndicator messagingHealthIndicator(MessageBus messageBus) {
+    return new MessagingHealthIndicator(messageBus);
+}
+```
+
+在 `MessageBus` SPI 接口中新增默认方法：
+
+```java
+/** 检查 Producer 连通性（健康检查用） */
+default boolean isProducerHealthy() { return true; }
+
+/** 获取活跃订阅数（健康检查用） */
+default int activeSubscriptionCount() { return 0; }
+
+/** 获取熔断器状态（健康检查用） */
+default String circuitBreakerState() { return "unknown"; }
+```
+
 ## 7. 业务集成方式
 
 ### 7.1 聊天消息异步保存
@@ -1539,6 +1778,7 @@ messageBus.subscribe("rag.index.document", "index-group",
 | `infrastructure/messaging/RetryPolicy.java` | 新增 | 重试策略 |
 | `infrastructure/messaging/MessagingProperties.java` | 新增 | 配置属性 |
 | `infrastructure/messaging/MessagingAutoConfiguration.java` | 新增 | 条件装配 |
+| `infrastructure/messaging/MessagingHealthIndicator.java` | 新增 | 健康检查（Producer/订阅/熔断器） |
 | `infrastructure/messaging/NoOpMessageBus.java` | 新增 | 未启用时的空实现 |
 | `infrastructure/messaging/MessagePayloadCodec.java` | 新增 | 序列化接口 |
 | `infrastructure/messaging/idempotent/IdempotentConfig.java` | 新增 | 幂等配置 record |
@@ -1546,6 +1786,7 @@ messageBus.subscribe("rag.index.document", "index-group",
 | `infrastructure/messaging/exception/MessagingException.java` | 新增 | 基础异常 |
 | `infrastructure/messaging/exception/MessagePublishException.java` | 新增 | 发送异常 |
 | `infrastructure/messaging/exception/MessageConsumeException.java` | 新增 | 消费异常 |
+| `infrastructure/messaging/exception/PermanentConsumeException.java` | 新增 | 永久性消费异常（跳过重试） |
 | `infrastructure/messaging/rocketmq/RocketMQMessageBus.java` | 新增 | RocketMQ 5.x 核心实现 |
 | `infrastructure/messaging/rocketmq/RocketMQSubscription.java` | 新增 | 订阅管理（Push/Simple 双模式） |
 | `application.yml` | 修改 | 新增 `app.messaging.*` 配置段 |

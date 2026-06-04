@@ -1,6 +1,7 @@
 package com.smart.rag.rag.retrieval;
 
 import com.smart.rag.config.NamedThreadFactory;
+import com.smart.rag.config.ThreadPoolConstants;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.document.Document;
@@ -76,8 +77,10 @@ public class BailianRerankPostProcessor implements DocumentPostProcessor, Dispos
                 .build();
 
         // 遵循项目线程池规约：全 7 参数 + NamedThreadFactory + CallerRunsPolicy
+        // 轻量级线程池：rerank 为外部 API 调用，IO 等待为主，使用 lightCore/lightMax
         this.rerankExecutor = new ThreadPoolExecutor(
-                2, 4, 60L, TimeUnit.SECONDS,
+                ThreadPoolConstants.lightCore(), ThreadPoolConstants.lightMax(),
+                60L, TimeUnit.SECONDS,
                 new ArrayBlockingQueue<>(50),
                 new NamedThreadFactory("rerank", true),
                 new ThreadPoolExecutor.CallerRunsPolicy()

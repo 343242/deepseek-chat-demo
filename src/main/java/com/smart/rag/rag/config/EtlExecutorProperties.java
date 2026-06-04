@@ -1,5 +1,6 @@
 package com.smart.rag.rag.config;
 
+import com.smart.rag.config.ThreadPoolConstants;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /**
@@ -9,13 +10,17 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
  * CPU 密集型池：用于文本分块、文档解析计算
  * <p>
  * 对应 application.yml 中 app.etl.executor.* 配置项。
+ * <p>
+ * 默认值基于 {@link ThreadPoolConstants#CPU_COUNT} 动态计算，YAML 可覆盖。
  */
 @ConfigurationProperties(prefix = "app.etl.executor")
 public class EtlExecutorProperties {
 
     private PoolConfig io = new PoolConfig();
-    private PoolConfig cpu = new PoolConfig();
-    private PoolConfig merge = new PoolConfig();
+    private PoolConfig cpu = new PoolConfig(
+            ThreadPoolConstants.cpuCore(), ThreadPoolConstants.cpuMax(), 50, "etl-", 60);
+    private PoolConfig merge = new PoolConfig(
+            ThreadPoolConstants.lightCore(), ThreadPoolConstants.lightMax(), 50, "etl-", 60);
 
     public PoolConfig getIo() { return io; }
     public void setIo(PoolConfig io) { this.io = io; }
@@ -30,16 +35,25 @@ public class EtlExecutorProperties {
      * 单个线程池配置
      */
     public static class PoolConfig {
-        /** 核心线程数 */
-        private int corePoolSize = 4;
-        /** 最大线程数 */
-        private int maxPoolSize = 8;
-        /** 队列容量 */
-        private int queueCapacity = 50;
-        /** 线程名前缀 */
-        private String threadNamePrefix = "etl-";
-        /** 空闲线程存活时间（秒） */
-        private int keepAliveSeconds = 60;
+        private int corePoolSize;
+        private int maxPoolSize;
+        private int queueCapacity;
+        private String threadNamePrefix;
+        private int keepAliveSeconds;
+
+        /** IO 密集型默认值（供 io 池使用） */
+        public PoolConfig() {
+            this(ThreadPoolConstants.ioCore(), ThreadPoolConstants.ioMax(), 50, "etl-", 60);
+        }
+
+        public PoolConfig(int corePoolSize, int maxPoolSize, int queueCapacity,
+                          String threadNamePrefix, int keepAliveSeconds) {
+            this.corePoolSize = corePoolSize;
+            this.maxPoolSize = maxPoolSize;
+            this.queueCapacity = queueCapacity;
+            this.threadNamePrefix = threadNamePrefix;
+            this.keepAliveSeconds = keepAliveSeconds;
+        }
 
         public int getCorePoolSize() { return corePoolSize; }
         public void setCorePoolSize(int corePoolSize) { this.corePoolSize = corePoolSize; }

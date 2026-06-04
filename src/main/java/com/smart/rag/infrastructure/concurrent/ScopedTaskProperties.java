@@ -1,5 +1,6 @@
 package com.smart.rag.infrastructure.concurrent;
 
+import com.smart.rag.config.ThreadPoolConstants;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 import java.time.Duration;
@@ -133,8 +134,8 @@ public class ScopedTaskProperties {
 
     public static class PoolConfig {
 
-        private int corePoolSize = 4;
-        private int maxPoolSize = 16;
+        private int corePoolSize = ThreadPoolConstants.lightCore();
+        private int maxPoolSize = ThreadPoolConstants.ioMax();
         private int queueCapacity = 100;
         private int keepAliveSeconds = 60;
         private String threadNamePrefix;

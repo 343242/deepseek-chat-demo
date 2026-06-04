@@ -3,11 +3,13 @@ package com.smart.rag.config;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
+import org.springframework.scheduling.concurrent.ConcurrentTaskExecutor;
 import org.springframework.web.servlet.config.annotation.AsyncSupportConfigurer;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Spring MVC 配置。
@@ -30,24 +32,22 @@ public class WebMvcConfig implements WebMvcConfigurer {
 
     @Override
     public void configureAsyncSupport(AsyncSupportConfigurer configurer) {
-        configurer.setTaskExecutor(mvcAsyncExecutor());
+        configurer.setTaskExecutor(new ConcurrentTaskExecutor(mvcAsyncExecutor()));
         // SSE 长连接超时：5 分钟（匹配 JWT Access Token 有效期）
         configurer.setDefaultTimeout(300_000);
     }
 
-    @Bean("mvcAsyncExecutor")
-    public ThreadPoolTaskExecutor mvcAsyncExecutor() {
-        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
-        executor.setCorePoolSize(mvcExecutorProperties.getCorePoolSize());
-        executor.setMaxPoolSize(mvcExecutorProperties.getMaxPoolSize());
-        executor.setQueueCapacity(mvcExecutorProperties.getQueueCapacity());
-        executor.setKeepAliveSeconds(mvcExecutorProperties.getKeepAliveSeconds());
-        executor.setThreadFactory(new NamedThreadFactory("mvc-async-"));
-        executor.setAllowCoreThreadTimeOut(true);
-        executor.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
-        executor.setWaitForTasksToCompleteOnShutdown(true);
-        executor.setAwaitTerminationSeconds(30);
-        executor.initialize();
-        return executor;
+    @Bean(name = "mvcAsyncExecutor", destroyMethod = "shutdown")
+    public ThreadPoolExecutor mvcAsyncExecutor() {
+        MvcExecutorProperties props = mvcExecutorProperties;
+        return new ThreadPoolExecutor(
+                props.getCorePoolSize(),
+                props.getMaxPoolSize(),
+                props.getKeepAliveSeconds(),
+                TimeUnit.SECONDS,
+                new ArrayBlockingQueue<>(props.getQueueCapacity()),
+                new NamedThreadFactory("mvc-async-"),
+                new ThreadPoolExecutor.CallerRunsPolicy()
+        );
     }
 }

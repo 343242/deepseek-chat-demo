@@ -27,7 +27,7 @@ import org.springframework.core.io.ClassPathResource;
 import org.jspecify.annotations.Nullable;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
-import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
+import java.util.concurrent.Executor;
 import org.springframework.stereotype.Service;
 
 import java.io.ByteArrayInputStream;
@@ -66,7 +66,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
     private final EtlDispatchService etlDispatchService;
     private final TeamStatusService teamStatusService;
     private final DefaultRedisScript<List> atomicChunkUploadScript;
-    private final ThreadPoolTaskExecutor mergeExecutor;
+    private final Executor mergeExecutor;
     private final ApplicationEventPublisher eventPublisher;
     private final @Nullable DocumentDedupService documentDedupService;
 
@@ -81,7 +81,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
             RagDocumentMapper ragDocumentMapper,
             EtlDispatchService etlDispatchService,
             TeamStatusService teamStatusService,
-            ThreadPoolTaskExecutor mergeExecutor,
+            Executor mergeExecutor,
             ApplicationEventPublisher eventPublisher,
             @Nullable DocumentDedupService documentDedupService
     ) {

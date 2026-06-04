@@ -4,15 +4,18 @@ import com.smart.rag.config.NamedThreadFactory;
 import com.smart.rag.rag.config.EtlExecutorProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.DisposableBean;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Lazy;
-import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 
+import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.*;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
 /**
  * 线程池配置。
@@ -34,18 +37,20 @@ import java.util.concurrent.*;
  */
 @Configuration
 @EnableConfigurationProperties(EtlExecutorProperties.class)
-public class EtlExecutorConfig {
+public class EtlExecutorConfig implements DisposableBean {
 
     private static final Logger log = LoggerFactory.getLogger(EtlExecutorConfig.class);
+
+    private final List<ThreadPoolExecutor> managedExecutors = new ArrayList<>();
 
     /**
      * IO 密集型线程池 — 文件读取、MinIO 下载、Embedding API、PGvector 写入
      */
     @Lazy
     @Bean("etlIoExecutor")
-    public ThreadPoolTaskExecutor etlIoExecutor(EtlExecutorProperties properties) {
+    public ThreadPoolExecutor etlIoExecutor(EtlExecutorProperties properties) {
         EtlExecutorProperties.PoolConfig cfg = properties.getIo();
-        ThreadPoolTaskExecutor executor = buildExecutor(cfg);
+        ThreadPoolExecutor executor = buildExecutor(cfg);
         log.info("ETL IO executor: core={}, max={}, queue={}, prefix={}",
                 cfg.getCorePoolSize(), cfg.getMaxPoolSize(), cfg.getQueueCapacity(), cfg.getThreadNamePrefix());
         return executor;
@@ -56,9 +61,9 @@ public class EtlExecutorConfig {
      */
     @Lazy
     @Bean("etlCpuExecutor")
-    public ThreadPoolTaskExecutor etlCpuExecutor(EtlExecutorProperties properties) {
+    public ThreadPoolExecutor etlCpuExecutor(EtlExecutorProperties properties) {
         EtlExecutorProperties.PoolConfig cfg = properties.getCpu();
-        ThreadPoolTaskExecutor executor = buildExecutor(cfg);
+        ThreadPoolExecutor executor = buildExecutor(cfg);
         log.info("ETL CPU executor: core={}, max={}, queue={}, prefix={}",
                 cfg.getCorePoolSize(), cfg.getMaxPoolSize(), cfg.getQueueCapacity(), cfg.getThreadNamePrefix());
         return executor;
@@ -70,8 +75,8 @@ public class EtlExecutorConfig {
     @Lazy
     @Bean
     public EtlTaskExecutorBridge etlTaskExecutorBridge(
-            @Qualifier("etlIoExecutor") ThreadPoolTaskExecutor etlIoExecutor,
-            @Qualifier("etlCpuExecutor") ThreadPoolTaskExecutor etlCpuExecutor) {
+            @Qualifier("etlIoExecutor") ThreadPoolExecutor etlIoExecutor,
+            @Qualifier("etlCpuExecutor") ThreadPoolExecutor etlCpuExecutor) {
         return new EtlTaskExecutorBridge(etlIoExecutor, etlCpuExecutor);
     }
 
@@ -80,9 +85,9 @@ public class EtlExecutorConfig {
      */
     @Lazy
     @Bean("mergeExecutor")
-    public ThreadPoolTaskExecutor mergeExecutor(EtlExecutorProperties properties) {
+    public ThreadPoolExecutor mergeExecutor(EtlExecutorProperties properties) {
         EtlExecutorProperties.PoolConfig cfg = properties.getMerge();
-        ThreadPoolTaskExecutor executor = buildExecutor(cfg);
+        ThreadPoolExecutor executor = buildExecutor(cfg);
         log.info("Merge executor: core={}, max={}, queue={}, prefix={}",
                 cfg.getCorePoolSize(), cfg.getMaxPoolSize(), cfg.getQueueCapacity(), cfg.getThreadNamePrefix());
         return executor;
@@ -107,18 +112,35 @@ public class EtlExecutorConfig {
      *   <li>handler — CallerRunsPolicy（满载时由调用线程执行，不丢弃任务）</li>
      * </ul>
      */
-    private ThreadPoolTaskExecutor buildExecutor(EtlExecutorProperties.PoolConfig cfg) {
-        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
-        executor.setCorePoolSize(cfg.getCorePoolSize());
-        executor.setMaxPoolSize(cfg.getMaxPoolSize());
-        executor.setKeepAliveSeconds(cfg.getKeepAliveSeconds());
-        executor.setQueueCapacity(cfg.getQueueCapacity());
-        executor.setThreadFactory(new NamedThreadFactory(cfg.getThreadNamePrefix()));
-        executor.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
-        executor.setWaitForTasksToCompleteOnShutdown(true);
-        executor.setAwaitTerminationSeconds(120);
-        executor.setAllowCoreThreadTimeOut(true);
-        executor.initialize();
+    private ThreadPoolExecutor buildExecutor(EtlExecutorProperties.PoolConfig cfg) {
+        ThreadPoolExecutor executor = new ThreadPoolExecutor(
+                cfg.getCorePoolSize(),
+                cfg.getMaxPoolSize(),
+                cfg.getKeepAliveSeconds(),
+                TimeUnit.SECONDS,
+                new ArrayBlockingQueue<>(cfg.getQueueCapacity()),
+                new NamedThreadFactory(cfg.getThreadNamePrefix()),
+                new ThreadPoolExecutor.CallerRunsPolicy()
+        );
+        executor.allowCoreThreadTimeOut(true);
+        managedExecutors.add(executor);
         return executor;
+    }
+
+    @Override
+    public void destroy() {
+        for (ThreadPoolExecutor executor : managedExecutors) {
+            executor.shutdown();
+            try {
+                if (!executor.awaitTermination(120, TimeUnit.SECONDS)) {
+                    log.warn("ThreadPoolExecutor did not terminate in 120s, forcing shutdown: active={}",
+                            executor.getActiveCount());
+                    executor.shutdownNow();
+                }
+            } catch (InterruptedException e) {
+                executor.shutdownNow();
+                Thread.currentThread().interrupt();
+            }
+        }
     }
 }

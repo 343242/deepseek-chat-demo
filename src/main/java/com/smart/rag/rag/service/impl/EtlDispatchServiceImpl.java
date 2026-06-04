@@ -19,9 +19,9 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 
 import java.util.List;
+import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -40,13 +40,13 @@ public class EtlDispatchServiceImpl implements EtlDispatchService {
     private static final long LOCK_WAIT_SECONDS = 30;
 
     private final EtlRouteStrategyFactory strategyFactory;
-    private final ThreadPoolTaskExecutor etlIoExecutor;
+    private final Executor etlIoExecutor;
     private final Loader loader;
     private final ApplicationEventPublisher eventPublisher;
     private final @Nullable RedissonClient redissonClient;
 
     public EtlDispatchServiceImpl(EtlRouteStrategyFactory strategyFactory,
-                                  @Qualifier("etlIoExecutor") ThreadPoolTaskExecutor etlIoExecutor,
+                                  @Qualifier("etlIoExecutor") Executor etlIoExecutor,
                                   Loader loader,
                                   ApplicationEventPublisher eventPublisher,
                                   @Nullable RedissonClient redissonClient) {

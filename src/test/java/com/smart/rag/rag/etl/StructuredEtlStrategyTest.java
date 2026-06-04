@@ -6,11 +6,13 @@ import com.smart.rag.rag.mapper.VectorStoreMapper;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.document.Document;
-import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
@@ -28,8 +30,8 @@ class StructuredEtlStrategyTest {
         Loader loader = mock(Loader.class);
         EtlStatusManager statusManager = mock(EtlStatusManager.class);
         RecordingScopedTasks scopedTasks = new RecordingScopedTasks();
-        ThreadPoolTaskExecutor ioExecutor = executor("test-io-");
-        ThreadPoolTaskExecutor cpuExecutor = executor("test-cpu-");
+        ExecutorService ioExecutor = executor("test-io-");
+        ExecutorService cpuExecutor = executor("test-cpu-");
         EtlCandidate candidate = candidate(1L);
         Document document = new Document("raw");
         Document chunk = new Document("chunk");
@@ -61,8 +63,8 @@ class StructuredEtlStrategyTest {
         EtlStatusManager statusManager = mock(EtlStatusManager.class);
         VectorStoreMapper vectorStoreMapper = mock(VectorStoreMapper.class);
         RecordingScopedTasks scopedTasks = new RecordingScopedTasks();
-        ThreadPoolTaskExecutor ioExecutor = executor("test-io-");
-        ThreadPoolTaskExecutor cpuExecutor = executor("test-cpu-");
+        ExecutorService ioExecutor = executor("test-io-");
+        ExecutorService cpuExecutor = executor("test-cpu-");
         EtlCandidate candidate = candidate(2L);
         Document document = new Document("raw");
         Document chunk = new Document("chunk");
@@ -97,14 +99,16 @@ class StructuredEtlStrategyTest {
         }
     }
 
-    private static ThreadPoolTaskExecutor executor(String prefix) {
-        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
-        executor.setCorePoolSize(1);
-        executor.setMaxPoolSize(1);
-        executor.setQueueCapacity(8);
-        executor.setThreadNamePrefix(prefix);
-        executor.initialize();
-        return executor;
+    private static ExecutorService executor(String prefix) {
+        return new ThreadPoolExecutor(
+                1, 1, 0L, TimeUnit.SECONDS,
+                new ArrayBlockingQueue<>(8),
+                r -> {
+                    Thread t = new Thread(r);
+                    t.setName(prefix + t.threadId());
+                    return t;
+                }
+        );
     }
 
     private static EtlCandidate candidate(Long documentId) {

@@ -9,7 +9,6 @@ import com.smart.rag.infrastructure.concurrent.TaskScope;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.document.Document;
-import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
@@ -35,16 +34,16 @@ public class StandardStrategy implements EtlRouteStrategy {
     private final Transformer transformer;
     private final Loader loader;
     private final EtlStatusManager statusManager;
-    private final ThreadPoolTaskExecutor ioExecutor;
-    private final ThreadPoolTaskExecutor cpuExecutor;
+    private final ExecutorService ioExecutor;
+    private final ExecutorService cpuExecutor;
     private final ScopedTasks scopedTasks;
 
     public StandardStrategy(Extractor extractor,
                             Transformer transformer,
                             Loader loader,
                             EtlStatusManager statusManager,
-                            ThreadPoolTaskExecutor etlIoExecutor,
-                            ThreadPoolTaskExecutor etlCpuExecutor,
+                            ExecutorService etlIoExecutor,
+                            ExecutorService etlCpuExecutor,
                             ScopedTasks scopedTasks) {
         this.extractor = extractor;
         this.transformer = transformer;
@@ -87,7 +86,7 @@ public class StandardStrategy implements EtlRouteStrategy {
     // ==================== Extract ====================
 
     private Map<Long, List<Document>> extractAll(List<EtlCandidate> candidates) {
-        try (TaskScope scope = openExternalScope("standard-extract", ioExecutor.getThreadPoolExecutor())) {
+        try (TaskScope scope = openExternalScope("standard-extract", ioExecutor)) {
             for (EtlCandidate c : candidates) {
                 scope.fork("extract-" + c.documentId(), () -> {
                     try {
@@ -112,7 +111,7 @@ public class StandardStrategy implements EtlRouteStrategy {
 
     private Map<Long, List<Document>> transformAll(List<EtlCandidate> candidates,
                                                     Map<Long, List<Document>> extractedMap) {
-        try (TaskScope scope = openExternalScope("standard-transform", cpuExecutor.getThreadPoolExecutor())) {
+        try (TaskScope scope = openExternalScope("standard-transform", cpuExecutor)) {
             candidates.stream()
                     .filter(c -> extractedMap.containsKey(c.documentId()))
                     .forEach(c -> scope.fork("transform-" + c.documentId(), () -> {
@@ -147,7 +146,7 @@ public class StandardStrategy implements EtlRouteStrategy {
 
     private Map<Long, Integer> loadAll(List<EtlCandidate> candidates,
                                         Map<Long, List<Document>> chunkMap) {
-        try (TaskScope scope = openExternalScope("standard-load", ioExecutor.getThreadPoolExecutor())) {
+        try (TaskScope scope = openExternalScope("standard-load", ioExecutor)) {
             candidates.stream()
                     .filter(c -> chunkMap.containsKey(c.documentId()))
                     .forEach(c -> scope.fork("load-" + c.documentId(), () -> {

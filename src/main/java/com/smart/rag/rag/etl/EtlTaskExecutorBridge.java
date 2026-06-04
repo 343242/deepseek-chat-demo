@@ -1,8 +1,7 @@
 package com.smart.rag.rag.etl;
 
-import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
-
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
 import java.util.function.Supplier;
 
 /**
@@ -15,11 +14,11 @@ import java.util.function.Supplier;
  */
 public class EtlTaskExecutorBridge {
 
-    private final ThreadPoolTaskExecutor ioExecutor;
-    private final ThreadPoolTaskExecutor cpuExecutor;
+    private final ExecutorService ioExecutor;
+    private final ExecutorService cpuExecutor;
 
-    public EtlTaskExecutorBridge(ThreadPoolTaskExecutor ioExecutor,
-                                  ThreadPoolTaskExecutor cpuExecutor) {
+    public EtlTaskExecutorBridge(ExecutorService ioExecutor,
+                                  ExecutorService cpuExecutor) {
         this.ioExecutor = ioExecutor;
         this.cpuExecutor = cpuExecutor;
     }
@@ -41,14 +40,14 @@ public class EtlTaskExecutorBridge {
     /**
      * 获取 IO 线程池
      */
-    public ThreadPoolTaskExecutor getIoExecutor() {
+    public ExecutorService getIoExecutor() {
         return ioExecutor;
     }
 
     /**
      * 获取 CPU 线程池
      */
-    public ThreadPoolTaskExecutor getCpuExecutor() {
+    public ExecutorService getCpuExecutor() {
         return cpuExecutor;
     }
 }

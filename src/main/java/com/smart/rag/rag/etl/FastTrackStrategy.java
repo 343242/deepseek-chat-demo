@@ -12,7 +12,6 @@ import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.document.Document;
-import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
@@ -50,8 +49,8 @@ public class FastTrackStrategy implements EtlRouteStrategy {
     private final EtlStatusManager statusManager;
     private final EtlFastTrackProperties fastTrackProperties;
     private final VectorStoreMapper vectorStoreMapper;
-    private final ThreadPoolTaskExecutor ioExecutor;
-    private final ThreadPoolTaskExecutor cpuExecutor;
+    private final ExecutorService ioExecutor;
+    private final ExecutorService cpuExecutor;
     private final ScopedTasks scopedTasks;
 
     /** 追踪进行中的异步向量化任务，支持优雅停机 */
@@ -63,8 +62,8 @@ public class FastTrackStrategy implements EtlRouteStrategy {
                              EtlStatusManager statusManager,
                              EtlFastTrackProperties fastTrackProperties,
                              VectorStoreMapper vectorStoreMapper,
-                             ThreadPoolTaskExecutor etlIoExecutor,
-                             ThreadPoolTaskExecutor etlCpuExecutor,
+                             ExecutorService etlIoExecutor,
+                             ExecutorService etlCpuExecutor,
                              ScopedTasks scopedTasks) {
         this.extractor = extractor;
         this.transformer = transformer;
@@ -172,7 +171,7 @@ public class FastTrackStrategy implements EtlRouteStrategy {
         CompletableFuture<Void> future = CompletableFuture
                 .runAsync(() -> {
                     List<Document> chunks;
-                    try (TaskScope scope = openExternalScope("fast-track-vectorize", cpuExecutor.getThreadPoolExecutor())) {
+                    try (TaskScope scope = openExternalScope("fast-track-vectorize", cpuExecutor)) {
                         scope.fork("transform-" + c.documentId(), () -> {
                             List<Document> transformed = transformer.transform(docs, c.fileName());
                             String docIdStr = String.valueOf(c.documentId());
@@ -210,7 +209,7 @@ public class FastTrackStrategy implements EtlRouteStrategy {
     // ==================== Extract ====================
 
     private Map<Long, List<Document>> extractAll(List<EtlCandidate> candidates) {
-        try (TaskScope scope = openExternalScope("fast-track-extract", ioExecutor.getThreadPoolExecutor())) {
+        try (TaskScope scope = openExternalScope("fast-track-extract", ioExecutor)) {
             for (EtlCandidate c : candidates) {
                 scope.fork("extract-" + c.documentId(), () -> {
                     try {

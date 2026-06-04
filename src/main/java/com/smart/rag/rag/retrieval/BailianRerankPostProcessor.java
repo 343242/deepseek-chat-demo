@@ -2,6 +2,7 @@ package com.smart.rag.rag.retrieval;
 
 import com.smart.rag.config.NamedThreadFactory;
 import com.smart.rag.config.ThreadPoolConstants;
+import org.jspecify.annotations.NonNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.document.Document;
@@ -91,7 +92,7 @@ public class BailianRerankPostProcessor implements DocumentPostProcessor, Dispos
     }
 
     @Override
-    public List<Document> process(Query query, List<Document> documents) {
+    public @NonNull List<Document> process(@NonNull Query query, @NonNull List<Document> documents) {
         if (documents == null || documents.isEmpty()) {
             return documents;
         }

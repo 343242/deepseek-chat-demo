@@ -1,5 +1,6 @@
 package com.smart.rag.infrastructure.fallback;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.time.Clock;
@@ -14,6 +15,7 @@ public class ModelCircuitBreakerRegistry {
     private final Clock clock;
     private final ConcurrentMap<String, ModelCircuitBreaker> breakers = new ConcurrentHashMap<>();
 
+    @Autowired
     public ModelCircuitBreakerRegistry(ModelCircuitBreakerProperties properties) {
         this(properties, Clock.systemUTC());
     }

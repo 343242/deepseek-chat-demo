@@ -1,6 +1,6 @@
 package com.smart.rag.infrastructure.web.config;
 
-import com.smart.rag.infrastructure.exception.errorcode.ErrorCode;
+import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;
 import com.smart.rag.infrastructure.response.GlobalResponse;
 import com.smart.rag.infrastructure.web.filter.JwtAuthenticationFilter;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -62,13 +62,13 @@ public class SecurityConfig {
                 .authenticationEntryPoint((req, res, authEx) -> {
                     res.setStatus(401);
                     res.setContentType("application/json;charset=UTF-8");
-                    GlobalResponse<Void> body = GlobalResponse.error(ErrorCode.UNAUTHORIZED, "请先登录");
+                    GlobalResponse<Void> body = GlobalResponse.error(ClientErrorCode.UNAUTHORIZED, "请先登录");
                     res.getWriter().write(objectMapper.writeValueAsString(body));
                 })
                 .accessDeniedHandler((req, res, accessEx) -> {
                     res.setStatus(403);
                     res.setContentType("application/json;charset=UTF-8");
-                    GlobalResponse<Void> body = GlobalResponse.error(ErrorCode.FORBIDDEN, "您没有执行此操作的权限");
+                    GlobalResponse<Void> body = GlobalResponse.error(ClientErrorCode.FORBIDDEN, "您没有执行此操作的权限");
                     res.getWriter().write(objectMapper.writeValueAsString(body));
                 })
             )

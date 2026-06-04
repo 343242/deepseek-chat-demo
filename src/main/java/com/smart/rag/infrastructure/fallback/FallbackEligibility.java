@@ -1,6 +1,6 @@
 package com.smart.rag.infrastructure.fallback;
 
-import com.smart.rag.infrastructure.exception.BusinessException;
+import com.smart.rag.infrastructure.exception.AbstractException;
 import com.smart.rag.infrastructure.exception.ContentFilteredException;
 import com.smart.rag.infrastructure.exception.ModelNotFoundException;
 import com.smart.rag.infrastructure.exception.ProviderNotFoundException;
@@ -14,7 +14,7 @@ import org.springframework.stereotype.Component;
  * 不可降级的场景（用户侧错误，换模型结果相同）：
  * <ul>
  *   <li>{@link ContentFilteredException} — 用户内容违规</li>
- *   <li>{@link BusinessException} — 业务逻辑错误（参数校验等）</li>
+ *   <li>{@link AbstractException} — 业务逻辑错误（参数校验、权限等）</li>
  * </ul>
  * <p>
  * 可降级的场景（模型侧故障，换模型可能恢复）：
@@ -35,7 +35,7 @@ public class FallbackEligibility {
      */
     public boolean isEligible(Throwable e) {
         return !(e instanceof ContentFilteredException
-                || e instanceof BusinessException
+                || e instanceof AbstractException
                 || e instanceof NullPointerException
                 || e instanceof IllegalArgumentException
                 || e instanceof IllegalStateException);

@@ -1,7 +1,7 @@
 package com.smart.rag.rag.retrieval;
 
 import com.smart.rag.agent.service.HybridSearchService;
-import com.smart.rag.infrastructure.exception.BusinessException;
+import com.smart.rag.infrastructure.exception.ServiceException;
 import com.smart.rag.rag.config.RagRetrievalProperties;
 import com.smart.rag.rag.mapper.VectorStoreMapper;
 import org.junit.jupiter.api.BeforeEach;
@@ -220,7 +220,7 @@ class HybridDocumentRetrieverTest {
         }
 
         @Test
-        @DisplayName("向量和 BM25 均失败时抛业务异常")
+        @DisplayName("向量和 BM25 均失败时抛 ServiceException")
         void both_branches_fail_throws_business_exception() {
             var props = defaultProperties();
             var retriever = createRetriever(props, 1L, null);
@@ -231,7 +231,7 @@ class HybridDocumentRetrieverTest {
                     .thenThrow(new RuntimeException("DB error"));
 
             assertThatThrownBy(() -> retriever.retrieve(query("test")))
-                    .isInstanceOf(BusinessException.class)
+                    .isInstanceOf(ServiceException.class)
                     .hasMessage("向量检索和 BM25 检索均不可用");
         }
     }

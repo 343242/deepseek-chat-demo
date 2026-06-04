@@ -72,13 +72,14 @@ class AuthControllerTest {
         }
 
         @Test
-        @DisplayName("register_invalidRequest (blank username) → 400")
+        @DisplayName("register_invalidRequest (blank username) → 200 with VALIDATION_ERROR code")
         void register_invalidRequest() throws Exception {
             mockMvc.perform(post("/api/auth/register")
                             .contentType(MediaType.APPLICATION_JSON)
                             .content(objectMapper.writeValueAsString(
                                     new RegisterRequest("", "Password1!", "t@e.com", "nick", "cap-id", "100"))))
-                    .andExpect(status().isBadRequest());
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.code").value(100002));
         }
     }
 
@@ -104,7 +105,7 @@ class AuthControllerTest {
         }
 
         @Test
-        @DisplayName("login_invalidCredentials → 400 (BusinessException)")
+        @DisplayName("login_invalidCredentials → 200 with non-zero code (BusinessException)")
         void login_invalidCredentials() throws Exception {
             when(authService.login(anyString(), anyString(), anyString(), anyString(), anyString()))
                     .thenThrow(new BusinessException("用户名或密码错误"));
@@ -113,7 +114,8 @@ class AuthControllerTest {
                             .contentType(MediaType.APPLICATION_JSON)
                             .content(objectMapper.writeValueAsString(
                                     new LoginRequest("testuser", "wrong", "cap-id", "100"))))
-                    .andExpect(status().isBadRequest());
+                    .andExpect(status().isOk())
+                    .andExpect(jsonPath("$.code").value(40000));
         }
     }
 

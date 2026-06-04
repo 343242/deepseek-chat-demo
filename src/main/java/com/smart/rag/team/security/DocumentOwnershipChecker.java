@@ -1,7 +1,7 @@
 package com.smart.rag.team.security;
 
-import com.smart.rag.infrastructure.exception.errorcode.ErrorCode;
-import com.smart.rag.infrastructure.exception.BusinessException;
+import com.smart.rag.infrastructure.exception.ServiceException;
+import com.smart.rag.infrastructure.exception.errorcode.ServiceErrorCode;
 import com.smart.rag.rag.entity.RagDocument;
 import com.smart.rag.rag.mapper.RagDocumentMapper;
 import com.smart.rag.team.service.TeamMembershipVerifier;
@@ -48,18 +48,18 @@ public class DocumentOwnershipChecker {
      * @param documentId 文档 ID
      * @param userId     当前用户 ID
      * @return 文档实体（校验通过）
-     * @throws BusinessException 权限不足或文档不存在
+     * @throws ServiceException 权限不足或文档不存在
      */
     public RagDocument checkOwnership(Long documentId, Long userId) {
         RagDocument doc = ragDocumentMapper.selectById(documentId);
         if (doc == null) {
-            throw new BusinessException(ErrorCode.DOCUMENT_NOT_FOUND);
+            throw new ServiceException(ServiceErrorCode.DOCUMENT_NOT_FOUND);
         }
 
         if (doc.getTeamId() == null) {
             // 个人文档：只有文档所有者有权限
             if (!userId.equals(doc.getUserId())) {
-                throw new BusinessException(ErrorCode.DOCUMENT_OWNERSHIP_DENIED);
+                throw new ServiceException(ServiceErrorCode.DOCUMENT_OWNERSHIP_DENIED);
             }
         } else {
             // 团队文档：团队成员 + (CREATOR/ADMIN 或 文档上传者)
@@ -68,7 +68,7 @@ public class DocumentOwnershipChecker {
                     || member.getRole() == TeamMemberRole.ADMIN;
             boolean isUploader = userId.equals(doc.getUserId());
             if (!isManager && !isUploader) {
-                throw new BusinessException(ErrorCode.NO_PERMISSION_DELETE_TEAM_DOC);
+                throw new ServiceException(ServiceErrorCode.NO_PERMISSION_DELETE_TEAM_DOC);
             }
         }
 

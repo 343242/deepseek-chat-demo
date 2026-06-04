@@ -63,18 +63,20 @@ class RoleControllerTest {
         mockMvc.perform(post("/api/roles")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(req)))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(100002));
     }
 
     @Test
-    @DisplayName("分配权限 - 空列表 → 400")
+    @DisplayName("分配权限 - 空列表 → 200 with VALIDATION_ERROR code")
     void assignPermissions_emptyList() throws Exception {
         AssignPermissionsRequest req = new AssignPermissionsRequest(List.of());
 
         mockMvc.perform(post("/api/roles/1/permissions/update")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(req)))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(100002));
     }
 
     @Test

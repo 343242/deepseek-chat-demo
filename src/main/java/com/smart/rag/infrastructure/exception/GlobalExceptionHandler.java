@@ -1,8 +1,8 @@
 package com.smart.rag.infrastructure.exception;
 
 import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;
-import com.smart.rag.infrastructure.exception.errorcode.ErrorCode;
 import com.smart.rag.infrastructure.exception.errorcode.IErrorCode;
+import com.smart.rag.infrastructure.exception.errorcode.ServiceErrorCode;
 import com.smart.rag.infrastructure.response.GlobalResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -94,6 +94,6 @@ public class GlobalExceptionHandler {
         String traceId = MDC.get("traceId");
         log.error("Unhandled exception (traceId={}): {}", traceId, e.getClass().getName());
         log.debug("Unhandled exception details", e);
-        return ResponseEntity.ok(GlobalResponse.error(ErrorCode.INTERNAL_ERROR));
+        return ResponseEntity.ok(GlobalResponse.error(ServiceErrorCode.INTERNAL_ERROR));
     }
 }

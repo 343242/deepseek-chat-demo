@@ -68,24 +68,26 @@ class UserControllerTest {
     }
 
     @Test
-    @DisplayName("更新用户 - 邮箱格式错误 → 400")
+    @DisplayName("更新用户 - 邮箱格式错误 → 200 with VALIDATION_ERROR code")
     void updateUser_invalidEmail() throws Exception {
         UserUpdateRequest req = new UserUpdateRequest(null, "not-an-email", null, null);
 
         mockMvc.perform(post("/api/users/1/update")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(req)))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(100002));
     }
 
     @Test
-    @DisplayName("更新用户状态 - 无效状态 → 400")
+    @DisplayName("更新用户状态 - 无效状态 → 200 with non-zero code")
     void updateUserStatus_invalidStatus() throws Exception {
         when(sysUserService.updateUserStatus(1L, 2)).thenThrow(
                 new BusinessException("无效的用户状态，仅支持 0(禁用) 和 1(启用)"));
 
         mockMvc.perform(post("/api/users/1/status?status=2"))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(40000));
     }
 
     @Test
@@ -100,14 +102,15 @@ class UserControllerTest {
     }
 
     @Test
-    @DisplayName("分配角色 - 空列表 → 400")
+    @DisplayName("分配角色 - 空列表 → 200 with VALIDATION_ERROR code")
     void assignRoles_emptyList() throws Exception {
         AssignRolesRequest req = new AssignRolesRequest(List.of());
 
         mockMvc.perform(post("/api/users/1/roles")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content(objectMapper.writeValueAsString(req)))
-                .andExpect(status().isBadRequest());
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.code").value(100002));
     }
 
     @Test

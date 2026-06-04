@@ -5,7 +5,7 @@ import com.smart.rag.user.dto.*;
 import com.smart.rag.user.service.impl.SysUserServiceImpl;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
-import com.smart.rag.infrastructure.exception.BusinessException;
+import com.smart.rag.infrastructure.exception.ServiceException;
 import com.smart.rag.infrastructure.web.service.TokenCacheService;
 import com.smart.rag.user.entity.SysRole;
 import com.smart.rag.user.entity.SysUser;
@@ -85,10 +85,10 @@ class SysUserServiceTest {
         }
 
         @Test
-        @DisplayName("updateUserStatus_userNotFound: 抛 BusinessException")
+        @DisplayName("updateUserStatus_userNotFound: 抛 ServiceException")
         void updateUserStatus_userNotFound() {
             when(userMapper.selectById(999L)).thenReturn(null);
-            assertThrows(BusinessException.class, () -> sysUserService.updateUserStatus(999L, 1));
+            assertThrows(ServiceException.class, () -> sysUserService.updateUserStatus(999L, 1));
         }
     }
 
@@ -146,21 +146,21 @@ class SysUserServiceTest {
         }
 
         @Test
-        @DisplayName("assignRoles_userNotFound: 抛 BusinessException")
+        @DisplayName("assignRoles_userNotFound: 抛 ServiceException")
         void assignRoles_userNotFound() {
             when(userMapper.selectById(999L)).thenReturn(null);
-            assertThrows(BusinessException.class,
+            assertThrows(ServiceException.class,
                     () -> sysUserService.assignRoles(999L, new AssignRolesRequest(List.of(10L))));
         }
 
         @Test
-        @DisplayName("assignRoles_nonExistentRole: roleId 不存在时抛 BusinessException")
+        @DisplayName("assignRoles_nonExistentRole: roleId 不存在时抛 ServiceException")
         void assignRoles_nonExistentRole() {
             SysUser user = buildUser();
             when(userMapper.selectById(1L)).thenReturn(user);
             when(roleMapper.selectByIds(List.of(999L))).thenReturn(List.of());
 
-            assertThrows(BusinessException.class,
+            assertThrows(ServiceException.class,
                     () -> sysUserService.assignRoles(1L, new AssignRolesRequest(List.of(999L))));
         }
     }

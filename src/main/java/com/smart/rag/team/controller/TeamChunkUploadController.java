@@ -1,9 +1,11 @@
 package com.smart.rag.team.controller;
 
-import com.smart.rag.infrastructure.exception.errorcode.ErrorCode;
+import com.smart.rag.infrastructure.exception.ClientException;
+import com.smart.rag.infrastructure.exception.ServiceException;
+import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;
+import com.smart.rag.infrastructure.exception.errorcode.ServiceErrorCode;
 import com.smart.rag.infrastructure.response.GlobalResponse;
 import com.smart.rag.common.team.TeamStatusService;
-import com.smart.rag.infrastructure.exception.BusinessException;
 import com.smart.rag.rag.upload.*;
 import com.smart.rag.infrastructure.web.util.SecurityUtils;
 import jakarta.validation.Valid;
@@ -38,15 +40,15 @@ public class TeamChunkUploadController {
     /**
      * 校验团队存在且当前用户是活跃成员。
      *
-     * @throws BusinessException 团队不存在或非成员
+     * @throws ServiceException 团队不存在或非成员
      */
     private void verifyTeamAccess(Long teamId) {
         if (!teamStatusService.isTeamActive(teamId)) {
-            throw new BusinessException(ErrorCode.TEAM_NOT_FOUND);
+            throw new ServiceException(ServiceErrorCode.TEAM_NOT_FOUND);
         }
         Long userId = SecurityUtils.getCurrentUserId();
         if (!teamStatusService.isTeamMember(teamId, userId)) {
-            throw new BusinessException(ErrorCode.NOT_TEAM_MEMBER);
+            throw new ServiceException(ServiceErrorCode.NOT_TEAM_MEMBER);
         }
     }
 
@@ -87,7 +89,7 @@ public class TeamChunkUploadController {
             @RequestBody byte[] chunkData) {
         verifyTeamAccess(teamId);
         if (chunkMd5 == null || !chunkMd5.matches("^[0-9a-fA-F]{32}$")) {
-            throw new BusinessException(ErrorCode.VALIDATION_ERROR, "分片MD5格式错误");
+            throw new ClientException(ClientErrorCode.VALIDATION_ERROR, "分片MD5格式错误");
         }
         return GlobalResponse.ok(chunkUploadService.uploadChunk(uploadId, chunkIndex, chunkMd5, chunkData));
     }

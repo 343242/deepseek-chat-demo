@@ -67,6 +67,25 @@ RuntimeException
 
 ---
 
+## IErrorCode Interface
+
+```java
+public interface IErrorCode {
+    int getCode();
+    String getMessage();
+}
+```
+
+每个枚举实现 `IErrorCode`，异常构造器接受 `IErrorCode`（实际传入对应分类枚举）：
+
+```java
+new ClientException(ClientErrorCode.VALIDATION_ERROR)     // 编译期类型安全
+new ServiceException(ServiceErrorCode.USER_NOT_FOUND)
+new RemoteException(RemoteErrorCode.PROVIDER_NOT_FOUND)
+```
+
+---
+
 ## Error Code Enums
 
 | 枚举 | 范围 | 分类 |
@@ -145,3 +164,21 @@ if (user == null || !passwordEncoder.matches(password, user.getPassword())) {
 ```
 
 防止枚举攻击：不告诉攻击者是"用户不存在"还是"密码错误"。
+
+---
+
+## Common Mistakes
+
+### `instanceof` 守卫必须用 `AbstractException` 而非 `BusinessException`
+
+降级/回退框架中判断"是否为不可降级异常"时，必须检查 `instanceof AbstractException`。
+
+> **Warning**: `BusinessException` 是 `AbstractException` 的子类，但 `ClientException`/`ServiceException`/`RemoteException` 是 `BusinessException` 的兄弟类，不是子类。用 `instanceof BusinessException` 会遗漏所有新异常，导致用户错误意外触发模型回退。
+
+```java
+// Wrong — 新异常全部漏过
+if (exception instanceof BusinessException) { ... }
+
+// Correct — 覆盖所有面向用户的异常
+if (exception instanceof AbstractException) { ... }
+```

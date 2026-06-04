@@ -1,9 +1,11 @@
 package com.smart.rag.user.service.impl;
 
-import com.smart.rag.infrastructure.exception.errorcode.ErrorCode;
+import com.smart.rag.infrastructure.exception.ClientException;
+import com.smart.rag.infrastructure.exception.ServiceException;
+import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;
+import com.smart.rag.infrastructure.exception.errorcode.ServiceErrorCode;
 import com.smart.rag.infrastructure.request.PageRequest;
 import com.smart.rag.infrastructure.response.PagedResult;
-import com.smart.rag.infrastructure.exception.BusinessException;
 import com.smart.rag.user.dto.*;
 import com.smart.rag.user.enums.UserStatus;
 import com.smart.rag.infrastructure.web.service.TokenCacheService;
@@ -75,11 +77,11 @@ public class SysUserServiceImpl implements SysUserService {
     @Override
     public UserStatusUpdateResult updateUserStatus(Long id, Integer status) {
         if (!UserStatus.isValid(status)) {
-            throw new BusinessException(ErrorCode.USER_STATUS_INVALID);
+            throw new ClientException(ClientErrorCode.USER_STATUS_INVALID);
         }
         SysUser user = userMapper.selectById(id);
         if (user == null) {
-            throw new BusinessException(ErrorCode.USER_NOT_FOUND);
+            throw new ServiceException(ServiceErrorCode.USER_NOT_FOUND);
         }
         user.setStatus(status);
         userMapper.updateById(user);
@@ -97,7 +99,7 @@ public class SysUserServiceImpl implements SysUserService {
     public RoleAssignResult assignRoles(Long id, AssignRolesRequest request) {
         SysUser user = userMapper.selectById(id);
         if (user == null) {
-            throw new BusinessException(ErrorCode.USER_NOT_FOUND);
+            throw new ServiceException(ServiceErrorCode.USER_NOT_FOUND);
         }
 
         List<Long> uniqueRoleIds = request.roleIds().stream().distinct().toList();
@@ -106,7 +108,7 @@ public class SysUserServiceImpl implements SysUserService {
         if (existingRoles.size() != uniqueRoleIds.size()) {
             Set<Long> found = existingRoles.stream().map(SysRole::getId).collect(Collectors.toSet());
             List<Long> missing = uniqueRoleIds.stream().filter(rid -> !found.contains(rid)).toList();
-            throw new BusinessException(ErrorCode.ROLE_NOT_FOUND, "角色不存在: " + missing);
+            throw new ServiceException(ServiceErrorCode.ROLE_NOT_FOUND, "角色不存在: " + missing);
         }
 
         transactionTemplate.executeWithoutResult(status -> {
@@ -133,7 +135,7 @@ public class SysUserServiceImpl implements SysUserService {
     public UserDeleteResult deleteUser(Long id) {
         SysUser user = userMapper.selectById(id);
         if (user == null) {
-            throw new BusinessException(ErrorCode.USER_NOT_FOUND);
+            throw new ServiceException(ServiceErrorCode.USER_NOT_FOUND);
         }
 
         userMapper.deleteById(id);

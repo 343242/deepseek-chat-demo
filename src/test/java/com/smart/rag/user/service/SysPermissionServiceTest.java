@@ -1,7 +1,8 @@
 package com.smart.rag.user.service;
 
 import com.smart.rag.user.service.impl.SysPermissionServiceImpl;
-import com.smart.rag.infrastructure.exception.BusinessException;
+import com.smart.rag.infrastructure.exception.ClientException;
+import com.smart.rag.infrastructure.exception.ServiceException;
 import com.smart.rag.user.entity.SysPermission;
 import com.smart.rag.user.mapper.SysPermissionMapper;
 import org.junit.jupiter.api.DisplayName;
@@ -44,7 +45,7 @@ class SysPermissionServiceTest {
     }
 
     @Test
-    @DisplayName("createPermission_duplicateResourceKey: resourceKey 重复时抛 BusinessException")
+    @DisplayName("createPermission_duplicateResourceKey: resourceKey 重复时抛 ClientException")
     void createPermission_duplicateResourceKey() {
         SysPermission existing = new SysPermission();
         existing.setId(1L);
@@ -52,21 +53,21 @@ class SysPermissionServiceTest {
         when(permissionMapper.selectByPermissionName("user:write")).thenReturn(Optional.empty());
         when(permissionMapper.selectByResourceKey("api:user:read")).thenReturn(Optional.of(existing));
 
-        BusinessException ex = assertThrows(BusinessException.class,
+        ClientException ex = assertThrows(ClientException.class,
                 () -> sysPermissionService.createPermission("user:write", "写入用户", "API", "api:user:read"));
         assertTrue(ex.getMessage().contains("权限标识已存在"));
         verify(permissionMapper, never()).insert(any(SysPermission.class));
     }
 
     @Test
-    @DisplayName("createPermission_duplicatePermissionName: permissionName 重复时抛 BusinessException")
+    @DisplayName("createPermission_duplicatePermissionName: permissionName 重复时抛 ClientException")
     void createPermission_duplicatePermissionName() {
         SysPermission existing = new SysPermission();
         existing.setId(1L);
         existing.setPermissionName("user:read");
         when(permissionMapper.selectByPermissionName("user:read")).thenReturn(Optional.of(existing));
 
-        BusinessException ex = assertThrows(BusinessException.class,
+        ClientException ex = assertThrows(ClientException.class,
                 () -> sysPermissionService.createPermission("user:read", "查看用户", "API", "api:user:view"));
         assertTrue(ex.getMessage().contains("权限名称已存在"));
         verify(permissionMapper, never()).insert(any(SysPermission.class));
@@ -88,11 +89,11 @@ class SysPermissionServiceTest {
     }
 
     @Test
-    @DisplayName("deletePermission_notFound: 抛 BusinessException")
+    @DisplayName("deletePermission_notFound: 抛 ServiceException")
     void deletePermission_notFound() {
         when(permissionMapper.selectById(999L)).thenReturn(null);
 
-        BusinessException ex = assertThrows(BusinessException.class,
+        ServiceException ex = assertThrows(ServiceException.class,
                 () -> sysPermissionService.deletePermission(999L));
         assertTrue(ex.getMessage().contains("权限不存在"));
     }

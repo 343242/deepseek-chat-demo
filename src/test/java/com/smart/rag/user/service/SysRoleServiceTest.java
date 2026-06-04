@@ -1,7 +1,8 @@
 package com.smart.rag.user.service;
 
 import com.smart.rag.user.service.impl.SysRoleServiceImpl;
-import com.smart.rag.infrastructure.exception.BusinessException;
+import com.smart.rag.infrastructure.exception.ClientException;
+import com.smart.rag.infrastructure.exception.ServiceException;
 import com.smart.rag.infrastructure.web.service.TokenCacheService;
 import com.smart.rag.user.entity.SysPermission;
 import com.smart.rag.user.entity.SysRole;
@@ -56,14 +57,14 @@ class SysRoleServiceTest {
         }
 
         @Test
-        @DisplayName("createRole_duplicateName: 名字重复时抛 BusinessException")
+        @DisplayName("createRole_duplicateName: 名字重复时抛 ClientException")
         void createRole_duplicateName() {
             SysRole existing = new SysRole();
             existing.setId(1L);
             existing.setRoleName("ADMIN");
             when(roleMapper.selectByRoleName("ADMIN")).thenReturn(Optional.of(existing));
 
-            assertThrows(BusinessException.class, () -> sysRoleService.createRole("ADMIN", "管理员"));
+            assertThrows(ClientException.class, () -> sysRoleService.createRole("ADMIN", "管理员"));
         }
     }
 
@@ -88,10 +89,10 @@ class SysRoleServiceTest {
         }
 
         @Test
-        @DisplayName("deleteRole_notFound: 抛 BusinessException")
+        @DisplayName("deleteRole_notFound: 抛 ServiceException")
         void deleteRole_notFound() {
             when(roleMapper.selectById(999L)).thenReturn(null);
-            assertThrows(BusinessException.class, () -> sysRoleService.deleteRole(999L));
+            assertThrows(ServiceException.class, () -> sysRoleService.deleteRole(999L));
         }
     }
 
@@ -147,23 +148,23 @@ class SysRoleServiceTest {
         }
 
         @Test
-        @DisplayName("assignPermissions_nonExistentPermission: 权限不存在时抛 BusinessException")
+        @DisplayName("assignPermissions_nonExistentPermission: 权限不存在时抛 ServiceException")
         void assignPermissions_nonExistentPermission() {
             SysRole role = new SysRole();
             role.setId(1L);
             when(roleMapper.selectById(1L)).thenReturn(role);
             when(permissionMapper.selectByIds(List.of(999L))).thenReturn(List.of());
 
-            assertThrows(BusinessException.class,
+            assertThrows(ServiceException.class,
                     () -> sysRoleService.assignPermissions(1L, List.of(999L)));
         }
 
         @Test
-        @DisplayName("assignPermissions_roleNotFound: 角色不存在时抛 BusinessException")
+        @DisplayName("assignPermissions_roleNotFound: 角色不存在时抛 ServiceException")
         void assignPermissions_roleNotFound() {
             when(roleMapper.selectById(999L)).thenReturn(null);
 
-            assertThrows(BusinessException.class,
+            assertThrows(ServiceException.class,
                     () -> sysRoleService.assignPermissions(999L, List.of(10L)));
         }
     }

@@ -664,6 +664,12 @@ import org.apache.rocketmq.client.apis.ClientConfiguration;
 import org.apache.rocketmq.client.apis.ClientServiceProvider;
 import org.apache.rocketmq.client.apis.producer.Producer;
 import org.apache.rocketmq.client.apis.producer.SendReceipt;
+import org.apache.rocketmq.client.apis.consumer.FilterExpression;
+import org.apache.rocketmq.client.apis.consumer.FilterExpressionType;
+import org.apache.rocketmq.client.apis.consumer.MessageListener;
+import org.apache.rocketmq.client.apis.consumer.ConsumeResult;
+import org.apache.rocketmq.client.apis.consumer.PushConsumer;
+import org.apache.rocketmq.client.apis.consumer.SimpleConsumer;
 
 public class RocketMQMessageBus implements MessageBus {
     private final Producer producer;
@@ -779,8 +785,7 @@ public class RocketMQMessageBus implements MessageBus {
 
     private org.apache.rocketmq.client.apis.message.Message buildRocketMQMessage(
             Message<?> message, byte[] encodedPayload) {
-        var builder = org.apache.rocketmq.client.apis.message.MessageBuilder
-            .newBuilder()
+        var builder = provider.newMessageBuilder()
             .setTopic(properties.topicPrefix() + message.topic())
             .setBody(encodedPayload);
 
@@ -1017,7 +1022,8 @@ public <T> Subscription subscribe(String topic, String group,
     // 防止 TOCTOU 竞态：subscribe() 通过 shutdown 检查后、add() 前，shutdown() 可能已关闭所有 subscription
     synchronized (this) {
         if (shutdown) {
-            throw new IllegalStateException("MessageBus is shutting down, cannot create new subscriptions");
+            throw new MessagingException(MessagingErrorCode.SUBSCRIPTION_ERROR,
+                "MessageBus is shutting down, cannot create new subscriptions");
         }
     }
     // 注入幂等包装
@@ -1044,7 +1050,8 @@ public <T> Subscription subscribe(String topic, String group,
             if (shutdown) {
                 // shutdown 已触发，立即关闭刚创建的 subscription 防止泄漏
                 try { subscription.close(); } catch (Exception e) { log.warn("Failed to close subscription during shutdown race", e); }
-                throw new IllegalStateException("MessageBus is shutting down, cannot create new subscriptions");
+                throw new MessagingException(MessagingErrorCode.SUBSCRIPTION_ERROR,
+                    "MessageBus is shutting down, cannot create new subscriptions");
             }
             activeSubscriptions.add(subscription);
         }
@@ -1137,7 +1144,8 @@ private <T> Subscription createSimpleSubscription(
         try { simpleConsumer.close(); } catch (Exception closeEx) {
             log.warn("Failed to close simpleConsumer after setup failure", closeEx);
         }
-        throw new MessagingException("Failed to create subscription: " + topic, e);
+        throw new MessagingException(MessagingErrorCode.SUBSCRIPTION_ERROR,
+            "Failed to create subscription: " + topic, e);
     }
 }
 
@@ -1418,9 +1426,9 @@ private boolean sendToDeadLetter(MessageView messageView, String topic, String g
     try {
         String dlqTopic = "%APP_DLQ%" + group;
         org.apache.rocketmq.client.apis.message.Message dlqMsg =
-            org.apache.rocketmq.client.apis.message.MessageBuilder.newBuilder()
+            provider.newMessageBuilder()
                 .setTopic(dlqTopic)
-                .setBody(messageView.getBody())
+                .setBody(toByteArray(messageView.getBody()))
                 .setKeys(msgId)
                 .addProperty("originalTopic", topic)
                 .addProperty("originalGroup", group)

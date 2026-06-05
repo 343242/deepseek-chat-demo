@@ -76,5 +76,23 @@ app:
       JAVASCRIPT: sandbox-node:bookworm
       TYPESCRIPT: sandbox-node:bookworm
       JAVA: sandbox-java:bookworm
+  messaging:
+    enabled: ${MESSAGING_ENABLED:false}
+    topic-prefix: ${MESSAGING_TOPIC_PREFIX:SMART_RAG_}
+    shutdown-timeout: ${MESSAGING_SHUTDOWN_TIMEOUT:30s}
+    ordered-topics:
+      - rag_index_document
+    idempotent:
+      enabled: ${MESSAGING_IDEMPOTENT_ENABLED:true}
+      ttl-seconds: ${MESSAGING_IDEMPOTENT_TTL_SECONDS:90000}
+    circuit-breaker:
+      failure-threshold: ${MESSAGING_CB_FAILURE_THRESHOLD:5}
+      cooldown-millis: ${MESSAGING_CB_COOLDOWN_MILLIS:30000}
+    rocketmq:
+      endpoints: ${ROCKETMQ_ENDPOINTS:localhost:8081}
+      producer-group: ${ROCKETMQ_PRODUCER_GROUP:smart-rag-producer}
+      request-timeout: ${ROCKETMQ_REQUEST_TIMEOUT:3s}
+      max-delivery-attempts: ${ROCKETMQ_MAX_DELIVERY_ATTEMPTS:16}
+      max-message-size: ${ROCKETMQ_MAX_MESSAGE_SIZE:4194304}
 
 # Log4j 2 配置见 log4j2.xml，此处不再配置 logging.level

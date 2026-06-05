@@ -231,7 +231,7 @@ public interface MessageBus {
     <T> Subscription subscribe(String topic, String group,
                                ConsumerConfig config,
                                Class<T> payloadType,
-                               MessageListener<T> listener);
+                               MessageHandler<T> handler);
 
     // ==================== 生命周期 ====================
 
@@ -302,17 +302,21 @@ public interface DeadLetterOperations {
 }
 ```
 
-### 4.3 消息监听器
+### 4.3 消息处理器
 
 ```java
 /**
- * 消息监听器 — 业务代码实现此接口处理消息。
+ * 消息处理器 — 业务代码实现此接口处理消息。
  * <p>
- * 抛出异常表示消费失败，触发 RocketMQ 重试；正常返回表示消费成功。
- * 实现必须是幂等的（消息可能被重复投递）。
+ * 命名为 MessageHandler 而非 MessageListener，避免与
+ * {@code org.apache.rocketmq.client.apis.consumer.MessageListener}（返回 ConsumeResult）命名冲突。
+ * <p>
+ * 错误传播约定：实现类抛出异常 = 消费失败，由 RocketMQMessageBus 内部包装器捕获后
+ * 转换为 RocketMQ 的 ConsumeResult.FAILURE（PushConsumer）或不 ack（SimpleConsumer）。
+ * 正常返回 = 消费成功。实现必须是幂等的（消息可能被重复投递）。
  */
 @FunctionalInterface
-public interface MessageListener<T> {
+public interface MessageHandler<T> {
     void onMessage(Message<T> message);
 }
 ```
@@ -418,6 +422,10 @@ public record ConsumerConfig(
  * 客户端消费失败返回 ConsumeResult.FAILURE 即触发 Broker 侧重试。
  * 超过 maxDeliveryAttempts 后消息自动进入 %DLQ% Topic。
  * <p>
+ * 错误传播约定：SPI 层 MessageHandler.onMessage() 返回 void，抛出异常 = 消费失败。
+ * RocketMQMessageBus 内部 PushConsumer 包装器捕获异常后返回 ConsumeResult.FAILURE，
+ * SimpleConsumer 包装器捕获异常后不调用 ack()，消息在 invisibleDuration 后重新可见。
+ * <p>
  * SimpleConsumer：无自动重试。消费失败时不调用 ack()，
  * 消息在 invisibleDuration 后重新可见，由消费者再次 receive() 拉取。
  * RocketMQMessageBus 内部维护 ConcurrentHashMap&lt;msgId, retryCount&gt;
@@ -486,7 +494,7 @@ public interface TracePropagator {
 | `Message.hashKey` | `messageGroup`（FIFO Topic） | 分区路由（替代 4.x 的 `MessageQueueSelector`） |
 | `Message.deduplicationKey` | `keys` 字段 | Broker 端去重查询 |
 | `Message.headers` | `properties` | 用户自定义属性 |
-| `MessageListener` | `MessageListener`（返回 `ConsumeResult`） | 消息处理回调 |
+| `MessageHandler` | `MessageListener`（返回 `ConsumeResult`） | SPI 层回调（避免与 5.x MessageListener 命名冲突） |
 | `Subscription` | `PushConsumer` 或 `SimpleConsumer` 实例 | 消费者生命周期 |
 | `ConsumerMode.PUSH` | `PushConsumer` | 自动投递，自动重试 |
 | `ConsumerMode.SIMPLE` | `SimpleConsumer` | 手动 receive/ack，精确流控 |
@@ -502,7 +510,7 @@ public interface TracePropagator {
 infrastructure/messaging/
 ├── MessageBus.java                    (SPI 接口)
 ├── Message.java                       (消息信封)
-├── MessageListener.java               (监听器接口)
+├── MessageHandler.java                 (消息处理器接口)
 ├── Subscription.java                  (订阅句柄)
 ├── ConsumerConfig.java                (消费者配置)
 ├── ConsumerMode.java                  (消费模式枚举)
@@ -724,6 +732,7 @@ public class RocketMQMessageBus implements MessageBus {
                 buildRocketMQMessage(message, encoded);
             SendReceipt receipt = producer.send(rmqMsg);
             recordSuccess();
+            // SendReceipt.getMessageId() 返回 MessageId 类型，toString() 得到 Broker 分配的唯一 ID
             log.debug("Message sent: topic={}, msgId={}", message.topic(), receipt.getMessageId());
             return receipt.getMessageId().toString();
         } catch (Exception e) {
@@ -997,7 +1006,7 @@ public record CircuitBreakerConfig(
 public <T> Subscription subscribe(String topic, String group,
                                    ConsumerConfig config,
                                    Class<T> payloadType,
-                                   MessageListener<T> listener) {
+                                   MessageHandler<T> handler) {
     // 消费组名称格式校验（B-05）
     if (group == null || !GROUP_PATTERN.matcher(group).matches()) {
         throw new IllegalArgumentException(
@@ -1012,7 +1021,7 @@ public <T> Subscription subscribe(String topic, String group,
         }
     }
     // 注入幂等包装
-    MessageListener<T> wrappedListener = wrapWithIdempotent(listener, topic);
+    MessageHandler<T> wrappedHandler = wrapWithIdempotent(handler, topic);
 
     String fullTopic = properties.topicPrefix() + topic;
     ClientConfiguration clientConfig = this.clientConfiguration;
@@ -1025,10 +1034,10 @@ public <T> Subscription subscribe(String topic, String group,
         Subscription subscription;
         if (config.consumerMode() == ConsumerMode.SIMPLE) {
             subscription = createSimpleSubscription(topic, group, config,
-                payloadType, wrappedListener, clientConfig, subscriptionExpressions);
+                payloadType, wrappedHandler, clientConfig, subscriptionExpressions);
         } else {
             subscription = createPushSubscription(topic, group, config,
-                payloadType, wrappedListener, clientConfig, subscriptionExpressions);
+                payloadType, wrappedHandler, clientConfig, subscriptionExpressions);
         }
         // 二次 synchronized：确保 shutdown 未在 subscription 创建期间触发
         synchronized (this) {
@@ -1054,7 +1063,7 @@ private static final java.util.regex.Pattern GROUP_PATTERN =
 
 private <T> Subscription createPushSubscription(
         String topic, String group, ConsumerConfig config,
-        Class<T> payloadType, MessageListener<T> listener,
+        Class<T> payloadType, MessageHandler<T> handler,
         ClientConfiguration clientConfig,
         Map<String, FilterExpression> subscriptionExpressions) throws ClientException {
 
@@ -1072,7 +1081,7 @@ private <T> Subscription createPushSubscription(
                 messageView.getProperties(),
                 messageView.getBornTimestamp()
             );
-            listener.onMessage(message);
+            handler.onMessage(message);
             log.debug("Message consumed: topic={}, group={}, msgId={}", topic, group, messageView.getMessageId());
             return ConsumeResult.SUCCESS;
         } catch (PermanentConsumeException e) {
@@ -1110,7 +1119,7 @@ private <T> Subscription createPushSubscription(
 
 private <T> Subscription createSimpleSubscription(
         String topic, String group, ConsumerConfig config,
-        Class<T> payloadType, MessageListener<T> listener,
+        Class<T> payloadType, MessageHandler<T> handler,
         ClientConfiguration clientConfig,
         Map<String, FilterExpression> subscriptionExpressions) throws ClientException {
 
@@ -1134,7 +1143,7 @@ private <T> Subscription createSimpleSubscription(
 
 private <T> Subscription buildSimpleSubscription(
         String topic, String group, ConsumerConfig config,
-        Class<T> payloadType, MessageListener<T> listener,
+        Class<T> payloadType, MessageHandler<T> handler,
         SimpleConsumer simpleConsumer) {
 
     // 后台线程轮询 receive()（接收循环单线程）
@@ -1258,7 +1267,7 @@ private <T> Subscription buildSimpleSubscription(
 private <T> void processMessage(
         MessageView messageView, String topic, String group,
         ConsumerConfig config, Class<T> payloadType,
-        MessageListener<T> listener, SimpleConsumer simpleConsumer,
+        MessageHandler<T> handler, SimpleConsumer simpleConsumer,
         @Nullable Cache<String, AtomicInteger> retryCounter,
         boolean skipRetry, int maxRetries,
         Semaphore inflightSemaphore) {
@@ -1274,7 +1283,7 @@ private <T> void processMessage(
             messageView.getProperties(),
             messageView.getBornTimestamp()
         );
-        listener.onMessage(message);
+        handler.onMessage(message);
         simpleConsumer.ack(messageView);
         log.debug("Message consumed and acked: topic={}, group={}, msgId={}", topic, group, msgId);
         if (retryCounter != null) retryCounter.invalidate(msgId);
@@ -1742,7 +1751,7 @@ void shutdown() {
 **设计决策：内建集成而非 AOP**
 
 > `@IdempotentConsume` AOP 方案在本项目中不可行，原因：
-> 1. `MessageListener` 以 lambda 形式传入 `subscribe()`，Spring AOP 无法拦截 lambda。
+> 1. `MessageHandler` 以 lambda 形式传入 `subscribe()`，Spring AOP 无法拦截 lambda。
 > 2. 5.x 重试投递时消息从 Broker 侧状态机重新投递，
 >    `messageId` 在 5.x 中保持不变（改进），但以业务 `deduplicationKey` 为幂等 key 更可靠。
 >
@@ -1791,20 +1800,20 @@ public class RocketMQMessageBus implements MessageBus {
      * <p>
      * 流程：
      * 1. Lua SETNX with TTL → if exists (返回 1), skip (duplicate)
-     * 2. Execute listener.onMessage(msg)
+     * 2. Execute handler.onMessage(msg)
      * 3. On success: key stays (marked as processed, TTL 自动过期)
      * 4. On failure: DELETE key (unmark, 允许合法重试通过)
      * 5. On Redis failure: degrade to business-layer idempotent
      */
-    <T> MessageListener<T> wrapWithIdempotent(
-            MessageListener<T> listener, String topic) {
+    <T> MessageHandler<T> wrapWithIdempotent(
+            MessageHandler<T> handler, String topic) {
         if (!properties.idempotent().enabled()) {
-            return listener;
+            return handler;
         }
         return msg -> {
             String idempotentKey = msg.deduplicationKey();
             if (idempotentKey == null || idempotentKey.isEmpty()) {
-                listener.onMessage(msg);  // 无幂等 key，直接放行
+                handler.onMessage(msg);  // 无幂等 key，直接放行
                 return;
             }
             String redisKey = "messaging:idempotent:" + topic + ":" + idempotentKey;
@@ -1823,7 +1832,7 @@ public class RocketMQMessageBus implements MessageBus {
                 marked = true;
 
                 // 步骤 2：执行消费逻辑（此时 Redis 已标记，并发消费者被阻断）
-                listener.onMessage(msg);
+                handler.onMessage(msg);
                 // 步骤 3：消费成功 — key 保留，TTL 自动过期
             } catch (Exception e) {
                 if (marked) {
@@ -1838,7 +1847,7 @@ public class RocketMQMessageBus implements MessageBus {
                     meterRegistry.counter("messaging.idempotent.degraded", "topic", topic).increment();
                 }
                 try {
-                    listener.onMessage(msg);
+                    handler.onMessage(msg);
                 } catch (Exception listenerEx) {
                     log.error("Listener failed during Redis-degraded path: topic={}, key={}",
                         topic, idempotentKey, listenerEx);
@@ -1867,7 +1876,7 @@ if (idempotent.enabled()) {
 **subscribe() 集成点**：
 
 幂等包装在 `subscribe()` 中、创建 5.x 消费者之前注入。
-对 PushConsumer 和 SimpleConsumer 均适用——包装后的 `MessageListener<T>`
+对 PushConsumer 和 SimpleConsumer 均适用——包装后的 `MessageHandler<T>`
 在内部消费循环中被调用。
 
 > **两层幂等的关系与执行顺序**：消息总线内建幂等采用"先标记、失败回滚"策略——
@@ -2483,7 +2492,7 @@ messageBus.subscribe("rag_index_document", "index-group",
 |------|------|------|
 | `infrastructure/messaging/MessageBus.java` | 新增 | SPI 接口 |
 | `infrastructure/messaging/Message.java` | 新增 | 消息信封 record |
-| `infrastructure/messaging/MessageListener.java` | 新增 | 监听器接口 |
+| `infrastructure/messaging/MessageHandler.java` | 新增 | 消息处理器接口 |
 | `infrastructure/messaging/Subscription.java` | 新增 | 订阅句柄 |
 | `infrastructure/messaging/ConsumerConfig.java` | 新增 | 消费者配置 |
 | `infrastructure/messaging/ConsumerMode.java` | 新增 | 消费模式枚举（PUSH / SIMPLE） |

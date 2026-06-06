@@ -1,6 +1,5 @@
-package com.smart.rag.infrastructure.messaging.exception;
+package com.smart.rag.infrastructure.exception;
 
-import com.smart.rag.infrastructure.exception.AbstractException;
 import com.smart.rag.infrastructure.exception.errorcode.IErrorCode;
 
 /**

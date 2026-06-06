@@ -16,7 +16,7 @@ import java.util.Map;
  * @param headers           extension headers (traceId, contentType, etc.)
  * @param timestamp         creation timestamp
  */
-public record Message<T>(
+public record MessageEnvelope<T>(
     @Nullable String id,
     String topic,
     @Nullable String tag,
@@ -26,13 +26,13 @@ public record Message<T>(
     Map<String, String> headers,
     long timestamp
 ) {
-    public static <T> Message<T> of(String topic, T payload) {
-        return new Message<>(null, topic, null, payload, null, null, Map.of(),
+    public static <T> MessageEnvelope<T> of(String topic, T payload) {
+        return new MessageEnvelope<>(null, topic, null, payload, null, null, Map.of(),
             System.currentTimeMillis());
     }
 
-    public static <T> Message<T> of(String topic, String tag, T payload) {
-        return new Message<>(null, topic, tag, payload, null, null, Map.of(),
+    public static <T> MessageEnvelope<T> of(String topic, String tag, T payload) {
+        return new MessageEnvelope<>(null, topic, tag, payload, null, null, Map.of(),
             System.currentTimeMillis());
     }
 
@@ -40,8 +40,8 @@ public record Message<T>(
      * Create an ordered message. Same hashKey routes to the same partition (5.x messageGroup).
      * Different hashKeys have no ordering guarantee.
      */
-    public static <T> Message<T> ordered(String topic, T payload, String hashKey) {
-        return new Message<>(null, topic, null, payload, hashKey, null, Map.of(),
+    public static <T> MessageEnvelope<T> ordered(String topic, T payload, String hashKey) {
+        return new MessageEnvelope<>(null, topic, null, payload, hashKey, null, Map.of(),
             System.currentTimeMillis());
     }
 
@@ -49,8 +49,8 @@ public record Message<T>(
      * Create a deduplicated message. DeduplicationKey is used for consumer-side idempotency
      * (DB unique constraint / business natural key).
      */
-    public static <T> Message<T> deduplicated(String topic, T payload, String deduplicationKey) {
-        return new Message<>(null, topic, null, payload, null, deduplicationKey, Map.of(),
+    public static <T> MessageEnvelope<T> deduplicated(String topic, T payload, String deduplicationKey) {
+        return new MessageEnvelope<>(null, topic, null, payload, null, deduplicationKey, Map.of(),
             System.currentTimeMillis());
     }
 }

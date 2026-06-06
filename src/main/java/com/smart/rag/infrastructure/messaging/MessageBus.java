@@ -1,5 +1,6 @@
 package com.smart.rag.infrastructure.messaging;
 
+import com.smart.rag.infrastructure.exception.MessagingException;
 import jakarta.annotation.Nullable;
 
 import java.util.concurrent.CompletableFuture;
@@ -8,15 +9,15 @@ import java.util.concurrent.CompletableFuture;
  * Message bus SPI — unified entry point for all messaging operations.
  * <p>
  * Implementations: RocketMQMessageBus (Phase 1), extensible to other backends.
- * All thrown exceptions must be {@link com.smart.rag.infrastructure.messaging.exception.MessagingException} subclasses.
+ * All thrown exceptions must be {@link MessagingException} subclasses.
  */
 public interface MessageBus {
 
     /** Synchronous send, returns transport-level message ID */
-    String send(Message<?> message);
+    String send(MessageEnvelope<?> messageEnvelope);
 
     /** Asynchronous send using 5.x native sendAsync (gRPC async stub) */
-    CompletableFuture<String> sendAsync(Message<?> message);
+    CompletableFuture<String> sendAsync(MessageEnvelope<?> messageEnvelope);
 
     /**
      * Subscribe to a topic with a consumer group.
@@ -40,8 +41,8 @@ public interface MessageBus {
      * Send message after current Spring transaction commits.
      * Non-transactional contexts fall back to immediate send.
      */
-    default void sendAfterCommit(Message<?> message) {
-        send(message);
+    default void sendAfterCommit(MessageEnvelope<?> messageEnvelope) {
+        send(messageEnvelope);
     }
 
     /** Dead letter operations (optional, for ops tooling) */

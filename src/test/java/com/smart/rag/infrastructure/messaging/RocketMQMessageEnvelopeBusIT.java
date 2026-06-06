@@ -29,7 +29,7 @@ import static org.junit.jupiter.api.Assertions.*;
 @TestMethodOrder(OrderAnnotation.class)
 @DisplayName("RocketMQ 5.x integration tests")
 @Disabled("Requires Docker with stable RocketMQ proxy networking. Run manually against docker-compose.")
-class RocketMQMessageBusIT {
+class RocketMQMessageEnvelopeBusIT {
 
     private static final String ROCKETMQ_IMAGE = "apache/rocketmq:5.2.0";
     private static final int PROXY_PORT = 8081;
@@ -82,7 +82,7 @@ class RocketMQMessageBusIT {
         String topic = "it_async_test";
         String payload = "async-payload";
 
-        CompletableFuture<String> future = bus.sendAsync(Message.of(topic, payload));
+        CompletableFuture<String> future = bus.sendAsync(MessageEnvelope.of(topic, payload));
         String msgId = future.get(15, TimeUnit.SECONDS);
 
         assertNotNull(msgId);
@@ -98,7 +98,7 @@ class RocketMQMessageBusIT {
         String group = "it-push-group";
         String payload = "hello-push-" + System.currentTimeMillis();
 
-        AtomicReference<Message<String>> received = new AtomicReference<>();
+        AtomicReference<MessageEnvelope<String>> received = new AtomicReference<>();
         CountDownLatch latch = new CountDownLatch(1);
 
         Subscription subscription = bus.subscribe(topic, group,
@@ -110,7 +110,7 @@ class RocketMQMessageBusIT {
 
         assertTrue(subscription.isActive());
 
-        bus.send(Message.of(topic, payload));
+        bus.send(MessageEnvelope.of(topic, payload));
 
         assertTrue(latch.await(15, TimeUnit.SECONDS), "Message not received within timeout");
         assertNotNull(received.get());
@@ -130,7 +130,7 @@ class RocketMQMessageBusIT {
         String group = "it-ordered-group";
         String payload = "ordered-" + System.currentTimeMillis();
 
-        AtomicReference<Message<String>> received = new AtomicReference<>();
+        AtomicReference<MessageEnvelope<String>> received = new AtomicReference<>();
         CountDownLatch latch = new CountDownLatch(1);
 
         Subscription subscription = bus.subscribe(topic, group,
@@ -141,7 +141,7 @@ class RocketMQMessageBusIT {
                 latch.countDown();
             });
 
-        bus.send(Message.of(topic, "save", payload));
+        bus.send(MessageEnvelope.of(topic, "save", payload));
 
         assertTrue(latch.await(15, TimeUnit.SECONDS), "Tagged message not received");
         assertEquals(payload, received.get().payload());

@@ -1,8 +1,8 @@
 package com.smart.rag.infrastructure.messaging;
 
-import com.smart.rag.infrastructure.messaging.exception.MessagePublishException;
-import com.smart.rag.infrastructure.messaging.exception.MessagingErrorCode;
-import com.smart.rag.infrastructure.messaging.exception.MessagingException;
+import com.smart.rag.infrastructure.exception.MessagePublishException;
+import com.smart.rag.infrastructure.exception.MessagingErrorCode;
+import com.smart.rag.infrastructure.exception.MessagingException;
 import com.smart.rag.infrastructure.messaging.idempotent.IdempotentHandler;
 import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.Nullable;
@@ -14,6 +14,7 @@ import org.apache.rocketmq.client.apis.consumer.FilterExpressionType;
 import org.apache.rocketmq.client.apis.consumer.PushConsumer;
 import org.apache.rocketmq.client.apis.consumer.SimpleConsumer;
 import org.apache.rocketmq.client.apis.message.MessageView;
+import org.apache.rocketmq.client.apis.message.Message;
 import org.apache.rocketmq.client.apis.producer.Producer;
 import org.apache.rocketmq.client.apis.producer.SendReceipt;
 import org.slf4j.Logger;
@@ -35,6 +36,7 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.regex.Pattern;
 
 /**
@@ -117,7 +119,7 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
     // ==================== Send ====================
 
     @Override
-    public String send(Message<?> message) {
+    public String send(MessageEnvelope<?> message) {
         SendCircuitBreaker cb = circuitBreakerFor(message.topic());
         if (!cb.isCallAllowed()) {
             throw new MessagePublishException("Circuit breaker OPEN for topic: " + message.topic());
@@ -150,7 +152,7 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
     }
 
     @Override
-    public CompletableFuture<String> sendAsync(Message<?> message) {
+    public CompletableFuture<String> sendAsync(MessageEnvelope<?> message) {
         byte[] encoded = validator.validateAndEncode(message);
         var rmqMsg = buildRocketMQMessage(message, encoded);
         SendCircuitBreaker cb = circuitBreakerFor(message.topic());
@@ -339,10 +341,8 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
             return true;
         } catch (Exception e) {
             String errorType = e.getClass().getSimpleName();
-            if (e instanceof java.util.concurrent.TimeoutException || e.getCause() instanceof java.util.concurrent.TimeoutException) {
+            if (e.getCause() instanceof TimeoutException) {
                 errorType = "TIMEOUT";
-            } else if (e instanceof IOException) {
-                errorType = "IO_ERROR";
             }
             log.error("Failed to forward message to DLQ [{}]: topic={}, msgId={}",
                 errorType, topic, msgId, e);
@@ -390,7 +390,7 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
     // ==================== Transaction Integration ====================
 
     @Override
-    public void sendAfterCommit(Message<?> message) {
+    public void sendAfterCommit(MessageEnvelope<?> message) {
         if (TransactionSynchronizationManager.isSynchronizationActive()) {
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                 @Override
@@ -421,7 +421,7 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
                 if (deadLetterOps == null) {
                     deadLetterOps = new DeadLetterOperations() {
                         @Override
-                        public List<Message<?>> scanDeadLetters(String topic, int count) {
+                        public List<MessageEnvelope<?>> scanDeadLetters(String topic, int count) {
                             log.warn("DLQ scan not yet implemented for topic={}", topic);
                             return Collections.emptyList();
                         }
@@ -473,8 +473,8 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
             k -> new SendCircuitBreaker(properties.circuitBreaker()));
     }
 
-    private org.apache.rocketmq.client.apis.message.Message buildRocketMQMessage(
-            Message<?> message, byte[] encodedPayload) {
+    private Message buildRocketMQMessage(
+            MessageEnvelope<?> message, byte[] encodedPayload) {
         var builder = provider.newMessageBuilder()
             .setTopic(properties.topicPrefix() + message.topic())
             .setBody(encodedPayload);

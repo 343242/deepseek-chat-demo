@@ -16,14 +16,14 @@ public class NoOpMessageBus implements MessageBus {
     private static final Logger log = LoggerFactory.getLogger(NoOpMessageBus.class);
 
     @Override
-    public String send(Message<?> message) {
-        log.debug("Messaging disabled, send ignored: topic={}", message.topic());
+    public String send(MessageEnvelope<?> messageEnvelope) {
+        log.debug("Messaging disabled, send ignored: topic={}", messageEnvelope.topic());
         return "no-op";
     }
 
     @Override
-    public CompletableFuture<String> sendAsync(Message<?> message) {
-        log.debug("Messaging disabled, sendAsync ignored: topic={}", message.topic());
+    public CompletableFuture<String> sendAsync(MessageEnvelope<?> messageEnvelope) {
+        log.debug("Messaging disabled, sendAsync ignored: topic={}", messageEnvelope.topic());
         return CompletableFuture.completedFuture("no-op");
     }
 
@@ -42,8 +42,8 @@ public class NoOpMessageBus implements MessageBus {
     }
 
     @Override
-    public void sendAfterCommit(Message<?> message) {
-        log.debug("Messaging disabled, sendAfterCommit ignored: topic={}", message.topic());
+    public void sendAfterCommit(MessageEnvelope<?> messageEnvelope) {
+        log.debug("Messaging disabled, sendAfterCommit ignored: topic={}", messageEnvelope.topic());
     }
 
     private record NoOpSubscription(String topic, String group) implements Subscription {

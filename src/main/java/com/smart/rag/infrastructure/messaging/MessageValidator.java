@@ -19,24 +19,24 @@ class MessageValidator {
         this.codec = codec;
     }
 
-    byte[] validateAndEncode(Message<?> message) {
-        String fullTopic = properties.topicPrefix() + message.topic();
+    byte[] validateAndEncode(MessageEnvelope<?> messageEnvelope) {
+        String fullTopic = properties.topicPrefix() + messageEnvelope.topic();
         if (fullTopic.length() > 128) {
             throw new IllegalArgumentException(
                 "Full topic name too long: '" + fullTopic
                 + "' (prefix + topic = " + fullTopic.length() + " chars, max 128)");
         }
-        if (!TOPIC_PATTERN.matcher(message.topic()).matches()) {
+        if (!TOPIC_PATTERN.matcher(messageEnvelope.topic()).matches()) {
             throw new IllegalArgumentException(
-                "Invalid topic name: '" + message.topic()
+                "Invalid topic name: '" + messageEnvelope.topic()
                 + "'. Must be 1-128 chars, alphanumeric/underscore/hyphen/percent only.");
         }
-        if (message.tag() != null && !TAG_PATTERN.matcher(message.tag()).matches()) {
+        if (messageEnvelope.tag() != null && !TAG_PATTERN.matcher(messageEnvelope.tag()).matches()) {
             throw new IllegalArgumentException(
-                "Invalid tag name: '" + message.tag()
+                "Invalid tag name: '" + messageEnvelope.tag()
                 + "'. Must be 1-64 chars, alphanumeric/underscore/hyphen only.");
         }
-        byte[] encoded = codec.encode(message.payload());
+        byte[] encoded = codec.encode(messageEnvelope.payload());
         if (encoded.length > properties.rocketmq().maxMessageSize()) {
             throw new IllegalArgumentException(
                 "Message payload too large: " + encoded.length + " bytes");

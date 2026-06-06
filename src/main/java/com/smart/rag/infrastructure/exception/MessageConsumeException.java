@@ -1,4 +1,4 @@
-package com.smart.rag.infrastructure.messaging.exception;
+package com.smart.rag.infrastructure.exception;
 
 /**
  * Message consume exception — consume processing failure.

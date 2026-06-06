@@ -1,6 +1,6 @@
 package com.smart.rag.infrastructure.messaging;
 
-import com.smart.rag.infrastructure.messaging.exception.PermanentConsumeException;
+import com.smart.rag.infrastructure.exception.PermanentConsumeException;
 import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.Nullable;
 import org.apache.rocketmq.client.apis.consumer.SimpleConsumer;
@@ -138,7 +138,7 @@ class SimpleConsumerReceiveLoop<T> {
                         continue;
                     }
                     List<MessageView> processable = new ArrayList<>(messages.size());
-                    processable.add(messages.get(0));
+                    processable.add(messages.getFirst());
                     for (int i = 1; i < messages.size(); i++) {
                         if (inflightSemaphore.tryAcquire()) {
                             processable.add(messages.get(i));
@@ -194,7 +194,7 @@ class SimpleConsumerReceiveLoop<T> {
         long startNanos = meterRegistry != null ? System.nanoTime() : 0;
         try {
             T payload = codec.decode(MessagePayloadCodec.toByteArray(messageView.getBody()), payloadType);
-            Message<T> message = new Message<>(
+            MessageEnvelope<T> messageEnvelope = new MessageEnvelope<>(
                 msgId, topic,
                 messageView.getTag().orElse(null),
                 payload, null,
@@ -202,7 +202,7 @@ class SimpleConsumerReceiveLoop<T> {
                 messageView.getProperties(),
                 messageView.getBornTimestamp()
             );
-            handler.onMessage(message);
+            handler.onMessage(messageEnvelope);
             simpleConsumer.ack(messageView);
             if (meterRegistry != null) {
                 meterRegistry.counter("messaging.consume.count",

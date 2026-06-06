@@ -2,8 +2,8 @@ package com.smart.rag.infrastructure.messaging;
 
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.smart.rag.infrastructure.messaging.exception.PermanentConsumeException;
-import com.smart.rag.infrastructure.messaging.exception.MessagePublishException;
+import com.smart.rag.infrastructure.exception.PermanentConsumeException;
+import com.smart.rag.infrastructure.exception.MessagePublishException;
 import org.springframework.stereotype.Component;
 
 /**

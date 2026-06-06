@@ -1,6 +1,6 @@
 package com.smart.rag.infrastructure.messaging;
 
-import com.smart.rag.infrastructure.messaging.exception.PermanentConsumeException;
+import com.smart.rag.infrastructure.exception.PermanentConsumeException;
 import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.Nullable;
 import org.apache.rocketmq.client.apis.consumer.ConsumeResult;
@@ -49,7 +49,7 @@ class PushConsumerListener<T> {
             long startNanos = meterRegistry != null ? System.nanoTime() : 0;
             try {
                 T payload = codec.decode(MessagePayloadCodec.toByteArray(messageView.getBody()), payloadType);
-                Message<T> message = new Message<>(
+                MessageEnvelope<T> messageEnvelope = new MessageEnvelope<>(
                     messageView.getMessageId().toString(),
                     topic,
                     messageView.getTag().orElse(null),
@@ -59,7 +59,7 @@ class PushConsumerListener<T> {
                     messageView.getProperties(),
                     messageView.getBornTimestamp()
                 );
-                handler.onMessage(message);
+                handler.onMessage(messageEnvelope);
                 if (meterRegistry != null) {
                     meterRegistry.counter("messaging.consume.count",
                         "topic", topic, "group", group, "mode", "push", "result", "success").increment();

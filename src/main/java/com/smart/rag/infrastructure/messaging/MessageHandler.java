@@ -10,5 +10,5 @@ package com.smart.rag.infrastructure.messaging;
  */
 @FunctionalInterface
 public interface MessageHandler<T> {
-    void onMessage(Message<T> message);
+    void onMessage(MessageEnvelope<T> messageEnvelope);
 }

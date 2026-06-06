@@ -40,9 +40,7 @@ public class MessagingHealthIndicator extends AbstractHealthIndicator {
 
         // 3. Circuit breaker state
         Map<String, String> circuitBreakerState = busManagement.circuitBreakerState();
-        boolean hasOpenBreaker = circuitBreakerState.isEmpty()
-            ? false
-            : circuitBreakerState.values().stream()
+        boolean hasOpenBreaker = !circuitBreakerState.isEmpty() && circuitBreakerState.values().stream()
                 .anyMatch(s -> "open".equals(s) || "half_open".equals(s));
 
         (hasOpenBreaker ? builder.down() : builder.up())

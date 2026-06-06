@@ -9,7 +9,7 @@ import java.util.List;
  */
 public interface DeadLetterOperations {
     /** Scan dead letter messages for a topic */
-    List<Message<?>> scanDeadLetters(String topic, int count);
+    List<MessageEnvelope<?>> scanDeadLetters(String topic, int count);
 
     /** Replay a dead letter message back to the main topic */
     void replayDeadLetter(String topic, String messageId);

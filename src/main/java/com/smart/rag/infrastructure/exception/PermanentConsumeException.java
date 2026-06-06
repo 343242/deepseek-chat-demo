@@ -1,4 +1,4 @@
-package com.smart.rag.infrastructure.messaging.exception;
+package com.smart.rag.infrastructure.exception;
 
 /**
  * Permanent consume exception — message is inherently unprocessable, retrying is pointless.

@@ -1,6 +1,7 @@
 package com.smart.rag.infrastructure.messaging;
 
 import com.smart.rag.infrastructure.messaging.exception.PermanentConsumeException;
+import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.Nullable;
 import org.apache.rocketmq.client.apis.consumer.SimpleConsumer;
 import org.apache.rocketmq.client.apis.message.MessageView;
@@ -47,14 +48,18 @@ class SimpleConsumerReceiveLoop<T> {
     private final SimpleConsumer simpleConsumer;
     private final MessagePayloadCodec codec;
     private final DeadLetterSender deadLetterSender;
+    @Nullable private final MeterRegistry meterRegistry;
+    private final TracePropagator propagator;
 
     private final AtomicBoolean runningFlag = new AtomicBoolean(true);
     private final AtomicLong closeTimeoutMsHolder;
+    @Nullable private volatile ExecutorService processingPool;
 
     SimpleConsumerReceiveLoop(String topic, String group, ConsumerConfig config,
                                Class<T> payloadType, MessageHandler<T> handler,
                                SimpleConsumer simpleConsumer, MessagePayloadCodec codec,
-                               Duration defaultCloseTimeout, DeadLetterSender deadLetterSender) {
+                               Duration defaultCloseTimeout, DeadLetterSender deadLetterSender,
+                               @Nullable MeterRegistry meterRegistry, TracePropagator propagator) {
         this.topic = topic;
         this.group = group;
         this.config = config;
@@ -64,10 +69,33 @@ class SimpleConsumerReceiveLoop<T> {
         this.codec = codec;
         this.deadLetterSender = deadLetterSender;
         this.closeTimeoutMsHolder = new AtomicLong(defaultCloseTimeout.toMillis());
+        this.meterRegistry = meterRegistry;
+        this.propagator = propagator != null ? propagator : TracePropagator.NO_OP;
     }
 
     AtomicBoolean runningFlag() { return runningFlag; }
     AtomicLong closeTimeoutMsHolder() { return closeTimeoutMsHolder; }
+
+    /**
+     * Shut down the processing pool directly — called by {@link RocketMQSubscription#close}.
+     * Idempotent: safe to call multiple times.
+     */
+    void shutdownProcessingPool() {
+        ExecutorService pool = this.processingPool;
+        if (pool == null) return;
+        pool.shutdown();
+        try {
+            long timeout = closeTimeoutMsHolder.get();
+            if (!pool.awaitTermination(timeout, TimeUnit.MILLISECONDS)) {
+                log.warn("Processing pool did not terminate within {}ms on direct shutdown: topic={}",
+                    timeout, topic);
+                pool.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            pool.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
+    }
 
     ExecutorService start() {
         int maxRetries = config.retryPolicy().maxRetries();
@@ -78,12 +106,13 @@ class SimpleConsumerReceiveLoop<T> {
 
         int processingConcurrency = Math.max(1, config.concurrency());
         AtomicInteger threadCounter = new AtomicInteger(0);
-        ExecutorService processingPool = new ThreadPoolExecutor(
+        ExecutorService pool = new ThreadPoolExecutor(
             processingConcurrency, processingConcurrency, 0L, TimeUnit.MILLISECONDS,
             new ArrayBlockingQueue<>(config.batchSize() * 2),
             r -> new Thread(r, "simple-process-" + topic + "-" + threadCounter.incrementAndGet()),
             new ThreadPoolExecutor.AbortPolicy()
         );
+        this.processingPool = pool;
 
         Semaphore inflightSemaphore = new Semaphore(config.concurrency());
 
@@ -116,7 +145,7 @@ class SimpleConsumerReceiveLoop<T> {
                     }
                     for (MessageView messageView : processable) {
                         try {
-                            processingPool.submit(() -> processMessage(
+                            pool.submit(() -> processMessage(
                                 messageView, retryCounter, skipRetry, maxRetries, inflightSemaphore));
                         } catch (RejectedExecutionException e) {
                             inflightSemaphore.release();
@@ -136,16 +165,16 @@ class SimpleConsumerReceiveLoop<T> {
                     }
                 }
             }
-            processingPool.shutdown();
+            pool.shutdown();
             try {
                 long timeout = closeTimeoutMsHolder.get();
-                if (!processingPool.awaitTermination(timeout, TimeUnit.MILLISECONDS)) {
+                if (!pool.awaitTermination(timeout, TimeUnit.MILLISECONDS)) {
                     log.warn("Processing pool did not terminate within {}ms: topic={}",
                         timeout, topic);
-                    processingPool.shutdownNow();
+                    pool.shutdownNow();
                 }
             } catch (InterruptedException e) {
-                processingPool.shutdownNow();
+                pool.shutdownNow();
                 Thread.currentThread().interrupt();
             }
         });
@@ -158,6 +187,8 @@ class SimpleConsumerReceiveLoop<T> {
                                  boolean skipRetry, int maxRetries,
                                  Semaphore inflightSemaphore) {
         String msgId = messageView.getMessageId().toString();
+        propagator.restore(messageView.getProperties());
+        long startNanos = meterRegistry != null ? System.nanoTime() : 0;
         try {
             T payload = codec.decode(toByteArray(messageView.getBody()), payloadType);
             Message<T> message = new Message<>(
@@ -170,6 +201,11 @@ class SimpleConsumerReceiveLoop<T> {
             );
             handler.onMessage(message);
             simpleConsumer.ack(messageView);
+            if (meterRegistry != null) {
+                meterRegistry.timer("messaging.consume.latency",
+                        "topic", topic, "group", group, "mode", "simple")
+                    .record(System.nanoTime() - startNanos, TimeUnit.NANOSECONDS);
+            }
             log.debug("Message consumed and acked: topic={}, group={}, msgId={}", topic, group, msgId);
             if (retryCounter != null) retryCounter.remove(msgId);
         } catch (PermanentConsumeException e) {
@@ -178,6 +214,7 @@ class SimpleConsumerReceiveLoop<T> {
             handleRetryableError(messageView, msgId, e, retryCounter, skipRetry, maxRetries);
         } finally {
             inflightSemaphore.release();
+            propagator.clear();
         }
     }
 
@@ -208,6 +245,11 @@ class SimpleConsumerReceiveLoop<T> {
         } else {
             int attempts = retryCounter.computeIfAbsent(msgId, k -> new AtomicInteger(0))
                 .incrementAndGet();
+            if (meterRegistry != null) {
+                meterRegistry.counter("messaging.retry.count",
+                    "topic", topic, "group", group, "mode", "simple",
+                    "attempt", String.valueOf(attempts)).increment();
+            }
             if (attempts >= maxRetries) {
                 log.error("Simple consume exhausted retries ({}): topic={}, msgId={}",
                     attempts, topic, msgId, e);

@@ -9,6 +9,14 @@ import java.util.Map;
  * Consumer: restore() recovers trace context before calling listener.
  */
 public interface TracePropagator {
+
+    /** No-op implementation — used when no tracing infrastructure is available */
+    TracePropagator NO_OP = new TracePropagator() {
+        @Override public Map<String, String> inject() { return Map.of(); }
+        @Override public void restore(Map<String, String> headers) { }
+        @Override public void clear() { }
+    };
+
     /** Extract trace info from current context for injection into Message.headers */
     Map<String, String> inject();
 

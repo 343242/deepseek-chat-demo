@@ -27,6 +27,7 @@ public class RocketMQSubscription implements Subscription {
     @Nullable private final PushConsumer pushConsumer;
     @Nullable private final SimpleConsumer simpleConsumer;
     @Nullable private final ExecutorService receiveExecutor;
+    @Nullable private final SimpleConsumerReceiveLoop<?> receiveLoop;
 
     private final AtomicBoolean closed = new AtomicBoolean(false);
     @Nullable private volatile AtomicBoolean runningFlag;
@@ -35,12 +36,22 @@ public class RocketMQSubscription implements Subscription {
     RocketMQSubscription(String topic, String group,
                          @Nullable PushConsumer pushConsumer,
                          @Nullable SimpleConsumer simpleConsumer,
-                         @Nullable ExecutorService receiveExecutor) {
+                         @Nullable ExecutorService receiveExecutor,
+                         @Nullable SimpleConsumerReceiveLoop<?> receiveLoop) {
         this.topic = topic;
         this.group = group;
         this.pushConsumer = pushConsumer;
         this.simpleConsumer = simpleConsumer;
         this.receiveExecutor = receiveExecutor;
+        this.receiveLoop = receiveLoop;
+    }
+
+    /** Backward-compatible constructor for PushConsumer (no loop). */
+    RocketMQSubscription(String topic, String group,
+                         @Nullable PushConsumer pushConsumer,
+                         @Nullable SimpleConsumer simpleConsumer,
+                         @Nullable ExecutorService receiveExecutor) {
+        this(topic, group, pushConsumer, simpleConsumer, receiveExecutor, null);
     }
 
     void setRunningFlag(AtomicBoolean flag) {
@@ -79,6 +90,9 @@ public class RocketMQSubscription implements Subscription {
         }
         if (runningFlag != null) {
             runningFlag.set(false);
+        }
+        if (receiveLoop != null) {
+            receiveLoop.shutdownProcessingPool();
         }
         if (receiveExecutor != null) {
             receiveExecutor.shutdown();

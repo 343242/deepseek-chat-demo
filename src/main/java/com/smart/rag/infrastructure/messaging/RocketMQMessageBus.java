@@ -155,14 +155,14 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
         }
         try {
             return producer.sendAsync(rmqMsg)
-                .thenApply(receipt -> {
+                .handle((receipt, ex) -> {
+                    if (ex != null) {
+                        cb.recordFailure();
+                        Throwable cause = (ex instanceof CompletionException ce) ? ce.getCause() : ex;
+                        throw new MessagePublishException("Async send failed: " + message.topic(), cause);
+                    }
                     cb.recordSuccess();
                     return receipt.getMessageId().toString();
-                })
-                .exceptionally(e -> {
-                    cb.recordFailure();
-                    Throwable cause = (e instanceof CompletionException ce) ? ce.getCause() : e;
-                    throw new MessagePublishException("Async send failed: " + message.topic(), cause);
                 });
         } catch (Exception e) {
             cb.recordFailure();
@@ -504,6 +504,9 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
 
     @Override
     public void shutdown() {
+        if (shutdown) {
+            return;
+        }
         if (producer == null && activeSubscriptions.isEmpty()) {
             shutdown = true;
             return;

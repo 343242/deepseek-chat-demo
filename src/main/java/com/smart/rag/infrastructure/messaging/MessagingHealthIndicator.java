@@ -38,8 +38,10 @@ public class MessagingHealthIndicator extends AbstractHealthIndicator {
 
         // 3. Circuit breaker state
         String circuitBreakerState = busManagement.circuitBreakerState();
+        boolean hasOpenBreaker = circuitBreakerState.contains("open")
+            || circuitBreakerState.contains("half_open");
 
-        builder.up()
+        (hasOpenBreaker ? builder.down() : builder.up())
             .withDetail("producer", "healthy")
             .withDetail("activeSubscriptions", activeSubscriptions)
             .withDetail("circuitBreaker", circuitBreakerState);

@@ -84,15 +84,19 @@ public class RocketMQSubscription implements Subscription {
                 Thread.currentThread().interrupt();
             }
         }
-        try {
-            if (simpleConsumer != null) {
+        if (simpleConsumer != null) {
+            try {
                 simpleConsumer.close();
+            } catch (Exception e) {
+                log.warn("Error closing simpleConsumer: topic={}, group={}", topic, group, e);
             }
-            if (pushConsumer != null) {
+        }
+        if (pushConsumer != null) {
+            try {
                 pushConsumer.close();
+            } catch (Exception e) {
+                log.warn("Error closing pushConsumer: topic={}, group={}", topic, group, e);
             }
-        } catch (Exception e) {
-            log.warn("Error closing consumer: topic={}, group={}", topic, group, e);
         }
     }
 

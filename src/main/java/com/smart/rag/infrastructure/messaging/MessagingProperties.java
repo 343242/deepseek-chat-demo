@@ -5,6 +5,7 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 
 import java.time.Duration;
 import java.util.Set;
+import java.util.Collections;
 
 /**
  * Messaging bus configuration properties.
@@ -28,6 +29,9 @@ public record MessagingProperties(
         if (shutdownTimeout == null) {
             shutdownTimeout = Duration.ofSeconds(30);
         }
+        if (orderedTopics == null) {
+            orderedTopics = Collections.emptySet();
+        }
         if (idempotent == null) {
             idempotent = new IdempotentConfig(true, 90000);
         }
@@ -35,8 +39,8 @@ public record MessagingProperties(
             circuitBreaker = new CircuitBreakerConfig(5, 30000);
         }
         if (rocketmq == null) {
-            rocketmq = new RocketMQConfig(null, "smart-rag-producer",
-                Duration.ofSeconds(3), 16, 4194304, null, null);
+            rocketmq = new RocketMQConfig(null, null,
+                null, 0, 0, null, null);
         }
     }
 
@@ -77,9 +81,11 @@ public record MessagingProperties(
         @Nullable String accessKey,
         @Nullable String secretKey
     ) {
+        public static final String DEFAULT_PRODUCER_GROUP = "smart-rag-producer";
+
         public RocketMQConfig {
             if (producerGroup == null || producerGroup.isEmpty()) {
-                producerGroup = "smart-rag-producer";
+                producerGroup = DEFAULT_PRODUCER_GROUP;
             }
             if (requestTimeout == null) {
                 requestTimeout = Duration.ofSeconds(3);

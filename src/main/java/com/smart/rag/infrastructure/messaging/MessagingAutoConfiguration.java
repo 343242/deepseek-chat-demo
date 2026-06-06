@@ -1,10 +1,13 @@
 package com.smart.rag.infrastructure.messaging;
 
+import io.micrometer.core.instrument.MeterRegistry;
 import org.apache.rocketmq.client.apis.ClientServiceProvider;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.actuate.health.HealthIndicator;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.data.redis.core.StringRedisTemplate;
 
 /**
  * Messaging bus auto-configuration.
@@ -24,8 +27,14 @@ public class MessagingAutoConfiguration {
     @Bean(destroyMethod = "shutdown")
     MessageBus rocketMQMessageBus(MessagingProperties properties,
                                   MessagePayloadCodec codec,
-                                  ClientServiceProvider provider) {
-        return new RocketMQMessageBus(properties, codec, provider);
+                                  ClientServiceProvider provider,
+                                  @Autowired(required = false) MeterRegistry meterRegistry,
+                                  @Autowired(required = false) StringRedisTemplate redisTemplate) {
+        RocketMQMessageBus bus = new RocketMQMessageBus(properties, codec, provider, meterRegistry);
+        if (redisTemplate != null) {
+            bus.setRedisTemplate(redisTemplate);
+        }
+        return bus;
     }
 
     @Bean

@@ -92,6 +92,12 @@ public record ConsumerConfig(
             if (tagExpression == null || tagExpression.isBlank()) {
                 tagExpression = "*";
             }
+            if (retryPolicy == null) {
+                retryPolicy = RetryPolicy.DEFAULT;
+            }
+            if (consumeTimeout == null) {
+                consumeTimeout = Duration.ofMinutes(15);
+            }
             return new ConsumerConfig(consumerMode, concurrency, batchSize,
                 consumeTimeout, invisibleDuration, tagExpression, retryPolicy);
         }

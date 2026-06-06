@@ -30,26 +30,15 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.ArrayList;
-
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.RejectedExecutionException;
-import java.util.concurrent.Semaphore;
-import java.util.concurrent.ThreadPoolExecutor;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Pattern;
 
 /**
@@ -249,9 +238,9 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
                     topic, group, messageView.getMessageId());
                 return ConsumeResult.SUCCESS;
             } catch (PermanentConsumeException e) {
-                log.error("Permanent consume error, skipping retry: topic={}, msgId={}",
+                log.error("Permanent consume error, acking to skip broker retry: topic={}, msgId={}",
                     topic, messageView.getMessageId(), e);
-                return ConsumeResult.FAILURE;
+                return ConsumeResult.SUCCESS;
             } catch (Exception e) {
                 log.error("Push consume failed: topic={}, msgId={}",
                     topic, messageView.getMessageId(), e);
@@ -301,179 +290,22 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
             Class<T> payloadType, MessageHandler<T> handler,
             SimpleConsumer simpleConsumer) {
 
-        ExecutorService receiveExecutor = Executors.newSingleThreadExecutor(
-            r -> new Thread(r, "simple-consumer-" + topic));
-        AtomicBoolean running = new AtomicBoolean(true);
-        AtomicLong closeTimeoutMs = new AtomicLong(properties.shutdownTimeout().toMillis());
-        int maxRetries = config.retryPolicy().maxRetries();
-        boolean skipRetry = maxRetries <= 0;
+        SimpleConsumerReceiveLoop<T> loop = new SimpleConsumerReceiveLoop<>(
+            topic, group, config, payloadType, handler, simpleConsumer,
+            codec, properties.shutdownTimeout(), this::sendToDeadLetter);
 
-        ConcurrentMap<String, AtomicInteger> retryCounter = skipRetry
-            ? null : new ConcurrentHashMap<>();
-
-        int processingConcurrency = Math.max(1, config.concurrency());
-        AtomicInteger threadCounter = new AtomicInteger(0);
-        ExecutorService processingPool = new ThreadPoolExecutor(
-            processingConcurrency, processingConcurrency, 0L, TimeUnit.MILLISECONDS,
-            new ArrayBlockingQueue<>(config.batchSize() * 2),
-            r -> new Thread(r, "simple-process-" + topic + "-" + threadCounter.incrementAndGet()),
-            new ThreadPoolExecutor.AbortPolicy()
-        );
-
-        Semaphore inflightSemaphore = new Semaphore(config.concurrency());
-
-        receiveExecutor.submit(() -> {
-            long backoffMs = 1000;
-            while (running.get()) {
-                try {
-                    if (!inflightSemaphore.tryAcquire(1, TimeUnit.SECONDS)) {
-                        continue;
-                    }
-                    List<MessageView> messages = simpleConsumer.receive(
-                        Math.min(config.batchSize(), config.concurrency()),
-                        config.invisibleDuration());
-                    backoffMs = 1000;
-                    if (messages.isEmpty()) {
-                        inflightSemaphore.release();
-                        continue;
-                    }
-                    List<MessageView> processable = new ArrayList<>(messages.size());
-                    processable.add(messages.get(0));
-                    for (int i = 1; i < messages.size(); i++) {
-                        if (inflightSemaphore.tryAcquire()) {
-                            processable.add(messages.get(i));
-                        } else {
-                            break;
-                        }
-                    }
-                    for (MessageView messageView : processable) {
-                        try {
-                            processingPool.submit(() -> processMessage(
-                                messageView, topic, group, config, payloadType, handler,
-                                simpleConsumer, retryCounter, skipRetry, maxRetries, inflightSemaphore));
-                        } catch (RejectedExecutionException e) {
-                            inflightSemaphore.release();
-                            log.debug("Processing pool full, releasing semaphore: topic={}", topic);
-                        }
-                    }
-                } catch (Exception e) {
-                    if (running.get()) {
-                        log.warn("Simple receive error, retrying in {}ms: topic={}", backoffMs, topic, e);
-                        try {
-                            Thread.sleep(Math.min(backoffMs, 60_000));
-                        } catch (InterruptedException ie) {
-                            Thread.currentThread().interrupt();
-                            break;
-                        }
-                        backoffMs = Math.min(backoffMs * 2, 60_000);
-                    }
-                }
-            }
-            processingPool.shutdown();
-            try {
-                long timeout = closeTimeoutMs.get();
-                if (!processingPool.awaitTermination(timeout, TimeUnit.MILLISECONDS)) {
-                    log.warn("Processing pool did not terminate within {}ms: topic={}",
-                        timeout, topic);
-                    processingPool.shutdownNow();
-                }
-            } catch (InterruptedException e) {
-                processingPool.shutdownNow();
-                Thread.currentThread().interrupt();
-            }
-        });
+        ExecutorService receiveExecutor = loop.start();
 
         RocketMQSubscription subscription = new RocketMQSubscription(
             topic, group, null, simpleConsumer, receiveExecutor);
-        subscription.setRunningFlag(running);
-        subscription.setCloseTimeoutMsHolder(closeTimeoutMs);
+        subscription.setRunningFlag(loop.runningFlag());
+        subscription.setCloseTimeoutMsHolder(loop.closeTimeoutMsHolder());
         return subscription;
-    }
-
-    private <T> void processMessage(
-            MessageView messageView, String topic, String group,
-            ConsumerConfig config, Class<T> payloadType,
-            MessageHandler<T> handler, SimpleConsumer simpleConsumer,
-            @Nullable ConcurrentMap<String, AtomicInteger> retryCounter,
-            boolean skipRetry, int maxRetries,
-            Semaphore inflightSemaphore) {
-        String msgId = messageView.getMessageId().toString();
-        try {
-            T payload = codec.decode(toByteArray(messageView.getBody()), payloadType);
-            Message<T> message = new Message<>(
-                msgId, topic,
-                messageView.getTag().orElse(null),
-                payload, null,
-                messageView.getKeys().stream().findFirst().orElse(null),
-                messageView.getProperties(),
-                messageView.getBornTimestamp()
-            );
-            handler.onMessage(message);
-            simpleConsumer.ack(messageView);
-            log.debug("Message consumed and acked: topic={}, group={}, msgId={}", topic, group, msgId);
-            if (retryCounter != null) retryCounter.remove(msgId);
-        } catch (PermanentConsumeException e) {
-            handlePermanentError(messageView, topic, group, msgId, simpleConsumer, retryCounter);
-        } catch (Exception e) {
-            handleRetryableError(messageView, topic, group, msgId, e,
-                retryCounter, skipRetry, maxRetries, simpleConsumer);
-        } finally {
-            inflightSemaphore.release();
-        }
-    }
-
-    private void handlePermanentError(MessageView messageView, String topic, String group,
-                                       String msgId, SimpleConsumer simpleConsumer,
-                                       @Nullable ConcurrentMap<String, AtomicInteger> retryCounter) {
-        log.error("Permanent consume error, forwarding to DLQ: topic={}, msgId={}", topic, msgId);
-        if (sendToDeadLetter(messageView, topic, group)) {
-            try { simpleConsumer.ack(messageView); } catch (Exception e) {
-                log.warn("Ack failed after DLQ forward: topic={}, msgId={}", topic, msgId, e);
-            }
-        } else {
-            log.warn("DLQ forward failed for permanent error, message will reappear: topic={}, msgId={}",
-                topic, msgId);
-        }
-        if (retryCounter != null) retryCounter.remove(msgId);
-    }
-
-    private void handleRetryableError(MessageView messageView, String topic, String group,
-                                       String msgId, Exception e,
-                                       @Nullable ConcurrentMap<String, AtomicInteger> retryCounter,
-                                       boolean skipRetry, int maxRetries,
-                                       SimpleConsumer simpleConsumer) {
-        if (skipRetry || retryCounter == null) {
-            log.error("Simple consume failed (no retry): topic={}, msgId={}", topic, msgId, e);
-            if (sendToDeadLetter(messageView, topic, group)) {
-                try { simpleConsumer.ack(messageView); } catch (Exception ae) {
-                    log.warn("Ack failed after DLQ forward: topic={}, msgId={}", topic, msgId, ae);
-                }
-            }
-        } else {
-            int attempts = retryCounter.computeIfAbsent(msgId, k -> new AtomicInteger(0))
-                .incrementAndGet();
-            if (attempts >= maxRetries) {
-                log.error("Simple consume exhausted retries ({}): topic={}, msgId={}",
-                    attempts, topic, msgId, e);
-                if (sendToDeadLetter(messageView, topic, group)) {
-                    try { simpleConsumer.ack(messageView); } catch (Exception ae) {
-                        log.warn("Ack failed after DLQ forward: topic={}, msgId={}", topic, msgId, ae);
-                    }
-                    retryCounter.remove(msgId);
-                } else {
-                    retryCounter.remove(msgId);
-                    log.warn("DLQ forward failed, retry counter reset: topic={}, msgId={}", topic, msgId);
-                }
-            } else {
-                log.warn("Simple consume failed ({}/{}): topic={}, msgId={}",
-                    attempts, maxRetries, topic, msgId, e);
-            }
-        }
     }
 
     // ==================== Dead Letter ====================
 
-    private boolean sendToDeadLetter(MessageView messageView, String topic, String group) {
+    boolean sendToDeadLetter(MessageView messageView, String topic, String group) {
         String msgId = messageView.getMessageId().toString();
         try {
             String dlqTopic = "%DLQ%" + group;

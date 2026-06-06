@@ -14,7 +14,6 @@ import java.util.Set;
  */
 @ConfigurationProperties(prefix = "app.messaging")
 public record MessagingProperties(
-    boolean enabled,
     String topicPrefix,
     Duration shutdownTimeout,
     Set<String> orderedTopics,

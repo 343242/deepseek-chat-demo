@@ -77,7 +77,6 @@ app:
       TYPESCRIPT: sandbox-node:bookworm
       JAVA: sandbox-java:bookworm
   messaging:
-    enabled: ${MESSAGING_ENABLED:false}
     topic-prefix: ${MESSAGING_TOPIC_PREFIX:SMART_RAG_}
     shutdown-timeout: ${MESSAGING_SHUTDOWN_TIMEOUT:30s}
     ordered-topics:

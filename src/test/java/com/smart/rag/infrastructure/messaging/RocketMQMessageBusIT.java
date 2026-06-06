@@ -62,7 +62,7 @@ class RocketMQMessageBusIT {
     static void setUp() {
         String endpoints = "localhost:" + broker.getMappedPort(PROXY_PORT);
         MessagingProperties properties = new MessagingProperties(
-            true, TOPIC_PREFIX, Duration.ofSeconds(30),
+            TOPIC_PREFIX, Duration.ofSeconds(30),
             Set.of("ordered_topic"),
             new MessagingProperties.IdempotentConfig(false, 90000),
             new MessagingProperties.CircuitBreakerConfig(5, 30000),

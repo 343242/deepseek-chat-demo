@@ -3,16 +3,14 @@ package com.smart.rag.infrastructure.messaging;
 import com.smart.rag.infrastructure.messaging.exception.MessagePublishException;
 import com.smart.rag.infrastructure.messaging.exception.MessagingErrorCode;
 import com.smart.rag.infrastructure.messaging.exception.MessagingException;
-import com.smart.rag.infrastructure.messaging.exception.PermanentConsumeException;
+import com.smart.rag.infrastructure.messaging.idempotent.IdempotentHandler;
 import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.Nullable;
 import org.apache.rocketmq.client.apis.ClientConfiguration;
 import org.apache.rocketmq.client.apis.ClientException;
 import org.apache.rocketmq.client.apis.ClientServiceProvider;
-import org.apache.rocketmq.client.apis.consumer.ConsumeResult;
 import org.apache.rocketmq.client.apis.consumer.FilterExpression;
 import org.apache.rocketmq.client.apis.consumer.FilterExpressionType;
-import org.apache.rocketmq.client.apis.consumer.MessageListener;
 import org.apache.rocketmq.client.apis.consumer.PushConsumer;
 import org.apache.rocketmq.client.apis.consumer.SimpleConsumer;
 import org.apache.rocketmq.client.apis.message.MessageView;
@@ -21,8 +19,6 @@ import org.apache.rocketmq.client.apis.producer.SendReceipt;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
-import org.springframework.data.redis.core.script.DefaultRedisScript;
-import org.springframework.data.redis.core.script.RedisScript;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
@@ -52,17 +48,8 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
 
     private static final Logger log = LoggerFactory.getLogger(RocketMQMessageBus.class);
 
-    private static final Pattern TOPIC_PATTERN = Pattern.compile("^[a-zA-Z0-9_-][%a-zA-Z0-9_-]{0,127}$");
-    private static final Pattern TAG_PATTERN = Pattern.compile("^[a-zA-Z0-9_-]{1,64}$");
     private static final Pattern GROUP_PATTERN = Pattern.compile("^[a-zA-Z0-9_-]{1,128}$");
     private static final long PRODUCER_HEALTH_THRESHOLD_MS = 60_000;
-
-    private static final RedisScript<Long> IDEMPOTENT_MARK = new DefaultRedisScript<>(
-        "local result = redis.call('SET', KEYS[1], '1', 'NX', 'EX', ARGV[1]) " +
-        "if result then return 0 end " +
-        "return 1",
-        Long.class
-    );
 
     private final MessagingProperties properties;
     private final MessagePayloadCodec codec;
@@ -79,6 +66,7 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
     private volatile boolean shutdown;
     private volatile long lastSuccessfulSendMs = System.currentTimeMillis();
     @Nullable private volatile DeadLetterOperations deadLetterOps;
+    private final MessageValidator validator;
 
     public RocketMQMessageBus(MessagingProperties properties,
                                MessagePayloadCodec codec,
@@ -103,8 +91,9 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
         this.provider = provider;
         this.meterRegistry = meterRegistry;
         this.propagator = propagator != null ? propagator : TracePropagator.NO_OP;
+        this.validator = new MessageValidator(properties, codec);
 
-        validateTopicPrefix(properties.topicPrefix());
+        MessageValidator.validateTopicPrefix(properties.topicPrefix());
 
         this.clientConfiguration = ClientConfiguration.newBuilder()
             .setEndpoints(properties.rocketmq().endpoints())
@@ -134,8 +123,8 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
             throw new MessagePublishException("Circuit breaker OPEN for topic: " + message.topic());
         }
         try {
-            byte[] encoded = validateAndEncode(message);
-            org.apache.rocketmq.client.apis.message.Message rmqMsg = buildRocketMQMessage(message, encoded);
+            byte[] encoded = validator.validateAndEncode(message);
+            var rmqMsg = buildRocketMQMessage(message, encoded);
             long startNanos = meterRegistry != null ? System.nanoTime() : 0;
             SendReceipt receipt = producer.send(rmqMsg);
             if (meterRegistry != null) {
@@ -162,8 +151,8 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
 
     @Override
     public CompletableFuture<String> sendAsync(Message<?> message) {
-        byte[] encoded = validateAndEncode(message);
-        org.apache.rocketmq.client.apis.message.Message rmqMsg = buildRocketMQMessage(message, encoded);
+        byte[] encoded = validator.validateAndEncode(message);
+        var rmqMsg = buildRocketMQMessage(message, encoded);
         SendCircuitBreaker cb = circuitBreakerFor(message.topic());
         if (!cb.isCallAllowed()) {
             return CompletableFuture.failedFuture(
@@ -226,7 +215,9 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
             }
         }
 
-        MessageHandler<T> wrappedHandler = wrapWithIdempotent(handler, topic);
+        MessageHandler<T> wrappedHandler = properties.idempotent().enabled() && redis != null
+            ? IdempotentHandler.wrap(handler, topic, redis, properties.idempotent().ttlSeconds(), meterRegistry)
+            : handler;
 
         String fullTopic = properties.topicPrefix() + topic;
         FilterExpression filterExpression = new FilterExpression(
@@ -266,51 +257,9 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
             Class<T> payloadType, MessageHandler<T> handler,
             Map<String, FilterExpression> subscriptionExpressions) throws ClientException {
 
-        MessageListener pushListener = messageView -> {
-            propagator.restore(messageView.getProperties());
-            long startNanos = meterRegistry != null ? System.nanoTime() : 0;
-            try {
-                T payload = codec.decode(MessagePayloadCodec.toByteArray(messageView.getBody()), payloadType);
-                Message<T> message = new Message<>(
-                    messageView.getMessageId().toString(),
-                    topic,
-                    messageView.getTag().orElse(null),
-                    payload,
-                    null,
-                    messageView.getKeys().stream().findFirst().orElse(null),
-                    messageView.getProperties(),
-                    messageView.getBornTimestamp()
-                );
-                handler.onMessage(message);
-                if (meterRegistry != null) {
-                    meterRegistry.counter("messaging.consume.count",
-                        "topic", topic, "group", group, "mode", "push", "result", "success").increment();
-                    meterRegistry.timer("messaging.consume.latency",
-                            "topic", topic, "group", group, "mode", "push")
-                        .record(System.nanoTime() - startNanos, TimeUnit.NANOSECONDS);
-                }
-                log.debug("Message consumed: topic={}, group={}, msgId={}",
-                    topic, group, messageView.getMessageId());
-                return ConsumeResult.SUCCESS;
-            } catch (PermanentConsumeException e) {
-                log.error("Permanent consume error, forwarding to DLQ: topic={}, msgId={}",
-                    topic, messageView.getMessageId(), e);
-                sendToDeadLetter(messageView, topic, group);
-                return ConsumeResult.SUCCESS;
-            } catch (Exception e) {
-                log.error("Push consume failed: topic={}, msgId={}",
-                    topic, messageView.getMessageId(), e);
-                if (meterRegistry != null) {
-                    meterRegistry.counter("messaging.consume.count",
-                        "topic", topic, "group", group, "mode", "push", "result", "fail").increment();
-                    meterRegistry.counter("messaging.retry.count",
-                        "topic", topic, "group", group, "mode", "push").increment();
-                }
-                return ConsumeResult.FAILURE;
-            } finally {
-                propagator.clear();
-            }
-        };
+        var pushListener = new PushConsumerListener<>(
+            topic, group, payloadType, handler, codec,
+            this::sendToDeadLetter, meterRegistry, propagator).create();
 
         PushConsumer pushConsumer = provider.newPushConsumerBuilder()
             .setClientConfiguration(clientConfiguration)
@@ -372,7 +321,7 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
         String msgId = messageView.getMessageId().toString();
         try {
             String dlqTopic = "%DLQ%" + group;
-            org.apache.rocketmq.client.apis.message.Message dlqMsg =
+            var dlqMsg =
                 provider.newMessageBuilder()
                     .setTopic(dlqTopic)
                     .setBody(MessagePayloadCodec.toByteArray(messageView.getBody()))
@@ -493,54 +442,6 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
         return deadLetterOps;
     }
 
-    // ==================== Idempotent Wrapper ====================
-
-    <T> MessageHandler<T> wrapWithIdempotent(MessageHandler<T> handler, String topic) {
-        if (!properties.idempotent().enabled() || redis == null) {
-            return handler;
-        }
-        return msg -> {
-            String idempotentKey = msg.deduplicationKey();
-            if (idempotentKey == null || idempotentKey.isEmpty()) {
-                handler.onMessage(msg);
-                return;
-            }
-            String redisKey = "messaging:idempotent:" + topic + ":" + idempotentKey;
-            boolean marked = false;
-            try {
-                Long isDuplicate = redis.execute(
-                    IDEMPOTENT_MARK,
-                    List.of(redisKey),
-                    String.valueOf(properties.idempotent().ttlSeconds()));
-                if (isDuplicate != null && isDuplicate == 1L) {
-                    log.info("Duplicate message skipped: topic={}, key={}", topic, idempotentKey);
-                    return;
-                }
-                marked = true;
-                handler.onMessage(msg);
-            } catch (Exception e) {
-                if (marked) {
-                    try { redis.delete(redisKey); } catch (Exception de) {
-                        log.warn("Failed to delete idempotent key after handler failure: key={}", redisKey, de);
-                    }
-                    throw (e instanceof RuntimeException re) ? re : new RuntimeException(e);
-                }
-                log.warn("Idempotent check failed (Redis unavailable), delegating to business-layer: topic={}",
-                    topic, e);
-                if (meterRegistry != null) {
-                    meterRegistry.counter("messaging.idempotent.degraded", "topic", topic).increment();
-                }
-                try {
-                    handler.onMessage(msg);
-                } catch (Exception listenerEx) {
-                    log.error("Listener failed during Redis-degraded path: topic={}, key={}",
-                        topic, idempotentKey, listenerEx);
-                    throw listenerEx;
-                }
-            }
-        };
-    }
-
     // ==================== Management ====================
 
     @Override
@@ -601,38 +502,4 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
             && properties.orderedTopics().contains(topic);
     }
 
-    private byte[] validateAndEncode(Message<?> message) {
-        String fullTopic = properties.topicPrefix() + message.topic();
-        if (fullTopic.length() > 128) {
-            throw new IllegalArgumentException(
-                "Full topic name too long: '" + fullTopic
-                + "' (prefix + topic = " + fullTopic.length() + " chars, max 128)");
-        }
-        if (!TOPIC_PATTERN.matcher(message.topic()).matches()) {
-            throw new IllegalArgumentException(
-                "Invalid topic name: '" + message.topic()
-                + "'. Must be 1-128 chars, alphanumeric/underscore/hyphen/percent only.");
-        }
-        if (message.tag() != null && !TAG_PATTERN.matcher(message.tag()).matches()) {
-            throw new IllegalArgumentException(
-                "Invalid tag name: '" + message.tag()
-                + "'. Must be 1-64 chars, alphanumeric/underscore/hyphen only.");
-        }
-        byte[] encoded = codec.encode(message.payload());
-        if (encoded.length > properties.rocketmq().maxMessageSize()) {
-            throw new IllegalArgumentException(
-                "Message payload too large: " + encoded.length + " bytes");
-        }
-        return encoded;
-    }
-
-    private static void validateTopicPrefix(String prefix) {
-        if (prefix != null && !prefix.isEmpty()
-            && !Pattern.matches("^[a-zA-Z0-9_-][%a-zA-Z0-9_-]*$", prefix)) {
-            throw new IllegalArgumentException(
-                "Invalid topicPrefix: '" + prefix
-                + "'. Must start with alphanumeric/underscore/hyphen, "
-                + "followed by alphanumeric/underscore/hyphen/percent characters only.");
-        }
-    }
 }

@@ -27,7 +27,6 @@ import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.io.IOException;
-import java.nio.ByteBuffer;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Collections;
@@ -56,6 +55,7 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
     private static final Pattern TOPIC_PATTERN = Pattern.compile("^[a-zA-Z0-9_-][%a-zA-Z0-9_-]{0,127}$");
     private static final Pattern TAG_PATTERN = Pattern.compile("^[a-zA-Z0-9_-]{1,64}$");
     private static final Pattern GROUP_PATTERN = Pattern.compile("^[a-zA-Z0-9_-]{1,128}$");
+    private static final long PRODUCER_HEALTH_THRESHOLD_MS = 60_000;
 
     private static final RedisScript<Long> IDEMPOTENT_MARK = new DefaultRedisScript<>(
         "local result = redis.call('SET', KEYS[1], '1', 'NX', 'EX', ARGV[1]) " +
@@ -77,6 +77,7 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
     private final CopyOnWriteArrayList<RocketMQSubscription> activeSubscriptions = new CopyOnWriteArrayList<>();
     private final ConcurrentMap<String, SendCircuitBreaker> circuitBreakers = new ConcurrentHashMap<>();
     private volatile boolean shutdown;
+    private volatile long lastSuccessfulSendMs = System.currentTimeMillis();
     @Nullable private volatile DeadLetterOperations deadLetterOps;
 
     public RocketMQMessageBus(MessagingProperties properties,
@@ -142,10 +143,19 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
                     .record(System.nanoTime() - startNanos, TimeUnit.NANOSECONDS);
             }
             cb.recordSuccess();
+            lastSuccessfulSendMs = System.currentTimeMillis();
+            if (meterRegistry != null) {
+                meterRegistry.counter("messaging.send.count",
+                    "topic", message.topic(), "result", "success").increment();
+            }
             log.debug("Message sent: topic={}, msgId={}", message.topic(), receipt.getMessageId());
             return receipt.getMessageId().toString();
         } catch (Exception e) {
             cb.recordFailure();
+            if (meterRegistry != null) {
+                meterRegistry.counter("messaging.send.count",
+                    "topic", message.topic(), "result", "fail").increment();
+            }
             throw new MessagePublishException("Failed to send message to topic: " + message.topic(), e);
         }
     }
@@ -165,15 +175,22 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
                 .handle((receipt, ex) -> {
                     if (ex != null) {
                         cb.recordFailure();
+                        if (meterRegistry != null) {
+                            meterRegistry.counter("messaging.send.count",
+                                "topic", message.topic(), "result", "fail").increment();
+                        }
                         Throwable cause = (ex instanceof CompletionException ce) ? ce.getCause() : ex;
                         throw new MessagePublishException("Async send failed: " + message.topic(), cause);
                     }
                     try {
                         cb.recordSuccess();
+                        lastSuccessfulSendMs = System.currentTimeMillis();
                     } catch (Exception cbEx) {
                         log.warn("Circuit breaker recordSuccess failed", cbEx);
                     }
                     if (meterRegistry != null) {
+                        meterRegistry.counter("messaging.send.count",
+                            "topic", message.topic(), "result", "success").increment();
                         meterRegistry.timer("messaging.send.latency", "topic", message.topic())
                             .record(System.nanoTime() - startNanos, TimeUnit.NANOSECONDS);
                     }
@@ -181,6 +198,10 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
                 });
         } catch (Exception e) {
             cb.recordFailure();
+            if (meterRegistry != null) {
+                meterRegistry.counter("messaging.send.count",
+                    "topic", message.topic(), "result", "fail").increment();
+            }
             return CompletableFuture.failedFuture(
                 new MessagePublishException("Failed to initiate async send: " + message.topic(), e));
         }
@@ -249,7 +270,7 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
             propagator.restore(messageView.getProperties());
             long startNanos = meterRegistry != null ? System.nanoTime() : 0;
             try {
-                T payload = codec.decode(toByteArray(messageView.getBody()), payloadType);
+                T payload = codec.decode(MessagePayloadCodec.toByteArray(messageView.getBody()), payloadType);
                 Message<T> message = new Message<>(
                     messageView.getMessageId().toString(),
                     topic,
@@ -262,6 +283,8 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
                 );
                 handler.onMessage(message);
                 if (meterRegistry != null) {
+                    meterRegistry.counter("messaging.consume.count",
+                        "topic", topic, "group", group, "mode", "push", "result", "success").increment();
                     meterRegistry.timer("messaging.consume.latency",
                             "topic", topic, "group", group, "mode", "push")
                         .record(System.nanoTime() - startNanos, TimeUnit.NANOSECONDS);
@@ -270,13 +293,16 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
                     topic, group, messageView.getMessageId());
                 return ConsumeResult.SUCCESS;
             } catch (PermanentConsumeException e) {
-                log.error("Permanent consume error, acking to skip broker retry: topic={}, msgId={}",
+                log.error("Permanent consume error, forwarding to DLQ: topic={}, msgId={}",
                     topic, messageView.getMessageId(), e);
+                sendToDeadLetter(messageView, topic, group);
                 return ConsumeResult.SUCCESS;
             } catch (Exception e) {
                 log.error("Push consume failed: topic={}, msgId={}",
                     topic, messageView.getMessageId(), e);
                 if (meterRegistry != null) {
+                    meterRegistry.counter("messaging.consume.count",
+                        "topic", topic, "group", group, "mode", "push", "result", "fail").increment();
                     meterRegistry.counter("messaging.retry.count",
                         "topic", topic, "group", group, "mode", "push").increment();
                 }
@@ -335,11 +361,9 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
 
         ExecutorService receiveExecutor = loop.start();
 
-        RocketMQSubscription subscription = new RocketMQSubscription(
-            topic, group, null, simpleConsumer, receiveExecutor, loop);
-        subscription.setRunningFlag(loop.runningFlag());
-        subscription.setCloseTimeoutMsHolder(loop.closeTimeoutMsHolder());
-        return subscription;
+        return new RocketMQSubscription(
+            topic, group, null, simpleConsumer, receiveExecutor, loop,
+            loop.runningFlag(), loop.closeTimeoutMsHolder());
     }
 
     // ==================== Dead Letter ====================
@@ -351,7 +375,7 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
             org.apache.rocketmq.client.apis.message.Message dlqMsg =
                 provider.newMessageBuilder()
                     .setTopic(dlqTopic)
-                    .setBody(toByteArray(messageView.getBody()))
+                    .setBody(MessagePayloadCodec.toByteArray(messageView.getBody()))
                     .setKeys(msgId)
                     .addProperty("originalTopic", topic)
                     .addProperty("originalGroup", group)
@@ -380,7 +404,7 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
     // ==================== Shutdown ====================
 
     @Override
-    public void shutdown() {
+    public synchronized void shutdown() {
         if (shutdown) {
             return;
         }
@@ -496,7 +520,9 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
                 handler.onMessage(msg);
             } catch (Exception e) {
                 if (marked) {
-                    try { redis.delete(redisKey); } catch (Exception de) { /* ignore */ }
+                    try { redis.delete(redisKey); } catch (Exception de) {
+                        log.warn("Failed to delete idempotent key after handler failure: key={}", redisKey, de);
+                    }
                     throw (e instanceof RuntimeException re) ? re : new RuntimeException(e);
                 }
                 log.warn("Idempotent check failed (Redis unavailable), delegating to business-layer: topic={}",
@@ -519,7 +545,8 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
 
     @Override
     public boolean isProducerHealthy() {
-        return !shutdown && producer != null;
+        return !shutdown && producer != null
+            && (System.currentTimeMillis() - lastSuccessfulSendMs < PRODUCER_HEALTH_THRESHOLD_MS);
     }
 
     @Override
@@ -528,16 +555,14 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
     }
 
     @Override
-    public String circuitBreakerState() {
+    public Map<String, String> circuitBreakerState() {
         if (circuitBreakers.isEmpty()) {
-            return "CLOSED";
+            return Map.of();
         }
-        StringBuilder sb = new StringBuilder();
-        circuitBreakers.forEach((topic, cb) -> {
-            if (!sb.isEmpty()) sb.append(", ");
-            sb.append(topic).append("=").append(cb.state().name().toLowerCase());
-        });
-        return sb.toString();
+        Map<String, String> result = new java.util.LinkedHashMap<>();
+        circuitBreakers.forEach((topic, cb) ->
+            result.put(topic, cb.state().name().toLowerCase()));
+        return result;
     }
 
     // ==================== Private Helpers ====================
@@ -609,11 +634,5 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
                 + "'. Must start with alphanumeric/underscore/hyphen, "
                 + "followed by alphanumeric/underscore/hyphen/percent characters only.");
         }
-    }
-
-    private static byte[] toByteArray(ByteBuffer buffer) {
-        byte[] bytes = new byte[buffer.remaining()];
-        buffer.get(bytes);
-        return bytes;
     }
 }

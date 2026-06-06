@@ -3,6 +3,8 @@ package com.smart.rag.infrastructure.messaging;
 import org.springframework.boot.actuate.health.AbstractHealthIndicator;
 import org.springframework.boot.actuate.health.Health;
 
+import java.util.Map;
+
 /**
  * Messaging bus health check — monitors producer connectivity, subscription activity,
  * and circuit breaker state via Spring Boot Actuator /health endpoint.
@@ -37,9 +39,11 @@ public class MessagingHealthIndicator extends AbstractHealthIndicator {
         }
 
         // 3. Circuit breaker state
-        String circuitBreakerState = busManagement.circuitBreakerState();
-        boolean hasOpenBreaker = circuitBreakerState.contains("open")
-            || circuitBreakerState.contains("half_open");
+        Map<String, String> circuitBreakerState = busManagement.circuitBreakerState();
+        boolean hasOpenBreaker = circuitBreakerState.isEmpty()
+            ? false
+            : circuitBreakerState.values().stream()
+                .anyMatch(s -> "open".equals(s) || "half_open".equals(s));
 
         (hasOpenBreaker ? builder.down() : builder.up())
             .withDetail("producer", "healthy")

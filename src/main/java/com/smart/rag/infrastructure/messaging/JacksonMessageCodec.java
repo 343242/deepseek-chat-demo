@@ -19,7 +19,7 @@ public class JacksonMessageCodec implements MessagePayloadCodec {
 
     public JacksonMessageCodec(ObjectMapper springObjectMapper) {
         this.objectMapper = springObjectMapper.copy()
-            .configure(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES, false);
+            .disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);
     }
 
     @Override

@@ -8,12 +8,12 @@ import org.apache.rocketmq.client.apis.message.MessageView;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.nio.ByteBuffer;
+import com.github.benmanes.caffeine.cache.Caffeine;
+
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.ArrayBlockingQueue;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -102,7 +102,10 @@ class SimpleConsumerReceiveLoop<T> {
         boolean skipRetry = maxRetries <= 0;
 
         ConcurrentMap<String, AtomicInteger> retryCounter = skipRetry
-            ? null : new ConcurrentHashMap<>();
+            ? null : Caffeine.newBuilder()
+                .expireAfterWrite(config.invisibleDuration().multipliedBy(2))
+                .<String, AtomicInteger>build()
+                .asMap();
 
         int processingConcurrency = Math.max(1, config.concurrency());
         AtomicInteger threadCounter = new AtomicInteger(0);
@@ -190,7 +193,7 @@ class SimpleConsumerReceiveLoop<T> {
         propagator.restore(messageView.getProperties());
         long startNanos = meterRegistry != null ? System.nanoTime() : 0;
         try {
-            T payload = codec.decode(toByteArray(messageView.getBody()), payloadType);
+            T payload = codec.decode(MessagePayloadCodec.toByteArray(messageView.getBody()), payloadType);
             Message<T> message = new Message<>(
                 msgId, topic,
                 messageView.getTag().orElse(null),
@@ -202,6 +205,8 @@ class SimpleConsumerReceiveLoop<T> {
             handler.onMessage(message);
             simpleConsumer.ack(messageView);
             if (meterRegistry != null) {
+                meterRegistry.counter("messaging.consume.count",
+                    "topic", topic, "group", group, "mode", "simple", "result", "success").increment();
                 meterRegistry.timer("messaging.consume.latency",
                         "topic", topic, "group", group, "mode", "simple")
                     .record(System.nanoTime() - startNanos, TimeUnit.NANOSECONDS);
@@ -209,8 +214,16 @@ class SimpleConsumerReceiveLoop<T> {
             log.debug("Message consumed and acked: topic={}, group={}, msgId={}", topic, group, msgId);
             if (retryCounter != null) retryCounter.remove(msgId);
         } catch (PermanentConsumeException e) {
+            if (meterRegistry != null) {
+                meterRegistry.counter("messaging.consume.count",
+                    "topic", topic, "group", group, "mode", "simple", "result", "fail").increment();
+            }
             handlePermanentError(messageView, msgId, retryCounter);
         } catch (Exception e) {
+            if (meterRegistry != null) {
+                meterRegistry.counter("messaging.consume.count",
+                    "topic", topic, "group", group, "mode", "simple", "result", "fail").increment();
+            }
             handleRetryableError(messageView, msgId, e, retryCounter, skipRetry, maxRetries);
         } finally {
             inflightSemaphore.release();
@@ -269,9 +282,4 @@ class SimpleConsumerReceiveLoop<T> {
         }
     }
 
-    private static byte[] toByteArray(ByteBuffer buffer) {
-        byte[] bytes = new byte[buffer.remaining()];
-        buffer.get(bytes);
-        return bytes;
-    }
 }

@@ -30,20 +30,24 @@ public class RocketMQSubscription implements Subscription {
     @Nullable private final SimpleConsumerReceiveLoop<?> receiveLoop;
 
     private final AtomicBoolean closed = new AtomicBoolean(false);
-    @Nullable private volatile AtomicBoolean runningFlag;
-    @Nullable private AtomicLong closeTimeoutMsHolder;
+    @Nullable private final AtomicBoolean runningFlag;
+    @Nullable private final AtomicLong closeTimeoutMsHolder;
 
     RocketMQSubscription(String topic, String group,
                          @Nullable PushConsumer pushConsumer,
                          @Nullable SimpleConsumer simpleConsumer,
                          @Nullable ExecutorService receiveExecutor,
-                         @Nullable SimpleConsumerReceiveLoop<?> receiveLoop) {
+                         @Nullable SimpleConsumerReceiveLoop<?> receiveLoop,
+                         @Nullable AtomicBoolean runningFlag,
+                         @Nullable AtomicLong closeTimeoutMsHolder) {
         this.topic = topic;
         this.group = group;
         this.pushConsumer = pushConsumer;
         this.simpleConsumer = simpleConsumer;
         this.receiveExecutor = receiveExecutor;
         this.receiveLoop = receiveLoop;
+        this.runningFlag = runningFlag;
+        this.closeTimeoutMsHolder = closeTimeoutMsHolder;
     }
 
     /** Backward-compatible constructor for PushConsumer (no loop). */
@@ -51,15 +55,7 @@ public class RocketMQSubscription implements Subscription {
                          @Nullable PushConsumer pushConsumer,
                          @Nullable SimpleConsumer simpleConsumer,
                          @Nullable ExecutorService receiveExecutor) {
-        this(topic, group, pushConsumer, simpleConsumer, receiveExecutor, null);
-    }
-
-    void setRunningFlag(AtomicBoolean flag) {
-        this.runningFlag = flag;
-    }
-
-    void setCloseTimeoutMsHolder(AtomicLong holder) {
-        this.closeTimeoutMsHolder = holder;
+        this(topic, group, pushConsumer, simpleConsumer, receiveExecutor, null, null, null);
     }
 
     @Override
@@ -73,12 +69,14 @@ public class RocketMQSubscription implements Subscription {
 
     @Override
     public void pause() {
-        log.warn("pause() not supported by RocketMQ 5.x — topic={}, group={}", topic, group);
+        throw new UnsupportedOperationException(
+            "pause() not supported by RocketMQ 5.x — topic=" + topic + ", group=" + group);
     }
 
     @Override
     public void resume() {
-        log.warn("resume() not supported by RocketMQ 5.x — topic={}, group={}", topic, group);
+        throw new UnsupportedOperationException(
+            "resume() not supported by RocketMQ 5.x — topic=" + topic + ", group=" + group);
     }
 
     public void close(Duration timeout) {

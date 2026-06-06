@@ -18,13 +18,13 @@ public class NoOpMessageBus implements MessageBus {
     @Override
     public String send(Message<?> message) {
         log.debug("Messaging disabled, send ignored: topic={}", message.topic());
-        return "";
+        return "no-op";
     }
 
     @Override
     public CompletableFuture<String> sendAsync(Message<?> message) {
         log.debug("Messaging disabled, sendAsync ignored: topic={}", message.topic());
-        return CompletableFuture.completedFuture("");
+        return CompletableFuture.completedFuture("no-op");
     }
 
     @Override

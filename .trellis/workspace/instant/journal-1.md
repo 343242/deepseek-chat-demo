@@ -170,3 +170,37 @@ Migrate remaining production/test files from old ErrorCode/BusinessException to 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 6: Messaging Bus Phase A + remove enabled toggle
+
+**Date**: 2026-06-06
+**Task**: Messaging Bus Phase A + remove enabled toggle
+**Branch**: `agentic-rag-dev`
+
+### Summary
+
+Implemented messaging bus Phase A (SPI interfaces, RocketMQ 5.x core, circuit breaker, auto-config, exception hierarchy, 11 unit tests). Then removed the enabled feature flag, deleted NoOpMessageBus dead code, and flattened MessagingAutoConfiguration to a single bean creation path.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `d2baf8c` | (see git log) |
+| `5dc4ca0` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

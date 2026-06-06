@@ -1,0 +1,5 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": "docs/design/messaging-bus.md", "reason": "Core design spec: SPI interfaces, RocketMQ 5.x implementation, Spring integration"}
+{"file": "src/main/java/com/smart/rag/infrastructure/exception/AbstractException.java", "reason": "Exception base class pattern for MessagingException"}
+{"file": "src/main/java/com/smart/rag/infrastructure/fallback/FallbackAutoConfiguration.java", "reason": "Auto-configuration pattern reference"}
+{"file": "src/main/java/com/smart/rag/infrastructure/fallback/ChatFallbackProperties.java", "reason": "Record-based ConfigurationProperties pattern"}

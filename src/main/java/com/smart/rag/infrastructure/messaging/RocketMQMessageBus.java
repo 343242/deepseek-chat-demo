@@ -48,6 +48,7 @@ import java.util.concurrent.Semaphore;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Pattern;
 
@@ -62,7 +63,7 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
 
     private static final Logger log = LoggerFactory.getLogger(RocketMQMessageBus.class);
 
-    private static final Pattern TOPIC_PATTERN = Pattern.compile("^[%a-zA-Z0-9_-]{1,128}$");
+    private static final Pattern TOPIC_PATTERN = Pattern.compile("^[a-zA-Z0-9_-][%a-zA-Z0-9_-]{0,127}$");
     private static final Pattern TAG_PATTERN = Pattern.compile("^[a-zA-Z0-9_-]{1,64}$");
     private static final Pattern GROUP_PATTERN = Pattern.compile("^[a-zA-Z0-9_-]{1,128}$");
 
@@ -303,6 +304,7 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
         ExecutorService receiveExecutor = Executors.newSingleThreadExecutor(
             r -> new Thread(r, "simple-consumer-" + topic));
         AtomicBoolean running = new AtomicBoolean(true);
+        AtomicLong closeTimeoutMs = new AtomicLong(properties.shutdownTimeout().toMillis());
         int maxRetries = config.retryPolicy().maxRetries();
         boolean skipRetry = maxRetries <= 0;
 
@@ -369,10 +371,10 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
             }
             processingPool.shutdown();
             try {
-                long closeTimeoutMs = properties.shutdownTimeout().toMillis();
-                if (!processingPool.awaitTermination(closeTimeoutMs, TimeUnit.MILLISECONDS)) {
+                long timeout = closeTimeoutMs.get();
+                if (!processingPool.awaitTermination(timeout, TimeUnit.MILLISECONDS)) {
                     log.warn("Processing pool did not terminate within {}ms: topic={}",
-                        closeTimeoutMs, topic);
+                        timeout, topic);
                     processingPool.shutdownNow();
                 }
             } catch (InterruptedException e) {
@@ -384,6 +386,7 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
         RocketMQSubscription subscription = new RocketMQSubscription(
             topic, group, null, simpleConsumer, receiveExecutor);
         subscription.setRunningFlag(running);
+        subscription.setCloseTimeoutMsHolder(closeTimeoutMs);
         return subscription;
     }
 
@@ -473,7 +476,7 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
     private boolean sendToDeadLetter(MessageView messageView, String topic, String group) {
         String msgId = messageView.getMessageId().toString();
         try {
-            String dlqTopic = "%APP_DLQ%" + group;
+            String dlqTopic = "%DLQ%" + group;
             org.apache.rocketmq.client.apis.message.Message dlqMsg =
                 provider.newMessageBuilder()
                     .setTopic(dlqTopic)
@@ -545,7 +548,16 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
             TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
                 @Override
                 public void afterCommit() {
-                    send(message);
+                    try {
+                        send(message);
+                    } catch (Exception e) {
+                        log.error("Post-commit send failed: topic={}, dedupKey={}",
+                            message.topic(), message.deduplicationKey(), e);
+                        if (meterRegistry != null) {
+                            meterRegistry.counter("messaging.send.post_commit_fail",
+                                "topic", message.topic()).increment();
+                        }
+                    }
                 }
             });
         } else {

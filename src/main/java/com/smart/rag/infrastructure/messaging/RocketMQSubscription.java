@@ -10,6 +10,7 @@ import java.time.Duration;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * RocketMQ subscription lifecycle — manages a single PushConsumer or SimpleConsumer.
@@ -29,6 +30,7 @@ public class RocketMQSubscription implements Subscription {
 
     private final AtomicBoolean closed = new AtomicBoolean(false);
     @Nullable private volatile AtomicBoolean runningFlag;
+    @Nullable private AtomicLong closeTimeoutMsHolder;
 
     RocketMQSubscription(String topic, String group,
                          @Nullable PushConsumer pushConsumer,
@@ -43,6 +45,10 @@ public class RocketMQSubscription implements Subscription {
 
     void setRunningFlag(AtomicBoolean flag) {
         this.runningFlag = flag;
+    }
+
+    void setCloseTimeoutMsHolder(AtomicLong holder) {
+        this.closeTimeoutMsHolder = holder;
     }
 
     @Override
@@ -67,6 +73,9 @@ public class RocketMQSubscription implements Subscription {
     public void close(Duration timeout) {
         if (!closed.compareAndSet(false, true)) {
             return;
+        }
+        if (closeTimeoutMsHolder != null) {
+            closeTimeoutMsHolder.set(timeout.toMillis());
         }
         if (runningFlag != null) {
             runningFlag.set(false);

@@ -1,6 +1,7 @@
 package com.smart.rag.infrastructure.messaging;
 
 import com.smart.rag.infrastructure.exception.MessagePublishException;
+import com.smart.rag.infrastructure.exception.ServiceException;
 import com.smart.rag.infrastructure.exception.errorcode.MessagingErrorCode;
 import com.smart.rag.infrastructure.exception.MessagingException;
 import com.smart.rag.infrastructure.messaging.idempotent.IdempotentHandler;
@@ -293,7 +294,7 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
             .setMessageListener(pushListener)
             .build();
 
-        return new RocketMQSubscription(topic, group, pushConsumer, null);
+        return new PushSubscription(topic, group, pushConsumer);
     }
 
     // ==================== SimpleConsumer ====================
@@ -334,10 +335,10 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
 
         ExecutorService receiveExecutor = loop.start();
 
-        var ctx = new RocketMQSubscription.SimpleConsumerContext(
+        var ctx = new SimpleSubscription.SimpleConsumerContext(
             simpleConsumer, receiveExecutor, loop,
             loop.runningFlag(), loop.closeTimeoutMsHolder());
-        return new RocketMQSubscription(topic, group, null, ctx);
+        return new SimpleSubscription(topic, group, ctx);
     }
 
     // ==================== Dead Letter ====================
@@ -458,20 +459,20 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
                     deadLetterOps = new DeadLetterOperations() {
                         @Override
                         public List<MessageEnvelope<?>> scanDeadLetters(String topic, int count) {
-                            throw new UnsupportedOperationException(
-                                "DLQ scan is not yet implemented");
+                            throw new ServiceException(MessagingErrorCode.UNSUPPORTED_OPERATION,
+                                "DLQ 扫描功能尚未实现");
                         }
 
                         @Override
                         public void replayDeadLetter(String topic, String messageId) {
-                            throw new UnsupportedOperationException(
-                                "DLQ replay is not yet implemented");
+                            throw new ServiceException(MessagingErrorCode.UNSUPPORTED_OPERATION,
+                                "DLQ 重放功能尚未实现");
                         }
 
                         @Override
                         public int deadLetterCount(String topic) {
-                            throw new UnsupportedOperationException(
-                                "DLQ count is not yet implemented");
+                            throw new ServiceException(MessagingErrorCode.UNSUPPORTED_OPERATION,
+                                "DLQ 计数功能尚未实现");
                         }
                     };
                 }

@@ -46,8 +46,12 @@ RuntimeException
         │     └── RateLimitExceededException
         ├── ServiceException
         │     └── ModelNotFoundException
-        └── RemoteException
-              └── ProviderNotFoundException
+        ├── RemoteException
+        │     └── ProviderNotFoundException
+        └── MessagingException
+              ├── MessageConsumeException
+              ├── MessagePublishException
+              └── PermanentConsumeException
 ```
 
 ### 面向用户的专用异常
@@ -58,6 +62,34 @@ RuntimeException
 | `RateLimitExceededException` | 100005 | — | 请求过于频繁 |
 | `ModelNotFoundException` | 203001 | modelId | 模型不存在 |
 | `ProviderNotFoundException` | 300001 | providerId | 厂商未配置 |
+
+### 消息总线异常（MessagingException 体系）
+
+| 异常类 | 错误码 | 使用场景 |
+|--------|-------|---------|
+| `MessagingException` | — | 消息总线基础异常，不直接使用 |
+| `MessageConsumeException` | 400002 | 消息消费处理失败 |
+| `MessagePublishException` | 400001 | Producer 发送失败 |
+| `PermanentConsumeException` | 400003 | 永久性消费错误（反序列化失败、payload 格式错误等），重试无意义，直接进 DLQ |
+
+### 基础设施内部异常（不继承 AbstractException）
+
+以下异常直接继承 `RuntimeException`，不经过 GlobalExceptionHandler 统一响应，用于基础设施内部控制流信号：
+
+| 异常类 | 包 | 使用场景 |
+|--------|---|---------|
+| `ModelCircuitOpenException` | `infrastructure.fallback` | 熔断器开启，模型暂不可用，触发降级 |
+| `ProbeTimeoutException` | `infrastructure.fallback` | 首包探测超时，触发立即降级到下一候选模型 |
+| `ModelStreamException` | `infrastructure.stream` | 流式响应异常 |
+| `ScopeExecutionException` | `infrastructure.concurrent` | 结构化并发作用域执行异常 |
+| `ScopeClosedException` | `infrastructure.concurrent` | 作用域已关闭 |
+| `ScopeTimeoutException` | `infrastructure.concurrent` | 作用域超时 |
+| `ScopeViolationException` | `infrastructure.concurrent` | 作用域违规（如线程逃逸） |
+| `SubtaskException` | `infrastructure.concurrent` | 子任务基础异常 |
+| `SubtaskCancelledException` | `infrastructure.concurrent` | 子任务被取消 |
+| `SubtaskFailedException` | `infrastructure.concurrent` | 子任务执行失败 |
+| `SubtaskNotCompletedException` | `infrastructure.concurrent` | 子任务未完成 |
+| `DocumentParseException` | `rag.parser` | 文档解析异常 |
 
 ### 兼容过渡
 
@@ -93,6 +125,7 @@ new RemoteException(RemoteErrorCode.PROVIDER_NOT_FOUND)
 | `ClientErrorCode` | 100001–105013 | 通用、认证、用户冲突、聊天客户端、RAG上传、团队客户端 |
 | `ServiceErrorCode` | 200001–205007 | 通用、用户/角色/权限、会话、聊天、RAG、团队 |
 | `RemoteErrorCode` | 300001–300003 | 厂商、模型超时、向量数据库 |
+| `MessagingErrorCode` | 400001–400011 | 消息发送、消费、DLQ、熔断、Topic/Tag/Group 校验、消息体超限、配置无效 |
 | `ErrorCode` (旧版) | 0–50099 | 保留兼容，逐步迁移 |
 
 ---

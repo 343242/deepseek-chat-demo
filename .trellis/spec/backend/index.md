@@ -18,6 +18,7 @@ Spring Boot 3.5 + MyBatis-Plus + PostgreSQL + Redis 的 DeepSeek 聊天助手后
 - [ ] [Database Guidelines](./database-guidelines.md) — ORM 用法、Schema 管理、Redis/缓存策略
 - [ ] [Error Handling](./error-handling.md) — 异常体系和统一错误格式
 - [ ] [Quality Guidelines](./quality-guidelines.md) — 设计原则、安全检查清单、禁止模式
+- [ ] [Code Review Checklist](./code-review-checklist.md) — Review 维度、检查项、常见陷阱
 - [ ] [Logging Guidelines](./logging-guidelines.md) — 日志级别和规范
 
 ---
@@ -30,6 +31,7 @@ Spring Boot 3.5 + MyBatis-Plus + PostgreSQL + Redis 的 DeepSeek 聊天助手后
 | [Database Guidelines](./database-guidelines.md) | MyBatis-Plus、Schema、Redis、Caffeine | ✅ Filled |
 | [Error Handling](./error-handling.md) | 异常体系、错误格式、校验模式 | ✅ Filled |
 | [Quality Guidelines](./quality-guidelines.md) | 安全检查、禁止模式、DTO 规则 | ✅ Filled |
+| [Code Review Checklist](./code-review-checklist.md) | Review 维度、检查项、常见陷阱 | ✅ Filled |
 | [Logging Guidelines](./logging-guidelines.md) | 日志级别、Profile 差异 | ✅ Filled |
 
 ---
@@ -38,7 +40,7 @@ Spring Boot 3.5 + MyBatis-Plus + PostgreSQL + Redis 的 DeepSeek 聊天助手后
 
 - **ORM**: MyBatis-Plus（禁 JPA）
 - **事务**: TransactionTemplate（禁 @Transactional）
-- **异常**: BusinessException（禁 IllegalArgumentException）
+- **异常**: ClientException / ServiceException / RemoteException 三级体系（禁 IllegalArgumentException，禁 BusinessException）
 - **DTO**: record + @Valid
 - **Token**: HttpOnly Cookie（禁 JSON body 返回）
 - **状态字段**: 枚举校验（禁裸 Integer）

@@ -2,12 +2,16 @@ package com.smart.rag.rag.service.impl;
 
 import com.smart.rag.infrastructure.exception.errorcode.ServiceErrorCode;
 import com.smart.rag.infrastructure.exception.ServiceException;
+import com.smart.rag.infrastructure.messaging.MessageBus;
+import com.smart.rag.infrastructure.messaging.MessageEnvelope;
+import com.smart.rag.infrastructure.exception.MessagingException;
 import com.smart.rag.rag.etl.EtlCandidate;
+import com.smart.rag.rag.etl.EtlDocumentConsumer;
 import com.smart.rag.rag.etl.EtlResult;
-import com.smart.rag.rag.etl.Loader;
 import com.smart.rag.rag.etl.EtlRouteStrategy;
 import com.smart.rag.rag.etl.EtlRouteStrategyFactory;
 import com.smart.rag.rag.etl.EtlStatus;
+import com.smart.rag.rag.etl.Loader;
 import com.smart.rag.rag.event.EtlCompletedEvent;
 import com.smart.rag.rag.service.EtlDispatchService;
 import org.jspecify.annotations.Nullable;
@@ -15,12 +19,13 @@ import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 
-import org.springframework.beans.factory.annotation.Qualifier;
-
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
 
@@ -44,17 +49,23 @@ public class EtlDispatchServiceImpl implements EtlDispatchService {
     private final Loader loader;
     private final ApplicationEventPublisher eventPublisher;
     private final @Nullable RedissonClient redissonClient;
+    private final @Nullable MessageBus messageBus;
+    private final boolean messagingEnabled;
 
     public EtlDispatchServiceImpl(EtlRouteStrategyFactory strategyFactory,
                                   @Qualifier("etlIoExecutor") Executor etlIoExecutor,
                                   Loader loader,
                                   ApplicationEventPublisher eventPublisher,
-                                  @Nullable RedissonClient redissonClient) {
+                                  @Nullable RedissonClient redissonClient,
+                                  @Nullable MessageBus messageBus,
+                                  @Value("${app.messaging.enabled:false}") boolean messagingEnabled) {
         this.strategyFactory = strategyFactory;
         this.etlIoExecutor = etlIoExecutor;
         this.loader = loader;
         this.eventPublisher = eventPublisher;
         this.redissonClient = redissonClient;
+        this.messageBus = messageBus;
+        this.messagingEnabled = messagingEnabled;
     }
 
     @Override
@@ -119,6 +130,21 @@ public class EtlDispatchServiceImpl implements EtlDispatchService {
         EtlCandidate candidate = new EtlCandidate(documentId, bucket, objectKey, fileName, mimeType, fileSize, userId, teamId);
         log.info("ETL dispatchAsync: documentId={}, file={}, userId={}, teamId={}", documentId, fileName, userId, teamId);
 
+        if (messagingEnabled && messageBus != null) {
+            try {
+                String dedupKey = String.valueOf(documentId);
+                messageBus.send(new MessageEnvelope<>(null, EtlDocumentConsumer.TOPIC, null, candidate,
+                    dedupKey, dedupKey, Map.of(), System.currentTimeMillis()));
+            } catch (MessagingException e) {
+                log.warn("Message bus send failed, falling back to thread pool: documentId={}, file={}", documentId, fileName, e);
+                dispatchViaThreadPool(candidate, documentId, fileName);
+            }
+        } else {
+            dispatchViaThreadPool(candidate, documentId, fileName);
+        }
+    }
+
+    private void dispatchViaThreadPool(EtlCandidate candidate, Long documentId, String fileName) {
         etlIoExecutor.execute(() -> {
             try {
                 List<EtlResult> results = dispatch(List.of(candidate));

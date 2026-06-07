@@ -73,7 +73,9 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
     private final MessageValidator validator;
 
     private static final int DLQ_FAST_FAIL_THRESHOLD = 10;
+    private static final long DLQ_HALF_OPEN_COOLDOWN_MS = 60_000;
     private final AtomicInteger dlqConsecutiveFailures = new AtomicInteger(0);
+    private volatile long dlqBlockedSinceMs;
 
     public RocketMQMessageBus(MessagingProperties properties,
                                MessagePayloadCodec codec,
@@ -347,9 +349,14 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
         String msgId = messageView.getMessageId().toString();
         int failures = dlqConsecutiveFailures.get();
         if (failures >= DLQ_FAST_FAIL_THRESHOLD) {
-            log.warn("DLQ fast-fail ({} consecutive failures), skipping: topic={}, msgId={}",
-                failures, topic, msgId);
-            return false;
+            long blocked = dlqBlockedSinceMs;
+            if (blocked > 0 && System.currentTimeMillis() - blocked < DLQ_HALF_OPEN_COOLDOWN_MS) {
+                log.warn("DLQ fast-fail ({} consecutive failures), skipping: topic={}, msgId={}",
+                    failures, topic, msgId);
+                return false;
+            }
+            log.info("DLQ half-open probe after {}ms cooldown: topic={}, msgId={}",
+                System.currentTimeMillis() - blocked, topic, msgId);
         }
         try {
             String dlqTopic = "%DLQ%" + group;
@@ -364,6 +371,7 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
                     .build();
             producer.send(dlqMsg);
             dlqConsecutiveFailures.set(0);
+            dlqBlockedSinceMs = 0;
             log.warn("Message forwarded to DLQ: dlqTopic={}, originalTopic={}, msgId={}",
                 dlqTopic, topic, msgId);
             if (meterRegistry != null) {
@@ -377,6 +385,9 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
                 errorType = "TIMEOUT";
             }
             if (total >= DLQ_FAST_FAIL_THRESHOLD) {
+                if (dlqBlockedSinceMs == 0) {
+                    dlqBlockedSinceMs = System.currentTimeMillis();
+                }
                 log.error("DLQ consecutive failures reached threshold ({}), entering fast-fail mode [{}]: topic={}, msgId={}",
                     total, errorType, topic, msgId);
             } else {

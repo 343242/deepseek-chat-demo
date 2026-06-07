@@ -73,8 +73,16 @@ class PushConsumerListener<T> {
             } catch (PermanentConsumeException e) {
                 log.error("Permanent consume error, forwarding to DLQ: topic={}, msgId={}",
                     topic, messageView.getMessageId(), e);
-                deadLetterSender.send(messageView, topic, group);
-                return ConsumeResult.SUCCESS;
+                if (deadLetterSender.send(messageView, topic, group)) {
+                    return ConsumeResult.SUCCESS;
+                }
+                log.warn("DLQ forward failed for permanent error, returning FAILURE for broker retry: topic={}, msgId={}",
+                    topic, messageView.getMessageId());
+                if (meterRegistry != null) {
+                    meterRegistry.counter("messaging.consume.count",
+                        "topic", topic, "group", group, "mode", "push", "result", "fail").increment();
+                }
+                return ConsumeResult.FAILURE;
             } catch (Exception e) {
                 log.error("Push consume failed: topic={}, msgId={}",
                     topic, messageView.getMessageId(), e);

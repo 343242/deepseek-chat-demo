@@ -37,7 +37,7 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeoutException;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Pattern;
 
 /**
@@ -66,6 +66,7 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
 
     private final CopyOnWriteArrayList<RocketMQSubscription> activeSubscriptions = new CopyOnWriteArrayList<>();
     private final ConcurrentMap<String, SendCircuitBreaker> circuitBreakers = new ConcurrentHashMap<>();
+    private final ConcurrentMap<String, RocketMQSubscription> subscriptionRegistry = new ConcurrentHashMap<>();
     private volatile boolean shutdown;
     private volatile long lastSuccessfulSendMs = System.currentTimeMillis();
     @Nullable private volatile DeadLetterOperations deadLetterOps;
@@ -73,8 +74,15 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
 
     private static final int DLQ_FAST_FAIL_THRESHOLD = 10;
     private static final long DLQ_HALF_OPEN_COOLDOWN_MS = 60_000;
-    private final AtomicInteger dlqConsecutiveFailures = new AtomicInteger(0);
-    private volatile long dlqBlockedSinceMs;
+
+    private record DlqState(int consecutiveFailures, long blockedSinceMs) {
+        static final DlqState INITIAL = new DlqState(0, 0);
+        boolean isFastFailing() { return consecutiveFailures >= DLQ_FAST_FAIL_THRESHOLD; }
+        boolean isCooldownActive(long nowMs) {
+            return blockedSinceMs > 0 && (nowMs - blockedSinceMs < DLQ_HALF_OPEN_COOLDOWN_MS);
+        }
+    }
+    private final AtomicReference<DlqState> dlqState = new AtomicReference<>(DlqState.INITIAL);
 
     public RocketMQMessageBus(MessagingProperties properties,
                                MessagePayloadCodec codec,
@@ -134,6 +142,8 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
             lastSuccessfulSendMs = System.currentTimeMillis();
             log.debug("Message sent: topic={}, msgId={}", message.topic(), receipt.getMessageId());
             return receipt.getMessageId().toString();
+        } catch (com.smart.rag.infrastructure.exception.ClientException e) {
+            throw e;
         } catch (Exception e) {
             cb.recordFailure();
             metrics.recordSendFailure(message.topic());
@@ -148,7 +158,12 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
             return CompletableFuture.failedFuture(
                 new MessagePublishException("Circuit breaker OPEN for topic: " + message.topic()));
         }
-        byte[] encoded = validator.validateAndEncode(message);
+        byte[] encoded;
+        try {
+            encoded = validator.validateAndEncode(message);
+        } catch (com.smart.rag.infrastructure.exception.ClientException e) {
+            return CompletableFuture.failedFuture(e);
+        }
         var rmqMsg = buildRocketMQMessage(message, encoded);
         long startNanos = metrics.startNanos();
         try {
@@ -169,6 +184,8 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
                     metrics.recordSendSuccess(message.topic(), startNanos, encoded.length);
                     return receipt.getMessageId().toString();
                 });
+        } catch (com.smart.rag.infrastructure.exception.ClientException e) {
+            throw e;
         } catch (Exception e) {
             cb.recordFailure();
             metrics.recordSendFailure(message.topic());
@@ -188,6 +205,13 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
             throw new com.smart.rag.infrastructure.exception.ClientException(MessagingErrorCode.INVALID_GROUP,
                 "非法消费者组名称: '" + group + "'，仅允许字母/数字/下划线/连字符，长度1-128");
         }
+
+        String subscriptionKey = topic + ":" + group;
+        RocketMQSubscription existing = subscriptionRegistry.get(subscriptionKey);
+        if (existing != null && existing.isActive()) {
+            return existing;
+        }
+
         synchronized (this) {
             if (shutdown) {
                 throw new MessagingException(MessagingErrorCode.SUBSCRIPTION_ERROR,
@@ -222,6 +246,7 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
                         "MessageBus is shutting down, cannot create new subscriptions");
                 }
                 activeSubscriptions.add(subscription);
+                subscriptionRegistry.put(subscriptionKey, subscription);
             }
             return subscription;
         } catch (ClientException e) {
@@ -300,17 +325,19 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
 
     boolean sendToDeadLetter(MessageView messageView, String topic, String group) {
         String msgId = messageView.getMessageId().toString();
-        int failures = dlqConsecutiveFailures.get();
-        if (failures >= DLQ_FAST_FAIL_THRESHOLD) {
-            long blocked = dlqBlockedSinceMs;
-            if (blocked > 0 && System.currentTimeMillis() - blocked < DLQ_HALF_OPEN_COOLDOWN_MS) {
-                log.warn("DLQ fast-fail ({} consecutive failures), skipping: topic={}, msgId={}",
-                    failures, topic, msgId);
-                return false;
-            }
-            log.info("DLQ half-open probe after {}ms cooldown: topic={}, msgId={}",
-                System.currentTimeMillis() - blocked, topic, msgId);
+        long nowMs = System.currentTimeMillis();
+
+        DlqState current = dlqState.get();
+        if (current.isFastFailing() && current.isCooldownActive(nowMs)) {
+            log.warn("DLQ fast-fail ({} consecutive failures), skipping: topic={}, msgId={}",
+                current.consecutiveFailures(), topic, msgId);
+            return false;
         }
+        if (current.isFastFailing()) {
+            log.info("DLQ half-open probe after {}ms cooldown: topic={}, msgId={}",
+                nowMs - current.blockedSinceMs(), topic, msgId);
+        }
+
         try {
             String dlqTopic = "%DLQ%" + group;
             var dlqMsg =
@@ -323,24 +350,28 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
                     .addProperty("deadAt", Instant.now().toString())
                     .build();
             producer.send(dlqMsg);
-            dlqConsecutiveFailures.set(0);
-            dlqBlockedSinceMs = 0;
+            dlqState.set(DlqState.INITIAL);
             log.warn("Message forwarded to DLQ: dlqTopic={}, originalTopic={}, msgId={}",
                 dlqTopic, topic, msgId);
             metrics.recordDeadLetter(topic, group);
             return true;
         } catch (Exception e) {
-            int total = dlqConsecutiveFailures.incrementAndGet();
             String errorType = e.getClass().getSimpleName();
             if (e.getCause() instanceof TimeoutException) {
                 errorType = "TIMEOUT";
             }
-            if (total >= DLQ_FAST_FAIL_THRESHOLD) {
-                if (dlqBlockedSinceMs == 0) {
-                    dlqBlockedSinceMs = System.currentTimeMillis();
+            dlqState.updateAndGet(s -> {
+                int next = s.consecutiveFailures() + 1;
+                long blocked = s.blockedSinceMs();
+                if (next >= DLQ_FAST_FAIL_THRESHOLD && blocked == 0) {
+                    blocked = System.currentTimeMillis();
                 }
+                return new DlqState(next, blocked);
+            });
+            DlqState updated = dlqState.get();
+            if (updated.isFastFailing()) {
                 log.error("DLQ consecutive failures reached threshold ({}), entering fast-fail mode [{}]: topic={}, msgId={}",
-                    total, errorType, topic, msgId);
+                    updated.consecutiveFailures(), errorType, topic, msgId);
             } else {
                 log.error("Failed to forward message to DLQ [{}]: topic={}, msgId={}",
                     errorType, topic, msgId, e);
@@ -376,6 +407,7 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
             sub.close(Duration.ofMillis(remaining));
         }
         activeSubscriptions.clear();
+        subscriptionRegistry.clear();
 
         if (producer != null) {
             try {
@@ -413,29 +445,7 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
     @Override
     public @Nullable DeadLetterOperations deadLetterOperations() {
         if (deadLetterOps == null) {
-            synchronized (this) {
-                if (deadLetterOps == null) {
-                    deadLetterOps = new DeadLetterOperations() {
-                        @Override
-                        public List<MessageEnvelope<?>> scanDeadLetters(String topic, int count) {
-                            throw new ServiceException(MessagingErrorCode.UNSUPPORTED_OPERATION,
-                                "DLQ 扫描功能尚未实现");
-                        }
-
-                        @Override
-                        public void replayDeadLetter(String topic, String messageId) {
-                            throw new ServiceException(MessagingErrorCode.UNSUPPORTED_OPERATION,
-                                "DLQ 重放功能尚未实现");
-                        }
-
-                        @Override
-                        public int deadLetterCount(String topic) {
-                            throw new ServiceException(MessagingErrorCode.UNSUPPORTED_OPERATION,
-                                "DLQ 计数功能尚未实现");
-                        }
-                    };
-                }
-            }
+            deadLetterOps = DeadLetterOperations.UNSUPPORTED;
         }
         return deadLetterOps;
     }

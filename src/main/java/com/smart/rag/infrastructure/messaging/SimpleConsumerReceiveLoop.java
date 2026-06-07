@@ -15,7 +15,6 @@ import java.util.List;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.ThreadPoolExecutor;
@@ -111,15 +110,27 @@ class SimpleConsumerReceiveLoop<T> {
         ExecutorService pool = new ThreadPoolExecutor(
             processingConcurrency, processingConcurrency, 0L, TimeUnit.MILLISECONDS,
             new ArrayBlockingQueue<>(config.batchSize() * 2),
-            r -> new Thread(r, "simple-process-" + topic + "-" + threadCounter.incrementAndGet()),
+            r -> {
+                Thread t = new Thread(r, "simple-process-" + topic + "-" + threadCounter.incrementAndGet());
+                t.setDaemon(true);
+                return t;
+            },
             new ThreadPoolExecutor.AbortPolicy()
         );
         this.processingPool = pool;
 
         Semaphore inflightSemaphore = new Semaphore(config.concurrency());
 
-        ExecutorService receiveExecutor = Executors.newSingleThreadExecutor(
-            r -> new Thread(r, "simple-consumer-" + topic));
+        ExecutorService receiveExecutor = new ThreadPoolExecutor(
+            1, 1, 0L, TimeUnit.MILLISECONDS,
+            new ArrayBlockingQueue<>(1),
+            r -> {
+                Thread t = new Thread(r, "simple-consumer-" + topic);
+                t.setDaemon(true);
+                return t;
+            },
+            new ThreadPoolExecutor.DiscardPolicy()
+        );
 
         receiveExecutor.submit(() -> {
             long backoffMs = 1000;

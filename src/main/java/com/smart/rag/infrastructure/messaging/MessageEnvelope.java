@@ -26,6 +26,10 @@ public record MessageEnvelope<T>(
     Map<String, String> headers,
     long timestamp
 ) {
+    public MessageEnvelope {
+        headers = headers == null ? Map.of() : Map.copyOf(headers);
+    }
+
     public static <T> MessageEnvelope<T> of(String topic, T payload) {
         return new MessageEnvelope<>(null, topic, null, payload, null, null, Map.of(),
             System.currentTimeMillis());

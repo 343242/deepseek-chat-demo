@@ -33,7 +33,7 @@ public record MessagingProperties(
             orderedTopics = Collections.emptySet();
         }
         if (idempotent == null) {
-            idempotent = new IdempotentConfig(true, 90000);
+            idempotent = new IdempotentConfig(true, 900);
         }
         if (circuitBreaker == null) {
             circuitBreaker = new CircuitBreakerConfig(5, 30000);
@@ -47,11 +47,12 @@ public record MessagingProperties(
     /** Idempotent check configuration */
     public record IdempotentConfig(
         boolean enabled,
+        /** Redis key TTL in seconds — covers broker retry window (default 15 min) */
         long ttlSeconds
     ) {
         public IdempotentConfig {
             if (ttlSeconds <= 0) {
-                ttlSeconds = 90000;
+                ttlSeconds = 900;
             }
         }
     }

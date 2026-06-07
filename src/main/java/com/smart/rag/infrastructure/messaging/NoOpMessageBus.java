@@ -3,6 +3,7 @@ package com.smart.rag.infrastructure.messaging;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 
 /**
@@ -18,13 +19,13 @@ public class NoOpMessageBus implements MessageBus {
     @Override
     public String send(MessageEnvelope<?> messageEnvelope) {
         log.debug("Messaging disabled, send ignored: topic={}", messageEnvelope.topic());
-        return "no-op";
+        return "no-op-" + UUID.randomUUID();
     }
 
     @Override
     public CompletableFuture<String> sendAsync(MessageEnvelope<?> messageEnvelope) {
         log.debug("Messaging disabled, sendAsync ignored: topic={}", messageEnvelope.topic());
-        return CompletableFuture.completedFuture("no-op");
+        return CompletableFuture.completedFuture("no-op-" + UUID.randomUUID());
     }
 
     @Override

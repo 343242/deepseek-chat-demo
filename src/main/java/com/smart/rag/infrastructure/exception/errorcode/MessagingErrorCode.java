@@ -1,6 +1,4 @@
-package com.smart.rag.infrastructure.exception;
-
-import com.smart.rag.infrastructure.exception.errorcode.IErrorCode;
+package com.smart.rag.infrastructure.exception.errorcode;
 
 /**
  * Messaging bus error codes (D class, 400001-499999).

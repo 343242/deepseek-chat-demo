@@ -1,5 +1,7 @@
 package com.smart.rag.infrastructure.exception;
 
+import com.smart.rag.infrastructure.exception.errorcode.MessagingErrorCode;
+
 /**
  * Permanent consume exception — message is inherently unprocessable, retrying is pointless.
  * <p>

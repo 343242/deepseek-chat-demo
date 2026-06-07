@@ -1,7 +1,7 @@
 package com.smart.rag.infrastructure.messaging;
 
 import com.smart.rag.infrastructure.exception.MessagePublishException;
-import com.smart.rag.infrastructure.exception.MessagingErrorCode;
+import com.smart.rag.infrastructure.exception.errorcode.MessagingErrorCode;
 import com.smart.rag.infrastructure.exception.MessagingException;
 import com.smart.rag.infrastructure.messaging.idempotent.IdempotentHandler;
 import io.micrometer.core.instrument.MeterRegistry;

@@ -1,6 +1,6 @@
 package com.smart.rag.infrastructure.messaging;
 
-import com.smart.rag.infrastructure.exception.MessagingErrorCode;
+import com.smart.rag.infrastructure.exception.errorcode.MessagingErrorCode;
 import com.smart.rag.infrastructure.exception.ServiceException;
 import jakarta.annotation.Nullable;
 import org.apache.rocketmq.client.apis.consumer.PushConsumer;

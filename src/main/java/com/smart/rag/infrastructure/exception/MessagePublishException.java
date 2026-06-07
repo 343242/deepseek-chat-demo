@@ -1,5 +1,7 @@
 package com.smart.rag.infrastructure.exception;
 
+import com.smart.rag.infrastructure.exception.errorcode.MessagingErrorCode;
+
 /**
  * Message publish exception — Producer send failure.
  */

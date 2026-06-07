@@ -151,6 +151,8 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
             if (meterRegistry != null) {
                 meterRegistry.timer("messaging.send.latency", "topic", message.topic())
                     .record(System.nanoTime() - startNanos, TimeUnit.NANOSECONDS);
+                meterRegistry.summary("messaging.send.payload.size", "topic", message.topic())
+                    .record(encoded.length);
             }
             cb.recordSuccess();
             lastSuccessfulSendMs = System.currentTimeMillis();
@@ -203,6 +205,8 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
                             "topic", message.topic(), "result", "success").increment();
                         meterRegistry.timer("messaging.send.latency", "topic", message.topic())
                             .record(System.nanoTime() - startNanos, TimeUnit.NANOSECONDS);
+                        meterRegistry.summary("messaging.send.payload.size", "topic", message.topic())
+                            .record(encoded.length);
                     }
                     return receipt.getMessageId().toString();
                 });
@@ -289,7 +293,7 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
             .setMessageListener(pushListener)
             .build();
 
-        return new RocketMQSubscription(topic, group, pushConsumer, null, null);
+        return new RocketMQSubscription(topic, group, pushConsumer, null);
     }
 
     // ==================== SimpleConsumer ====================
@@ -330,9 +334,10 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
 
         ExecutorService receiveExecutor = loop.start();
 
-        return new RocketMQSubscription(
-            topic, group, null, simpleConsumer, receiveExecutor, loop,
+        var ctx = new RocketMQSubscription.SimpleConsumerContext(
+            simpleConsumer, receiveExecutor, loop,
             loop.runningFlag(), loop.closeTimeoutMsHolder());
+        return new RocketMQSubscription(topic, group, null, ctx);
     }
 
     // ==================== Dead Letter ====================

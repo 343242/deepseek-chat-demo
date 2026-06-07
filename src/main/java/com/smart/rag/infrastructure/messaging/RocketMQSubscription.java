@@ -4,7 +4,6 @@ import com.smart.rag.infrastructure.exception.MessagingErrorCode;
 import com.smart.rag.infrastructure.exception.ServiceException;
 import jakarta.annotation.Nullable;
 import org.apache.rocketmq.client.apis.consumer.PushConsumer;
-import org.apache.rocketmq.client.apis.consumer.SimpleConsumer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -27,37 +26,26 @@ public class RocketMQSubscription implements Subscription {
     private final String topic;
     private final String group;
     @Nullable private final PushConsumer pushConsumer;
-    @Nullable private final SimpleConsumer simpleConsumer;
-    @Nullable private final ExecutorService receiveExecutor;
-    @Nullable private final SimpleConsumerReceiveLoop<?> receiveLoop;
+    @Nullable private final SimpleConsumerContext simpleCtx;
 
     private final AtomicBoolean closed = new AtomicBoolean(false);
-    @Nullable private final AtomicBoolean runningFlag;
-    @Nullable private final AtomicLong closeTimeoutMsHolder;
+
+    /** Bundles SimpleConsumer-specific lifecycle state. */
+    record SimpleConsumerContext(
+        org.apache.rocketmq.client.apis.consumer.SimpleConsumer consumer,
+        ExecutorService receiveExecutor,
+        SimpleConsumerReceiveLoop<?> receiveLoop,
+        AtomicBoolean runningFlag,
+        AtomicLong closeTimeoutMsHolder
+    ) {}
 
     RocketMQSubscription(String topic, String group,
                          @Nullable PushConsumer pushConsumer,
-                         @Nullable SimpleConsumer simpleConsumer,
-                         @Nullable ExecutorService receiveExecutor,
-                         @Nullable SimpleConsumerReceiveLoop<?> receiveLoop,
-                         @Nullable AtomicBoolean runningFlag,
-                         @Nullable AtomicLong closeTimeoutMsHolder) {
+                         @Nullable SimpleConsumerContext simpleCtx) {
         this.topic = topic;
         this.group = group;
         this.pushConsumer = pushConsumer;
-        this.simpleConsumer = simpleConsumer;
-        this.receiveExecutor = receiveExecutor;
-        this.receiveLoop = receiveLoop;
-        this.runningFlag = runningFlag;
-        this.closeTimeoutMsHolder = closeTimeoutMsHolder;
-    }
-
-    /** Backward-compatible constructor for PushConsumer (no loop). */
-    RocketMQSubscription(String topic, String group,
-                         @Nullable PushConsumer pushConsumer,
-                         @Nullable SimpleConsumer simpleConsumer,
-                         @Nullable ExecutorService receiveExecutor) {
-        this(topic, group, pushConsumer, simpleConsumer, receiveExecutor, null, null, null);
+        this.simpleCtx = simpleCtx;
     }
 
     @Override
@@ -85,31 +73,24 @@ public class RocketMQSubscription implements Subscription {
         if (!closed.compareAndSet(false, true)) {
             return;
         }
-        if (closeTimeoutMsHolder != null) {
-            closeTimeoutMsHolder.set(timeout.toMillis());
-        }
-        if (runningFlag != null) {
-            runningFlag.set(false);
-        }
-        if (receiveLoop != null) {
-            receiveLoop.shutdownProcessingPool();
-        }
-        if (receiveExecutor != null) {
-            receiveExecutor.shutdown();
+        if (simpleCtx != null) {
+            simpleCtx.closeTimeoutMsHolder().set(timeout.toMillis());
+            simpleCtx.runningFlag().set(false);
+            simpleCtx.receiveLoop().shutdownProcessingPool();
+            ExecutorService executor = simpleCtx.receiveExecutor();
+            executor.shutdown();
             try {
-                if (!receiveExecutor.awaitTermination(timeout.toMillis(), TimeUnit.MILLISECONDS)) {
+                if (!executor.awaitTermination(timeout.toMillis(), TimeUnit.MILLISECONDS)) {
                     log.warn("Receive executor did not terminate within {}ms: topic={}",
                         timeout.toMillis(), topic);
-                    receiveExecutor.shutdownNow();
+                    executor.shutdownNow();
                 }
             } catch (InterruptedException e) {
-                receiveExecutor.shutdownNow();
+                executor.shutdownNow();
                 Thread.currentThread().interrupt();
             }
-        }
-        if (simpleConsumer != null) {
             try {
-                simpleConsumer.close();
+                simpleCtx.consumer().close();
             } catch (Exception e) {
                 log.warn("Error closing simpleConsumer: topic={}, group={}", topic, group, e);
             }

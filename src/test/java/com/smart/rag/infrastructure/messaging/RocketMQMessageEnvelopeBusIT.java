@@ -71,7 +71,7 @@ class RocketMQMessageEnvelopeBusIT {
                 16, 4194304, false, null, null)
         );
         ClientServiceProvider provider = ClientServiceProvider.loadService();
-        bus = new RocketMQMessageBus(properties, new JacksonMessageCodecTestSupport(), provider);
+        bus = new RocketMQMessageBus(properties, new JacksonMessageCodecTestSupport(), provider, null, null, null);
     }
 
     @Test

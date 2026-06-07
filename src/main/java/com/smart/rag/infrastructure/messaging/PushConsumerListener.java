@@ -1,14 +1,10 @@
 package com.smart.rag.infrastructure.messaging;
 
 import com.smart.rag.infrastructure.exception.PermanentConsumeException;
-import io.micrometer.core.instrument.MeterRegistry;
-import jakarta.annotation.Nullable;
 import org.apache.rocketmq.client.apis.consumer.ConsumeResult;
 import org.apache.rocketmq.client.apis.consumer.MessageListener;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
-import java.util.concurrent.TimeUnit;
 
 /**
  * PushConsumer message listener — extracted from RocketMQMessageBus for testability.
@@ -26,27 +22,27 @@ class PushConsumerListener<T> {
     private final MessageHandler<T> handler;
     private final MessagePayloadCodec codec;
     private final SimpleConsumerReceiveLoop.DeadLetterSender deadLetterSender;
-    @Nullable private final MeterRegistry meterRegistry;
+    private final MessagingMetrics metrics;
     private final TracePropagator propagator;
 
     PushConsumerListener(String topic, String group, Class<T> payloadType,
                           MessageHandler<T> handler, MessagePayloadCodec codec,
                           SimpleConsumerReceiveLoop.DeadLetterSender deadLetterSender,
-                          @Nullable MeterRegistry meterRegistry, TracePropagator propagator) {
+                          MessagingMetrics metrics, TracePropagator propagator) {
         this.topic = topic;
         this.group = group;
         this.payloadType = payloadType;
         this.handler = handler;
         this.codec = codec;
         this.deadLetterSender = deadLetterSender;
-        this.meterRegistry = meterRegistry;
+        this.metrics = metrics;
         this.propagator = propagator != null ? propagator : TracePropagator.NO_OP;
     }
 
     MessageListener create() {
         return messageView -> {
             propagator.restore(messageView.getProperties());
-            long startNanos = meterRegistry != null ? System.nanoTime() : 0;
+            long startNanos = metrics.startNanos();
             try {
                 T payload = codec.decode(MessagePayloadCodec.toByteArray(messageView.getBody()), payloadType);
                 MessageEnvelope<T> messageEnvelope = new MessageEnvelope<>(
@@ -60,13 +56,7 @@ class PushConsumerListener<T> {
                     messageView.getBornTimestamp()
                 );
                 handler.onMessage(messageEnvelope);
-                if (meterRegistry != null) {
-                    meterRegistry.counter("messaging.consume.count",
-                        "topic", topic, "group", group, "mode", "push", "result", "success").increment();
-                    meterRegistry.timer("messaging.consume.latency",
-                            "topic", topic, "group", group, "mode", "push")
-                        .record(System.nanoTime() - startNanos, TimeUnit.NANOSECONDS);
-                }
+                metrics.recordConsumeSuccess(topic, group, "push", startNanos);
                 log.debug("Message consumed: topic={}, group={}, msgId={}",
                     topic, group, messageView.getMessageId());
                 return ConsumeResult.SUCCESS;
@@ -78,21 +68,14 @@ class PushConsumerListener<T> {
                 }
                 log.warn("DLQ forward failed for permanent error, returning FAILURE for broker retry: topic={}, msgId={}",
                     topic, messageView.getMessageId());
-                if (meterRegistry != null) {
-                    meterRegistry.counter("messaging.consume.count",
-                        "topic", topic, "group", group, "mode", "push", "result", "fail").increment();
-                }
+                metrics.recordConsumeFailure(topic, group, "push");
                 return ConsumeResult.FAILURE;
             } catch (Exception e) {
                 log.error("Push consume failed: topic={}, msgId={}",
                     topic, messageView.getMessageId(), e);
-                if (meterRegistry != null) {
-                    meterRegistry.counter("messaging.consume.count",
-                        "topic", topic, "group", group, "mode", "push", "result", "fail").increment();
-                    meterRegistry.counter("messaging.retry.count",
-                        "topic", topic, "group", group, "mode", "push",
-                        "attempt", String.valueOf(messageView.getDeliveryAttempt())).increment();
-                }
+                metrics.recordConsumeFailure(topic, group, "push");
+                metrics.recordRetry(topic, group, "push",
+                    String.valueOf(messageView.getDeliveryAttempt()));
                 return ConsumeResult.FAILURE;
             } finally {
                 propagator.clear();

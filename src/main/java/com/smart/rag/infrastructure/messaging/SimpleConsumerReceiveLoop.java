@@ -1,10 +1,9 @@
 package com.smart.rag.infrastructure.messaging;
 
 import com.smart.rag.infrastructure.exception.PermanentConsumeException;
-import io.micrometer.core.instrument.MeterRegistry;
-import jakarta.annotation.Nullable;
 import org.apache.rocketmq.client.apis.consumer.SimpleConsumer;
 import org.apache.rocketmq.client.apis.message.MessageView;
+import jakarta.annotation.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -48,7 +47,7 @@ class SimpleConsumerReceiveLoop<T> {
     private final SimpleConsumer simpleConsumer;
     private final MessagePayloadCodec codec;
     private final DeadLetterSender deadLetterSender;
-    @Nullable private final MeterRegistry meterRegistry;
+    private final MessagingMetrics metrics;
     private final TracePropagator propagator;
 
     private final AtomicBoolean runningFlag = new AtomicBoolean(true);
@@ -59,7 +58,7 @@ class SimpleConsumerReceiveLoop<T> {
                                Class<T> payloadType, MessageHandler<T> handler,
                                SimpleConsumer simpleConsumer, MessagePayloadCodec codec,
                                Duration defaultCloseTimeout, DeadLetterSender deadLetterSender,
-                               @Nullable MeterRegistry meterRegistry, TracePropagator propagator) {
+                               MessagingMetrics metrics, TracePropagator propagator) {
         this.topic = topic;
         this.group = group;
         this.config = config;
@@ -69,7 +68,7 @@ class SimpleConsumerReceiveLoop<T> {
         this.codec = codec;
         this.deadLetterSender = deadLetterSender;
         this.closeTimeoutMsHolder = new AtomicLong(defaultCloseTimeout.toMillis());
-        this.meterRegistry = meterRegistry;
+        this.metrics = metrics;
         this.propagator = propagator != null ? propagator : TracePropagator.NO_OP;
     }
 
@@ -199,7 +198,7 @@ class SimpleConsumerReceiveLoop<T> {
                                  Semaphore inflightSemaphore) {
         String msgId = messageView.getMessageId().toString();
         propagator.restore(messageView.getProperties());
-        long startNanos = meterRegistry != null ? System.nanoTime() : 0;
+        long startNanos = metrics.startNanos();
         try {
             T payload = codec.decode(MessagePayloadCodec.toByteArray(messageView.getBody()), payloadType);
             MessageEnvelope<T> messageEnvelope = new MessageEnvelope<>(
@@ -212,26 +211,14 @@ class SimpleConsumerReceiveLoop<T> {
             );
             handler.onMessage(messageEnvelope);
             simpleConsumer.ack(messageView);
-            if (meterRegistry != null) {
-                meterRegistry.counter("messaging.consume.count",
-                    "topic", topic, "group", group, "mode", "simple", "result", "success").increment();
-                meterRegistry.timer("messaging.consume.latency",
-                        "topic", topic, "group", group, "mode", "simple")
-                    .record(System.nanoTime() - startNanos, TimeUnit.NANOSECONDS);
-            }
+            metrics.recordConsumeSuccess(topic, group, "simple", startNanos);
             log.debug("Message consumed and acked: topic={}, group={}, msgId={}", topic, group, msgId);
             if (retryCounter != null) retryCounter.remove(msgId);
         } catch (PermanentConsumeException e) {
-            if (meterRegistry != null) {
-                meterRegistry.counter("messaging.consume.count",
-                    "topic", topic, "group", group, "mode", "simple", "result", "fail").increment();
-            }
+            metrics.recordConsumeFailure(topic, group, "simple");
             handlePermanentError(messageView, msgId, retryCounter);
         } catch (Exception e) {
-            if (meterRegistry != null) {
-                meterRegistry.counter("messaging.consume.count",
-                    "topic", topic, "group", group, "mode", "simple", "result", "fail").increment();
-            }
+            metrics.recordConsumeFailure(topic, group, "simple");
             handleRetryableError(messageView, msgId, e, retryCounter, skipRetry, maxRetries);
         } finally {
             inflightSemaphore.release();
@@ -266,11 +253,7 @@ class SimpleConsumerReceiveLoop<T> {
         } else {
             int attempts = retryCounter.computeIfAbsent(msgId, k -> new AtomicInteger(0))
                 .incrementAndGet();
-            if (meterRegistry != null) {
-                meterRegistry.counter("messaging.retry.count",
-                    "topic", topic, "group", group, "mode", "simple",
-                    "attempt", String.valueOf(attempts)).increment();
-            }
+            metrics.recordRetry(topic, group, "simple", String.valueOf(attempts));
             if (attempts >= maxRetries) {
                 log.error("Simple consume exhausted retries ({}): topic={}, msgId={}",
                     attempts, topic, msgId, e);

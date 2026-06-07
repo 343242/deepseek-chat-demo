@@ -3,8 +3,7 @@ package com.smart.rag.infrastructure.messaging.idempotent;
 import com.smart.rag.infrastructure.exception.ServiceException;
 import com.smart.rag.infrastructure.exception.errorcode.ServiceErrorCode;
 import com.smart.rag.infrastructure.messaging.MessageHandler;
-import io.micrometer.core.instrument.MeterRegistry;
-import jakarta.annotation.Nullable;
+import com.smart.rag.infrastructure.messaging.MessagingMetrics;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -41,7 +40,7 @@ public class IdempotentHandler {
 
     public static <T> MessageHandler<T> wrap(MessageHandler<T> handler, String topic,
                                        StringRedisTemplate redis, long ttlSeconds,
-                                       @Nullable MeterRegistry meterRegistry) {
+                                       MessagingMetrics metrics) {
         return msg -> {
             String idempotentKey = msg.deduplicationKey();
             if (idempotentKey == null || idempotentKey.isEmpty()) {
@@ -71,9 +70,7 @@ public class IdempotentHandler {
                 }
                 log.warn("Idempotent check failed (Redis unavailable), delegating to business-layer: topic={}",
                     topic, e);
-                if (meterRegistry != null) {
-                    meterRegistry.counter("messaging.idempotent.degraded", "topic", topic).increment();
-                }
+                metrics.recordIdempotentDegraded(topic);
                 try {
                     handler.onMessage(msg);
                 } catch (Exception listenerEx) {

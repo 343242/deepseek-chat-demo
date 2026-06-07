@@ -5,7 +5,6 @@ import com.smart.rag.infrastructure.exception.ServiceException;
 import com.smart.rag.infrastructure.exception.errorcode.MessagingErrorCode;
 import com.smart.rag.infrastructure.exception.MessagingException;
 import com.smart.rag.infrastructure.messaging.idempotent.IdempotentHandler;
-import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.Nullable;
 import org.apache.rocketmq.client.apis.ClientConfiguration;
 import org.apache.rocketmq.client.apis.ClientException;
@@ -15,6 +14,7 @@ import org.apache.rocketmq.client.apis.consumer.FilterExpression;
 import org.apache.rocketmq.client.apis.consumer.FilterExpressionType;
 import org.apache.rocketmq.client.apis.consumer.PushConsumer;
 import org.apache.rocketmq.client.apis.consumer.SimpleConsumer;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.apache.rocketmq.client.apis.message.MessageView;
 import org.apache.rocketmq.client.apis.message.Message;
 import org.apache.rocketmq.client.apis.producer.Producer;
@@ -36,7 +36,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Pattern;
@@ -61,7 +60,7 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
     private final Producer producer;
     private final ClientConfiguration clientConfiguration;
 
-    @Nullable private final MeterRegistry meterRegistry;
+    private final MessagingMetrics metrics;
     @Nullable private final StringRedisTemplate redis;
     private final TracePropagator propagator;
 
@@ -79,27 +78,6 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
 
     public RocketMQMessageBus(MessagingProperties properties,
                                MessagePayloadCodec codec,
-                               ClientServiceProvider provider) {
-        this(properties, codec, provider, null, null, null);
-    }
-
-    public RocketMQMessageBus(MessagingProperties properties,
-                               MessagePayloadCodec codec,
-                               ClientServiceProvider provider,
-                               @Nullable MeterRegistry meterRegistry) {
-        this(properties, codec, provider, meterRegistry, null, null);
-    }
-
-    public RocketMQMessageBus(MessagingProperties properties,
-                               MessagePayloadCodec codec,
-                               ClientServiceProvider provider,
-                               @Nullable MeterRegistry meterRegistry,
-                               @Nullable TracePropagator propagator) {
-        this(properties, codec, provider, meterRegistry, propagator, null);
-    }
-
-    public RocketMQMessageBus(MessagingProperties properties,
-                               MessagePayloadCodec codec,
                                ClientServiceProvider provider,
                                @Nullable MeterRegistry meterRegistry,
                                @Nullable TracePropagator propagator,
@@ -107,7 +85,7 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
         this.properties = properties;
         this.codec = codec;
         this.provider = provider;
-        this.meterRegistry = meterRegistry;
+        this.metrics = new MessagingMetrics(meterRegistry);
         this.redis = redis;
         this.propagator = propagator != null ? propagator : TracePropagator.NO_OP;
         this.validator = new MessageValidator(properties, codec);
@@ -149,28 +127,16 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
         try {
             byte[] encoded = validator.validateAndEncode(message);
             var rmqMsg = buildRocketMQMessage(message, encoded);
-            long startNanos = meterRegistry != null ? System.nanoTime() : 0;
+            long startNanos = metrics.startNanos();
             SendReceipt receipt = producer.send(rmqMsg);
-            if (meterRegistry != null) {
-                meterRegistry.timer("messaging.send.latency", "topic", message.topic())
-                    .record(System.nanoTime() - startNanos, TimeUnit.NANOSECONDS);
-                meterRegistry.summary("messaging.send.payload.size", "topic", message.topic())
-                    .record(encoded.length);
-            }
+            metrics.recordSendSuccess(message.topic(), startNanos, encoded.length);
             cb.recordSuccess();
             lastSuccessfulSendMs = System.currentTimeMillis();
-            if (meterRegistry != null) {
-                meterRegistry.counter("messaging.send.count",
-                    "topic", message.topic(), "result", "success").increment();
-            }
             log.debug("Message sent: topic={}, msgId={}", message.topic(), receipt.getMessageId());
             return receipt.getMessageId().toString();
         } catch (Exception e) {
             cb.recordFailure();
-            if (meterRegistry != null) {
-                meterRegistry.counter("messaging.send.count",
-                    "topic", message.topic(), "result", "fail").increment();
-            }
+            metrics.recordSendFailure(message.topic());
             throw new MessagePublishException("Failed to send message to topic: " + message.topic(), e);
         }
     }
@@ -184,16 +150,13 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
         }
         byte[] encoded = validator.validateAndEncode(message);
         var rmqMsg = buildRocketMQMessage(message, encoded);
-        long startNanos = meterRegistry != null ? System.nanoTime() : 0;
+        long startNanos = metrics.startNanos();
         try {
             return producer.sendAsync(rmqMsg)
                 .handle((receipt, ex) -> {
                     if (ex != null) {
                         cb.recordFailure();
-                        if (meterRegistry != null) {
-                            meterRegistry.counter("messaging.send.count",
-                                "topic", message.topic(), "result", "fail").increment();
-                        }
+                        metrics.recordSendFailure(message.topic());
                         Throwable cause = (ex instanceof CompletionException ce) ? ce.getCause() : ex;
                         throw new MessagePublishException("Async send failed: " + message.topic(), cause);
                     }
@@ -203,22 +166,12 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
                     } catch (Exception cbEx) {
                         log.warn("Circuit breaker recordSuccess failed", cbEx);
                     }
-                    if (meterRegistry != null) {
-                        meterRegistry.counter("messaging.send.count",
-                            "topic", message.topic(), "result", "success").increment();
-                        meterRegistry.timer("messaging.send.latency", "topic", message.topic())
-                            .record(System.nanoTime() - startNanos, TimeUnit.NANOSECONDS);
-                        meterRegistry.summary("messaging.send.payload.size", "topic", message.topic())
-                            .record(encoded.length);
-                    }
+                    metrics.recordSendSuccess(message.topic(), startNanos, encoded.length);
                     return receipt.getMessageId().toString();
                 });
         } catch (Exception e) {
             cb.recordFailure();
-            if (meterRegistry != null) {
-                meterRegistry.counter("messaging.send.count",
-                    "topic", message.topic(), "result", "fail").increment();
-            }
+            metrics.recordSendFailure(message.topic());
             return CompletableFuture.failedFuture(
                 new MessagePublishException("Failed to initiate async send: " + message.topic(), e));
         }
@@ -243,7 +196,7 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
         }
 
         MessageHandler<T> wrappedHandler = properties.idempotent().enabled() && redis != null
-            ? IdempotentHandler.wrap(handler, topic, redis, properties.idempotent().ttlSeconds(), meterRegistry)
+            ? IdempotentHandler.wrap(handler, topic, redis, properties.idempotent().ttlSeconds(), metrics)
             : handler;
 
         String fullTopic = properties.topicPrefix() + topic;
@@ -286,7 +239,7 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
 
         var pushListener = new PushConsumerListener<>(
             topic, group, payloadType, handler, codec,
-            this::sendToDeadLetter, meterRegistry, propagator).create();
+            this::sendToDeadLetter, metrics, propagator).create();
 
         PushConsumer pushConsumer = provider.newPushConsumerBuilder()
             .setClientConfiguration(clientConfiguration)
@@ -333,7 +286,7 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
         SimpleConsumerReceiveLoop<T> loop = new SimpleConsumerReceiveLoop<>(
             topic, group, config, payloadType, handler, simpleConsumer,
             codec, properties.shutdownTimeout(), this::sendToDeadLetter,
-            meterRegistry, propagator);
+            metrics, propagator);
 
         ExecutorService receiveExecutor = loop.start();
 
@@ -374,9 +327,7 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
             dlqBlockedSinceMs = 0;
             log.warn("Message forwarded to DLQ: dlqTopic={}, originalTopic={}, msgId={}",
                 dlqTopic, topic, msgId);
-            if (meterRegistry != null) {
-                meterRegistry.counter("messaging.dead.count", "topic", topic, "group", group).increment();
-            }
+            metrics.recordDeadLetter(topic, group);
             return true;
         } catch (Exception e) {
             int total = dlqConsecutiveFailures.incrementAndGet();
@@ -448,10 +399,7 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
                     } catch (Exception e) {
                         log.error("Post-commit send failed: topic={}, dedupKey={}",
                             message.topic(), message.deduplicationKey(), e);
-                        if (meterRegistry != null) {
-                            meterRegistry.counter("messaging.send.post_commit_fail",
-                                "topic", message.topic()).increment();
-                        }
+                        metrics.recordPostCommitFail(message.topic());
                     }
                 }
             });

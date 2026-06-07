@@ -36,7 +36,7 @@ public class JacksonMessageCodec implements MessagePayloadCodec {
         try {
             return objectMapper.readValue(data, type);
         } catch (Exception e) {
-            throw new PermanentConsumeException("Failed to decode message payload: " + type.getName(), e);
+            throw new PermanentConsumeException("Failed to decode message payload: " + type.getSimpleName(), e);
         }
     }
 }

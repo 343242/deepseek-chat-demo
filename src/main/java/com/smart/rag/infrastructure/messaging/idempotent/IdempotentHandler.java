@@ -1,5 +1,7 @@
 package com.smart.rag.infrastructure.messaging.idempotent;
 
+import com.smart.rag.infrastructure.exception.ServiceException;
+import com.smart.rag.infrastructure.exception.errorcode.ServiceErrorCode;
 import com.smart.rag.infrastructure.messaging.MessageHandler;
 import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.Nullable;
@@ -16,6 +18,13 @@ import java.util.List;
  * <p>
  * Uses Lua SETNX to detect and skip duplicate messages within a configurable TTL window.
  * Falls back to pass-through when Redis is unavailable.
+ * <p>
+ * <b>At-least-once tradeoff:</b> if Redis becomes unavailable after a successful SETNX
+ * but before the handler completes, the idempotent key remains in Redis. On message
+ * redelivery, the key will be detected as duplicate and the message silently skipped.
+ * This is an inherent tradeoff of at-least-once delivery semantics — during Redis
+ * instability windows, a small number of messages may be dropped in favor of preventing
+ * duplicates.
  */
 public class IdempotentHandler {
 
@@ -57,7 +66,8 @@ public class IdempotentHandler {
                     try { redis.delete(redisKey); } catch (Exception de) {
                         log.warn("Failed to delete idempotent key after handler failure: key={}", redisKey, de);
                     }
-                    throw (e instanceof RuntimeException re) ? re : new RuntimeException(e);
+                    throw (e instanceof RuntimeException re) ? re
+                        : new ServiceException(ServiceErrorCode.INTERNAL_ERROR, "消息处理失败", e);
                 }
                 log.warn("Idempotent check failed (Redis unavailable), delegating to business-layer: topic={}",
                     topic, e);

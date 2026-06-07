@@ -1,5 +1,8 @@
 package com.smart.rag.infrastructure.messaging;
 
+import com.smart.rag.infrastructure.exception.ClientException;
+import com.smart.rag.infrastructure.exception.MessagingErrorCode;
+
 import java.time.Duration;
 
 /**
@@ -69,25 +72,25 @@ public record ConsumerConfig(
 
         public ConsumerConfig build() {
             if (concurrency < 1) {
-                throw new IllegalArgumentException("concurrency must be >= 1");
+                throw new ClientException(MessagingErrorCode.INVALID_CONFIG, "并发数必须大于等于1");
             }
             if (concurrency > 256) {
-                throw new IllegalArgumentException("concurrency must be <= 256");
+                throw new ClientException(MessagingErrorCode.INVALID_CONFIG, "并发数不能超过256");
             }
             if (batchSize < 1) {
-                throw new IllegalArgumentException("batchSize must be >= 1");
+                throw new ClientException(MessagingErrorCode.INVALID_CONFIG, "批量大小必须大于等于1");
             }
             if (batchSize > 256) {
-                throw new IllegalArgumentException("batchSize must be <= 256");
+                throw new ClientException(MessagingErrorCode.INVALID_CONFIG, "批量大小不能超过256");
             }
             if (invisibleDuration != null && invisibleDuration.compareTo(Duration.ofSeconds(20)) < 0) {
-                throw new IllegalArgumentException("invisibleDuration must be >= 20s (RocketMQ minimum)");
+                throw new ClientException(MessagingErrorCode.INVALID_CONFIG, "不可见时间不能小于20秒");
             }
             if (invisibleDuration != null && invisibleDuration.compareTo(Duration.ofHours(2)) > 0) {
-                throw new IllegalArgumentException("invisibleDuration must be <= 2h");
+                throw new ClientException(MessagingErrorCode.INVALID_CONFIG, "不可见时间不能超过2小时");
             }
             if (retryPolicy != null && retryPolicy.maxRetries() > 100) {
-                throw new IllegalArgumentException("maxRetries must be <= 100");
+                throw new ClientException(MessagingErrorCode.INVALID_CONFIG, "最大重试次数不能超过100");
             }
             if (tagExpression == null || tagExpression.isBlank()) {
                 tagExpression = "*";

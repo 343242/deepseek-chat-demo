@@ -9,6 +9,7 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.lang.Nullable;
 
 /**
  * Messaging bus auto-configuration — active when {@code app.messaging.enabled=true}.
@@ -31,12 +32,9 @@ public class MessagingAutoConfiguration {
                                   MessagePayloadCodec codec,
                                   ClientServiceProvider provider,
                                   @Autowired(required = false) MeterRegistry meterRegistry,
+                                  @Autowired(required = false) @Nullable TracePropagator propagator,
                                   @Autowired(required = false) StringRedisTemplate redisTemplate) {
-        RocketMQMessageBus bus = new RocketMQMessageBus(properties, codec, provider, meterRegistry);
-        if (redisTemplate != null) {
-            bus.setRedisTemplate(redisTemplate);
-        }
-        return bus;
+        return new RocketMQMessageBus(properties, codec, provider, meterRegistry, propagator, redisTemplate);
     }
 
     @Bean

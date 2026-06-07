@@ -152,14 +152,22 @@ class SimpleConsumerReceiveLoop<T> {
                                 messageView, retryCounter, skipRetry, maxRetries, inflightSemaphore));
                         } catch (RejectedExecutionException e) {
                             inflightSemaphore.release();
-                            log.debug("Processing pool full, releasing semaphore: topic={}", topic);
+                            log.warn("Processing pool full, forwarding to DLQ: topic={}, msgId={}",
+                                topic, messageView.getMessageId());
+                            if (deadLetterSender.send(messageView, topic, group)) {
+                                try { simpleConsumer.ack(messageView); } catch (Exception ae) {
+                                    log.warn("Ack failed after DLQ forward (pool full): topic={}, msgId={}",
+                                        topic, messageView.getMessageId(), ae);
+                                }
+                            }
                         }
                     }
                 } catch (Exception e) {
                     if (runningFlag.get()) {
                         log.warn("Simple receive error, retrying in {}ms: topic={}", backoffMs, topic, e);
                         try {
-                            Thread.sleep(Math.min(backoffMs, 60_000));
+                            long jitter = java.util.concurrent.ThreadLocalRandom.current().nextLong(0, Math.max(1, backoffMs / 4));
+                            Thread.sleep(Math.min(backoffMs + jitter, 60_000));
                         } catch (InterruptedException ie) {
                             Thread.currentThread().interrupt();
                             break;
@@ -272,8 +280,7 @@ class SimpleConsumerReceiveLoop<T> {
                     }
                     retryCounter.remove(msgId);
                 } else {
-                    retryCounter.remove(msgId);
-                    log.warn("DLQ forward failed, retry counter reset: topic={}, msgId={}", topic, msgId);
+                    log.warn("DLQ forward failed, retry counter preserved for next delivery: topic={}, msgId={}", topic, msgId);
                 }
             } else {
                 log.warn("Simple consume failed ({}/{}): topic={}, msgId={}",

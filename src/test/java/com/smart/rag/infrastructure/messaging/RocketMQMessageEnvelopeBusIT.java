@@ -68,7 +68,7 @@ class RocketMQMessageEnvelopeBusIT {
             new MessagingProperties.CircuitBreakerConfig(5, 30000),
             new MessagingProperties.RocketMQConfig(
                 endpoints, "test-producer", Duration.ofSeconds(5),
-                16, 4194304, null, null)
+                16, 4194304, false, null, null)
         );
         ClientServiceProvider provider = ClientServiceProvider.loadService();
         bus = new RocketMQMessageBus(properties, new JacksonMessageCodecTestSupport(), provider);

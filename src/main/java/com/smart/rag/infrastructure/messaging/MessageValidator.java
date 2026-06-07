@@ -1,5 +1,8 @@
 package com.smart.rag.infrastructure.messaging;
 
+import com.smart.rag.infrastructure.exception.ClientException;
+import com.smart.rag.infrastructure.exception.MessagingErrorCode;
+
 import java.util.regex.Pattern;
 
 /**
@@ -10,6 +13,7 @@ class MessageValidator {
 
     private static final Pattern TOPIC_PATTERN = Pattern.compile("^[a-zA-Z0-9_-][%a-zA-Z0-9_-]{0,127}$");
     private static final Pattern TAG_PATTERN = Pattern.compile("^[a-zA-Z0-9_-]{1,64}$");
+    private static final Pattern TOPIC_PREFIX_PATTERN = Pattern.compile("^[a-zA-Z0-9_-][%a-zA-Z0-9_-]*$");
 
     private final MessagingProperties properties;
     private final MessagePayloadCodec codec;
@@ -22,35 +26,30 @@ class MessageValidator {
     byte[] validateAndEncode(MessageEnvelope<?> messageEnvelope) {
         String fullTopic = properties.topicPrefix() + messageEnvelope.topic();
         if (fullTopic.length() > 128) {
-            throw new IllegalArgumentException(
-                "Full topic name too long: '" + fullTopic
-                + "' (prefix + topic = " + fullTopic.length() + " chars, max 128)");
+            throw new ClientException(MessagingErrorCode.INVALID_TOPIC,
+                "Topic名称过长: '" + messageEnvelope.topic() + "' (含前缀" + fullTopic.length() + "字符，上限128)");
         }
         if (!TOPIC_PATTERN.matcher(messageEnvelope.topic()).matches()) {
-            throw new IllegalArgumentException(
-                "Invalid topic name: '" + messageEnvelope.topic()
-                + "'. Must be 1-128 chars, alphanumeric/underscore/hyphen/percent only.");
+            throw new ClientException(MessagingErrorCode.INVALID_TOPIC,
+                "非法Topic名称: '" + messageEnvelope.topic() + "'，仅允许字母/数字/下划线/连字符/百分号，长度1-128");
         }
         if (messageEnvelope.tag() != null && !TAG_PATTERN.matcher(messageEnvelope.tag()).matches()) {
-            throw new IllegalArgumentException(
-                "Invalid tag name: '" + messageEnvelope.tag()
-                + "'. Must be 1-64 chars, alphanumeric/underscore/hyphen only.");
+            throw new ClientException(MessagingErrorCode.INVALID_TAG,
+                "非法标签名称: '" + messageEnvelope.tag() + "'，仅允许字母/数字/下划线/连字符，长度1-64");
         }
         byte[] encoded = codec.encode(messageEnvelope.payload());
         if (encoded.length > properties.rocketmq().maxMessageSize()) {
-            throw new IllegalArgumentException(
-                "Message payload too large: " + encoded.length + " bytes");
+            throw new ClientException(MessagingErrorCode.MESSAGE_TOO_LARGE,
+                "消息体超限: " + encoded.length + "字节，上限" + properties.rocketmq().maxMessageSize() + "字节");
         }
         return encoded;
     }
 
     static void validateTopicPrefix(String prefix) {
         if (prefix != null && !prefix.isEmpty()
-            && !Pattern.matches("^[a-zA-Z0-9_-][%a-zA-Z0-9_-]*$", prefix)) {
-            throw new IllegalArgumentException(
-                "Invalid topicPrefix: '" + prefix
-                + "'. Must start with alphanumeric/underscore/hyphen, "
-                + "followed by alphanumeric/underscore/hyphen/percent characters only.");
+            && !TOPIC_PREFIX_PATTERN.matcher(prefix).matches()) {
+            throw new ClientException(MessagingErrorCode.INVALID_TOPIC,
+                "非法Topic前缀: '" + prefix + "'");
         }
     }
 }

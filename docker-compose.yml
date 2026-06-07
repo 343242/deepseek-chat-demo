@@ -107,6 +107,9 @@ services:
         brokerRole = ASYNC_MASTER
         flushDiskType = ASYNC_FLUSH
         timerMaxDelaySec = 31622400
+        # Docker 环境：brokerIP1 必须设为 127.0.0.1，否则 proxy 广播容器内网 IP (172.18.x.x)，
+        # gRPC 客户端从宿主机无法连通。生产环境去掉此行或改为实际主机 IP。
+        brokerIP1 = 127.0.0.1
         EOF
         sh mqbroker --enable-proxy \
           -c /home/rocketmq/rocketmq-5.2.0/conf/broker.conf

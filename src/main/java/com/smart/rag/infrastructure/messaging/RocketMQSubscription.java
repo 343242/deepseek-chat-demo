@@ -1,5 +1,7 @@
 package com.smart.rag.infrastructure.messaging;
 
+import com.smart.rag.infrastructure.exception.MessagingErrorCode;
+import com.smart.rag.infrastructure.exception.ServiceException;
 import jakarta.annotation.Nullable;
 import org.apache.rocketmq.client.apis.consumer.PushConsumer;
 import org.apache.rocketmq.client.apis.consumer.SimpleConsumer;
@@ -69,14 +71,14 @@ public class RocketMQSubscription implements Subscription {
 
     @Override
     public void pause() {
-        throw new UnsupportedOperationException(
-            "pause() not supported by RocketMQ 5.x — topic=" + topic + ", group=" + group);
+        throw new ServiceException(MessagingErrorCode.UNSUPPORTED_OPERATION,
+            "当前消息订阅不支持暂停操作");
     }
 
     @Override
     public void resume() {
-        throw new UnsupportedOperationException(
-            "resume() not supported by RocketMQ 5.x — topic=" + topic + ", group=" + group);
+        throw new ServiceException(MessagingErrorCode.UNSUPPORTED_OPERATION,
+            "当前消息订阅不支持恢复操作");
     }
 
     public void close(Duration timeout) {

@@ -9,6 +9,7 @@ import jakarta.annotation.Nullable;
 import org.apache.rocketmq.client.apis.ClientConfiguration;
 import org.apache.rocketmq.client.apis.ClientException;
 import org.apache.rocketmq.client.apis.ClientServiceProvider;
+import org.apache.rocketmq.client.apis.StaticSessionCredentialsProvider;
 import org.apache.rocketmq.client.apis.consumer.FilterExpression;
 import org.apache.rocketmq.client.apis.consumer.FilterExpressionType;
 import org.apache.rocketmq.client.apis.consumer.PushConsumer;
@@ -26,7 +27,6 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 import java.io.IOException;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -37,6 +37,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.regex.Pattern;
 
 /**
@@ -60,7 +61,7 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
     private final ClientConfiguration clientConfiguration;
 
     @Nullable private final MeterRegistry meterRegistry;
-    @Nullable private StringRedisTemplate redis;
+    @Nullable private final StringRedisTemplate redis;
     private final TracePropagator propagator;
 
     private final CopyOnWriteArrayList<RocketMQSubscription> activeSubscriptions = new CopyOnWriteArrayList<>();
@@ -70,17 +71,20 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
     @Nullable private volatile DeadLetterOperations deadLetterOps;
     private final MessageValidator validator;
 
+    private static final int DLQ_FAST_FAIL_THRESHOLD = 10;
+    private final AtomicInteger dlqConsecutiveFailures = new AtomicInteger(0);
+
     public RocketMQMessageBus(MessagingProperties properties,
                                MessagePayloadCodec codec,
                                ClientServiceProvider provider) {
-        this(properties, codec, provider, null, null);
+        this(properties, codec, provider, null, null, null);
     }
 
     public RocketMQMessageBus(MessagingProperties properties,
                                MessagePayloadCodec codec,
                                ClientServiceProvider provider,
                                @Nullable MeterRegistry meterRegistry) {
-        this(properties, codec, provider, meterRegistry, null);
+        this(properties, codec, provider, meterRegistry, null, null);
     }
 
     public RocketMQMessageBus(MessagingProperties properties,
@@ -88,19 +92,38 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
                                ClientServiceProvider provider,
                                @Nullable MeterRegistry meterRegistry,
                                @Nullable TracePropagator propagator) {
+        this(properties, codec, provider, meterRegistry, propagator, null);
+    }
+
+    public RocketMQMessageBus(MessagingProperties properties,
+                               MessagePayloadCodec codec,
+                               ClientServiceProvider provider,
+                               @Nullable MeterRegistry meterRegistry,
+                               @Nullable TracePropagator propagator,
+                               @Nullable StringRedisTemplate redis) {
         this.properties = properties;
         this.codec = codec;
         this.provider = provider;
         this.meterRegistry = meterRegistry;
+        this.redis = redis;
         this.propagator = propagator != null ? propagator : TracePropagator.NO_OP;
         this.validator = new MessageValidator(properties, codec);
 
         MessageValidator.validateTopicPrefix(properties.topicPrefix());
 
-        this.clientConfiguration = ClientConfiguration.newBuilder()
+        var configBuilder = ClientConfiguration.newBuilder()
             .setEndpoints(properties.rocketmq().endpoints())
-            .setRequestTimeout(properties.rocketmq().requestTimeout())
-            .build();
+            .setRequestTimeout(properties.rocketmq().requestTimeout());
+        if (properties.rocketmq().enableSsl() != null) {
+            configBuilder.enableSsl(properties.rocketmq().enableSsl());
+        }
+        if (properties.rocketmq().accessKey() != null && properties.rocketmq().secretKey() != null) {
+            configBuilder.setCredentialProvider(
+                new StaticSessionCredentialsProvider(
+                    properties.rocketmq().accessKey(),
+                    properties.rocketmq().secretKey()));
+        }
+        this.clientConfiguration = configBuilder.build();
 
         try {
             this.producer = provider.newProducerBuilder()
@@ -110,10 +133,6 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
             throw new MessagingException(MessagingErrorCode.SUBSCRIPTION_ERROR,
                 "Failed to create RocketMQ Producer", e);
         }
-    }
-
-    void setRedisTemplate(@Nullable StringRedisTemplate redis) {
-        this.redis = redis;
     }
 
     // ==================== Send ====================
@@ -153,13 +172,13 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
 
     @Override
     public CompletableFuture<String> sendAsync(MessageEnvelope<?> message) {
-        byte[] encoded = validator.validateAndEncode(message);
-        var rmqMsg = buildRocketMQMessage(message, encoded);
         SendCircuitBreaker cb = circuitBreakerFor(message.topic());
         if (!cb.isCallAllowed()) {
             return CompletableFuture.failedFuture(
                 new MessagePublishException("Circuit breaker OPEN for topic: " + message.topic()));
         }
+        byte[] encoded = validator.validateAndEncode(message);
+        var rmqMsg = buildRocketMQMessage(message, encoded);
         long startNanos = meterRegistry != null ? System.nanoTime() : 0;
         try {
             return producer.sendAsync(rmqMsg)
@@ -206,9 +225,8 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
                                        Class<T> payloadType,
                                        MessageHandler<T> handler) {
         if (group == null || !GROUP_PATTERN.matcher(group).matches()) {
-            throw new IllegalArgumentException(
-                "Invalid consumer group: '" + group
-                + "'. Must be 1-128 chars, alphanumeric/underscore/hyphen only.");
+            throw new com.smart.rag.infrastructure.exception.ClientException(MessagingErrorCode.INVALID_GROUP,
+                "非法消费者组名称: '" + group + "'，仅允许字母/数字/下划线/连字符，长度1-128");
         }
         synchronized (this) {
             if (shutdown) {
@@ -321,6 +339,12 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
 
     boolean sendToDeadLetter(MessageView messageView, String topic, String group) {
         String msgId = messageView.getMessageId().toString();
+        int failures = dlqConsecutiveFailures.get();
+        if (failures >= DLQ_FAST_FAIL_THRESHOLD) {
+            log.warn("DLQ fast-fail ({} consecutive failures), skipping: topic={}, msgId={}",
+                failures, topic, msgId);
+            return false;
+        }
         try {
             String dlqTopic = "%DLQ%" + group;
             var dlqMsg =
@@ -333,6 +357,7 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
                     .addProperty("deadAt", Instant.now().toString())
                     .build();
             producer.send(dlqMsg);
+            dlqConsecutiveFailures.set(0);
             log.warn("Message forwarded to DLQ: dlqTopic={}, originalTopic={}, msgId={}",
                 dlqTopic, topic, msgId);
             if (meterRegistry != null) {
@@ -340,12 +365,18 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
             }
             return true;
         } catch (Exception e) {
+            int total = dlqConsecutiveFailures.incrementAndGet();
             String errorType = e.getClass().getSimpleName();
             if (e.getCause() instanceof TimeoutException) {
                 errorType = "TIMEOUT";
             }
-            log.error("Failed to forward message to DLQ [{}]: topic={}, msgId={}",
-                errorType, topic, msgId, e);
+            if (total >= DLQ_FAST_FAIL_THRESHOLD) {
+                log.error("DLQ consecutive failures reached threshold ({}), entering fast-fail mode [{}]: topic={}, msgId={}",
+                    total, errorType, topic, msgId);
+            } else {
+                log.error("Failed to forward message to DLQ [{}]: topic={}, msgId={}",
+                    errorType, topic, msgId, e);
+            }
             return false;
         }
     }
@@ -422,18 +453,20 @@ public class RocketMQMessageBus implements MessageBus, MessageBusManagement {
                     deadLetterOps = new DeadLetterOperations() {
                         @Override
                         public List<MessageEnvelope<?>> scanDeadLetters(String topic, int count) {
-                            log.warn("DLQ scan not yet implemented for topic={}", topic);
-                            return Collections.emptyList();
+                            throw new UnsupportedOperationException(
+                                "DLQ scan is not yet implemented");
                         }
 
                         @Override
                         public void replayDeadLetter(String topic, String messageId) {
-                            log.warn("DLQ replay not yet implemented for topic={}, msgId={}", topic, messageId);
+                            throw new UnsupportedOperationException(
+                                "DLQ replay is not yet implemented");
                         }
 
                         @Override
                         public int deadLetterCount(String topic) {
-                            return 0;
+                            throw new UnsupportedOperationException(
+                                "DLQ count is not yet implemented");
                         }
                     };
                 }

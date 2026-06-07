@@ -40,7 +40,7 @@ public record MessagingProperties(
         }
         if (rocketmq == null) {
             rocketmq = new RocketMQConfig(null, null,
-                null, 0, 0, null, null);
+                null, 0, 0, null, null, null);
         }
     }
 
@@ -78,6 +78,7 @@ public record MessagingProperties(
         Duration requestTimeout,
         int maxDeliveryAttempts,
         int maxMessageSize,
+        @Nullable Boolean enableSsl,
         @Nullable String accessKey,
         @Nullable String secretKey
     ) {
@@ -96,6 +97,20 @@ public record MessagingProperties(
             if (maxMessageSize <= 0) {
                 maxMessageSize = 4194304;
             }
+        }
+
+        @Override
+        public String toString() {
+            return "RocketMQConfig["
+                + "endpoints=" + endpoints
+                + ", producerGroup=" + producerGroup
+                + ", requestTimeout=" + requestTimeout
+                + ", maxDeliveryAttempts=" + maxDeliveryAttempts
+                + ", maxMessageSize=" + maxMessageSize
+                + ", enableSsl=" + enableSsl
+                + ", accessKey=" + (accessKey != null ? "***" : "null")
+                + ", secretKey=" + (secretKey != null ? "***" : "null")
+                + ']';
         }
     }
 }

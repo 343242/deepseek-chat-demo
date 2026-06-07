@@ -11,6 +11,12 @@ public enum MessagingErrorCode implements IErrorCode {
     PERMANENT_CONSUME_ERROR(400003, "永久性消费错误"),
     SUBSCRIPTION_ERROR(400004, "订阅异常"),
     CIRCUIT_BREAKER_OPEN(400005, "熔断器开启，拒绝发送"),
+    INVALID_TOPIC(400006, "非法Topic名称"),
+    INVALID_TAG(400007, "非法标签名称"),
+    INVALID_GROUP(400008, "非法消费者组名称"),
+    MESSAGE_TOO_LARGE(400009, "消息体超限"),
+    INVALID_CONFIG(400010, "消费配置无效"),
+    UNSUPPORTED_OPERATION(400011, "不支持的操作"),
     ;
 
     private final int code;

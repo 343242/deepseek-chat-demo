@@ -1,5 +1,8 @@
 package com.smart.rag.infrastructure.messaging;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.time.Clock;
 
 /**
@@ -7,6 +10,8 @@ import java.time.Clock;
  * Follows project's ModelCircuitBreakerRegistry pattern.
  */
 public class SendCircuitBreaker {
+
+    private static final Logger log = LoggerFactory.getLogger(SendCircuitBreaker.class);
 
     private final MessagingProperties.CircuitBreakerConfig config;
     private final Clock clock;
@@ -44,11 +49,15 @@ public class SendCircuitBreaker {
     }
 
     synchronized void recordSuccess() {
+        CircuitBreakerState prev = state;
         if (state == CircuitBreakerState.HALF_OPEN) {
             activeHalfOpenProbes--;
         }
         failureCount = 0;
         state = CircuitBreakerState.CLOSED;
+        if (prev != CircuitBreakerState.CLOSED) {
+            log.info("Circuit breaker transition: {} → CLOSED (probe succeeded)", prev);
+        }
     }
 
     synchronized void recordFailure() {
@@ -69,6 +78,8 @@ public class SendCircuitBreaker {
     }
 
     private void tripOpen() {
+        log.warn("Circuit breaker tripped OPEN (failures={}/{}): will cooldown {}ms",
+            failureCount, config.failureThreshold(), config.cooldownMillis());
         state = CircuitBreakerState.OPEN;
         openedAtMs = clock.millis();
         failureCount = config.failureThreshold();
@@ -77,6 +88,7 @@ public class SendCircuitBreaker {
     private void refreshState() {
         if (state == CircuitBreakerState.OPEN
             && clock.millis() - openedAtMs >= config.cooldownMillis()) {
+            log.info("Circuit breaker transition: OPEN → HALF_OPEN (cooldown elapsed)");
             state = CircuitBreakerState.HALF_OPEN;
         }
     }

@@ -82,7 +82,8 @@ class PushConsumerListener<T> {
                     meterRegistry.counter("messaging.consume.count",
                         "topic", topic, "group", group, "mode", "push", "result", "fail").increment();
                     meterRegistry.counter("messaging.retry.count",
-                        "topic", topic, "group", group, "mode", "push").increment();
+                        "topic", topic, "group", group, "mode", "push",
+                        "attempt", String.valueOf(messageView.getDeliveryAttempt())).increment();
                 }
                 return ConsumeResult.FAILURE;
             } finally {

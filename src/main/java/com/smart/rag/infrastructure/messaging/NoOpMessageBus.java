@@ -32,7 +32,7 @@ public class NoOpMessageBus implements MessageBus {
                                       ConsumerConfig config,
                                       Class<T> payloadType,
                                       MessageHandler<T> handler) {
-        log.warn("Messaging disabled, subscribe ignored: topic={}, group={}", topic, group);
+        log.info("Messaging disabled, subscribe ignored: topic={}, group={}", topic, group);
         return new NoOpSubscription(topic, group);
     }
 

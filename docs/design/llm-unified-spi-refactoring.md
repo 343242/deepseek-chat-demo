@@ -705,6 +705,10 @@ public abstract class AbstractEmbeddingClient implements EmbeddingCapable {
      * <p>
      * 默认实现为逐条调用 {@link #embed}。
      * 子类可覆写为批量 API 调用以减少网络往返。
+     * <p>
+     * <b>语义约束：all-or-nothing</b>。
+     * 批量嵌入不返回部分结果——任意一条失败即整体重试（由 ResilientEmbeddingClient 的
+     * 重试策略统一处理）。调用方拿到的要么是完整列表，要么是异常。
      *
      * @param texts 待嵌入文本列表
      * @param type  嵌入类型
@@ -1069,7 +1073,15 @@ public class FallbackExecutor {
             List<T> chain,
             Function<T, Flux<String>> action) {
 
-        return buildStreamChain(chain, action, 0);
+        // 预过滤不可用客户端，消除装配期急迫递归
+        List<T> available = chain.stream()
+            .filter(CapabilityClient::isAvailable)
+            .toList();
+        if (available.isEmpty()) {
+            return Flux.error(new RemoteException(
+                RemoteErrorCode.LLM_ALL_MODELS_FAILED, "所有模型均不可用"));
+        }
+        return buildStreamChain(available, action, 0);
     }
 
     private <T extends CapabilityClient> Flux<String> buildStreamChain(
@@ -1082,10 +1094,8 @@ public class FallbackExecutor {
         }
 
         T client = chain.get(index);
-        if (!client.isAvailable()) {
-            return buildStreamChain(chain, action, index + 1);
-        }
 
+        // isAvailable 已在 executeStream 入口预过滤，此处无需再检查
         return action.apply(client)
             .onErrorResume(e -> {
                 // 用户错误不降级，直接向下游传播
@@ -1094,6 +1104,7 @@ public class FallbackExecutor {
                 }
                 log.warn("Stream client '{}' failed at index {}, falling back to next: {}",
                     client.compositeId(), index, e.getMessage());
+                // 惰性递归：仅在运行时错误触发，每次只深入一层，不积累栈帧
                 return buildStreamChain(chain, action, index + 1);
             });
     }
@@ -1346,7 +1357,10 @@ public class ResilientChatClient implements ChatCapable {
     @Override public String providerId() { return delegate.providerId(); }
     @Override public String modelId() { return delegate.modelId(); }
     @Override public Set<LlmCapability> capabilities() { return delegate.capabilities(); }
-    @Override public boolean isAvailable() { return delegate.isAvailable(); }
+    @Override public boolean isAvailable() {
+        return delegate.isAvailable()
+            && circuitBreaker.getState() != CircuitBreakerState.OPEN;
+    }
     @Override public ModelSpec modelSpec() { return delegate.modelSpec(); }
 
     // ======== Chat 操作（带弹性包装） ========
@@ -1422,7 +1436,10 @@ public class ResilientEmbeddingClient implements EmbeddingCapable {
     @Override public String providerId() { return delegate.providerId(); }
     @Override public String modelId() { return delegate.modelId(); }
     @Override public Set<LlmCapability> capabilities() { return delegate.capabilities(); }
-    @Override public boolean isAvailable() { return delegate.isAvailable(); }
+    @Override public boolean isAvailable() {
+        return delegate.isAvailable()
+            && circuitBreaker.getState() != CircuitBreakerState.OPEN;
+    }
     @Override public ModelSpec modelSpec() { return delegate.modelSpec(); }
 
     // ======== Embedding 操作（带弹性包装） ========
@@ -1482,7 +1499,10 @@ public class ResilientRerankClient implements RerankCapable {
     @Override public String providerId() { return delegate.providerId(); }
     @Override public String modelId() { return delegate.modelId(); }
     @Override public Set<LlmCapability> capabilities() { return delegate.capabilities(); }
-    @Override public boolean isAvailable() { return delegate.isAvailable(); }
+    @Override public boolean isAvailable() {
+        return delegate.isAvailable()
+            && circuitBreaker.getState() != CircuitBreakerState.OPEN;
+    }
     @Override public ModelSpec modelSpec() { return delegate.modelSpec(); }
 
     // ======== Rerank 操作（带弹性包装） ========
@@ -1900,6 +1920,16 @@ public class LlmClientRegistry {
                 .map(Optional::get))
             .toList();
 
+        // ====== 1.5 compositeId 唯一性校验 ======
+        Set<String> seenIds = new HashSet<>();
+        for (CapabilityClient client : allClients) {
+            if (!seenIds.add(client.compositeId())) {
+                throw new RemoteException(RemoteErrorCode.LLM_CONFIG_ERROR,
+                    "Duplicate compositeId detected: " + client.compositeId()
+                    + ". Each model must have a globally unique compositeId.");
+            }
+        }
+
         log.info("Total LLM clients registered: {}", allClients.size());
 
         // ====== 2. 构建 compositeId 索引（原始，用于 wrapWithResilience 输入） ======
@@ -1988,6 +2018,27 @@ public class LlmClientRegistry {
      */
     public List<CapabilityClient> getFallbackChain(LlmCapability capability) {
         return fallbackChains.getOrDefault(capability, List.of());
+    }
+
+    /**
+     * 获取某个能力的类型安全 Fallback Chain
+     * <p>
+     * 调用方通过此方法获取强类型的降级链，避免运行时强转：
+     * <pre>
+     * List&lt;ChatCapable&gt; chain = registry.getFallbackChain(LlmCapability.CHAT, ChatCapable.class);
+     * ChatResponse result = fallbackExecutor.execute(chain, client -> client.chat(request));
+     * </pre>
+     *
+     * @param capability 能力类型
+     * @param type       期望的客户端类型（如 ChatCapable.class）
+     * @return 类型安全的客户端列表
+     */
+    public <T extends CapabilityClient> List<T> getFallbackChain(
+            LlmCapability capability, Class<T> type) {
+        return fallbackChains.getOrDefault(capability, List.of()).stream()
+            .filter(type::isInstance)
+            .map(type::cast)
+            .toList();
     }
 
     /**
@@ -2319,6 +2370,37 @@ public record ProbeProperties(
 ) {}
 ```
 
+### 10.3 配置校验
+
+> 启动时校验，fail-fast。校验失败抛出 `RemoteException(LLM_CONFIG_ERROR)` 阻止应用启动。
+
+| 校验项 | 规则 | 校验时机 |
+|--------|------|---------|
+| `compositeId` 格式 | 必须包含且仅包含一个 `:`，格式 `{providerId}:{modelId}` | `LlmClientRegistry` 构造时 |
+| `compositeId` 唯一性 | 全局唯一，跨 Provider 不允许重复 | `LlmClientRegistry` 构造时 |
+| `priority` | 非负整数 | `ModelSpec` 构造时 |
+| `capabilities` | 非空集合 | `ModelSpec` 构造时 |
+| `type=custom` 的 `className` | 必须是可加载的类且实现 `LlmProvider` | `GenericOpenAiProviderRegistrar` 构造时 |
+| `retryableExceptions` | 每个条目必须是可加载的 `Exception` 子类 | `RetryPolicy` 构造时 |
+| `fallback` 引用 | chain 中每个 compositeId 必须在 providers 中存在 | `LlmClientRegistry` 构造时 |
+
+```java
+// LlmClientRegistry 构造时增加 Fallback Chain 引用校验
+private void validateFallbackReferences(
+        FallbackChainConfig config,
+        Set<String> knownIds) {
+    for (LlmCapability cap : LlmCapability.values()) {
+        for (String id : config.getOrder(cap)) {
+            if (!knownIds.contains(id)) {
+                throw new RemoteException(RemoteErrorCode.LLM_CONFIG_ERROR,
+                    "Fallback chain references unknown compositeId: " + id
+                    + " (capability: " + cap + ")");
+            }
+        }
+    }
+}
+```
+
 ---
 
 ## 11. 异常体系（复用已有层次结构）
@@ -2484,7 +2566,7 @@ public class ChatServiceImpl implements ChatService {
      * 执行链：FallbackExecutor → ResilientChatClient → CircuitBreaker → RetryPolicy → 原始 Client
      */
     public ChatResponse chat(String modelId, ChatRequest request) {
-        List<ChatCapable> chain = registry.getFallbackChain(LlmCapability.CHAT);
+        List<ChatCapable> chain = registry.getFallbackChain(LlmCapability.CHAT, ChatCapable.class);
         return fallbackExecutor.execute(chain, client -> client.chat(request));
     }
 
@@ -2500,7 +2582,7 @@ public class ChatServiceImpl implements ChatService {
      *   → 流报错时 → onErrorResume 切换到 chain 中下一个 ResilientChatClient
      */
     public Flux<String> chatStream(String modelId, ChatRequest request) {
-        List<ChatCapable> chain = registry.getFallbackChain(LlmCapability.CHAT);
+        List<ChatCapable> chain = registry.getFallbackChain(LlmCapability.CHAT, ChatCapable.class);
         return fallbackExecutor.executeStream(chain, client -> client.chatStream(request));
     }
 }

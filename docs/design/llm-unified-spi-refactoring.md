@@ -34,15 +34,15 @@
 
 6 个调用点各自实现重试，逻辑不一致（2 次/3 次、有无退避、有无熔断），无法保证弹性行为的统一性。
 
-### 1.2 保留的现有设计
+### 1.2 保留的设计模式
 
-以下设计经过验证是合理的，本次重构保留并复用：
+以下**设计模式**经过验证是合理的，本次重构保留其核心思想，但**实现类被新架构替代**：
 
-- `ModelProvider` 接口 + `AbstractModelProvider` 模板方法 — SPI 骨架良好
-- `ProviderRegistry` 自动发现 + `ModelRouter` 路由 — 注册表模式正确
-- `StreamRetryHandler` 两阶段降级（同模型重试 → 跨模型降级）— 核心算法保留
-- `ModelCircuitBreakerRegistry` 三态熔断器 — 保留
-- `ProbeStreamHandler` 首包探测 — 保留
+- **SPI 模式** — 原 `ModelProvider` 接口 + `AbstractModelProvider` 模板方法的 SPI 思想保留，由 `LlmProvider` + `AbstractXxxClient` 接替
+- **注册表模式** — 原 `ProviderRegistry` 自动发现 + `ModelRouter` 路由的思想保留，由 `LlmClientRegistry` 接替
+- **两阶段降级算法** — 原 `StreamRetryHandler`（同模型重试 → 跨模型降级）核心算法保留，由 `RetryPolicy` + `FallbackExecutor` 接替
+- **熔断器** — 原 `ModelCircuitBreakerRegistry` 三态熔断器保留，由 `CircuitBreakerRegistry` 统一管理
+- **首包探测** — 原 `ProbeStreamHandler` 首包探测保留，由 `ProbeHandler` 在 `ResilientChatClient` 中施加
 
 ---
 
@@ -178,7 +178,7 @@ public record ModelSpec(
     /** 模型在该供应商下的 ID，如 "text-embedding-v4" */
     String modelId,
 
-    /** compositeId，格式 "{providerId}:{modelId}"，如 "dashscope/text-embedding-v4" */
+    /** compositeId，格式 "{providerId}:{modelId}"，如 "dashscope:text-embedding-v4" */
     String compositeId,
 
     /** 人类可读显示名 */
@@ -293,7 +293,41 @@ public interface LlmProvider {
 }
 ```
 
-### 4.5 `ChatRequest` — Chat 请求模型
+### 4.5 `Message` — 对话消息
+
+```java
+package com.smart.rag.infrastructure.llm;
+
+import java.util.Map;
+
+/**
+ * 对话消息
+ * <p>
+ * Agent 场景下 {@code toolCallId} 用于匹配工具调用的请求-响应配对，
+ * 不可丢弃。
+ */
+public record Message(
+    String role,
+    String content,
+    /** 工具调用 ID（仅 role=tool 时非空），用于 Agent 场景的请求-响应配对 */
+    String toolCallId,
+    /** 附加元数据（如 tool_calls 列表、name 等），不参与 equals/hashCode */
+    Map<String, Object> metadata
+) {
+    public static Message user(String content) { return new Message("user", content, null, Map.of()); }
+    public static Message assistant(String content) { return new Message("assistant", content, null, Map.of()); }
+    public static Message system(String content) { return new Message("system", content, null, Map.of()); }
+
+    /**
+     * 工具响应消息（保留 toolCallId 用于 Agent 请求-响应配对）
+     */
+    public static Message tool(String toolCallId, String content) {
+        return new Message("tool", content, toolCallId, Map.of());
+    }
+}
+```
+
+### 4.6 `ChatRequest` — Chat 请求模型
 
 ```java
 package com.smart.rag.infrastructure.llm;
@@ -342,9 +376,9 @@ public record ChatRequest(
 
 > **设计决策**：不再使用统一的 `ChatRequest` 万能 Record。Chat 使用 `ChatRequest`，
 > Embedding 使用 `embed(String text, EmbeddingType type)` 方法参数，
-> Rerank 使用独立的 `RerankRequest`（见 4.8 节）。每种能力只看到自己需要的字段。
+> Rerank 使用独立的 `RerankRequest`（见 4.9 节）。每种能力只看到自己需要的字段。
 
-### 4.6 `EmbeddingType` — 嵌入类型
+### 4.7 `EmbeddingType` — 嵌入类型
 
 ```java
 package com.smart.rag.infrastructure.llm;
@@ -363,7 +397,7 @@ public enum EmbeddingType {
 }
 ```
 
-### 4.7 `ChatResponse` — Chat 响应
+### 4.8 `ChatResponse` — Chat 响应
 
 ```java
 package com.smart.rag.infrastructure.llm;
@@ -395,7 +429,7 @@ public record ChatResponse(
 }
 ```
 
-### 4.8 `RerankRequest` / `RerankResult`
+### 4.9 `RerankRequest` / `RerankResult`
 
 ```java
 package com.smart.rag.infrastructure.llm;
@@ -814,23 +848,50 @@ public class RetryPolicy {
     private final long maxDelayMs;
     private final double multiplier;
     private final Set<Class<? extends Exception>> retryableExceptions;
+    private final FallbackEligibility fallbackEligibility;
 
-    public RetryPolicy(RetryProperties properties) {
+    public RetryPolicy(RetryProperties properties, FallbackEligibility fallbackEligibility) {
         this.maxAttempts = properties.maxAttempts();
         this.baseDelayMs = properties.baseDelayMs();
         this.maxDelayMs = properties.maxDelayMs();
         this.multiplier = properties.multiplier();
-        this.retryableExceptions = properties.retryableExceptions();
+        this.fallbackEligibility = fallbackEligibility;
+        // 从类名字符串解析为 Class 对象
+        this.retryableExceptions = properties.retryableExceptions().stream()
+            .map(name -> {
+                try {
+                    @SuppressWarnings("unchecked")
+                    Class<? extends Exception> clazz =
+                        (Class<? extends Exception>) Class.forName(name);
+                    return clazz;
+                } catch (ClassNotFoundException e) {
+                    throw new RemoteException(RemoteErrorCode.LLM_CONFIG_ERROR, "不可重试的异常类: " + name, e);
+                }
+            })
+            .collect(Collectors.toSet());
+    }
+
+
+    /**
+     * 受检异常兼容的函数式接口
+     * <p>
+     * {@link java.util.function.Supplier} 不允许抛出 checked exception，
+     * 而 LLM 调用可能抛出 {@link java.io.IOException} 等受检异常。
+     * 此接口替代 Supplier 作为重试执行器的参数类型。
+     */
+    @FunctionalInterface
+    public interface CheckedSupplier<T> {
+        T get() throws Exception;
     }
 
     /**
      * 带指数退避的同步重试执行器
      *
-     * @param action 可重试的操作
+     * @param action 可重试的操作（允许抛出 checked exception）
      * @return 操作结果
      * @throws Exception 重试耗尽后抛出最后一个异常
      */
-    public <T> T executeWithBackoff(Supplier<T> action) throws Exception {
+    public <T> T executeWithBackoff(CheckedSupplier<T> action) throws Exception {
         Exception lastException = null;
         for (int attempt = 0; attempt <= maxAttempts; attempt++) {
             try {
@@ -851,43 +912,62 @@ public class RetryPolicy {
     }
 
     /**
-     * 带指数退避的异步重试执行器（响应式路径使用）
+     * 带指数退避的异步重试执行器（流式路径使用）
      * <p>
-     * 使用 Mono.delay() 替代 Thread.sleep()，避免阻塞 Reactor 线程。
+     * 使用 Flux.retryWhen() 实现流式重试：
+     * <ul>
+     *   <li>对 Flux 整体重试（不转换为 Mono，保留流式语义）</li>
+     *   <li>重试间隔由指数退避控制</li>
+     *   <li>仅对可重试异常触发重试，不可重试异常直接向下游传播</li>
+     * </ul>
      *
-     * @param action 返回 Mono 的可重试操作
-     * @return Mono 包装的操作结果
+     * @param streamSupplier 返回 Flux 的可重试操作
+     * @return 带重试语义的 Flux
      */
-    public <T> Mono<T> executeWithBackoffAsync(Supplier<Mono<T>> action) {
-        return attemptAsync(action, 0);
-    }
-
-    private <T> Mono<T> attemptAsync(Supplier<Mono<T>> action, int attempt) {
-        return Mono.defer(action)
-            .onErrorResume(e -> {
-                if (!(e instanceof Exception ex) || !isRetryable(ex) || attempt >= maxAttempts) {
-                    return Mono.error(e);
-                }
-                long delay = Math.min(
-                    baseDelayMs * (long) Math.pow(multiplier, attempt),
-                    maxDelayMs
-                );
-                return Mono.delay(Duration.ofMillis(delay), Schedulers.boundedElastic())
-                    .flatMap(v -> attemptAsync(action, attempt + 1));
-            });
+    public <T> Flux<T> retryStream(Supplier<Flux<T>> streamSupplier) {
+        return Flux.defer(streamSupplier)
+            .retryWhen(Retry.backoff(maxAttempts, Duration.ofMillis(baseDelayMs))
+                .maxBackoff(Duration.ofMillis(maxDelayMs))
+                .filter(this::isRetryable)
+                .onRetryExhaustedThrow((spec, signal) -> signal.failure()));
     }
 
     /**
      * 空操作重试（不需要重试的场景直接透传）
      */
-    public <T> T executeDirect(Supplier<T> action) throws Exception {
+    public <T> T executeDirect(CheckedSupplier<T> action) throws Exception {
         return action.get();
     }
 
-    private boolean isRetryable(Exception e) {
+    /**
+     * 判断异常是否可重试
+     * <p>
+     * 两层过滤：
+     * <ol>
+     *   <li>已有的 {@link FallbackEligibility} — 过滤用户错误（ContentFilteredException 等），不可重试也不可降级</li>
+     *   <li>retryableExceptions 配置 — 只有网络超时、IO 异常等才值得重试</li>
+     * </ol>
+     */
+    private boolean isRetryable(Throwable e) {
+        // 第一层：用户错误永远不重试（复用已有 FallbackEligibility）
+        if (!fallbackEligibility.isEligible(e)) {
+            return false;
+        }
+        // 第二层：配置的可重试异常类
         return retryableExceptions.stream()
             .anyMatch(clazz -> clazz.isInstance(e));
     }
+
+    /**
+     * 判断异常是否可触发跨模型降级
+     * <p>
+     * 比 isRetryable 更宽松：只要是 FallbackEligible 的异常就可以降级，
+     * 即使不在 retryableExceptions 列表中（如 ModelNotFoundException）。
+     */
+    public boolean isFallbackEligible(Throwable e) {
+        return fallbackEligibility.isEligible(e);
+    }
+
 }
 ```
 
@@ -896,6 +976,8 @@ public class RetryPolicy {
 ```java
 package com.smart.rag.infrastructure.llm.resilience;
 
+import com.smart.rag.infrastructure.fallback.FallbackEligibility;
+
 import java.util.List;
 import java.util.function.Function;
 
@@ -903,24 +985,38 @@ import java.util.function.Function;
  * 跨模型 Fallback 降级执行器
  * <p>
  * 按 Fallback Chain 顺序尝试，单个客户端失败后自动降级到下一个。
- * 与 {@link RetryPolicy} 配合：每个客户端内部有重试，客户端之间有降级。
+ * 集成已有的 {@link FallbackEligibility} 过滤用户错误（不可降级的异常直接终止）。
  * <p>
- * 降级策略：
+ * <b>调用层次</b>：
  * <pre>
- *   请求 → 客户端A（内部重试 3 次）→ 失败 → 客户端B（内部重试 3 次）→ 失败 → 抛异常
- *           ↑ ResilientClient 处理                    ↑ ResilientClient 处理
+ *   FallbackExecutor.execute(chain, client -> client.chat(request))
+ *     │
+ *     ├─ client = ResilientChatClient（已包装，含重试+熔断）
+ *     │    └─ ResilientChatClient.chat() → circuitBreaker → retryPolicy → delegate.chat()
+ *     │
+ *     └─ client 失败后 → FallbackExecutor 尝试 chain 中下一个 ResilientChatClient
  * </pre>
+ * <b>关键约束</b>：传入 {@code action} 的 client 必须是已包装 Resilience 的客户端，
+ * 否则 FallbackExecutor 只做跨模型降级，不提供单模型重试和熔断保护。
+ * Registry 返回的 Fallback Chain 已包含 Resilient 包装。
  */
 public class FallbackExecutor {
 
+    private static final Logger log = LoggerFactory.getLogger(FallbackExecutor.class);
+
+    private final FallbackEligibility fallbackEligibility;
+
+    public FallbackExecutor(FallbackEligibility fallbackEligibility) {
+        this.fallbackEligibility = fallbackEligibility;
+    }
+
     /**
-     * 执行 Fallback Chain
+     * 执行 Fallback Chain（阻塞式）
      *
-     * @param chain    按优先级排序的客户端列表
-     * @param action   对单个客户端执行的操作
-     * @param <T>      返回类型
+     * @param chain  按优先级排序的客户端列表
+     * @param action 对单个客户端执行的操作
      * @return 第一个成功的结果
-     * @throws LlmException 所有客户端都失败时抛出
+     * @throws RemoteException 所有客户端都失败时抛出（RemoteErrorCode.LLM_ALL_MODELS_FAILED）
      */
     public <T extends CapabilityClient, R> R execute(
             List<T> chain,
@@ -935,16 +1031,271 @@ public class FallbackExecutor {
                 return action.apply(client);
             } catch (Exception e) {
                 lastException = e;
+                if (!fallbackEligibility.isEligible(e)) {
+                    // 用户错误（ContentFilteredException 等）不降级，直接抛出
+                    throw e;
+                }
                 log.warn("Client '{}' failed, trying next: {}",
                     client.compositeId(), e.getMessage());
             }
         }
-        throw new LlmException("所有模型均不可用", lastException);
+        throw new RemoteException(RemoteErrorCode.LLM_ALL_MODELS_FAILED, "所有模型均不可用", lastException);
+    }
+
+    /**
+     * 执行 Fallback Chain（流式）
+     * <p>
+     * 语义：按 chain 顺序订阅 Flux，当前 client 的流报错时自动切换到下一个。
+     * <p>
+     * <b>调用层次</b>：
+     * <pre>
+     *   FallbackExecutor.executeStream(chain, c -> c.chatStream(req))
+     *     │
+     *     ├─ 订阅 client_0 的 Flux（已包装 Resilient：circuitBreaker → retryStream → probeHandler）
+     *     │    ├─ 流正常 → 直接输出，不尝试下一个
+     *     │    └─ 流报错（重试+熔断均耗尽）→ 切换到 client_1 的 Flux
+     *     │
+     *     └─ 所有 client 均报错 → Flux.error(RemoteException)
+     * </pre>
+     * <b>注意</b>：切换发生在 Flux 信号层面（onErrorResume），
+     * 意味着已发送给下游的数据片段不会回滚。
+     * 流式降级的效果是"从头开始用新模型重新生成"，而非"续接上一个模型的输出"。
+     *
+     * @param chain  按优先级排序的客户端列表
+     * @param action 对单个客户端执行的操作，返回 Flux
+     * @return 带降级语义的 Flux
+     */
+    public <T extends CapabilityClient> Flux<String> executeStream(
+            List<T> chain,
+            Function<T, Flux<String>> action) {
+
+        return buildStreamChain(chain, action, 0);
+    }
+
+    private <T extends CapabilityClient> Flux<String> buildStreamChain(
+            List<T> chain,
+            Function<T, Flux<String>> action,
+            int index) {
+
+        if (index >= chain.size()) {
+            return Flux.error(new RemoteException(RemoteErrorCode.LLM_ALL_MODELS_FAILED, "所有模型均不可用（流式降级链耗尽）"));
+        }
+
+        T client = chain.get(index);
+        if (!client.isAvailable()) {
+            return buildStreamChain(chain, action, index + 1);
+        }
+
+        return action.apply(client)
+            .onErrorResume(e -> {
+                // 用户错误不降级，直接向下游传播
+                if (!fallbackEligibility.isEligible(e)) {
+                    return Flux.error(e);
+                }
+                log.warn("Stream client '{}' failed at index {}, falling back to next: {}",
+                    client.compositeId(), index, e.getMessage());
+                return buildStreamChain(chain, action, index + 1);
+            });
     }
 }
 ```
 
-### 7.4 Resilient 装饰器
+
+### 7.4 `CircuitBreaker` — 熔断器适配器（包装已有基础设施）
+
+> **设计决策**：不重写三态熔断器，而是**包装已有的 `ModelCircuitBreakerRegistry`**。
+> 已有实现已包含完整状态机（synchronized + Clock 注入 + halfOpenMaxProbes + releaseProbe），
+> 新增 `execute()` / `executeStream()` 高层方法供 Resilient 装饰器使用。
+
+```java
+package com.smart.rag.infrastructure.llm.resilience;
+
+import com.smart.rag.infrastructure.fallback.CircuitBreakerState;
+import com.smart.rag.infrastructure.fallback.ModelCircuitBreakerRegistry;
+import com.smart.rag.infrastructure.fallback.ModelCircuitOpenException;
+
+import java.util.function.Supplier;
+
+/**
+ * 熔断器适配器 — 包装已有的 {@link ModelCircuitBreakerRegistry}
+ * <p>
+ * 复用已有三态熔断器实现（CLOSED → OPEN → HALF_OPEN），
+ * 新增 {@code execute()} / {@code executeStream()} 高层方法，
+ * 供 Resilient 装饰器统一调用。
+ * <p>
+ * <b>为什么包装而不重写</b>：
+ * <ul>
+ *   <li>已有实现经过生产验证（synchronized 状态机、Clock 注入可测试、releaseProbe 支持）</li>
+ *   <li>已有 {@code ProbeStreamHandler} 和 {@code StreamRetryHandler} 已集成此注册表</li>
+ *   <li>新架构只需在已有基础上加 execute/executeStream 语义</li>
+ * </ul>
+ */
+public class CircuitBreaker {
+
+    private final ModelCircuitBreakerRegistry registry;
+    private final String compositeId;
+
+    public CircuitBreaker(ModelCircuitBreakerRegistry registry, String compositeId) {
+        this.registry = registry;
+        this.compositeId = compositeId;
+    }
+
+    /**
+     * 阻塞式执行（带熔断保护）
+     * <p>
+     * OPEN → 抛出 {@link ModelCircuitOpenException}（已有异常类型）
+     * HALF_OPEN → 放行（由已有 halfOpenMaxProbes 控制并发数）
+     */
+    public <T> T execute(Supplier<T> action) throws Exception {
+        if (!registry.isCallAllowed(compositeId)) {
+            throw new ModelCircuitOpenException(compositeId);
+        }
+        try {
+            T result = action.get();
+            registry.recordSuccess(compositeId);
+            return result;
+        } catch (Exception e) {
+            registry.recordFailure(compositeId);
+            throw e;
+        }
+    }
+
+    /**
+     * 流式执行（带熔断保护）
+     * <p>
+     * 订阅时检查状态，流结束时更新计数。
+     * HALF_OPEN 下的探测流由已有 {@code releaseProbe()} 管理。
+     */
+    public <T> Flux<T> executeStream(Supplier<Flux<T>> streamSupplier) {
+        if (!registry.isCallAllowed(compositeId)) {
+            return Flux.error(new ModelCircuitOpenException(compositeId));
+        }
+        return Flux.defer(streamSupplier)
+            .doOnComplete(() -> {
+                registry.recordSuccess(compositeId);
+                registry.releaseProbe(compositeId);
+            })
+            .doOnError(__ -> {
+                registry.recordFailure(compositeId);
+                registry.releaseProbe(compositeId);
+            })
+            .doOnCancel(() -> {
+                // 客户端主动断开不算失败
+                registry.releaseProbe(compositeId);
+            });
+    }
+
+    /** 当前状态（委托给已有实现） */
+    public CircuitBreakerState getState() {
+        return registry.stateOf(compositeId);
+    }
+}
+```
+
+### 7.5 `CircuitBreakerRegistry` — 熔断器注册表（包装已有）
+
+```java
+package com.smart.rag.infrastructure.llm.resilience;
+
+import com.smart.rag.infrastructure.fallback.ModelCircuitBreakerRegistry;
+
+/**
+ * 按 compositeId 管理的熔断器注册表 — 包装已有 {@link ModelCircuitBreakerRegistry}
+ * <p>
+ * 不创建新的熔断器实例，而是为每个 compositeId 创建 {@link CircuitBreaker} 适配器，
+ * 底层委托给已有的 {@link ModelCircuitBreakerRegistry}。
+ */
+@Component
+public class CircuitBreakerRegistry {
+
+    private final ModelCircuitBreakerRegistry delegate;
+    private final ConcurrentHashMap<String, CircuitBreaker> adapters = new ConcurrentHashMap<>();
+
+    public CircuitBreakerRegistry(ModelCircuitBreakerRegistry delegate) {
+        this.delegate = delegate;
+    }
+
+    /**
+     * 获取或创建指定 compositeId 的熔断器适配器
+     */
+    public CircuitBreaker getOrCreate(String compositeId) {
+        return adapters.computeIfAbsent(compositeId,
+            id -> new CircuitBreaker(delegate, id));
+    }
+}
+```
+
+
+### 7.7 `ProbeHandler` — 首包探测处理器（包装已有基础设施）
+
+> **设计决策**：不重写首包探测，**包装已有的 `ProbeStreamHandler`**。
+> 已有实现使用 `Flux.create` + `AtomicBoolean` + 手动 timer 精确控制首包超时，
+> 并在超时时调用 `breakers.recordFailure()` 更新熔断计数。
+> 新架构复用此实现，额外集成 `SharedProbeRegistry` 探测去重。
+
+```java
+package com.smart.rag.infrastructure.llm.resilience;
+
+import com.smart.rag.infrastructure.fallback.ProbeStreamHandler;
+import com.smart.rag.infrastructure.fallback.probe.SharedProbeRegistry;
+
+/**
+ * 首包探测处理器 — 包装已有的 {@link ProbeStreamHandler}
+ * <p>
+ * 复用已有的首包超时检测（Flux.create + timer + breakers.recordFailure），
+ * 额外集成 {@link SharedProbeRegistry} 探测去重：
+ * <ul>
+ *   <li>同一 compositeId 的并发探测共享同一个探测结果，避免重复探测</li>
+ *   <li>探测结果（成功/失败 + 延迟）写入 Redis 健康缓存</li>
+ * </ul>
+ * <p>
+ * 降级语义：
+ * <ul>
+ *   <li>首包超时 → 已有 ProbeStreamHandler 调用 breakers.recordFailure() + 抛出 ProbeTimeoutException</li>
+ *   <li>ProbeTimeoutException 被 {@link RetryPolicy#retryStream} 识别为可重试异常</li>
+ *   <li>重试耗尽 → 异常冒泡到 {@link CircuitBreaker#executeStream} 的 doOnError → recordFailure</li>
+ *   <li>由 {@link FallbackExecutor#executeStream} 降级到下一个模型</li>
+ * </ul>
+ */
+public class ProbeHandler {
+
+    private final ProbeStreamHandler delegate;
+    @Nullable
+    private final SharedProbeRegistry probeRegistry;
+
+    public ProbeHandler(ProbeStreamHandler delegate,
+                        @Nullable SharedProbeRegistry probeRegistry) {
+        this.delegate = delegate;
+        this.probeRegistry = probeRegistry;
+    }
+
+    /**
+     * 包装 Flux，添加首包超时检测 + 探测去重
+     *
+     * @param compositeId 用于日志、熔断记录、探测去重 key
+     * @param raw         原始流式响应
+     * @return 带首包探测的 Flux
+     */
+    public Flux<String> wrap(String compositeId, Flux<String> raw) {
+        // 探测去重：如果已有同模型的探测在飞，等待其结果
+        if (probeRegistry != null) {
+            CompletableFuture<ProbeResult> inFlight = probeRegistry.getInFlight(compositeId);
+            if (inFlight != null) {
+                return Mono.fromFuture(() -> inFlight)
+                    .timeout(Duration.ofSeconds(probeTimeoutSeconds))
+                    .flatMapMany(result -> result.success() ? raw : Flux.error(
+                        new ProbeTimeoutException(compositeId)));
+            }
+        }
+        // 委托给已有的 ProbeStreamHandler（内部已集成 breakers.recordFailure）
+        return delegate.wrapWithProbe(compositeId, raw);
+    }
+}
+```
+
+
+
+### 7.8 Resilient 装饰器
 
 > **设计决策**：装饰器**只实现能力接口**（`ChatCapable` / `EmbeddingCapable` / `RerankCapable`），
 > **不继承**被装饰者的抽象类。纯组合 + 委托，避免继承+委托的双重关系。
@@ -1012,14 +1363,17 @@ public class ResilientChatClient implements ChatCapable {
     @Override
     public Flux<String> chatStream(ChatRequest request) {
         return circuitBreaker.executeStream(() ->
-            retryPolicy.executeWithBackoffAsync(() -> {
+            retryPolicy.retryStream(() -> {
                 Flux<String> raw = delegate.chatStream(request);
+                // ProbeHandler 包装：首包超时时抛出 ProbeTimeoutException，
+                // 该异常是 retryable 的，retryStream 会重试整个 Flux。
                 return probeHandler != null
                     ? probeHandler.wrap(compositeId(), raw)
-                    : Mono.fromSupplier(() -> raw);
-            }).flatMap(mono -> mono)
+                    : raw;
+            })
         );
     }
+
 
     @Override
     public ChatResponse chatWithTools(ChatRequest request, List<Object> tools) {
@@ -1144,7 +1498,11 @@ public class ResilientRerankClient implements RerankCapable {
 
     @Override
     public List<RerankResult> rerank(RerankRequest request, int topN) {
-        return rerank(request).stream().limit(topN).toList();
+        return circuitBreaker.execute(() ->
+            retryPolicy.executeWithBackoff(() ->
+                delegate.rerank(request, topN)
+            )
+        );
     }
 }
 ```
@@ -1159,9 +1517,9 @@ public class ResilientRerankClient implements RerankCapable {
 package com.smart.rag.infrastructure.llm.provider.generic;
 
 /**
- * 通用 OpenAI 兼容 Provider — 配置驱动，零代码
+ * 通用 OpenAI 兼容 Provider — 单个供应商实例
  * <p>
- * 处理所有 baseUrl + apiKey + OpenAI 兼容 API 的供应商。
+ * 每个 YAML 配置中的 `type: openai-compat` 条目对应一个此实例。
  * 不需要为 DeepSeek / MiniMax / SiliconFlow 等分别写实现类。
  * <p>
  * 处理的模型类型：
@@ -1171,7 +1529,6 @@ package com.smart.rag.infrastructure.llm.provider.generic;
  *   <li>RERANKING → RestClient 调用 /reranks 端点</li>
  * </ul>
  */
-@Component
 public class GenericOpenAiProvider implements LlmProvider {
 
     private final ProviderConfig config;
@@ -1231,6 +1588,70 @@ public class GenericOpenAiProvider implements LlmProvider {
     }
 }
 ```
+
+**多供应商注册器**（为每个 `type: openai-compat` 配置创建独立 Bean）：
+
+```java
+package com.smart.rag.infrastructure.llm.provider.generic;
+
+import org.springframework.beans.factory.support.BeanDefinitionRegistry;
+import org.springframework.beans.factory.support.BeanDefinitionRegistryPostProcessor;
+import org.springframework.beans.factory.support.GenericBeanDefinition;
+import org.springframework.context.annotation.Configuration;
+
+/**
+ * 通用 OpenAI 兼容 Provider 注册器
+ * <p>
+ * 扫描 YAML 中所有 {@code type: openai-compat} 的供应商配置，
+ * 为每个创建独立的 {@link GenericOpenAiProvider} 实例并注册为独立 Bean。
+ * <p>
+ * <b>为什么不用 {@code @Bean List<LlmProvider>}</b>：
+ * <ul>
+ *   <li>{@code @Bean List<LlmProvider>} 注册的是一个 Bean（类型为 List），</li>
+ *   <li>当其他 {@code @Component} Provider（如 DashScopeProvider）也存在时，</li>
+ *   <li>Spring 注入 {@code List<LlmProvider>} 会合并两者，导致类型冲突或重复注入。</li>
+ * </ul>
+ * 使用 {@code BeanDefinitionRegistryPostProcessor} 将每个 Provider 注册为独立 Bean，
+ * Spring 自动收集所有 {@code LlmProvider} 类型的 Bean 注入 {@code List<LlmProvider>}。
+ */
+@Configuration
+public class GenericOpenAiProviderRegistrar implements BeanDefinitionRegistryPostProcessor {
+
+    @Override
+    public void postProcessBeanDefinitionRegistry(BeanDefinitionRegistry registry) {
+        // 读取 YAML 配置（通过 Binder 而非 @ConfigurationProperties，因为此阶段 Bean 尚未就绪）
+        // 实际实现中通过 Environment 获取配置，此处简化展示核心逻辑
+        for (ProviderConfig config : loadOpenAiCompatConfigs()) {
+            GenericBeanDefinition bd = new GenericBeanDefinition();
+            bd.setBeanClass(GenericOpenAiProvider.class);
+            bd.getConstructorArgumentValues().addIndexedArgumentValue(0, config);
+            registry.registerBeanDefinition(
+                "llmProvider_" + config.id(), bd);
+        }
+    }
+
+    private List<ProviderConfig> loadOpenAiCompatConfigs() {
+        // 从 Environment 读取 app.llm.providers，过滤 type=openai-compat
+        // 实际实现使用 Binder.bind("app.llm", LlmProperties.class)
+        ...
+    }
+}
+```
+
+> **替代方案**（更简单，推荐先用）：如果不想引入 `BeanDefinitionRegistryPostProcessor`，
+> 可以保留 `@Bean List<LlmProvider>`，但需要在 `LlmClientRegistry` 的构造函数中
+> 手动合并 `@Bean` 返回的列表和 `@Component` 注入的单个 Provider：
+> ```java
+> public LlmClientRegistry(
+>         List<LlmProvider> componentProviders,      // @Component 注入
+>         @Qualifier("genericProviders") List<LlmProvider> genericProviders,  // @Bean 注入
+>         ...) {
+>     List<LlmProvider> all = new ArrayList<>(componentProviders);
+>     all.addAll(genericProviders);
+>     // ... 后续逻辑
+> }
+> ```
+
 
 ### 8.2 自定义 Provider 示例（DashScope）
 
@@ -1316,10 +1737,7 @@ public class DashScopeEmbeddingClient extends AbstractEmbeddingClient {
             .build();
     }
 
-    @Override
-    public Set<LlmCapability> capabilities() {
-        return Set.of(LlmCapability.EMBEDDING);
-    }
+    // capabilities() 由基类 AbstractEmbeddingClient 从 ModelSpec 统一提供，无需覆写
 
     @Override
     public float[] embed(String text, EmbeddingType type) {
@@ -1514,7 +1932,6 @@ public class LlmClientRegistry {
         this.clientsByCompositeId = Collections.unmodifiableMap(wrappedClients);
 
         // ====== 6. 用包装后的客户端解析 Fallback Chain 引用 ======
-        Map<LlmCapability, List<CapabilityClient>> resolvedChains = new EnumMap<>(LlmCapability.class);
         for (Map.Entry<LlmCapability, List<CapabilityClient>> entry : rawFallbackChains.entrySet()) {
             List<CapabilityClient> resolved = entry.getValue().stream()
                 .map(c -> wrappedClients.getOrDefault(c.compositeId(), List.of(c))
@@ -1528,14 +1945,31 @@ public class LlmClientRegistry {
     // ==================== 对外查询 API ====================
 
     /**
-     * 按 compositeId 获取所有能力客户端
+     * 按 compositeId 获取所有能力客户端（包内可见，非公开 API）
+     * <p>
+     * <b>调用方应优先使用 {@link #get(String, Class)}</b>，
+     * 该方法暴露内部索引结构，仅用于 Registry 内部构建和调试场景。
      */
-    public List<CapabilityClient> getAll(String compositeId) {
+    List<CapabilityClient> getAll(String compositeId) {
         return clientsByCompositeId.getOrDefault(compositeId, List.of());
     }
 
     /**
-     * 按 compositeId + 能力类型精确获取
+     * 按 compositeId 获取所有匹配指定能力类型的客户端
+     *
+     * @param compositeId 格式 "{providerId}:{modelId}"
+     * @param type        能力类型（如 ChatCapable.class）
+     * @return 匹配的客户端列表（可能为空）
+     */
+    public <T extends CapabilityClient> List<T> getAll(String compositeId, Class<T> type) {
+        return clientsByCompositeId.getOrDefault(compositeId, List.of()).stream()
+            .filter(type::isInstance)
+            .map(type::cast)
+            .toList();
+    }
+
+    /**
+     * 按 compositeId + 能力类型精确获取（推荐的公开 API）
      *
      * @param compositeId 格式 "{providerId}:{modelId}"
      * @param type        能力类型（如 EmbeddingCapable.class）
@@ -1547,6 +1981,7 @@ public class LlmClientRegistry {
             .map(type::cast)
             .findFirst();
     }
+
 
     /**
      * 获取某个能力的 Fallback Chain（已按优先级排序）
@@ -1655,6 +2090,44 @@ public class LlmClientRegistry {
             wrapped.put(entry.getKey(), entryWrapped);
         }
         return wrapped;
+    }
+}
+```
+
+
+> **辅助类型定义**：
+
+```java
+package com.smart.rag.infrastructure.llm.config;
+
+/**
+ * Fallback Chain 配置
+ * <p>
+ * 映射 YAML 中 {@code app.llm.fallback} 的配置。
+ * 每个 {@link LlmCapability} 对应一个有序的 compositeId 列表，
+ * 未配置的能力类型返回空列表（由 Registry 按 priority 自动填充）。
+ *
+ * <pre>
+ * YAML 示例：
+ * fallback:
+ *   CHAT:
+ *     - deepseek:deepseek-v4-flash
+ *     - minimax:minimax-text-01
+ *   EMBEDDING:
+ *     - dashscope:text-embedding-v4
+ * </pre>
+ */
+public record FallbackChainConfig(
+    Map<LlmCapability, List<String>> chains
+) {
+    /**
+     * 获取指定能力的 Fallback Chain 顺序
+     *
+     * @param cap 能力类型
+     * @return compositeId 列表（按优先级排序），未配置时返回空列表
+     */
+    public List<String> getOrder(LlmCapability cap) {
+        return chains.getOrDefault(cap, List.of());
     }
 }
 ```
@@ -1848,9 +2321,104 @@ public record ProbeProperties(
 
 ---
 
-## 11. 调用方迁移
+## 11. 异常体系（复用已有层次结构）
 
-### 11.1 迁移对照表
+> **设计决策**：不新建 `LlmException`，所有 LLM 弹性层异常**继承已有的 `RemoteException`（C类）**。
+> 已有异常体系按 A/B/C 三类划分，LLM 调用失败属于"第三方服务错误"，天然属于 C 类。
+
+### 11.1 异常层次映射
+
+```
+AbstractException (RuntimeException, 携带 IErrorCode)
+├── ClientException (A类, 1xxxxx) ← 不可降级
+│   ├── ContentFilteredException        ← 内容过滤（已有）
+│   └── RateLimitExceededException      ← 客户端限流（已有）
+│
+├── ServiceException (B类, 2xxxxx) ← 不可降级
+│   └── ModelNotFoundException          ← 模型配置不存在（已有）
+│
+└── RemoteException (C类, 3xxxxx) ← 可降级
+    ├── ProviderNotFoundException       ← 厂商未配置（已有, 300001）
+    │
+    └── LLM 弹性层异常 (301xxx)
+        ├── ModelCircuitOpenException   ← 熔断器打开（301002, 已重构为 RemoteException）
+        ├── ProbeTimeoutException       ← 首包探测超时（301003, 已重构为 RemoteException）
+        │
+        └── [FallbackExecutor 抛出]
+            └── RemoteException(LLM_ALL_MODELS_FAILED) ← 链耗尽（301001）
+
+
+### 11.2 新增 `RemoteErrorCode` 条目
+
+```java
+// RemoteErrorCode.java — 新增 301xxx 段
+LLM_ALL_MODELS_FAILED(301001, "所有模型均不可用"),
+LLM_CIRCUIT_BREAKER_OPEN(301002, "模型熔断器已打开，请稍后重试"),
+LLM_PROBE_TIMEOUT(301003, "模型首包探测超时"),
+LLM_RATE_LIMITED(301004, "模型调用频率超限"),
+LLM_CONFIG_ERROR(301005, "LLM 配置错误"),
+LLM_PROVIDER_UNAVAILABLE(301006, "模型厂商不可用"),
+LLM_RESPONSE_TRUNCATED(301007, "模型响应被截断"),
+```
+
+### 11.3 异常与弹性层的交互
+
+| 异常 | 来源 | 可重试? | 可降级? | 触发熔断? |
+|------|------|---------|---------|----------|
+| `ContentFilteredException` | 供应商返回内容过滤 | ✗ | ✗ | ✗ |
+| `ModelNotFoundException` | Registry 查找失败 | ✗ | ✗（B类） | ✗ |
+| `ProbeTimeoutException` | ProbeHandler 首包超时 | ✓ | ✓ | ✓ |
+| `ModelCircuitOpenException` | CircuitBreaker 熔断中 | ✗（等待冷却） | ✓ | — |
+| `RemoteException(LLM_RATE_LIMITED)` | 供应商 429 | ✓ | ✓ | ✓ |
+| `RemoteException(LLM_ALL_MODELS_FAILED)` | FallbackExecutor 链耗尽 | ✗ | — | — |
+| `IOException` / `SocketTimeoutException` | 网络层 | ✓ | ✓ | ✓ |
+
+> 所有 C 类异常（`RemoteException` 及其子类）均通过 `FallbackEligibility.isEligible()` 返回 `true`，可触发跨模型降级。
+
+### 11.4 `ProbeTimeoutException` / `ModelCircuitOpenException` — 已纳入 RemoteException 体系
+
+这两个异常**已重构为 `RemoteException` 子类**，统一在 C 类异常体系内：
+
+```java
+// ProbeTimeoutException.java — 已从 RuntimeException 改为 RemoteException
+public class ProbeTimeoutException extends RemoteException {
+    public ProbeTimeoutException(String modelId) {
+        super(RemoteErrorCode.LLM_PROBE_TIMEOUT, "首包探测超时: " + modelId);
+    }
+}
+
+// ModelCircuitOpenException.java — 已从 RuntimeException 改为 RemoteException
+public class ModelCircuitOpenException extends RemoteException {
+    public ModelCircuitOpenException(String modelId) {
+        super(RemoteErrorCode.LLM_CIRCUIT_BREAKER_OPEN, "模型熔断器已打开: " + modelId);
+    }
+}
+```
+
+**兼容性**：
+- `StreamRetryHandler` 中的 `instanceof ProbeTimeoutException` / `instanceof ModelCircuitOpenException` 检查不受影响（类本身未变，只是父类变了）
+- `FallbackEligibility.isEligible()` 对 `RemoteException` 返回 `true`，这两个异常自动可降级
+- `GlobalExceptionHandler` 会将它们作为 `RemoteException` 统一处理（携带 `RemoteErrorCode`，返回 C 类错误码给前端）
+
+**统一后的异常层次**：
+```
+AbstractException
+├── ClientException (A类)     ← 不可降级
+├── ServiceException (B类)    ← 不可降级
+└── RemoteException (C类)     ← 可降级
+    ├── ProviderNotFoundException     (300001)
+    ├── ProbeTimeoutException         (301003) ← 已纳入
+    ├── ModelCircuitOpenException     (301002) ← 已纳入
+    └── FallbackExecutor 抛出的       (301001) LLM_ALL_MODELS_FAILED
+```
+
+
+
+---
+
+## 12. 调用方迁移
+
+### 12.1 迁移对照表
 
 | 调用方 | 迁移前 | 迁移后 | 复杂度 |
 |--------|--------|--------|--------|
@@ -1863,7 +2431,7 @@ public record ProbeProperties(
 | `AgentModeStrategy` | `ChatClientRegistry` + `TokenCountingChatModel` 包装 | `registry.get(id, ChatCapable.class).chatWithTools(request, tools)` | ★★★ |
 | `ChatServiceImpl`（核心路径） | 15 个构造参数，自己编排 fallback + circuit breaker + probe | 由 `FallbackExecutor` + `ResilientChatClient` 处理 | ★★★★ |
 
-### 11.2 迁移顺序（风险从低到高）
+### 12.2 迁移顺序（风险从低到高）
 
 ```
 Phase 1（低风险，消除散落重试）:
@@ -1881,7 +2449,7 @@ Phase 3（高风险，核心路径）:
   8. ChatServiceImpl (blocking)  ← 最后迁移
 ```
 
-### 11.3 ChatServiceImpl 迁移效果
+### 12.3 ChatServiceImpl 迁移效果
 
 **Before（15 个构造参数）:**
 
@@ -1909,12 +2477,56 @@ public class ChatServiceImpl implements ChatService {
     private final LlmClientRegistry registry;
     private final ModeRouter modeRouter;
     private final FallbackExecutor fallbackExecutor;
+
+    /**
+     * 阻塞式对话（含跨模型降级）
+     * <p>
+     * 执行链：FallbackExecutor → ResilientChatClient → CircuitBreaker → RetryPolicy → 原始 Client
+     */
+    public ChatResponse chat(String modelId, ChatRequest request) {
+        List<ChatCapable> chain = registry.getFallbackChain(LlmCapability.CHAT);
+        return fallbackExecutor.execute(chain, client -> client.chat(request));
+    }
+
+    /**
+     * 流式对话（含跨模型降级 + 首包探测 + 重试 + 熔断）
+     * <p>
+     * 执行链：FallbackExecutor.executeStream()
+     *   → ResilientChatClient.chatStream()
+     *     → CircuitBreaker.executeStream()     (订阅时检查状态，结束时更新计数)
+     *       → RetryPolicy.retryStream()         (首包超时/网络异常时重试整个流)
+     *         → ProbeHandler.wrap()             (首包超时 → ProbeTimeoutException)
+     *           → delegate.chatStream()         (原始流)
+     *   → 流报错时 → onErrorResume 切换到 chain 中下一个 ResilientChatClient
+     */
+    public Flux<String> chatStream(String modelId, ChatRequest request) {
+        List<ChatCapable> chain = registry.getFallbackChain(LlmCapability.CHAT);
+        return fallbackExecutor.executeStream(chain, client -> client.chatStream(request));
+    }
 }
 ```
 
+> **降级时序示例**（流式路径）：
+> ```
+> 请求 → deepseek:deepseek-v4-flash (priority=10)
+>   → CircuitBreaker: CLOSED ✓
+>   → RetryPolicy.retryStream()
+>     → ProbeHandler: 首包 3s 超时 → ProbeTimeoutException
+>     → retryStream: 重试 1/3 → 再次超时
+>     → retryStream: 重试 2/3 → 再次超时
+>     → retryStream: 重试 3/3 → 耗尽 → ProbeTimeoutException 冒泡
+>   → CircuitBreaker: recordFailure() → failures=1（未达阈值 5）
+>   → FallbackExecutor.onErrorResume → 切换到下一个
+>
+> 请求 → minimax:minimax-text-01 (priority=30)
+>   → CircuitBreaker: CLOSED ✓
+>   → 正常流式输出 → onComplete → recordSuccess()
+> ```
+
+
 ---
 
-## 12. 新增供应商接入流程
+## 13. 新增供应商接入流程
 
 ### 场景 A：OpenAI 兼容 API（90% 的情况）
 
@@ -1969,7 +2581,7 @@ public class ResilientTtsClient extends AbstractTtsClient { ... }
 
 ---
 
-## 13. 目录结构
+## 14. 目录结构
 
 ```
 com.smart.rag.infrastructure.llm/
@@ -1977,30 +2589,41 @@ com.smart.rag.infrastructure.llm/
 ├── LlmCapability.java                      # 能力枚举（可扩展）
 ├── ModelSpec.java                           # 模型声明（配置映射）
 ├── CapabilityClient.java                    # 客户端根接口
+├── ChatCapable.java                         # Chat 能力契约
+├── EmbeddingCapable.java                    # Embedding 能力契约
+├── RerankCapable.java                       # Rerank 能力契约
 ├── LlmProvider.java                         # 供应商接口
-├── ChatRequest.java                          # 统一请求模型
+├── Message.java                             # 对话消息
+├── ChatRequest.java                         # Chat 请求
 ├── ChatResponse.java                        # Chat 响应
 ├── EmbeddingType.java                       # 嵌入类型
 ├── RerankRequest.java                       # 重排请求
 ├── RerankResult.java                        # 重排结果
-├── LlmException.java                        # 统一异常
-│
+│                                          # 异常体系：复用已有 exception/ 包
+│                                          #   RemoteException + RemoteErrorCode (301xxx)
+│                                          #   ModelCircuitOpenException (已有 fallback/)
+│                                          #   ProbeTimeoutException (已有 fallback/)
 ├── client/                                  # 能力客户端抽象层
 │   ├── AbstractChatClient.java
 │   ├── AbstractEmbeddingClient.java
 │   └── AbstractRerankClient.java
 │
 ├── resilience/                              # 统一弹性层
-│   ├── ResilientChatClient.java
-│   ├── ResilientEmbeddingClient.java
-│   ├── ResilientRerankClient.java
-│   ├── RetryPolicy.java                     # 统一重试策略
-│   ├── FallbackExecutor.java                # 跨模型降级执行器
-│   └── CircuitBreaker.java                  # 熔断器（复用现有实现）
+│   ├── ResilientChatClient.java             # Chat 装饰器
+│   ├── ResilientEmbeddingClient.java        # Embedding 装饰器
+│   ├── ResilientRerankClient.java           # Rerank 装饰器
+│   ├── RetryPolicy.java                     # 统一重试策略（含 CheckedSupplier，集成 FallbackEligibility）
+│   ├── FallbackExecutor.java                # 跨模型降级执行器（集成 FallbackEligibility）
+│   ├── CircuitBreaker.java                  # 熔断器适配器（包装已有 ModelCircuitBreakerRegistry）
+│   ├── CircuitBreakerRegistry.java          # 熔断器注册表（包装已有 ModelCircuitBreakerRegistry）
+│   └── ProbeHandler.java                    # 首包探测（包装已有 ProbeStreamHandler + SharedProbeRegistry）
+
+
 │
 ├── provider/                                # 供应商实现
 │   ├── generic/                             # 通用 OpenAI 兼容
-│   │   ├── GenericOpenAiProvider.java       # 零代码配置注册
+│   │   ├── GenericOpenAiProvider.java       # 单供应商实例
+│   │   ├── GenericOpenAiProviderRegistrar.java # 多供应商注册器
 │   │   ├── GenericChatClient.java
 │   │   ├── GenericEmbeddingClient.java
 │   │   └── GenericRerankClient.java
@@ -2014,9 +2637,11 @@ com.smart.rag.infrastructure.llm/
 ├── config/                                  # 配置
 │   ├── LlmProperties.java
 │   ├── ProviderConfig.java
-│   ├── ResilienceProperties.java
-│   ├── FallbackChainConfig.java
-│   └── RetryProperties.java
+│   ├── ResilienceConfig.java
+│   ├── RetryProperties.java
+│   ├── CircuitBreakerProperties.java
+│   ├── ProbeProperties.java
+│   └── FallbackChainConfig.java
 │
 └── registry/
     └── LlmClientRegistry.java               # 统一注册表
@@ -2024,7 +2649,7 @@ com.smart.rag.infrastructure.llm/
 
 ---
 
-## 14. 分阶段实施路线
+## 15. 分阶段实施路线
 
 ### Phase 1: 接口定义 + 弹性层（零破坏）
 
@@ -2033,25 +2658,44 @@ com.smart.rag.infrastructure.llm/
 - `LlmCapability.java`
 - `ModelSpec.java`
 - `CapabilityClient.java`
+- `ChatCapable.java`
+- `EmbeddingCapable.java`
+- `RerankCapable.java`
 - `LlmProvider.java`
+- `Message.java`
 - `ChatRequest.java`
 - `ChatResponse.java`
 - `EmbeddingType.java`
 - `RerankRequest.java`
 - `RerankResult.java`
-- `LlmException.java`
+- `RemoteErrorCode.java`（新增 301xxx LLM 弹性层错误码）
 - `AbstractChatClient.java`
 - `AbstractEmbeddingClient.java`
 - `AbstractRerankClient.java`
-- `RetryPolicy.java`
-- `FallbackExecutor.java`
+- `RetryPolicy.java`（集成已有 `FallbackEligibility`）
+- `FallbackExecutor.java`（集成已有 `FallbackEligibility`）
+- `CircuitBreaker.java`（适配器，包装已有 `ModelCircuitBreakerRegistry`）
+- `CircuitBreakerRegistry.java`（包装已有 `ModelCircuitBreakerRegistry`）
+- `ProbeHandler.java`（包装已有 `ProbeStreamHandler` + `SharedProbeRegistry`）
+- `FallbackChainConfig.java`
 - 配置 Properties 类
+
+> **已有基础设施（不修改，直接复用）**：
+> - `ModelCircuitBreakerRegistry` — 三态熔断器（CLOSED→OPEN→HALF_OPEN）
+> - `ProbeStreamHandler` — 首包超时检测（Flux.create + timer）
+> - `SharedProbeRegistry` — 探测去重（ConcurrentHashMap + CompletableFuture）
+> - `FallbackEligibility` — 异常可降级判定（已修复：RemoteException(C类) 可降级）
+> - `ModelHealthCache` — Redis 健康缓存（可选）
+
+> **已重构的异常（纳入 RemoteException 体系）**：
+> - `ProbeTimeoutException` — 已从 `RuntimeException` 改为 `extends RemoteException`（RemoteErrorCode.LLM_PROBE_TIMEOUT）
+> - `ModelCircuitOpenException` — 已从 `RuntimeException` 改为 `extends RemoteException`（RemoteErrorCode.LLM_CIRCUIT_BREAKER_OPEN）
+> - `RemoteErrorCode` — 新增 301xxx 段（7 个 LLM 弹性层错误码）
 
 ### Phase 2: Provider 实现（逐个迁移）
 
 每个 Provider 从现有 `ModelProvider` 迁移到 `LlmProvider`：
-
-- `GenericOpenAiProvider.java` + `GenericChatClient.java` + `GenericEmbeddingClient.java` + `GenericRerankClient.java`
+- `GenericOpenAiProvider.java` + `GenericOpenAiProviderRegistrar.java` + `GenericChatClient.java` + `GenericEmbeddingClient.java` + `GenericRerankClient.java`
 - `DashScopeProvider.java` + `DashScopeEmbeddingClient.java`
 - `BailianProvider.java` + `BailianRerankClient.java`
 - `DeepSeekProvider.java`（过渡期两个共存）
@@ -2060,7 +2704,7 @@ com.smart.rag.infrastructure.llm/
 
 ### Phase 3: 调用方迁移（逐个替换）
 
-按风险从低到高顺序迁移（见 10.2 节）。
+按风险从低到高顺序迁移（见 11.2 节）。
 
 ### Phase 4: 清理旧代码
 
@@ -2076,7 +2720,7 @@ com.smart.rag.infrastructure.llm/
 
 ---
 
-## 15. 风险与缓解措施
+## 16. 风险与缓解措施
 
 | 风险 | 缓解措施 |
 |------|---------|
@@ -2090,7 +2734,7 @@ com.smart.rag.infrastructure.llm/
 
 ---
 
-## 16. 附录：当前调用点映射
+## 17. 附录：当前调用点映射
 
 | # | 当前文件 | 当前调用模式 | 重构后入口 |
 |---|---------|------------|-----------|

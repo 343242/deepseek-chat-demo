@@ -109,7 +109,7 @@ public class AgentSystemPromptAdvisor implements BaseAdvisor {
             intent, workspace.getIntermediateAnswers().size(), finalPrompt.length(), existingSystemIndex >= 0);
 
         return request.mutate()
-            .prompt(new Prompt(newMessages))
+            .prompt(new Prompt(newMessages, request.prompt().getOptions()))
             .build();
     }
 

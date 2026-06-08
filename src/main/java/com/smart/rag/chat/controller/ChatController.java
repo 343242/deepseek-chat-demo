@@ -19,7 +19,7 @@ import java.util.List;
  * 聊天 API 控制器
  */
 @RestController
-@RequestMapping("/api/v1")
+@RequestMapping("/api")
 @PreAuthorize("hasAuthority('chat:send')")
 @Validated
 public class ChatController {

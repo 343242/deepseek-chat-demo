@@ -32,6 +32,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.prompt.ChatOptions;
 import org.springframework.ai.chat.prompt.Prompt;
+import org.springframework.ai.model.tool.ToolCallingChatOptions;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
 import org.springframework.ai.chat.client.advisor.ToolCallAdvisor;
@@ -44,6 +45,12 @@ import org.springframework.ai.tool.resolution.StaticToolCallbackResolver;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
+import org.springframework.ai.chat.messages.AssistantMessage;
+import org.springframework.ai.chat.messages.Message;
+import org.springframework.ai.chat.messages.UserMessage;
+import org.springframework.ai.chat.memory.ChatMemory;
+import org.springframework.ai.chat.memory.ChatMemoryRepository;
+import org.springframework.ai.chat.memory.MessageWindowChatMemory;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -143,7 +150,6 @@ public class AgentModeStrategy implements ChatModeStrategy {
 
             ToolCallAdvisor agentToolCallAdvisor = ToolCallAdvisor.builder()
                 .toolCallingManager(toolCallingManager)
-                .disableMemory()
                 .advisorOrder(2)
                 .build();
 
@@ -158,11 +164,12 @@ public class AgentModeStrategy implements ChatModeStrategy {
         chain.add(new AgentSystemPromptAdvisor(intentResult.intent(), mergedPrompt, workspace, guardrails));
 
         // Step 8: 对话记忆
-        chain.add(MessageChatMemoryAdvisor.builder(infra.getChatMemory()).build());
+        // 过滤 Redis 历史中残留的 tool 消息，避免 DeepSeek "role 'tool' without preceding tool_calls" 报错
+        chain.add(MessageChatMemoryAdvisor.builder(createFilteredMemory()).build());
 
         // tokenCountingModel 必须来自 guardrails -- 同一个实例用于护栏检查和 ChatClient 包装
         return ModeChainResult.agent(chain, intentResult, workspace,
-            guardrails.getTokenCountingModel());
+            guardrails.getTokenCountingModel(), toolCallbacks);
     }
 
     /**
@@ -231,12 +238,19 @@ public class AgentModeStrategy implements ChatModeStrategy {
             ModeChainResult result = buildAdvisorChain(chainCtx);
 
             ChatClient countingClient = ChatClient.builder(result.tokenCountingModel()).build();
-            ChatResponse springResponse = countingClient.prompt()
+            ChatClient.ChatClientRequestSpec spec = countingClient.prompt()
                 .user(ctx.request().message())
                 .advisors(a -> a.advisors(result.chain())
                     .param(CONVERSATION_ID,
-                        ctx.conversationId()))
-                .call()
+                        ctx.conversationId()));
+
+            if (result.toolCallbacks() != null && result.toolCallbacks().length > 0) {
+                spec.options(ToolCallingChatOptions.builder()
+                    .toolCallbacks(result.toolCallbacks())
+                    .build());
+            }
+
+            ChatResponse springResponse = spec.call()
                 .chatResponse();
 
             String content = AbstractModeStrategy.extractContent(springResponse);
@@ -277,5 +291,104 @@ public class AgentModeStrategy implements ChatModeStrategy {
         metadata.put("retrievalRounds", result.workspace().getRetrievalRound());
         return metadata;
     }
+
+    /**
+     * 创建过滤 tool 消息的 ChatMemory。
+     * <p>
+     * 核心问题：MessageWindowChatMemory 从 Redis 加载窗口时，可能包含之前 agent ReAct 循环
+     * 产生的 ToolResponseMessage 和带 tool_calls 的 AssistantMessage。当窗口截断（trim）旧消息时，
+     * 可能删掉 assistant+tool_calls 但保留对应的 ToolResponseMessage，导致孤立的 tool 消息。
+     * DeepSeek/OpenAI API 要求 tool 消息必须紧跟在带 tool_calls 的 assistant 消息之后，
+     * 孤立的 tool 消息会触发 400 错误。
+     * <p>
+     * 解决方案：在 ChatMemoryRepository 层面过滤，使 MessageWindowChatMemory 永远看不到
+     * tool 相关消息。这样窗口截断不会产生孤立消息，仓库中也不会积累 tool 消息。
+     */
+    private ChatMemory createFilteredMemory() {
+        ChatMemoryRepository delegate = infra.getChatMemoryRepository();
+        ChatMemoryRepository filteredRepo = new ChatMemoryRepository() {
+            @Override
+            public @NonNull List<String> findConversationIds() {
+                return delegate.findConversationIds();
+            }
+
+            @Override
+            public @NonNull List<Message> findByConversationId(@NonNull String conversationId) {
+                List<Message> raw = delegate.findByConversationId(conversationId);
+                List<Message> filtered = raw.stream()
+                    .filter(AgentModeStrategy::isAllowedInHistory)
+                    .toList();
+                List<Message> validated = validateMessageChain(filtered);
+                if (raw.size() != validated.size()) {
+                    log.warn("Filtered memory: raw={}, afterFilter={}, afterValidate={}, removed={} tool/orphan messages",
+                        raw.size(), filtered.size(), validated.size(), raw.size() - validated.size());
+                }
+                return validated;
+            }
+
+            @Override
+            public void saveAll(@NonNull String conversationId, @NonNull List<Message> messages) {
+                List<Message> filtered = messages.stream()
+                    .filter(AgentModeStrategy::isAllowedInHistory)
+                    .toList();
+                if (messages.size() != filtered.size()) {
+                    log.info("Filtered memory save: input={}, saved={}, dropped={} tool messages",
+                        messages.size(), filtered.size(), messages.size() - filtered.size());
+                }
+                delegate.saveAll(conversationId, filtered);
+            }
+
+
+            @Override
+            public void deleteByConversationId(@NonNull String conversationId) {
+                delegate.deleteByConversationId(conversationId);
+            }
+        };
+
+        // 复用原始 maxMessages 配置，创建独立的 MessageWindowChatMemory
+        // 每次请求创建新实例（请求级生命周期），窗口状态通过 filteredRepo 读写 Redis
+        return MessageWindowChatMemory.builder()
+            .chatMemoryRepository(filteredRepo)
+            .maxMessages(20)
+            .build();
+    }
+
+    /** 只保留 user 消息和无 tool_calls 的 assistant 消息，过滤掉所有 tool 相关消息 */
+    private static boolean isAllowedInHistory(Message message) {
+        if (message instanceof UserMessage) return true;
+        if (message instanceof AssistantMessage am) {
+            return am.getToolCalls() == null || am.getToolCalls().isEmpty();
+        }
+        return false;
+    }
+
+    /**
+     * 验证消息链完整性：过滤掉因窗口截断而孤立的 ToolResponseMessage。
+     * <p>
+     * 正常的 tool 调用链：assistant(tool_calls) → tool_response → assistant(final)。
+     * 如果 MessageWindowChatMemory 截断了 assistant(tool_calls)，其后的 tool_response 成为孤立消息。
+     * 此方法扫描消息链，移除没有前置 assistant+tool_calls 的 tool 消息。
+     */
+    private static List<Message> validateMessageChain(List<Message> messages) {
+        boolean hasPrecedingToolCalls = false;
+        List<Message> validated = new ArrayList<>(messages.size());
+        for (Message msg : messages) {
+            if (msg instanceof AssistantMessage am) {
+                hasPrecedingToolCalls = am.getToolCalls() != null && !am.getToolCalls().isEmpty();
+                validated.add(msg);
+            } else if (msg instanceof org.springframework.ai.chat.messages.ToolResponseMessage) {
+                if (hasPrecedingToolCalls) {
+                    validated.add(msg);
+                }
+                // 孤立的 tool 消息：丢弃
+                hasPrecedingToolCalls = false;
+            } else {
+                hasPrecedingToolCalls = false;
+                validated.add(msg);
+            }
+        }
+        return validated;
+    }
+
 
 }

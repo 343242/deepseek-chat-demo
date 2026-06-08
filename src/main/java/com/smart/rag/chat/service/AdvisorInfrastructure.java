@@ -5,6 +5,7 @@ import com.smart.rag.rag.config.RagAdvisorFactory;
 import org.springframework.ai.chat.client.advisor.ToolCallAdvisor;
 import org.springframework.ai.chat.client.advisor.api.Advisor;
 import org.springframework.ai.chat.memory.ChatMemory;
+import org.springframework.ai.chat.memory.ChatMemoryRepository;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
@@ -24,6 +25,7 @@ public class AdvisorInfrastructure {
     // 保留原有 ObjectProvider 类型 -- 与当前 ChatAdvisorChainFactory 一致
     private final ObjectProvider<List<Advisor>> globalAdvisorsProvider;
     private final ObjectProvider<ChatMemory> chatMemoryProvider;
+    private final ChatMemoryRepository chatMemoryRepository;
     private final ObjectProvider<ToolRegistry> toolRegistryProvider;
     private final ObjectProvider<ToolCallAdvisor> toolCallAdvisorProvider;
     private final RagAdvisorFactory ragAdvisorFactory;
@@ -35,11 +37,13 @@ public class AdvisorInfrastructure {
 
     public AdvisorInfrastructure(ObjectProvider<List<Advisor>> globalAdvisorsProvider,
                                   ObjectProvider<ChatMemory> chatMemoryProvider,
+                                  ChatMemoryRepository chatMemoryRepository,
                                   ObjectProvider<ToolRegistry> toolRegistryProvider,
                                   ObjectProvider<ToolCallAdvisor> toolCallAdvisorProvider,
                                   RagAdvisorFactory ragAdvisorFactory) {
         this.globalAdvisorsProvider = globalAdvisorsProvider;
         this.chatMemoryProvider = chatMemoryProvider;
+        this.chatMemoryRepository = chatMemoryRepository;
         this.toolRegistryProvider = toolRegistryProvider;
         this.toolCallAdvisorProvider = toolCallAdvisorProvider;
         this.ragAdvisorFactory = ragAdvisorFactory;
@@ -76,6 +80,7 @@ public class AdvisorInfrastructure {
     }
 
     public ChatMemory getChatMemory() { return chatMemoryProvider.getObject(); }
+    public ChatMemoryRepository getChatMemoryRepository() { return chatMemoryRepository; }
     public RagAdvisorFactory getRagAdvisorFactory() { return ragAdvisorFactory; }
     public ToolCallAdvisor getToolCallAdvisor() { return toolCallAdvisorProvider.getObject(); }
 }

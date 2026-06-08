@@ -6,6 +6,7 @@ import com.smart.rag.agent.tool.*;
 import com.smart.rag.agent.tool.dto.AgentEventLookupRequest;
 import com.smart.rag.agent.tool.dto.DocDetailRequest;
 import com.smart.rag.agent.tool.dto.NoInput;
+import com.smart.rag.agent.tool.dto.QueryRequest;
 import com.smart.rag.agent.workspace.ToolWorkspace;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -129,42 +130,42 @@ public class AgentToolCallbackFactory {
     // === 各 Tool 的闭包构建方法 ===
 
     private ToolCallback buildHybridSearch(ToolWorkspace workspace) {
-        return FunctionToolCallback.<String, String>builder(
+        return FunctionToolCallback.<QueryRequest, String>builder(
                 "hybridSearch",
-                (request, ctx) -> hybridSearchTool.execute(request, null, workspace)
+                (request, ctx) -> hybridSearchTool.execute(request.query(), null, workspace)
             )
-            .description("混合检索：结合向量语义搜索和 BM25 关键词搜索，通过 RRF 融合排序。输入查询文本。")
-            .inputType(String.class)
+            .description("混合检索：结合向量语义搜索和 BM25 关键词搜索，通过 RRF 融合排序。输入 JSON: {\"query\": \"查询文本\"}")
+            .inputType(QueryRequest.class)
             .build();
     }
 
     private ToolCallback buildVectorSearch(ToolWorkspace workspace) {
-        return FunctionToolCallback.<String, String>builder(
+        return FunctionToolCallback.<QueryRequest, String>builder(
                 "vectorSearch",
-                (request, ctx) -> vectorSearchTool.execute(request, workspace)
+                (request, ctx) -> vectorSearchTool.execute(request.query(), workspace)
             )
-            .description("纯向量语义检索，适用于概念性查询。输入查询文本。")
-            .inputType(String.class)
+            .description("纯向量语义检索，适用于概念性查询。输入 JSON: {\"query\": \"查询文本\"}")
+            .inputType(QueryRequest.class)
             .build();
     }
 
     private ToolCallback buildRerank(ToolWorkspace workspace) {
-        return FunctionToolCallback.<String, String>builder(
+        return FunctionToolCallback.<QueryRequest, String>builder(
                 "rerank",
-                (request, ctx) -> rerankTool.execute(request, workspace)
+                (request, ctx) -> rerankTool.execute(request.query(), workspace)
             )
-            .description("对已检索文档进行语义精排。输入用于精排的查询文本。前提：workspace 中必须有已检索的文档。")
-            .inputType(String.class)
+            .description("对已检索文档进行语义精排。输入 JSON: {\"query\": \"用于精排的查询文本\"}。前提：workspace 中必须有已检索的文档。")
+            .inputType(QueryRequest.class)
             .build();
     }
 
     private ToolCallback buildQueryRewrite(ToolWorkspace workspace) {
-        return FunctionToolCallback.<String, String>builder(
+        return FunctionToolCallback.<QueryRequest, String>builder(
                 "queryRewrite",
-                (request, ctx) -> queryRewriteTool.execute(request, workspace)
+                (request, ctx) -> queryRewriteTool.execute(request.query(), workspace)
             )
-            .description("改写查询以提升检索效果，支持多角度改写生成多个变体。输入原始查询文本。")
-            .inputType(String.class)
+            .description("改写查询以提升检索效果，支持多角度改写生成多个变体。输入 JSON: {\"query\": \"原始查询文本\"}")
+            .inputType(QueryRequest.class)
             .build();
     }
 
@@ -199,12 +200,12 @@ public class AgentToolCallbackFactory {
     }
 
     private ToolCallback buildBm25Search(ToolWorkspace workspace) {
-        return FunctionToolCallback.<String, String>builder(
+        return FunctionToolCallback.<QueryRequest, String>builder(
                 "bm25Search",
-                (request, ctx) -> bm25SearchTool.execute(request, workspace)
+                (request, ctx) -> bm25SearchTool.execute(request.query(), workspace)
             )
-            .description("BM25 关键词全文检索，适用于精确关键词匹配。输入查询文本。")
-            .inputType(String.class)
+            .description("BM25 关键词全文检索，适用于精确关键词匹配。输入 JSON: {\"query\": \"查询文本\"}")
+            .inputType(QueryRequest.class)
             .build();
     }
 

@@ -13,7 +13,7 @@ import java.util.List;
  * 模型参数管理 API
  */
 @RestController
-@RequestMapping("/api/v1/models")
+@RequestMapping("/api/models")
 @PreAuthorize("hasAuthority('model:config')")
 public class ModelParamsController {
 

@@ -101,7 +101,7 @@ public class GlobalExceptionHandler {
     public ResponseEntity<GlobalResponse<Void>> handleGeneric(Exception e) {
         String traceId = MDC.get("traceId");
         log.error("Unhandled exception (traceId={}): {}", traceId, e.getClass().getName());
-        log.debug("Unhandled exception details", e);
+        log.error("Unhandled exception details", e);
         return ResponseEntity.ok(GlobalResponse.error(ServiceErrorCode.INTERNAL_ERROR));
     }
 }

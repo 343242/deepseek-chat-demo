@@ -31,6 +31,7 @@
 
 > **传输层类型分组**：① Spring AI `ChatClient`（6 个调用点）② 原生 OkHttp SSE（2 个调用点）③ RestClient / 百炼原生 API（2 个调用点）④ RestClient / Bailian 非标准 API（1 个调用点）⑤ RestClient / 模型发现（2 个调用点，实为同一类）。
 > 注：③④⑤ 底层均为 `RestClient`，但目标 API 不同（百炼 Embedding / 百炼 Rerank / 模型列表），重试策略各异，故单独计数。
+> 注：#9 `LlmJudgeImpl` 因评估场景需独立 `@Bean("judgeChatClient")` 隔离，本次设计维持现状不迁移（见 §12.1），列入上表仅为完整性记录。
 
 **问题二：嵌入/重排绕过 Provider 体系**
 
@@ -61,7 +62,7 @@
 | **新增供应商零代码** | OpenAI 兼容 API 只需在 `providers` 中添加连接配置 + 在 `chat/embedding/rerank` candidates 中添加模型引用，不写 Java 代码 |
 | **新增能力类型可扩展** | 新增 TTS/STT 等能力只需扩展枚举 + 新增接口/抽象类/装饰器 + 在 `LlmClientRegistry` 和 `LlmProperties` 的 switch 中添加 case，已有调用方代码不修改 |
 | **重试/熔断统一** | 所有 LLM 调用共享同一套弹性策略配置，不分散在各调用点 |
-| **面向接口编程** | 调用方依赖能力接口（`ChatCapable` 等），不依赖具体实现 |
+| **面向接口编程** | 简单调用方依赖能力接口（`ChatCapable` 等），编排调用方依赖 `LlmClientRegistry` + `FallbackExecutor` |
 | **配置驱动** | 模型声明、Fallback Chain、弹性参数全部 YAML 配置化 |
 | **向后兼容** | 分阶段迁移，核心聊天路径最后迁移，可灰度切换 |
 
@@ -76,20 +77,33 @@
 │                       调用方 (Callers)                        │
 │  ChatService · IntentClassifier · LlmJudge · RagConfig 等    │
 └───────────────────────────┬──────────────────────────────────┘
-                            │ 依赖能力接口（ChatCapable / EmbeddingCapable / RerankCapable）
+                            │ 简单调用方：依赖能力接口（ChatCapable 等）
+                            │ 编排调用方：依赖 LlmClientRegistry + FallbackExecutor
+┌───────────────────────────▼──────────────────────────────────┐
+│              Orchestration 编排层（调用方持有）                  │
+│  FallbackExecutor — 跨模型降级编排                             │
+│  （遍历 Fallback Chain，逐个尝试 ResilientClient）             │
+│  ※ 不在 Registry 层，由 ChatServiceImpl 等调用方直接持有       │
+└───────────────────────────┬──────────────────────────────────┘
+                            │ 委托 Chain 中的每个 ResilientClient
 ┌───────────────────────────▼──────────────────────────────────┐
 │                    Resilience 弹性层（装饰器）                  │
-│  ResilientChatClient · ResilientEmbeddingClient               │
-│  ResilientRerankClient                                        │
+│  AbstractResilientClient（公共委托基类，消除重复）              │
+│  ├─ ResilientChatClient · ResilientEmbeddingClient            │
+│  │  └─ ResilientToolCallingClient（ISP 拆分，条件创建）        │
+│  └─ ResilientRerankClient                                     │
 │  （重试策略 RetryPolicy · 熔断保护 CircuitBreaker              │
-│    · 首包探测 ProbeHandler · 跨模型降级 FallbackExecutor）      │
+│    · 首包探测 ProbeHandler，不含跨模型降级）                    │
 └───────────────────────────┬──────────────────────────────────┘
                             │ 委托
 ┌───────────────────────────▼──────────────────────────────────┐
 │               CapabilityClient 能力抽象层（接口 + 抽象类）       │
 │  接口：ChatCapable · EmbeddingCapable · RerankCapable         │
+│  ├─ ToolCallingCapable（ISP 拆分，Agent 场景按需依赖）         │
 │  抽象类：AbstractChatClient · AbstractEmbeddingClient          │
 │           AbstractRerankClient                                 │
+│  ※ 装饰器与抽象类均实现同一能力接口，装饰器通过委托包装抽象类实例  │
+│  适配器：ChatModelAdapter（Spring AI ChatModel 桥接）          │
 └───────────────────────────┬──────────────────────────────────┘
                             │ 由 LlmProvider.createClient(candidate) 创建
 ┌───────────────────────────▼──────────────────────────────────┐
@@ -120,9 +134,10 @@
 
 > **启动时组装**：LlmClientRegistry 遍历 ModelGroup 的 candidates，按 `candidate.provider` 查找
 > LlmProvider Bean → Provider 创建原始 CapabilityClient → Registry 统一包装 Resilient 装饰器 → 注册到索引。
-> **运行时调用**：Callers → Resilient 装饰器（重试/熔断/探测） → 原始 CapabilityClient → LLM API。
+> **运行时调用**：Callers → FallbackExecutor（编排层，跨模型降级） → Resilient 装饰器（单模型重试/熔断/探测） → 原始 CapabilityClient → LLM API。
 > 供应商与模型解耦——Provider 只是工厂，ModelGroup 决定"用哪些模型"。
-> Callers 只依赖弹性层暴露的能力接口，不直接接触 LlmProvider 或底层 SDK。
+> Callers 只依赖能力接口，通过 `asChatModel()` 按需获取 Spring AI ChatModel 视图（详见 §5.4）。
+> **弹性层与编排层职责分离**：ResilientClient 负责单模型重试/熔断，FallbackExecutor 负责跨模型降级——二者正交组合。
 
 ### 3.2 关键设计决策
 
@@ -135,9 +150,12 @@
 | 通用供应商 | **GenericOpenAiProvider**，由 Registrar 从 YAML 批量创建 | 90%+ 的供应商是 OpenAI 兼容 API，纯配置即可接入 |
 | 特殊 Client | **按 endpoint 路径自动识别**（如百炼 Embedding → BaiLianEmbeddingClient） | 不需要独立的百炼 Provider，特殊逻辑封装在 Client 中 |
 | 接口 vs 抽象类 | **CapabilityClient 用接口，三个能力客户端用抽象类** | 接口保证根的灵活性，抽象类提取公共字段避免重复 |
-| 弹性层粒度 | **三个类型安全的装饰器，共享同一套配置**（详见 §7.1 + §7.7） | 类型安全 + 配置统一 + 装饰器透明性 |
-| Spring AI 兼容 | **`ChatCapable extends ChatModel`**，接口级原生继承 | 零转换成本，客户端实例天然就是 ChatModel |
+| 弹性层粒度 | **`AbstractResilientClient` 公共基类 + 三个类型安全装饰器**（详见 §7.1 + §7.7） | DRY：公共 CapabilityClient 委托代码只写一次；类型安全 + 装饰器透明性 |
+| Spring AI 兼容 | **`ChatModelAdapter` 独立适配器**，通过 `chatCapable.asChatModel()` 按需获取 | ISP/LSP 合规：ChatCapable 不继承 ChatModel，桥接代码集中在 Adapter 一处，不污染能力接口 |
+| 重试 vs 降级判定 | **可重试 ≠ 可降级**，由 `RetryPolicy.isRetryable()` 和 `isFallbackEligible()` 分别判定 | 语义正交：认证失败可降级但不应重试同一模型；格式错误可降级但重试无意义 |
 | 重试策略覆盖 | **全局默认 + 按能力类型可选覆盖** | YAML `resilience.retry-overrides` 按能力覆盖 |
+| 弹性与编排分离 | **ResilientClient 负责单模型重试/熔断，FallbackExecutor 负责跨模型降级** | 职责正交：弹性层不感知降级链，编排层不感知重试细节 |
+| 工具调用 ISP 拆分 | **`ToolCallingCapable` 独立接口**，不混入 ChatCapable | 只有 Agent 场景需要工具调用，避免非 Agent 调用方依赖不需要的方法 |
 
 ---
 
@@ -233,6 +251,21 @@ public record ModelCandidate(
     /** 默认调用参数（temperature、maxTokens 等），调用方可以覆盖 */
     Map<String, Object> params
 ) {}
+
+/**
+ * <b>与已有 ModelCandidate 的关系</b>：
+ * <p>
+ * 当前代码库中 {@code com.smart.rag.infrastructure.fallback.ModelCandidate}
+ * 仅包含 {@code id, provider, model, priority, enabled, supportsThinking} 字段，
+ * 用于 FallbackChainProvider 的降级链排序。
+ * <p>
+ * 本方案将其<b>就地扩展</b>为上述 record（新增 capability、dimension、
+ * supportsStreaming、params，移除 enabled——由 Registry 的 enabled-provider
+ * 过滤替代）。迁移期间保持 {@code compositeId()} 兼容方法。
+ * <p>
+ * 包路径从 {@code fallback} 迁移至 {@code infrastructure.llm}，
+ * 与新的 SPI 层对齐。旧 {@code fallback.ModelCandidate} 在迁移完成后删除。
+ */
 ```
 
 ### 4.3 `CapabilityClient` — 客户端根接口
@@ -245,6 +278,11 @@ package com.smart.rag.infrastructure.llm;
  * <p>
  * 所有 LLM 能力客户端（Chat / Embedding / Rerank）的公共契约。
  * 不定义具体 LLM 调用方法——通过 Registry 的类型查询获取具体能力接口。
+ * <p>
+ * <b>设计决策</b>：接口不暴露 {@code ModelCandidate} 引用。
+ * {@code ModelCandidate} 是创建客户端的输入参数，不应成为接口契约的一部分——
+ * 避免接口与数据模型的循环耦合，也使客户端可以在测试中脱离 ModelCandidate 独立使用。
+ * 实现类通过构造器接收 ModelCandidate，将其元数据提取为不可变字段。
  *
  * <pre>
  * 使用示例：
@@ -268,9 +306,6 @@ public interface CapabilityClient {
 
     /** 该客户端是否可用（供应商 API key 有效 + 基础连通性） */
     boolean isAvailable();
-
-    /** 返回模型候选声明 */
-    ModelCandidate candidate();
 }
 ```
 
@@ -538,20 +573,21 @@ public record RerankResult(
 package com.smart.rag.infrastructure.llm;
 
 import reactor.core.publisher.Flux;
-import java.util.List;
 
 /**
  * Chat 能力契约
  * <p>
- * 定义 Chat 场景的全部操作。AbstractChatClient 和 ResilientChatClient 均实现此接口。
+ * 定义 Chat 场景的核心操作。AbstractChatClient 和 ResilientChatClient 均实现此接口。
  * 调用方通过此接口与 Chat 客户端交互，无需关心是否经过弹性包装。
  * <p>
- * <b>Spring AI 原生兼容</b>：本接口直接继承 Spring AI 的 {@code ChatModel}，
- * 因此任何 {@code ChatCapable} 实例天然就是 {@code ChatModel}，可直接用于
- * Agent 工具调用等需要 Spring AI 原生类型的场景，无需 unwrap 转换。
- * 需要 {@code ChatClient} 的场景通过 {@code ChatClient.builder(chatCapable).build()} 构造。
+ * <b>不继承 Spring AI ChatModel</b>：ChatCapable 保持纯净的能力契约，
+ * 不引入 Spring AI 的 Prompt/ChatResponse 类型依赖（ISP）。
+ * 需要 ChatModel 的场景通过 {@link #asChatModel()} 获取适配器视图（详见 §5.5）。
+ * <p>
+ * <b>工具调用已拆分</b>：{@code chatWithTools} 不在本接口中，
+ * 而是在独立的 {@link ToolCallingCapable} 接口中（详见 §5.4），只有 Agent 场景需要实现。
  */
-public interface ChatCapable extends CapabilityClient, org.springframework.ai.chat.model.ChatModel {
+public interface ChatCapable extends CapabilityClient {
 
     /** 阻塞式对话 */
     LlmResponse chat(ChatRequest request);
@@ -559,17 +595,213 @@ public interface ChatCapable extends CapabilityClient, org.springframework.ai.ch
     /** 流式对话（SSE） */
     Flux<String> chatStream(ChatRequest request);
 
-    /** 带工具调用的对话（Agent 场景） */
-    default LlmResponse chatWithTools(ChatRequest request, List<Object> tools) {
-        throw new UnsupportedOperationException(
-            "Tool calling not supported by " + candidateId());
+    /** 是否支持流式（由 ModelCandidate.supportsStreaming 声明，未声明时默认 false） */
+    boolean supportsStreaming();
+
+    /**
+     * 获取 Spring AI ChatModel 适配器视图
+     * <p>
+     * 返回一个 {@code ChatModel} 实现，将 {@code call(Prompt)} 桥接到 {@link #chat(ChatRequest)}，
+     * 将 {@code stream(Prompt)} 桥接到 {@link #chatStream(ChatRequest)}。
+     * 桥接代码集中在适配器中，不污染能力接口。
+     * <p>
+     * 用途：{@code ChatClient.builder(chatCapable.asChatModel()).build()}
+     */
+    default org.springframework.ai.chat.model.ChatModel asChatModel() {
+        return new ChatModelAdapter(this);
+    }
+}
+```
+
+### 5.2 `EmbeddingCapable` — Embedding 能力契约
+
+```java
+package com.smart.rag.infrastructure.llm;
+
+import java.util.List;
+
+/**
+ * Embedding 能力契约
+ */
+public interface EmbeddingCapable extends CapabilityClient {
+
+    /** 单条文本向量嵌入 */
+    float[] embed(String text, EmbeddingType type);
+
+    /** 批量文本向量嵌入（默认逐条调用，子类可覆写为批量 API） */
+    default List<float[]> embedBatch(List<String> texts, EmbeddingType type) {
+        return texts.stream().map(text -> embed(text, type)).toList();
     }
 
-    /** 是否支持流式（由 ModelCandidate.supportsStreaming 声明，未声明时默认 false） */
-    default boolean supportsStreaming() {
-        return candidate() != null
-            && candidate().supportsStreaming() != null
-            && candidate().supportsStreaming();
+    /** 向量维度 */
+    int dimensions();
+}
+```
+
+### 5.3 `RerankCapable` — Rerank 能力契约
+
+```java
+package com.smart.rag.infrastructure.llm;
+
+import java.util.List;
+
+/**
+ * Rerank 能力契约
+ */
+public interface RerankCapable extends CapabilityClient {
+
+    /** 重排序 */
+    List<RerankResult> rerank(RerankRequest request);
+
+    /** 带 topN 截断的重排序（默认客户端截断，子类可覆写为服务端截断） */
+    default List<RerankResult> rerank(RerankRequest request, int topN) {
+        return rerank(request).stream().limit(topN).toList();
+    }
+}
+```
+
+### 5.4 `ToolCallingCapable` — 工具调用能力（ISP 拆分）
+
+```java
+package com.smart.rag.infrastructure.llm;
+
+import java.util.List;
+
+/**
+ * 工具调用能力契约（ISP 拆分）
+ * <p>
+ * 从 ChatCapable 中独立出来，只有支持工具调用的 Chat 客户端才需要实现此接口。
+ * AgentModeStrategy 等需要工具调用的调用方显式依赖此接口。
+ * <p>
+ * 获取方式：
+ * <pre>
+ * ChatCapable client = registry.get("qwen3-max", ChatCapable.class);
+ * if (client instanceof ToolCallingCapable tc) {
+ *     LlmResponse resp = tc.chatWithTools(request, tools);
+ * }
+ * </pre>
+ */
+public interface ToolCallingCapable extends ChatCapable {
+
+    /** 带工具调用的对话（Agent 场景） */
+    LlmResponse chatWithTools(ChatRequest request, List<Object> tools);
+}
+```
+
+### 5.5 `ChatModelAdapter` — Spring AI ChatModel 适配器
+
+```java
+package com.smart.rag.infrastructure.llm.adapter;
+
+import com.smart.rag.infrastructure.llm.*;
+import reactor.core.publisher.Flux;
+import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.ai.chat.model.ChatResponse;
+import org.springframework.ai.chat.model.ChatResponseMetadata;
+import org.springframework.ai.chat.metadata.Usage;
+import org.springframework.ai.chat.messages.AssistantMessage;
+import org.springframework.ai.chat.prompt.ChatGenerationMetadata;
+import org.springframework.ai.chat.model.Generation;
+import org.springframework.ai.chat.prompt.Prompt;
+import java.util.List;
+
+/**
+ * Spring AI ChatModel 适配器
+ * <p>
+ * 将任何 {@code ChatCapable} 实例适配为 Spring AI {@code ChatModel}。
+ * 这是 ChatCapable 与 ChatModel 之间桥接代码的<strong>唯一存放位置</strong>。
+ * <p>
+ * <b>设计原则</b>：
+ * <ul>
+ *   <li>ISP — ChatCapable 不被迫继承 ChatModel 的所有方法</li>
+ *   <li>LSP — 适配器是独立的 ChatModel 实现，不影响 ChatCapable 的契约</li>
+ *   <li>SRP — 桥接逻辑（Prompt→ChatRequest、LlmResponse→ChatResponse）集中在此</li>
+ * </ul>
+ * <p>
+ * 使用方式：{@code chatCapable.asChatModel()} 或 {@code new ChatModelAdapter(chatCapable)}
+ */
+public class ChatModelAdapter implements ChatModel {
+
+    private final ChatCapable delegate;
+
+    public ChatModelAdapter(ChatCapable delegate) {
+        this.delegate = delegate;
+    }
+
+    /** 返回被适配的 ChatCapable 实例 */
+    public ChatCapable delegate() { return delegate; }
+
+    @Override
+    public ChatResponse call(Prompt prompt) {
+        ChatRequest request = extractChatRequest(prompt);
+        LlmResponse llmResp = delegate.chat(request);
+        return wrapAsChatResponse(llmResp);
+    }
+
+    @Override
+    public Flux<ChatResponse> stream(Prompt prompt) {
+        ChatRequest request = extractChatRequest(prompt);
+        return delegate.chatStream(request)
+            .map(chunk -> new ChatResponse(
+                List.of(new Generation(new AssistantMessage(chunk)))));
+    }
+
+    // ======== 桥接工具方法 ========
+
+    private ChatResponse wrapAsChatResponse(LlmResponse llmResp) {
+        AssistantMessage assistantMsg = new AssistantMessage(
+            llmResp.content() != null ? llmResp.content() : "");
+        Generation generation = new Generation(assistantMsg,
+            ChatGenerationMetadata.builder()
+                .finishReason(llmResp.truncated() ? "length" : "stop")
+                .build());
+        ChatResponseMetadata.Builder metaBuilder = ChatResponseMetadata.builder();
+        if (llmResp.tokenUsage() != null) {
+            metaBuilder.usage(Usage.builder()
+                .promptTokens(llmResp.tokenUsage().promptTokens())
+                .completionTokens(llmResp.tokenUsage().completionTokens())
+                .totalTokens(llmResp.tokenUsage().totalTokens())
+                .build());
+        }
+        return new ChatResponse(List.of(generation), metaBuilder.build());
+    }
+
+    /**
+     * 从 Spring AI {@code Prompt} 提取 {@code ChatRequest}，保留 SystemMessage 和对话历史。
+     * <p>
+     * {@code Prompt.getContents()} 仅返回用户消息文本，会丢失 SystemMessage 和历史。
+     * 此方法从 {@code Prompt.getInstructions()} 中提取完整消息列表：
+     * <ul>
+     *   <li>SystemMessage → {@code ChatRequest.systemPrompt}</li>
+     *   <li>其他消息 → {@code ChatRequest.history}（保留多轮对话上下文）</li>
+     *   <li>最后一条 UserMessage 文本 → {@code ChatRequest.input}</li>
+     * </ul>
+     */
+    private ChatRequest extractChatRequest(Prompt prompt) {
+        String systemPrompt = null;
+        List<Message> history = List.of();
+        String userContent = prompt.getContents();
+
+        if (prompt.getInstructions() != null && !prompt.getInstructions().isEmpty()) {
+            var instructions = prompt.getInstructions();
+            // 提取 SystemMessage
+            for (var msg : instructions) {
+                if (msg instanceof org.springframework.ai.chat.messages.SystemMessage sm) {
+                    systemPrompt = sm.getText();
+                    break;
+                }
+            }
+            // 构建 history：排除 SystemMessage，保留 User/Assistant/Tool 消息
+            history = instructions.stream()
+                .filter(m -> !(m instanceof org.springframework.ai.chat.messages.SystemMessage))
+                .map(m -> new Message(
+                    m.getMessageType().name().toLowerCase(),
+                    m.getText()))
+                .toList();
+        }
+
+        return new ChatRequest(userContent, systemPrompt, history,
+            null, null, null, Map.of());
     }
 }
 ```
@@ -632,13 +864,6 @@ package com.smart.rag.infrastructure.llm.client;
 
 import com.smart.rag.infrastructure.llm.*;
 import reactor.core.publisher.Flux;
-import org.springframework.ai.chat.model.ChatResponse;
-import org.springframework.ai.chat.model.ChatResponseMetadata;
-import org.springframework.ai.chat.metadata.Usage;
-import org.springframework.ai.chat.messages.AssistantMessage;
-import org.springframework.ai.chat.prompt.Prompt;
-import org.springframework.ai.chat.prompt.ChatGenerationMetadata;
-import org.springframework.ai.chat.model.Generation;
 import java.util.List;
 import java.util.Set;
 
@@ -646,34 +871,30 @@ import java.util.Set;
  * Chat 客户端抽象基类
  * <p>
  * 实现 {@link ChatCapable} 接口。子类只需实现 {@link #chat} 和 {@link #chatStream}，
- * 其他元信息方法由基类通过 {@link ModelCandidate} 统一处理。
+ * 其他元信息方法由基类通过构造器注入的 {@link ModelCandidate} 统一处理。
  * <p>
  * <b>不包含重试/熔断逻辑</b>——由 {@code ResilientChatClient} 装饰器在外部施加。
  * <p>
- * <b>Spring AI ChatModel 桥接义务</b>：{@code ChatCapable extends ChatModel}，
- * 因此子类还必须实现 {@code call(Prompt)} 和 {@code stream(Prompt)} 方法。
- * 推荐在子类中桥接到 {@link #chat(ChatRequest)} 和 {@link #chatStream(ChatRequest)}：
- * <pre>
- * public ChatResponse call(Prompt prompt) {
- *     return chat(ChatRequest.of(prompt.getContents()));
- * }
- * </pre>
+ * <b>不包含 Spring AI ChatModel 桥接代码</b>——ChatCapable 不继承 ChatModel，
+ * 桥接逻辑集中在独立的 {@code ChatModelAdapter} 中（详见 §5.5）。
+ * <p>
+ * <b>工具调用</b>：需要支持工具调用的子类额外实现 {@link ToolCallingCapable}（详见 §5.4）。
  */
 public abstract class AbstractChatClient implements ChatCapable {
 
     protected final ModelCandidate candidate;
-    protected final String providerId;
+    protected final String providerIdStr;
 
     protected AbstractChatClient(ModelCandidate candidate, String providerId) {
         this.candidate = candidate;
-        this.providerId = providerId;
+        this.providerIdStr = providerId;
     }
 
     @Override
     public final String candidateId() { return candidate.id(); }
 
     @Override
-    public final String providerId() { return providerId; }
+    public final String providerId() { return providerIdStr; }
 
     @Override
     public final String modelName() { return candidate.model(); }
@@ -681,15 +902,17 @@ public abstract class AbstractChatClient implements ChatCapable {
     @Override
     public final LlmCapability capability() { return candidate.capability(); }
 
-    @Override
-    public final ModelCandidate candidate() { return candidate; }
-
     /**
      * 默认可用。子类可覆写为实际的 API key 检查或连通性探测。
      * ResilientChatClient 会在此基础上叠加熔断器状态判断。
      */
     @Override
     public boolean isAvailable() { return true; }
+
+    @Override
+    public boolean supportsStreaming() {
+        return candidate.supportsStreaming() != null && candidate.supportsStreaming();
+    }
 
     /**
      * 阻塞式对话
@@ -706,107 +929,6 @@ public abstract class AbstractChatClient implements ChatCapable {
      * @return 文本片段流（SSE），由上游 SseStreamBridge 桥接为 SSEEmitter
      */
     public abstract Flux<String> chatStream(ChatRequest request);
-
-    /**
-     * 带工具调用的对话（Agent 场景）
-     * <p>
-     * 默认不支持，AgentModeStrategy 可覆写。
-     *
-     * @param request 对话请求
-     * @param tools   工具定义列表
-     * @return 统一响应（可能包含 toolCalls）
-     */
-    public LlmResponse chatWithTools(ChatRequest request, List<Object> tools) {
-        throw new UnsupportedOperationException(
-            "Tool calling not supported by " + candidateId());
-    }
-
-    /**
-     * 是否支持流式
-     */
-    public boolean supportsStreaming() {
-        return candidate.supportsStreaming() != null && candidate.supportsStreaming();
-    }
-
-    // ======== Spring AI ChatModel 桥接（继承自 ChatCapable extends ChatModel）========
-
-    /**
-     * Spring AI ChatModel 桥接 — 将 {@code call(Prompt)} 委托给 {@link #chat(ChatRequest)}
-     * <p>
-     * {@code ChatCapable extends ChatModel}，因此子类天然就是 {@code ChatModel}。
-     * 此默认实现从 {@code Prompt.getInstructions()} 提取 SystemMessage，
-     * 从 {@code Prompt.getContents()} 提取用户输入，构建 {@code ChatRequest}。
-     * <p>
-     * <b>重要</b>：{@code ResilientChatClient} 会覆写此方法，确保通过弹性层（CircuitBreaker → RetryPolicy → delegate）。
-     * 直接调用此方法（未经 Resilient 包装）会绕过弹性保护。
-     */
-    @Override
-    public ChatResponse call(Prompt prompt) {
-        ChatRequest request = extractChatRequest(prompt);
-        LlmResponse llmResp = chat(request);
-        return wrapAsChatResponse(llmResp);
-    }
-
-    /**
-     * Spring AI ChatModel 桥接 — 将 {@code stream(Prompt)} 委托给 {@link #chatStream(ChatRequest)}
-     * <p>
-     * 流式场景下无法逐 chunk 获取 token usage（供应商不在每个 SSE 事件中返回 usage），
-     * 因此 {@code ChatResponseMetadata.usage} 为空，token 统计由 {@code TokenCountingChatModel}
-     * 在流结束后从 {@code LlmResponse} 的 {@code tokenUsage} 中提取。
-     */
-    @Override
-    public Flux<ChatResponse> stream(Prompt prompt) {
-        ChatRequest request = extractChatRequest(prompt);
-        return chatStream(request)
-            .map(chunk -> new ChatResponse(
-                List.of(new Generation(new AssistantMessage(chunk)))));
-    }
-
-    /**
-     * 将 SPI 的 {@code LlmResponse} 转换为 Spring AI 的 {@code ChatResponse}
-     * <p>
-     * 供 {@code call(Prompt)} 桥接使用。
-     */
-    protected ChatResponse wrapAsChatResponse(LlmResponse llmResp) {
-        AssistantMessage assistantMsg = new AssistantMessage(
-            llmResp.content() != null ? llmResp.content() : "");
-        Generation generation = new Generation(assistantMsg,
-            ChatGenerationMetadata.builder()
-                .finishReason(llmResp.truncated() ? "length" : "stop")
-                .build());
-
-        ChatResponseMetadata.Builder metaBuilder = ChatResponseMetadata.builder();
-        if (llmResp.tokenUsage() != null) {
-            metaBuilder.usage(Usage.builder()
-                .promptTokens(llmResp.tokenUsage().promptTokens())
-                .completionTokens(llmResp.tokenUsage().completionTokens())
-                .totalTokens(llmResp.tokenUsage().totalTokens())
-                .build());
-        }
-        return new ChatResponse(List.of(generation), metaBuilder.build());
-    }
-    /**
-     * 从 Spring AI {@code Prompt} 提取 {@code ChatRequest}，保留 SystemMessage。
-     * <p>
-     * {@code Prompt.getContents()} 仅返回用户消息文本，会丢失 SystemMessage。
-     * 此方法从 {@code Prompt.getInstructions()} 中提取 SystemMessage。
-     */
-    protected ChatRequest extractChatRequest(Prompt prompt) {
-        String systemPrompt = null;
-        String userContent = prompt.getContents();
-        if (prompt.getInstructions() != null) {
-            for (var msg : prompt.getInstructions()) {
-                if (msg instanceof org.springframework.ai.chat.messages.SystemMessage sm) {
-                    systemPrompt = sm.getText();
-                    break;
-                }
-            }
-        }
-        return systemPrompt != null
-            ? ChatRequest.withSystem(systemPrompt, userContent)
-            : ChatRequest.of(userContent);
-    }
-
 }
 ```
 
@@ -854,9 +976,6 @@ public abstract class AbstractEmbeddingClient implements EmbeddingCapable {
 
     @Override
     public final LlmCapability capability() { return candidate.capability(); }
-
-    @Override
-    public final ModelCandidate candidate() { return candidate; }
 
     @Override
     public boolean isAvailable() { return true; }
@@ -948,9 +1067,6 @@ public abstract class AbstractRerankClient implements RerankCapable {
     public final LlmCapability capability() { return candidate.capability(); }
 
     @Override
-    public final ModelCandidate candidate() { return candidate; }
-
-    @Override
     public boolean isAvailable() { return true; }
 
     /**
@@ -1010,9 +1126,18 @@ import java.util.function.Supplier;
  * 所有 LLM 操作共用同一套重试参数，由 {@code app.llm.resilience.retry} 配置。
  * 替换各调用点散落的 for-loop / 自写指数退避。
  * <p>
- * 可重试判定：直接复用已有 {@link FallbackEligibility}。
- * 可降级 = 可重试（C 类 RemoteException + 网络异常），不可降级 = 不可重试（A/B 类 + 编程异常）。
- * 与现有 {@code StreamRetryHandler} 的判定逻辑完全一致，无额外配置。
+ * <b>可重试 ≠ 可降级</b>——两个正交概念分别判定：
+ * <ul>
+ *   <li>{@link #isRetryable(Throwable)} — 同模型重试判定：瞬态错误（网络超时、5xx、限流 429、首包超时）</li>
+ *   <li>{@link #isFallbackEligible(Throwable)} — 跨模型降级判定：可重试错误 + 熔断器打开 + 认证失败等</li>
+ * </ul>
+ * 语义区别示例：
+ * <ul>
+ *   <li>认证失败（A 类）→ 不可重试（同一模型重试无意义），但可降级（换模型可能成功）</li>
+ *   <li>响应格式错误（B 类）→ 不可重试（同一模型重试无意义），但可降级（换模型可能正常）</li>
+ *   <li>熔断器打开 → 不可重试（重试无意义，等待冷却），但可降级（换模型绕过熔断）</li>
+ *   <li>内容过滤 → 不可重试（请求本身有问题），不可降级（换模型结果相同）</li>
+ * </ul>
  * <p>
  * 配置示例：
  * <pre>
@@ -1116,28 +1241,56 @@ public class RetryPolicy {
     }
 
     /**
-     * 判断异常是否可重试
+     * 判断异常是否可重试（同模型）
      * <p>
-     * 两层过滤：
-     * <ol>
-     *   <li>{@link ModelCircuitOpenException} — 熔断器已 OPEN，重试无意义，直接传播给
-     *       {@link FallbackExecutor} 做跨模型降级（与现有 {@code StreamRetryHandler} 行为一致）</li>
-     *   <li>{@link FallbackEligibility#isEligible} — 可降级 = 可重试，不可降级 = 不可重试</li>
-     * </ol>
+     * 仅瞬态错误可重试——同一模型稍后可能恢复：
+     * <ul>
+     *   <li>网络超时 / IOException / SocketTimeoutException</li>
+     *   <li>供应商 5xx / 网关超时 → {@code LlmTransientException}</li>
+     *   <li>限流 429 → {@code RemoteException(LLM_RATE_LIMITED)}</li>
+     *   <li>首包探测超时 → {@link ProbeTimeoutException}</li>
+     * </ul>
+     * <b>不可重试</b>（即使同一模型重试也无意义）：
+     * <ul>
+     *   <li>熔断器打开 → {@link ModelCircuitOpenException}（等待冷却，非重试可解）</li>
+     *   <li>认证失败 → A/B 类异常（请求本身有问题）</li>
+     *   <li>内容过滤 → 请求本身违规（换时间重试结果相同）</li>
+     *   <li>编程错误 → {@link UnsupportedOperationException}（如对非流式模型调用 chatStream）</li>
+     * </ul>
      */
     private boolean isRetryable(Throwable e) {
         if (e instanceof ModelCircuitOpenException) {
             return false;
         }
+        if (e instanceof UnsupportedOperationException) {
+            return false; // 编程错误：调用方应在调用前检查 supportsStreaming()
+        }
+        // 仅 C 类瞬态错误可重试
         return fallbackEligibility.isEligible(e);
     }
 
     /**
-     * 判断异常是否可触发跨模型降级（语义上等同于 isRetryable）
+     * 判断异常是否可触发跨模型降级
      * <p>
-     * 保留此方法以保持 {@link FallbackExecutor} 调用语义清晰。
+     * 比可重试范围更广——除了瞬态错误外，还包括：
+     * <ul>
+     *   <li>熔断器打开 — 不可重试但可降级（换模型绕过熔断）</li>
+     *   <li>认证失败 — 不可重试但可降级（换供应商/模型可能用不同 key）</li>
+     *   <li>响应格式错误 — 不可重试但可降级（换模型可能返回正确格式）</li>
+     * </ul>
+     * <b>不可降级</b>：
+     * <ul>
+     *   <li>内容过滤 — 换模型结果相同（请求本身违规）</li>
+     *   <li>编程异常 — IllegalArgumentException / NullPointerException / UnsupportedOperationException 等</li>
+     * </ul>
      */
     public boolean isFallbackEligible(Throwable e) {
+        if (e instanceof ModelCircuitOpenException) {
+            return true; // 熔断打开 → 不可重试，但可降级
+        }
+        if (e instanceof UnsupportedOperationException) {
+            return false; // 编程错误，不应触发降级
+        }
         return fallbackEligibility.isEligible(e);
     }
 
@@ -1233,6 +1386,14 @@ public class FallbackExecutor {
      * <b>注意</b>：切换发生在 Flux 信号层面（onErrorResume），
      * 意味着已发送给下游的数据片段不会回滚。
      * 流式降级的效果是"从头开始用新模型重新生成"，而非"续接上一个模型的输出"。
+     * <p>
+     * <b>⚠ 调用方须知</b>：由于切换发生在 {@code onErrorResume} 信号层面，
+     * 已发送给下游的数据片段不会回滚。若模型 A 在输出部分内容后失败，
+     * 调用方收到的将是「A 的不完整片段 + B 的完整输出」的拼接，内容可能不连贯。
+     * <p>
+     * <b>建议</b>：对内容连贯性有要求的调用方，应在 {@code chatStream} 之外
+     * 自行处理拼接不连贯的情况（如丢弃模型 A 的片段后重新请求，
+     * 或在 UI 层提示用户"因模型切换，前文可能不完整"）。
      *
      * @param chain  按优先级排序的客户端列表
      * @param action 对单个客户端执行的操作，返回 Flux
@@ -1527,9 +1688,13 @@ public class ProbeHandler {
 
 ### 7.7 Resilient 装饰器
 
-> **设计决策**：装饰器**只实现能力接口**（`ChatCapable` / `EmbeddingCapable` / `RerankCapable`），
-> **不继承**被装饰者的抽象类。纯组合 + 委托，避免继承+委托的双重关系。
-> 调用方通过接口交互，无法区分原始客户端和弹性包装——这正是装饰器的透明性。
+> **设计决策**：
+> 1. 装饰器**只实现能力接口**（`ChatCapable` / `EmbeddingCapable` / `RerankCapable`），不继承被装饰者的抽象类。
+>    调用方通过接口交互，无法区分原始客户端和弹性包装——这正是装饰器的透明性。
+> 2. 三个 Resilient 装饰器共享 `AbstractResilientClient<T>` 基类，消除 `CapabilityClient` 委托的 DRY 违反。
+> 3. `chatWithTools` 已提取到 `ToolCallingCapable`（§5.4），对应的弹性包装为 `ResilientToolCallingClient`，
+>    由 Registry 按 `delegate instanceof ToolCallingCapable` 条件创建。
+> 4. Spring AI `ChatModel` 桥接代码集中在 `ChatModelAdapter`（§5.5），Resilient 装饰器不感知 Spring AI。
 
 ```java
 package com.smart.rag.infrastructure.llm.resilience;
@@ -1537,14 +1702,36 @@ package com.smart.rag.infrastructure.llm.resilience;
 import com.smart.rag.infrastructure.llm.*;
 import com.smart.rag.infrastructure.llm.client.*;
 import reactor.core.publisher.Flux;
-import org.springframework.ai.chat.model.ChatResponse;
-import org.springframework.ai.chat.model.ChatResponseMetadata;
-import org.springframework.ai.chat.model.Generation;
-import org.springframework.ai.chat.metadata.Usage;
-import org.springframework.ai.chat.messages.AssistantMessage;
-import org.springframework.ai.chat.prompt.ChatGenerationMetadata;
-import org.springframework.ai.chat.prompt.Prompt;
 import java.util.List;
+
+/**
+ * AbstractResilientClient — 弹性装饰器公共基类
+ * <p>
+ * 消除三个 Resilient 装饰器中 {@code CapabilityClient} 委托的 DRY 违反。
+ * 泛型 {@code <T>} 约束为 {@code CapabilityClient} 的子接口（如 {@code ChatCapable}），
+ * 子类通过 {@code extends AbstractResilientClient<ChatCapable>} 获得统一的委托实现。
+ */
+abstract class AbstractResilientClient<T extends CapabilityClient> implements CapabilityClient {
+
+    protected final T delegate;
+    protected final CircuitBreaker circuitBreaker;
+    protected final RetryPolicy retryPolicy;
+
+    protected AbstractResilientClient(T delegate, CircuitBreaker circuitBreaker, RetryPolicy retryPolicy) {
+        this.delegate = delegate;
+        this.circuitBreaker = circuitBreaker;
+        this.retryPolicy = retryPolicy;
+    }
+
+    @Override public String candidateId() { return delegate.candidateId(); }
+    @Override public String providerId() { return delegate.providerId(); }
+    @Override public String modelName() { return delegate.modelName(); }
+    @Override public LlmCapability capability() { return delegate.capability(); }
+    @Override public boolean isAvailable() {
+        return delegate.isAvailable()
+            && circuitBreaker.getState() != CircuitBreakerState.OPEN;
+    }
+}
 
 /**
  * ResilientChatClient — Chat 能力的弹性装饰器
@@ -1556,37 +1743,23 @@ import java.util.List;
  * ├──────────────┼──────────────┼──────────────┼──────────────┤
  * │ chat         │ 指数退避重试   │ ✓            │ ✗（阻塞式）   │
  * │ chatStream   │ 指数退避重试   │ ✓            │ ✓ ProbeHandler│
- * │ chatWithTools│ 指数退避重试   │ ✓            │ ✗            │
  * └──────────────┴──────────────┴──────────────┴──────────────┘
  * </pre>
+ * <p>
+ * 工具调用（{@code chatWithTools}）已提取到 {@code ToolCallingCapable}（§5.4），
+ * 弹性包装见 {@code ResilientToolCallingClient}。
  */
-public class ResilientChatClient implements ChatCapable {
+public class ResilientChatClient extends AbstractResilientClient<ChatCapable> implements ChatCapable {
 
-    private final ChatCapable delegate;
-    private final CircuitBreaker circuitBreaker;
-    private final RetryPolicy retryPolicy;
     private final ProbeHandler probeHandler;
 
     public ResilientChatClient(ChatCapable delegate,
                                 CircuitBreaker circuitBreaker,
                                 RetryPolicy retryPolicy,
                                 ProbeHandler probeHandler) {
-        this.delegate = delegate;
-        this.circuitBreaker = circuitBreaker;
-        this.retryPolicy = retryPolicy;
+        super(delegate, circuitBreaker, retryPolicy);
         this.probeHandler = probeHandler;
     }
-
-    // ======== CapabilityClient 委托 ========
-    @Override public String candidateId() { return delegate.candidateId(); }
-    @Override public String providerId() { return delegate.providerId(); }
-    @Override public String modelName() { return delegate.modelName(); }
-    @Override public LlmCapability capability() { return delegate.capability(); }
-    @Override public boolean isAvailable() {
-        return delegate.isAvailable()
-            && circuitBreaker.getState() != CircuitBreakerState.OPEN;
-    }
-    @Override public ModelCandidate candidate() { return delegate.candidate(); }
 
     // ======== Chat 操作（带弹性包装） ========
 
@@ -1614,91 +1787,43 @@ public class ResilientChatClient implements ChatCapable {
     }
 
     @Override
-    public LlmResponse chatWithTools(ChatRequest request, List<Object> tools) {
-        return circuitBreaker.execute(() ->
-            retryPolicy.executeWithBackoff(() ->
-                delegate.chatWithTools(request, tools)
-            )
-        );
-    }
-
-    @Override
     public boolean supportsStreaming() {
         return delegate.supportsStreaming();
     }
+}
+```
 
+```java
+/**
+ * ResilientToolCallingClient — ToolCalling 能力的弹性装饰器
+ * <p>
+ * 当 delegate 实现 {@code ToolCallingCapable} 时，由 Registry 创建此装饰器，
+ * 为工具调用提供与 {@code ResilientChatClient} 相同的 CircuitBreaker + RetryPolicy 保护。
+ * <p>
+ * 策略矩阵：
+ * <pre>
+ * ┌──────────────┬──────────────┬──────────────┬──────────────┐
+ * │   操作类型     │ 重试策略      │ 熔断保护      │ 首包探测      │
+ * ├──────────────┼──────────────┼──────────────┼──────────────┤
+ * │ chatWithTools│ 指数退避重试   │ ✓            │ ✗（阻塞式）   │
+ * └──────────────┴──────────────┴──────────────┴──────────────┘
+ * 注：chat / chatStream 的策略矩阵继承自 {@link ResilientChatClient}。
+ * </pre>
+ */
+public class ResilientToolCallingClient extends ResilientChatClient implements ToolCallingCapable {
 
-    // ======== Spring AI ChatModel 桥接（通过弹性层）========
-    /**
-     * Spring AI ChatModel 桥接 — 通过弹性层委托给 delegate
-     * <p>
-     * {@code AgentModeStrategy} 等 Spring AI 组件通过 {@code ChatModel.call(Prompt)} 调用，
-     * 此覆写确保调用经过 CircuitBreaker → RetryPolicy → delegate 完整弹性链。
-     * <p>
-     * <b>Prompt 提取</b>：从 {@code Prompt.getInstructions()} 提取 SystemMessage 和用户消息，
-     * 从 {@code Prompt.getContents()} 提取用户输入文本，确保 SystemMessage 不丢失。
-     */
-    @Override
-    public ChatResponse call(Prompt prompt) {
-        ChatRequest request = extractChatRequest(prompt);
-        LlmResponse llmResp = circuitBreaker.execute(() ->
-            retryPolicy.executeWithBackoff(() -> delegate.chat(request)));
-        // 内联 LlmResponse → ChatResponse 转换（与 AbstractChatClient.wrapAsChatResponse 逻辑一致）
-        AssistantMessage assistantMsg = new AssistantMessage(
-            llmResp.content() != null ? llmResp.content() : "");
-        Generation generation = new Generation(assistantMsg,
-            ChatGenerationMetadata.builder()
-                .finishReason(llmResp.truncated() ? "length" : "stop")
-                .build());
-        ChatResponseMetadata.Builder metaBuilder = ChatResponseMetadata.builder();
-        if (llmResp.tokenUsage() != null) {
-            metaBuilder.usage(Usage.builder()
-                .promptTokens(llmResp.tokenUsage().promptTokens())
-                .completionTokens(llmResp.tokenUsage().completionTokens())
-                .totalTokens(llmResp.tokenUsage().totalTokens())
-                .build());
-        }
-        return new ChatResponse(List.of(generation), metaBuilder.build());
+    public ResilientToolCallingClient(ChatCapable delegate, CircuitBreaker circuitBreaker,
+                                      RetryPolicy retryPolicy, ProbeHandler probeHandler) {
+        super(delegate, circuitBreaker, retryPolicy, probeHandler);
     }
 
-    /**
-     * Spring AI ChatModel 桥接 — 通过弹性层委托给 delegate（流式）
-     */
     @Override
-    public Flux<ChatResponse> stream(Prompt prompt) {
-        ChatRequest request = extractChatRequest(prompt);
-        return circuitBreaker.executeStream(() ->
-            retryPolicy.retryStream(() -> {
-                Flux<String> raw = delegate.chatStream(request);
-                return probeHandler != null
-                    ? probeHandler.wrap(candidateId(), raw)
-                    : raw;
-            })
-        ).map(chunk -> new ChatResponse(
-            List.of(new Generation(new AssistantMessage(chunk)))));
-    }
-
-    /**
-     * 从 Spring AI {@code Prompt} 提取 {@code ChatRequest}，保留 SystemMessage 和对话历史。
-     * <p>
-     * {@code Prompt.getContents()} 仅返回用户消息文本，会丢失 SystemMessage。
-     * 此方法从 {@code Prompt.getInstructions()} 中提取完整消息列表。
-     */
-    private ChatRequest extractChatRequest(Prompt prompt) {
-        String systemPrompt = null;
-        String userContent = prompt.getContents();
-        // 从 instructions 中提取 SystemMessage
-        if (prompt.getInstructions() != null) {
-            for (var msg : prompt.getInstructions()) {
-                if (msg instanceof org.springframework.ai.chat.messages.SystemMessage sm) {
-                    systemPrompt = sm.getText();
-                    break;
-                }
-            }
-        }
-        return systemPrompt != null
-            ? ChatRequest.withSystem(systemPrompt, userContent)
-            : ChatRequest.of(userContent);
+    public LlmResponse chatWithTools(ChatRequest request, List<Object> tools) {
+        return circuitBreaker.execute(() ->
+            retryPolicy.executeWithBackoff(() ->
+                ((ToolCallingCapable) delegate).chatWithTools(request, tools)
+            )
+        );
     }
 }
 ```
@@ -1715,30 +1840,13 @@ public class ResilientChatClient implements ChatCapable {
  * │ embedBatch   │ 指数退避重试   │ ✓            │ ✗            │
  * └──────────────┴──────────────┴──────────────┴──────────────┘
  */
-public class ResilientEmbeddingClient implements EmbeddingCapable {
-
-    private final EmbeddingCapable delegate;
-    private final CircuitBreaker circuitBreaker;
-    private final RetryPolicy retryPolicy;
+public class ResilientEmbeddingClient extends AbstractResilientClient<EmbeddingCapable> implements EmbeddingCapable {
 
     public ResilientEmbeddingClient(EmbeddingCapable delegate,
                                       CircuitBreaker circuitBreaker,
                                       RetryPolicy retryPolicy) {
-        this.delegate = delegate;
-        this.circuitBreaker = circuitBreaker;
-        this.retryPolicy = retryPolicy;
+        super(delegate, circuitBreaker, retryPolicy);
     }
-
-    // ======== CapabilityClient 委托 ========
-    @Override public String candidateId() { return delegate.candidateId(); }
-    @Override public String providerId() { return delegate.providerId(); }
-    @Override public String modelName() { return delegate.modelName(); }
-    @Override public LlmCapability capability() { return delegate.capability(); }
-    @Override public boolean isAvailable() {
-        return delegate.isAvailable()
-            && circuitBreaker.getState() != CircuitBreakerState.OPEN;
-    }
-    @Override public ModelCandidate candidate() { return delegate.candidate(); }
 
     // ======== Embedding 操作（带弹性包装） ========
 
@@ -1778,30 +1886,13 @@ public class ResilientEmbeddingClient implements EmbeddingCapable {
  * │ rerank       │ 指数退避重试   │ ✓            │ ✗            │
  * └──────────────┴──────────────┴──────────────┴──────────────┘
  */
-public class ResilientRerankClient implements RerankCapable {
-
-    private final RerankCapable delegate;
-    private final CircuitBreaker circuitBreaker;
-    private final RetryPolicy retryPolicy;
+public class ResilientRerankClient extends AbstractResilientClient<RerankCapable> implements RerankCapable {
 
     public ResilientRerankClient(RerankCapable delegate,
                                    CircuitBreaker circuitBreaker,
                                    RetryPolicy retryPolicy) {
-        this.delegate = delegate;
-        this.circuitBreaker = circuitBreaker;
-        this.retryPolicy = retryPolicy;
+        super(delegate, circuitBreaker, retryPolicy);
     }
-
-    // ======== CapabilityClient 委托 ========
-    @Override public String candidateId() { return delegate.candidateId(); }
-    @Override public String providerId() { return delegate.providerId(); }
-    @Override public String modelName() { return delegate.modelName(); }
-    @Override public LlmCapability capability() { return delegate.capability(); }
-    @Override public boolean isAvailable() {
-        return delegate.isAvailable()
-            && circuitBreaker.getState() != CircuitBreakerState.OPEN;
-    }
-    @Override public ModelCandidate candidate() { return delegate.candidate(); }
 
     // ======== Rerank 操作（带弹性包装） ========
 
@@ -1850,13 +1941,16 @@ import com.smart.rag.infrastructure.llm.config.ProviderConfig;
  */
 public class GenericOpenAiProvider implements LlmProvider {
 
+    private final String id;
     private final ProviderConfig config;
 
-    public GenericOpenAiProvider(ProviderConfig config) {
+    /** id 从 YAML Map key 传入（Spring Boot 不自动注入 Map key 到值对象字段） */
+    public GenericOpenAiProvider(String id, ProviderConfig config) {
+        this.id = id;
         this.config = config;
     }
 
-    @Override public String id() { return config.id(); }
+    @Override public String id() { return id; }
     @Override public ProviderConfig config() { return config; }
 
     @Override
@@ -1903,21 +1997,35 @@ import org.springframework.context.annotation.Configuration;
  * 扫描 YAML 中 {@code app.llm.providers} 的所有条目，
  * 为没有对应 {@code @Component} {@link LlmProvider} Bean 的 id
  * 创建 {@link GenericOpenAiProvider} 并注册为独立 Bean。
+ * <p>
+ * <b>Spring 生命周期与冲突策略</b>：
+ * {@code BeanDefinitionRegistryPostProcessor.postProcessBeanDefinitionRegistry()}
+ * 在常规 Bean 定义加载前执行——此时 {@code @Component} 标注的 Provider 尚未扫描。
+ * 因此 {@code loadGenericConfigs()} 使用约定式过滤：检查 Registry 中是否已存在
+ * 同名 Bean 定义（如 XML 或其他 PostProcessor 提前注册的）。
+ * <p>
+ * 执行顺序保证：{@code @Component} Bean 由 ClassPathBeanDefinitionScanner 扫描，
+ * 其 Bean 定义在 {@code postProcessBeanDefinitionRegistry()} 返回后才被处理；
+ * 若两者 id 冲突，{@code @Component} 的 Bean 定义后注册、后处理，
+ * Spring 容器按"后注册覆盖先注册"策略，{@code @Component} 实例优先。
+ * <b>建议</b>：保持 YAML id 与 {@code @Component} Provider 的 {@code id()} 互斥，
+ * 在文档中明确约定，避免依赖覆盖行为。
  */
 @Configuration
 public class GenericOpenAiProviderRegistrar implements BeanDefinitionRegistryPostProcessor {
 
     @Override
     public void postProcessBeanDefinitionRegistry(BeanDefinitionRegistry registry) {
-        for (ProviderConfig config : loadGenericConfigs()) {
+        for (var entry : loadGenericConfigs().entrySet()) {
             GenericBeanDefinition bd = new GenericBeanDefinition();
             bd.setBeanClass(GenericOpenAiProvider.class);
-            bd.getConstructorArgumentValues().addIndexedArgumentValue(0, config);
-            registry.registerBeanDefinition("llmProvider_" + config.id(), bd);
+            bd.getConstructorArgumentValues().addIndexedArgumentValue(0, entry.getKey());
+            bd.getConstructorArgumentValues().addIndexedArgumentValue(1, entry.getValue());
+            registry.registerBeanDefinition("llmProvider_" + entry.getKey(), bd);
         }
     }
 
-    private List<ProviderConfig> loadGenericConfigs() {
+    private Map<String, ProviderConfig> loadGenericConfigs() {
         // 从 Environment 读取 app.llm.providers（Map<String, ProviderConfig>）
         // 过滤：排除有对应 @Component LlmProvider Bean 的 id
         ...
@@ -2147,6 +2255,35 @@ public class LlmClientRegistry {
             .toList();
     }
 
+    /**
+     * 获取带首选模型的降级链
+     * <p>
+     * 封装"指定模型放首位 + 去重 + 追加 Fallback Chain"逻辑，
+     * 供 ChatServiceImpl、IntentClassifier 等编排调用方复用。
+     *
+     * @param cap        能力类型
+     * @param type       期望的能力接口类型
+     * @param preferredId 首选模型 id（null 或空则返回完整 Fallback Chain）
+     * @return 排序后的客户端列表
+     */
+    public <T extends CapabilityClient> List<T> getChainFor(
+            LlmCapability cap, Class<T> type, @Nullable String preferredId) {
+        List<T> fullChain = getFallbackChain(cap, type);
+        if (preferredId == null || preferredId.isBlank()) {
+            return fullChain;
+        }
+        return get(preferredId, type)
+            .map(preferred -> {
+                List<T> chain = new ArrayList<>();
+                chain.add(preferred);
+                fullChain.stream()
+                    .filter(c -> !c.candidateId().equals(preferred.candidateId()))
+                    .forEach(chain::add);
+                return (List<T>) chain;
+            })
+            .orElse(fullChain);
+    }
+
     // ====== 内部方法 ======
 
     private void resolveDefaultModels(LlmProperties properties) {
@@ -2179,8 +2316,11 @@ public class LlmClientRegistry {
         CircuitBreaker circuitBreaker = circuitBreakers.getOrCreate(raw.candidateId());
 
         return switch (cap) {
-            case CHAT -> new ResilientChatClient(
-                (ChatCapable) raw, circuitBreaker, retryPolicy, probeHandler);
+            case CHAT -> raw instanceof ToolCallingCapable
+                ? new ResilientToolCallingClient(
+                    (ChatCapable) raw, circuitBreaker, retryPolicy, probeHandler)
+                : new ResilientChatClient(
+                    (ChatCapable) raw, circuitBreaker, retryPolicy, probeHandler);
             case EMBEDDING -> new ResilientEmbeddingClient(
                 (EmbeddingCapable) raw, circuitBreaker, retryPolicy);
             case RERANKING -> new ResilientRerankClient(
@@ -2274,7 +2414,7 @@ app:
           priority: 3
         - id: qwen3-max
           provider: bailian
-          model: qwen3-max
+          model: qwen3-max           # id 与 model 值相同是合法的——id 是内部引用标识（default-model / deep-thinking-model），model 是 API 真实模型名；当两者一致时无需区分
           supports-thinking: true
           priority: 4
 
@@ -2386,10 +2526,12 @@ public record LlmProperties(
  * 供应商连接配置（只关心"怎么连"，不关心"有哪些模型"）
  * <p>
  * 映射 YAML 中 {@code app.llm.providers.<id>} 节点。
+ * <p>
+ * <b>注意</b>：{@code id} 不作为 record 字段——Spring Boot {@code @ConfigurationProperties}
+ * 绑定 {@code Map<String, ProviderConfig>} 时，Map key 不会注入到值对象的字段中。
+ * {@code id} 由 {@code LlmProperties} 或调用方从 Map key 显式传入。
  */
 public record ProviderConfig(
-    /** 供应商 id（YAML key，如 "bailian"、"deepseek"、"ollama"） */
-    String id,
     /** 基地址（如 "https://dashscope.aliyuncs.com"） */
     String url,
     /** API Key（可为 null，如 ollama 不需要 key） */
@@ -2562,9 +2704,9 @@ private void validateCandidateReferences(LlmProperties properties, Set<String> p
 > **设计决策**：不新建 `LlmException`，所有 LLM 弹性层异常**继承已有的 `RemoteException`（C类）**。
 > 已有异常体系按 A/B/C 三类划分，LLM 调用失败属于"第三方服务错误"，天然属于 C 类。
 >
-> **实施状态**：§11.4 中的异常重构（`ProbeTimeoutException`、`ModelCircuitOpenException` 改为 `extends RemoteException`，
-> 新增 `LlmTransientException`、`RemoteErrorCode` 301xxx 段）**已完成**，不在本次设计范围内。
-> 本节保留作为架构参考。
+> **实施状态**：本节描述的异常重构（`ProbeTimeoutException`、`ModelCircuitOpenException` 改为 `extends RemoteException`，
+> 新增 `LlmTransientException`、`RemoteErrorCode` 301xxx 段）**已合入主干**。
+> §11.1–11.3 的异常分类与弹性层交互表为已实施代码的架构参考文档（非待实施设计）。
 
 ### 11.1 异常层次映射
 
@@ -2616,6 +2758,7 @@ LLM_TRANSIENT_ERROR(301007, "LLM 瞬态错误（可重试）"),
 | `ModelCircuitOpenException` | CircuitBreaker 熔断中 | ✗（等待冷却） | ✓ | — |
 | `RemoteException(LLM_RATE_LIMITED)` | 供应商 429 | ✓ | ✓ | ✓ |
 | `RemoteException(LLM_ALL_MODELS_FAILED)` | FallbackExecutor 链耗尽 | ✗ | — | — |
+| `UnsupportedOperationException` | 客户端不支持的操作（如非流式客户端调 chatStream） | ✗ | ✗ | ✗ |
 | `IOException` / `SocketTimeoutException` | 网络层 | ✓ | ✓ | ✓ |
 | `LlmTransientException` | LLM 瞬态错误（供应商 5xx、超时等） | ✓ | ✓ | ✓ |
 > 所有 C 类异常（`RemoteException` 及其子类）均通过 `FallbackEligibility.isEligible()` 返回 `true`，可触发跨模型降级。
@@ -2685,21 +2828,22 @@ AbstractException
 | `IntentClassifier` | `ChatClientRegistry.get(id)` + 自写 for-loop 2 次 | `registry.get(id, ChatCapable.class).chat(request)` | ★ |
 | `LlmJudgeImpl` | 构造注入 `ChatClient` + 自写 for-loop 2 次 | **本次跳过**，维持独立 `@Bean("judgeChatClient")` 不变 | — |
 | `DatasetGenerator` | Spring AI `ChatClient.Builder` 直接注入 | `registry.get(id, ChatCapable.class).chat(request)` | ★ |
-| `RagConfig`（query rewrite） | `RewriteQueryTransformer` 内部 ChatClient.Builder | 保留框架组件，将其底层 `ChatClient.Builder` 替换为从 `LlmClientRegistry` 获取的 `ChatCapable`（天然是 `ChatModel`），再 `ChatClient.builder(chatCapable).build()` 构造 | ★★ |
+| `RagConfig`（query rewrite） | `RewriteQueryTransformer` 内部 ChatClient.Builder | 保留框架组件，将其底层 `ChatClient.Builder` 替换为从 `LlmClientRegistry` 获取的 `ChatCapable`（通过 `.asChatModel()` 适配为 `ChatModel`），再 `ChatClient.builder(chatCapable.asChatModel()).build()` 构造 | ★★ |
 | `DashScopeEmbeddingModel` | 已有独立 REST 实现（自己创建 RestClient） | 迁移到新建 `BaiLianEmbeddingClient extends AbstractEmbeddingClient`（由 `GenericOpenAiProvider` 按 endpoint 自动创建），PgVectorStore 继续用已有 `EmbeddingModel`，新 SPI 调用方用 `EmbeddingCapable` | ★ |
 | `AnswerRelevanceScorer` | 注入 Spring AI `EmbeddingModel` | 改为注入 `EmbeddingCapable`（从 Registry 获取） | ★ |
 | `BailianRerankPostProcessor` | 自己实现 RestClient + 3x 重试 + 线程池 + 降级 | `registry.get("qwen3-rerank", RerankCapable.class).rerank(request)` | ★★ |
-| `AgentModeStrategy` | `ChatClientRegistry` + `TokenCountingChatModel` 包装 | 替换为 `LlmClientRegistry.getDefault(CHAT, ChatCapable.class)`，`ChatCapable` 天然是 `ChatModel`，`TokenCountingChatModel` + `ChatClient.Builder` + Advisor 链零改动 | ★★★ |
+| `AgentModeStrategy` | `ChatClientRegistry` + `TokenCountingChatModel` 包装 | 替换为 `LlmClientRegistry.getDefault(CHAT, ChatCapable.class).asChatModel()`，通过 `ChatModelAdapter` 适配为 `ChatModel`，`TokenCountingChatModel` + `ChatClient.Builder` + Advisor 链零改动 | ★★★ |
 | `ChatServiceImpl`（核心路径） | 15 个构造参数，自己编排 fallback + circuit breaker + probe | 由 `FallbackExecutor` + `ResilientChatClient` 处理 | ★★★★ |
 
-> **AgentModeStrategy 迁移策略**：`ChatCapable extends ChatModel`（§5.1），
-> 因此 `LlmClientRegistry.getDefault(CHAT, ChatCapable.class)` 返回的 `ChatCapable` 实例天然就是 `ChatModel`。
+> **AgentModeStrategy 迁移策略**：`ChatCapable` 不再直接继承 `ChatModel`（§5.1），
+> 而是通过 `ChatModelAdapter`（§5.5）适配。调用方式：
+> `LlmClientRegistry.getDefault(CHAT, ChatCapable.class).asChatModel()` 返回 `ChatModel` 实例。
 > `TokenCountingChatModel`（装饰器，接受 `ChatModel`）和 `ChatClient.builder(model).build()` 均无需修改。
-> 迁移仅需：将 `chatClientRegistry` 替换为 `LlmClientRegistry`，`getDefault()` 返回类型兼容，
+> 迁移仅需：将 `chatClientRegistry` 替换为 `LlmClientRegistry`，通过 `.asChatModel()` 获取 `ChatModel`，
 > Spring AI 工具调用（`ToolCallAdvisor` + `DefaultToolCallingManager`）、`MessageChatMemoryAdvisor`、
 > `AgentGuardrails` 等组件完全不受影响。
-> `ResilientChatClient.call(Prompt)` 通过弹性层桥接（§7.7），从 `Prompt.getInstructions()` 提取
-> SystemMessage 确保不丢失，Agent 调用自动获得重试/熔断/首包探测保护。
+> 弹性层保护（重试/熔断/首包探测）由 `ResilientChatClient` 在 `ChatCapable` 层面提供，
+> `ChatModelAdapter` 仅做类型桥接，不影响弹性语义。
 
 
 ### 12.2 迁移顺序（风险从低到高）
@@ -2715,7 +2859,7 @@ Phase 2（中风险，统一非 Chat 调用）:
   5. RagConfig (query rewrite) ← 保留 RewriteQueryTransformer，替换底层 ChatClient 注入来源
 
 Phase 3（高风险，核心路径）:
-  6. AgentModeStrategy       ← 替换 ChatClientRegistry → LlmClientRegistry，Spring AI 组件不变
+  6. AgentModeStrategy       ← 替换 ChatClientRegistry → LlmClientRegistry，通过 `.asChatModel()` 适配 Spring AI，组件不变
   7. ChatServiceImpl (streaming) ← 保留旧路径可灰度切换
   8. ChatServiceImpl (blocking)  ← 最后迁移
 
@@ -2793,22 +2937,7 @@ public class ChatServiceImpl implements ChatService {
      * </ul>
      */
     private List<ChatCapable> resolveChain(@Nullable String modelId) {
-        List<ChatCapable> fullChain = registry.getFallbackChain(LlmCapability.CHAT, ChatCapable.class);
-        if (modelId == null || modelId.isBlank()) {
-            return fullChain;
-        }
-        // 尝试精确匹配指定模型
-        return registry.get(modelId, ChatCapable.class)
-            .map(preferred -> {
-                // 指定模型放首位，追加 fullChain 中不重复的其余模型
-                List<ChatCapable> chain = new ArrayList<>();
-                chain.add(preferred);
-                fullChain.stream()
-                    .filter(c -> !c.candidateId().equals(preferred.candidateId()))
-                    .forEach(chain::add);
-                return (List<ChatCapable>) chain;
-            })
-            .orElse(fullChain); // 指定的 modelId 不存在时降级到完整链
+        return registry.getChainFor(LlmCapability.CHAT, ChatCapable.class, modelId);
     }
 }
 ```
@@ -2977,14 +3106,14 @@ public class XxxProvider implements LlmProvider {
         this.config = properties.requireProvider("xxx");
     }
 
-    @Override public String id() { return config.id(); }
+    @Override public String id() { return "xxx"; }
     @Override public ProviderConfig config() { return config; }
 
     @Override
     public CapabilityClient createClient(ModelCandidate candidate) {
         return switch (candidate.capability()) {
             case EMBEDDING -> new XxxEmbeddingClient(config, candidate);
-            default -> new GenericOpenAiProvider(config).createClient(candidate);
+            default -> new GenericOpenAiProvider("xxx", config).createClient(candidate);
         };
     }
 }
@@ -3160,8 +3289,8 @@ com.smart.rag.infrastructure.llm/
 | 风险 | 缓解措施 |
 |------|---------|
 | 核心聊天路径迁移回归 | Phase 3 最后迁移，保留旧路径可灰度切换 |
-| `TokenCountingChatModel` 包装（Agent guardrails） | `ChatCapable extends ChatModel`，`TokenCountingChatModel` 接受任意 `ChatModel`，零改动 |
-| `AgentModeStrategy` 工具调用深度耦合 Spring AI | `ChatCapable` 天然是 `ChatModel`，`ToolCallAdvisor` + `DefaultToolCallingManager` + `MessageChatMemoryAdvisor` 无需修改。仅替换 `ChatClientRegistry` → `LlmClientRegistry`。`ResilientChatClient.call(Prompt)` 通过弹性层桥接，Agent 获得重试/熔断保护 |
+| `TokenCountingChatModel` 包装（Agent guardrails） | `ChatCapable.asChatModel()` 通过 `ChatModelAdapter` 适配，`TokenCountingChatModel` 接受任意 `ChatModel`，零改动 |
+| `AgentModeStrategy` 工具调用深度耦合 Spring AI | `ChatCapable.asChatModel()` 返回 `ChatModelAdapter`，`ToolCallAdvisor` + `DefaultToolCallingManager` + `MessageChatMemoryAdvisor` 无需修改。仅替换 `ChatClientRegistry` → `LlmClientRegistry`，弹性保护在 `ChatCapable` 层面提供 |
 | `ChatRequestSpecFactory` 的 Advisor 链 | 保持在编排层，CapabilityClient 只负责传输 |
 | `DashScopeEmbeddingModel` 多实现 `EmbeddingCapable` 后 PgVectorStore 兼容性 | 保留 `@Primary implements EmbeddingModel`，PgVectorStore 注入不变，行为不变 |
 | Embedding 批量分片逻辑 | 已有 `DashScopeEmbeddingModel.callBatch()` 中实现，迁移后保留，由 `ResilientEmbeddingClient` 包装重试 |
@@ -3182,7 +3311,7 @@ com.smart.rag.infrastructure.llm/
 | 2 | `AbstractModeStrategy:63` | `OkHttpSseModelStreamClient.stream()` | `registry.get(id, ChatCapable.class).chatStream()` |
 | 3 | `MultiTurnModeStrategy:77` | `OkHttpSseModelStreamClient.stream()` | `registry.get(id, ChatCapable.class).chatStream()` |
 | 4 | `IntentClassifier:83` | `ChatClient.prompt().call().content()` | `registry.get(id, ChatCapable.class).chat()` |
-| 5 | `AgentModeStrategy:134` | `ChatClientRegistry.getChatModel()` + `TokenCountingChatModel` | `LlmClientRegistry.getDefault(CHAT, ChatCapable.class)`，`ChatCapable` 天然是 `ChatModel`，Advisor 链不变 |
+| 5 | `AgentModeStrategy:134` | `ChatClientRegistry.getChatModel()` + `TokenCountingChatModel` | `LlmClientRegistry.getDefault(CHAT, ChatCapable.class).asChatModel()`，通过 `ChatModelAdapter` 适配，Advisor 链不变 |
 | 6 | `RagConfig:58` | `RewriteQueryTransformer` | 保留框架组件，替换底层 ChatClient 注入来源 |
 | 7 | `DashScopeEmbeddingModel:206` | `RestClient.post()` | `LlmClientRegistry.getDefault(EMBEDDING, EmbeddingCapable.class).embed()` |
 | 8 | `BailianRerankPostProcessor:114` | `RestClient.post()` | `LlmClientRegistry.getDefault(RERANKING, RerankCapable.class).rerank()` |

@@ -209,11 +209,33 @@ public enum LlmCapability {
 > 4. **`enabled` 默认值**：抽象基类字段声明处 `private boolean enabled = true`，
 >    YAML 不配置时默认启用——这是选择 POJO 抽象基类而非 record 的核心原因
 >
-> <b>YAML 绑定策略</b>：Spring Boot 绑定 `Map<LlmCapability, ModelGroup>` 时，
-> 每个 `ModelGroup` 的 `candidates` 列表中，YAML key 已隐含能力类型（chat / embedding / reranking）。
-> 使用自定义 `@ConfigurationProperties` 后处理器或 `@JsonTypeInfo` 将 YAML 条目绑定到对应子类。
-> 简化方案：`ModelGroup` 先绑定为 `List<AbstractModelCandidate>`（POJO 平铺），
-> 再由 `ModelGroup.postBind(capability)` 按 capability 创建对应 sealed 子类实例。
+> <b>YAML 绑定策略（两阶段绑定）</b>：
+>
+> Spring Boot `@ConfigurationProperties` 的 Binder 无法直接实例化 `abstract sealed class`。
+> 因此采用**两阶段绑定**：
+>
+> **阶段 1 — YAML → RawCandidate（POJO 绑定层）**：
+> `ModelGroup` 的 `candidates` 字段在绑定阶段声明为 `List<RawCandidate>`（非 sealed 的普通 POJO），
+> Spring Boot Binder 可直接实例化并注入 setter。`RawCandidate` 包含所有候选的公共字段
+> （id / provider / model / priority / enabled / params）以及所有能力特定字段的扁平集合
+> （supportsThinking / supportsStreaming / dimension），未配置的字段为默认值（boolean→false, int→0）。
+>
+> **阶段 2 — RawCandidate → sealed subclass（域模型转换层）**：
+> `ModelGroup` 提供工厂方法 `ModelGroup.fromRaw(capability, rawCandidates, ...)`，
+> 按所属能力组的 `LlmCapability` 将每个 `RawCandidate` 转换为对应的 sealed 子类：
+> - `CHAT` → `ChatCandidate`（提取 supportsThinking / supportsStreaming）
+> - `EMBEDDING` → `EmbeddingCandidate`（提取 dimension）
+> - `RERANKING` → `RerankCandidate`（无额外字段）
+>
+> 转换在 `GenericOpenAiProviderRegistrar` 或 `@PostConstruct` 中完成，
+> 转换后 `ModelGroup.candidates()` 返回 `List<ModelCandidate>`（sealed interface）。
+> 域模型（sealed subclass）与绑定层（RawCandidate）完全解耦，
+> sealed interface 的编译期穷举检查仅作用于域模型层。
+>
+> **为什么不用 `@JsonTypeInfo`**：`@ConfigurationProperties` 使用 Spring Boot Binder（非 Jackson），
+> `@JsonTypeInfo` 不生效。自定义 `Converter<ModelCandidate>` 需要访问所属能力组上下文
+> （同一个 `RawCandidate` 在 chat 组应转为 `ChatCandidate`，在 embedding 组应转为 `EmbeddingCandidate`），
+> 而 `Converter` 无上下文感知能力。两阶段绑定是唯一可行方案。
 
 ```java
 package com.smart.rag.infrastructure.llm;
@@ -429,7 +451,7 @@ public interface CapabilityClient extends AutoCloseable {
     /** 该客户端声明的能力（一对一） */
     LlmCapability capability();
 
-    /** 该客户端是否可用（供应商 API key 有效 + 基础连通性） */
+    /** 该客户端是否可用（供应商 API key 有效；连通性由熔断器状态叠加判断，见 ResilientClient.isAvailable()） */
     boolean isAvailable();
 
     /** 释放资源（大多数 Client 共享 Provider 的 HTTP 连接池，默认空实现） */
@@ -476,8 +498,15 @@ public interface LlmProvider {
     /**
      * 按候选模型声明创建能力客户端
      * <p>
-     * Provider 根据 {@code candidate.capability()} 选择对应 endpoint，
-     * 使用 {@code config().url()} + endpoint 构建 HTTP 客户端。
+     * Provider 委托 {@link CapabilityStrategy} 完成客户端创建：
+     * <ol>
+     *   <li>Provider 从 {@code config()} 中取出 endpoint 配置（endpoint 是供应商 YAML 属性，
+     *       语义上属于"怎么连"的一部分，由 Provider 持有配置所有权）</li>
+     *   <li>Strategy 接收已解析的 baseUrl + endpoint + apiKey，负责实例化具体的 CapabilityClient</li>
+     * </ol>
+     * 这种拆分的原因：endpoint 配置在 YAML 中是 Provider 的属性（{@code providers.<id>.endpoints}），
+     * 因此 Provider 自然持有它；但"如何使用 endpoint 创建客户端"是能力特定的逻辑，
+     * 由 Strategy 决定（如百炼 Embedding 走原生 API 而非 OpenAI 兼容端点）。
      * <p>
      * 创建的是原始客户端（未包装 Resilience），
      * 由 {@code LlmClientRegistry} 在注册时统一包装 Resilient 装饰器。
@@ -490,56 +519,115 @@ public interface LlmProvider {
 }
 ```
 
-### 4.5 `Message` — 对话消息
+### 4.5 `MessageInformation` — 对话消息
 
 ```java
 package com.smart.rag.infrastructure.llm;
 
 import java.util.Map;
+import java.util.Objects;
 
 /**
- * 对话消息
+ * 对话消息（供应商无关的 SPI 层消息载体）
  * <p>
- * Agent 场景下 {@code toolCallId} 用于匹配工具调用的请求-响应配对，
- * 不可丢弃。
+ * <b>为什么用 class 而非 record</b>：{@code metadata} 不参与 equals/hashCode——
+ * 它是附加调试信息（如 tool_calls 列表），不应影响消息的身份判定（如对话历史去重）。
+ * Java record 的契约是"所有组件参与值语义"，自定义排除会违反契约。
+ * 使用普通 class 可以自然地定义选择性 equals/hashCode。
+ * <p>
+ * <b>为什么命名为 MessageInformation 而非 Message</b>：项目中已存在多个同名类型：
+ * <ul>
+ *   <li>{@code conversation.entity.Message} — DB 持久化实体（MyBatis-Plus）</li>
+ *   <li>{@code org.springframework.ai.chat.messages.Message} — Spring AI 框架类型</li>
+ * </ul>
+ * 命名为 {@code MessageInformation} 避免全限定名冲突和 import 歧义。
+ * <p>
+ * <b>Agent 场景</b>：{@code toolCallId} 用于匹配工具调用的请求-响应配对，
+ * 不可丢弃。{@code metadata} 透传 tool_calls 列表等结构化数据。
  */
-public record Message(
-    String role,
-    String content,
+public final class MessageInformation {
+
+    private final String role;
+    private final String content;
     /** 工具调用 ID（仅 role=tool 时非空），用于 Agent 场景的请求-响应配对 */
-    String toolCallId,
+    private final String toolCallId;
     /** 附加元数据（如 tool_calls 列表、name 等），不参与 equals/hashCode */
-    Map<String, Object> metadata
-) {
-    public static Message user(String content) { return new Message("user", content, null, Map.of()); }
-    public static Message assistant(String content) { return new Message("assistant", content, null, Map.of()); }
-    public static Message system(String content) { return new Message("system", content, null, Map.of()); }
+    private final Map<String, Object> metadata;
+
+    private MessageInformation(String role, String content, String toolCallId, Map<String, Object> metadata) {
+        this.role = role;
+        this.content = content;
+        this.toolCallId = toolCallId;
+        this.metadata = metadata != null ? metadata : Map.of();
+    }
+
+    // ====== 工厂方法 ======
+
+    public static MessageInformation user(String content) {
+        return new MessageInformation("user", content, null, Map.of());
+    }
+
+    public static MessageInformation assistant(String content) {
+        return new MessageInformation("assistant", content, null, Map.of());
+    }
+
+    public static MessageInformation system(String content) {
+        return new MessageInformation("system", content, null, Map.of());
+    }
+
+    /** 带附加元数据的 assistant 消息（携带 tool_calls 声明等） */
+    public static MessageInformation assistant(String content, Map<String, Object> metadata) {
+        return new MessageInformation("assistant", content, null, metadata);
+    }
 
     /**
      * 工具响应消息（保留 toolCallId 用于 Agent 请求-响应配对）
      */
-    public static Message tool(String toolCallId, String content) {
-        return new Message("tool", content, toolCallId, Map.of());
+    public static MessageInformation tool(String toolCallId, String content) {
+        return new MessageInformation("tool", content, toolCallId, Map.of());
     }
 
+    /** 通用工厂：按 role 和 content 创建（用于 Spring AI → SPI 消息桥接） */
+    public static MessageInformation of(String role, String content) {
+        return new MessageInformation(role, content, null, Map.of());
+    }
+
+    // ====== 访问器 ======
+
+    public String role() { return role; }
+    public String content() { return content; }
+    public String toolCallId() { return toolCallId; }
+    public Map<String, Object> metadata() { return metadata; }
+
+    // ====== equals/hashCode：仅比较身份字段，排除 metadata ======
+
     /**
-     * 自定义 equals/hashCode：仅比较 role、content、toolCallId，排除 metadata。
+     * 仅比较 role、content、toolCallId，排除 metadata。
      * <p>
-     * Java record 默认所有组件参与 equals/hashCode，但 metadata 是附加调试信息
-     * （如 tool_calls 列表），不应影响消息的身份判定（如对话历史去重）。
+     * 语义：消息的"身份"由 role + content + toolCallId 决定。
+     * metadata 是附加结构化数据（如 tool_calls 列表），同一条消息携带或不携带 metadata
+     * 视为"同一条消息的两种展示形式"，而非"两条不同的消息"。
+     * 这与 {@code RedisChatMemoryRepository} 的序列化语义一致。
      */
     @Override
     public boolean equals(Object o) {
         if (this == o) return true;
-        if (!(o instanceof Message other)) return false;
-        return java.util.Objects.equals(role, other.role)
-            && java.util.Objects.equals(content, other.content)
-            && java.util.Objects.equals(toolCallId, other.toolCallId);
+        if (!(o instanceof MessageInformation other)) return false;
+        return Objects.equals(role, other.role)
+            && Objects.equals(content, other.content)
+            && Objects.equals(toolCallId, other.toolCallId);
     }
 
     @Override
     public int hashCode() {
-        return java.util.Objects.hash(role, content, toolCallId);
+        return Objects.hash(role, content, toolCallId);
+    }
+
+    @Override
+    public String toString() {
+        return "MessageInformation{role='" + role + "', content='" +
+            (content != null && content.length() > 50 ? content.substring(0, 50) + "..." : content) +
+            "', toolCallId='" + toolCallId + "'}";
     }
 }
 ```
@@ -565,7 +653,7 @@ public record ChatRequest(
     String systemPrompt,
 
     /** 对话历史（仅多轮对话使用） */
-    List<Message> history,
+    List<MessageInformation> history,
 
     /** 温度（覆盖 ModelCandidate.params 中的值） */
     Double temperature,
@@ -641,7 +729,7 @@ public record ChatRequest(
     public static class Builder {
         private final String input;
         private String systemPrompt;
-        private List<Message> history = List.of();
+        private List<MessageInformation> history = List.of();
         private Double temperature;   // null = 使用模型默认值（ModelCandidate.params）
         private Integer maxTokens;    // null = 使用模型默认值
         private Double topP;          // null = 使用模型默认值
@@ -650,7 +738,7 @@ public record ChatRequest(
         private Builder(String input) { this.input = input; }
 
         public Builder systemPrompt(String sp) { this.systemPrompt = sp; return this; }
-        public Builder history(List<Message> h) { this.history = h; return this; }
+        public Builder history(List<MessageInformation> h) { this.history = h; return this; }
         /** 覆盖模型默认温度（null = 使用 ModelCandidate.params 中的值） */
         public Builder temperature(Double t) { this.temperature = t; return this; }
         /** 覆盖模型默认 maxTokens（null = 使用 ModelCandidate.params 中的值） */
@@ -984,7 +1072,7 @@ public class ChatModelAdapter implements ChatModel {
      */
     private ChatRequest extractChatRequest(Prompt prompt) {
         String systemPrompt = null;
-        List<Message> history = List.of();
+        List<MessageInformation> history = List.of();
         String userContent = prompt.getContents();
 
         if (prompt.getInstructions() != null && !prompt.getInstructions().isEmpty()) {
@@ -1011,16 +1099,15 @@ public class ChatModelAdapter implements ChatModel {
                         break;
                     }
                 }
-                final int excludeIdx = lastUserIdx;
-                history = nonSystemMessages.stream()
-                    .filter(m -> {
-                        int idx = nonSystemMessages.indexOf(m);
-                        return idx != excludeIdx;
-                    })
-                    .map(m -> new Message(
-                        m.getMessageType().name().toLowerCase(),
-                        m.getText()))
-                    .toList();
+                // O(n) 构建 history：跳过 lastUserIdx 处的 UserMessage（它作为 input 传递）
+                var builder = new java.util.ArrayList<MessageInformation>(nonSystemMessages.size() - 1);
+                for (int i = 0; i < nonSystemMessages.size(); i++) {
+                    if (i == excludeIdx) continue;
+                    var m = nonSystemMessages.get(i);
+                    builder.add(MessageInformation.of(
+                        m.getMessageType().name().toLowerCase(), m.getText()));
+                }
+                history = Collections.unmodifiableList(builder);
             }
         }
 
@@ -1088,7 +1175,7 @@ public abstract class AbstractChatClient implements ChatCapable {
 
     @Override
     public boolean supportsStreaming() {
-        return candidate.supportsStreaming() != null && candidate.supportsStreaming();
+        return candidate.supportsStreaming();
     }
 
     /**
@@ -1355,10 +1442,17 @@ public class RetryPolicy {
 
     /**
      * 带指数退避的同步重试执行器
+     * <p>
+     * <b>异常包装策略</b>：
+     * <ul>
+     *   <li>不可重试异常 → 直接抛出原始异常（如 ContentFilteredException、UnsupportedOperationException）</li>
+     *   <li>可重试但重试耗尽 → 包装为 {@link LlmTransientException} 抛出，
+     *       使 {@code FallbackExecutor} 和 {@code CircuitBreaker} 通过统一的异常类型识别瞬态失败</li>
+     * </ul>
      *
      * @param action 可重试的操作（允许抛出 checked exception）
      * @return 操作结果
-     * @throws Exception 重试耗尽后抛出最后一个异常
+     * @throws Exception 不可重试异常原样抛出；可重试异常重试耗尽后包装为 LlmTransientException
      */
     public <T> T executeWithBackoff(CheckedSupplier<T> action) throws Exception {
         Exception lastException = null;
@@ -1366,10 +1460,17 @@ public class RetryPolicy {
             try {
                 return action.get();
             } catch (Exception e) {
-                if (!isRetryable(e) || attempt == maxAttempts - 1) {
+                if (!isRetryable(e)) {
+                    // 不可重试异常（认证失败、内容过滤等）→ 直接抛出，不包装
                     throw e;
                 }
                 lastException = e;
+                if (attempt == maxAttempts - 1) {
+                    // 可重试但重试耗尽 → 包装为 LlmTransientException，
+                    // 使 FallbackExecutor/CircuitBreaker 通过统一异常类型识别瞬态失败
+                    throw new LlmTransientException(
+                        "LLM call failed after " + maxAttempts + " attempts: " + e.getMessage(), e);
+                }
                 long delay = Math.min(
                     baseDelayMs * (long) Math.pow(multiplier, attempt),
                     maxDelayMs
@@ -1458,7 +1559,6 @@ package com.smart.rag.infrastructure.llm.resilience;
 import com.smart.rag.infrastructure.fallback.FallbackEligibility;
 
 import java.util.List;
-import java.util.function.Function;
 
 /**
  * 跨模型 Fallback 降级执行器
@@ -1475,8 +1575,8 @@ import java.util.function.Function;
  * <b>责任链语义</b>：Fallback Chain 本质上是一条责任链——每个节点（ResilientClient）
  * 独立决定"成功"或"失败"，失败时传递给下一个节点。阻塞式 {@code execute()} 使用
  * for-loop 遍历（等价于 Chain of Responsibility），流式 {@code executeStream()} 使用
- * 递归 {@code onErrorResume} 实现惰性责任链（仅在运行时错误触发时深入下一层）。
- * <p>
+ * 迭代构造 {@code Flux.defer() + onErrorResume} 实现惰性责任链（从链尾向链首构建，
+ * 每个节点是平坦的 defer+onErrorResume，不累积操作符深度）。
  * <b>降级事件（Observer 模式）</b>：每次降级切换时发布 {@link FallbackEvent}，
  * 供 UI 层提示用户、metrics 采集、日志追踪消费。调用方可通过
  * {@code Flux.doOnNext(event -> ...)} 或 Spring EventListener 订阅。
@@ -1489,6 +1589,19 @@ import java.util.function.Function;
 public class FallbackExecutor {
 
     private static final Logger log = LoggerFactory.getLogger(FallbackExecutor.class);
+
+    /**
+     * 受检异常兼容的函数式接口
+     * <p>
+     * {@link java.util.function.Function} 不允许抛出 checked exception，
+     * 而 LLM 调用的 {@code chat()} / {@code chatStream()} 可能抛出
+     * {@link java.io.IOException} 等受检异常。
+     * 此接口替代 {@code Function} 作为 {@code execute()} 的参数类型。
+     */
+    @FunctionalInterface
+    public interface CheckedFunction<T, R> {
+        R apply(T t) throws Exception;
+    }
 
     private final FallbackEligibility fallbackEligibility;
     /** 降级事件发布器（Observer 模式），可选 */
@@ -1515,7 +1628,7 @@ public class FallbackExecutor {
      */
     public <T extends CapabilityClient, R> R execute(
             List<T> chain,
-            Function<T, R> action) {
+            CheckedFunction<T, R> action) throws Exception {
 
         // 入口预过滤：跳过全部已禁用的候选，避免误报 LLM_ALL_MODELS_FAILED
         List<T> available = chain.stream()
@@ -1594,7 +1707,7 @@ public class FallbackExecutor {
             List<T> chain,
             Function<T, Flux<R>> action) {
 
-        // 预过滤不可用客户端，消除装配期急迫递归
+        // 预过滤不可用客户端
         List<T> available = chain.stream()
             .filter(CapabilityClient::isAvailable)
             .toList();
@@ -1602,40 +1715,54 @@ public class FallbackExecutor {
             return Flux.error(new RemoteException(
                 RemoteErrorCode.LLM_ALL_MODELS_FAILED, "所有模型均不可用"));
         }
-        return buildStreamChain(available, action, 0);
+        return buildStreamChain(available, action);
     }
 
+    /**
+     * 构建流式降级链（迭代构造，避免递归 onErrorResume 在长链下累积操作符深度）
+     * <p>
+     * 从链尾向链首迭代构建：每个 {@code Flux.defer()} 仅在前一个 Flux 失败时才订阅下一个，
+     * 保持惰性语义。与递归 {@code onErrorResume} 的区别：
+     * <ul>
+     *   <li>递归：每个降级层嵌套一层 {@code onErrorResume}，链深 = 降级层数</li>
+     *   <li>迭代：每个降级层是一个 {@code defer + onErrorResume} 平坦节点，
+     *       总操作符深度固定为 2（不随链长增长）</li>
+     * </ul>
+     */
     private <T extends CapabilityClient, R> Flux<R> buildStreamChain(
             List<T> chain,
-            Function<T, Flux<R>> action,
-            int index) {
+            Function<T, Flux<R>> action) {
 
-        if (index >= chain.size()) {
-            return Flux.error(new RemoteException(RemoteErrorCode.LLM_ALL_MODELS_FAILED, "所有模型均不可用（流式降级链耗尽）"));
+        // 从链尾向链首迭代构建，最终 result 是链首节点
+        Flux<R> result = Flux.error(new RemoteException(
+            RemoteErrorCode.LLM_ALL_MODELS_FAILED, "所有模型均不可用（流式降级链耗尽）"));
+
+        for (int i = chain.size() - 1; i >= 0; i--) {
+            final int index = i;
+            final T client = chain.get(i);
+            final Flux<R> downstream = result;
+
+            result = Flux.defer(() -> action.apply(client))
+                .doOnError(e -> {
+                    // 发布降级事件（Observer 模式），供 UI/metrics/logging 消费
+                    if (eventPublisher != null && fallbackEligibility.isEligible(e)
+                            && index + 1 < chain.size()) {
+                        eventPublisher.accept(new FallbackEvent(
+                            client.capability(), client.candidateId(),
+                            chain.get(index + 1).candidateId(), e));
+                    }
+                })
+                .onErrorResume(e -> {
+                    // 用户错误不降级，直接向下游传播
+                    if (!fallbackEligibility.isEligible(e)) {
+                        return Flux.error(e);
+                    }
+                    log.warn("Stream client '{}' failed at index {}, falling back to next: {}",
+                        client.candidateId(), index, e.getMessage());
+                    return downstream;
+                });
         }
-
-        T client = chain.get(index);
-
-        return action.apply(client)
-            .doOnError(e -> {
-                // 发布降级事件（Observer 模式），供 UI/metrics/logging 消费
-                if (eventPublisher != null && fallbackEligibility.isEligible(e)
-                        && index + 1 < chain.size()) {
-                    eventPublisher.accept(new FallbackEvent(
-                        client.capability(), client.candidateId(),
-                        chain.get(index + 1).candidateId(), e));
-                }
-            })
-            .onErrorResume(e -> {
-                // 用户错误不降级，直接向下游传播
-                if (!fallbackEligibility.isEligible(e)) {
-                    return Flux.error(e);
-                }
-                log.warn("Stream client '{}' failed at index {}, falling back to next: {}",
-                    client.candidateId(), index, e.getMessage());
-                // 惰性责任链：仅在运行时错误触发，每次只深入一层，不积累栈帧
-                return buildStreamChain(chain, action, index + 1);
-            });
+        return result;
     }
 }
 ```
@@ -2873,11 +3000,17 @@ class LlmClientFactory {
             defaultClients.put(cap, client);
         }
 
-        // deep-thinking-model 解析
+        // deep-thinking-model 解析（带 fallback：候选不存在或被禁用时回退到 chat default-model）
         CapabilityClient deepThinking = null;
         ModelGroup chatGroup = properties.capabilities().get(LlmCapability.CHAT);
         if (chatGroup != null && chatGroup.deepThinkingModel() != null) {
             deepThinking = clientsById.get(chatGroup.deepThinkingModel());
+            if (deepThinking == null) {
+                // deep-thinking-model 引用的候选不存在（被禁用或创建失败），回退到 chat default-model
+                log.warn("deep-thinking-model '{}' not found in clients, falling back to default-model",
+                    chatGroup.deepThinkingModel());
+                deepThinking = defaultClients.get(LlmCapability.CHAT);
+            }
         }
 
         return new RegistrySnapshot(
@@ -4133,7 +4266,7 @@ com.smart.rag.infrastructure.llm/
 ├── CapabilityStrategyRegistry.java          # 能力策略注册表（自动收集 @Component 策略）
 ├── LlmClientFactory.java                   # 客户端工厂（创建 + Resilient 包装，SRP 拆分）
 ├── LlmClientRegistry.java                   # 统一注册表（查询 + 快照管理 + 禁用/启用）
-├── Message.java                             # 对话消息
+├── MessageInformation.java                   # 对话消息（class，非 record，避免命名冲突）
 ├── ChatRequest.java                         # Chat 请求（含 Builder）
 ├── LlmResponse.java                         # Chat 响应
 ├── EmbeddingType.java                       # 嵌入类型
@@ -4209,7 +4342,7 @@ com.smart.rag.infrastructure.llm/
 - `EmbeddingCapable.java`
 - `RerankCapable.java`
 - `LlmProvider.java`
-- `Message.java`
+- `MessageInformation.java`
 - `ChatRequest.java`
 - `LlmResponse.java`
 - `RemoteErrorCode.java`（修改已有类，新增 301xxx LLM 弹性层错误码）【已完成】

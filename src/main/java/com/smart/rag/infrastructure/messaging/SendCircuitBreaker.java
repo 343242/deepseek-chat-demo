@@ -16,7 +16,7 @@ public class SendCircuitBreaker {
     private final MessagingProperties.CircuitBreakerConfig config;
     private final Clock clock;
 
-    private CircuitBreakerState state = CircuitBreakerState.CLOSED;
+    private MessagingCircuitBreakerState state = MessagingCircuitBreakerState.CLOSED;
     private int failureCount = 0;
     private long openedAtMs = 0;
     private int activeHalfOpenProbes = 0;
@@ -36,10 +36,10 @@ public class SendCircuitBreaker {
      */
     synchronized boolean isCallAllowed() {
         refreshState();
-        if (state == CircuitBreakerState.OPEN) {
+        if (state == MessagingCircuitBreakerState.OPEN) {
             return false;
         }
-        if (state == CircuitBreakerState.HALF_OPEN) {
+        if (state == MessagingCircuitBreakerState.HALF_OPEN) {
             if (activeHalfOpenProbes >= 1) {
                 return false;
             }
@@ -49,19 +49,19 @@ public class SendCircuitBreaker {
     }
 
     synchronized void recordSuccess() {
-        CircuitBreakerState prev = state;
-        if (state == CircuitBreakerState.HALF_OPEN) {
+        MessagingCircuitBreakerState prev = state;
+        if (state == MessagingCircuitBreakerState.HALF_OPEN) {
             activeHalfOpenProbes--;
         }
         failureCount = 0;
-        state = CircuitBreakerState.CLOSED;
-        if (prev != CircuitBreakerState.CLOSED) {
+        state = MessagingCircuitBreakerState.CLOSED;
+        if (prev != MessagingCircuitBreakerState.CLOSED) {
             log.info("Circuit breaker transition: {} → CLOSED (probe succeeded)", prev);
         }
     }
 
     synchronized void recordFailure() {
-        if (state == CircuitBreakerState.HALF_OPEN) {
+        if (state == MessagingCircuitBreakerState.HALF_OPEN) {
             activeHalfOpenProbes--;
             tripOpen();
             return;
@@ -72,7 +72,7 @@ public class SendCircuitBreaker {
         }
     }
 
-    synchronized CircuitBreakerState state() {
+    synchronized MessagingCircuitBreakerState state() {
         refreshState();
         return state;
     }
@@ -80,16 +80,16 @@ public class SendCircuitBreaker {
     private void tripOpen() {
         log.warn("Circuit breaker tripped OPEN (failures={}/{}): will cooldown {}ms",
             failureCount, config.failureThreshold(), config.cooldownMillis());
-        state = CircuitBreakerState.OPEN;
+        state = MessagingCircuitBreakerState.OPEN;
         openedAtMs = clock.millis();
         failureCount = config.failureThreshold();
     }
 
     private void refreshState() {
-        if (state == CircuitBreakerState.OPEN
+        if (state == MessagingCircuitBreakerState.OPEN
             && clock.millis() - openedAtMs >= config.cooldownMillis()) {
             log.info("Circuit breaker transition: OPEN → HALF_OPEN (cooldown elapsed)");
-            state = CircuitBreakerState.HALF_OPEN;
+            state = MessagingCircuitBreakerState.HALF_OPEN;
         }
     }
 }

@@ -2,6 +2,8 @@ package com.smart.rag.infrastructure.stream;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.smart.rag.infrastructure.exception.RemoteException;
+import com.smart.rag.infrastructure.exception.errorcode.RemoteErrorCode;
 import okhttp3.Call;
 import okhttp3.HttpUrl;
 import okhttp3.MediaType;
@@ -49,23 +51,24 @@ public class OkHttpSseModelStreamClient {
         sink.onCancel(call::cancel);
         try (Response response = call.execute()) {
             if (!response.isSuccessful()) {
-                throw new ModelStreamException("模型流式请求失败: HTTP " + response.code());
+                throw new RemoteException(RemoteErrorCode.LLM_STREAM_ERROR,
+                        "模型流式请求失败: HTTP " + response.code());
             }
             ResponseBody body = response.body();
             if (body == null) {
-                throw new ModelStreamException("模型流式响应为空");
+                throw new RemoteException(RemoteErrorCode.LLM_STREAM_ERROR, "模型流式响应为空");
             }
             readSse(body.source(), call, sink);
             if (!sink.isCancelled()) {
                 sink.complete();
             }
-        } catch (ModelStreamException e) {
+        } catch (RemoteException e) {
             if (!sink.isCancelled()) {
                 sink.error(e);
             }
         } catch (IOException e) {
             if (!sink.isCancelled()) {
-                sink.error(new ModelStreamException("模型流式请求失败", e));
+                sink.error(new RemoteException(RemoteErrorCode.LLM_STREAM_ERROR, "模型流式请求失败", e));
             }
         } catch (RuntimeException e) {
             if (!sink.isCancelled()) {
@@ -124,14 +127,14 @@ public class OkHttpSseModelStreamClient {
             JsonNode messageContent = first.path("message").path("content");
             return messageContent.isTextual() ? messageContent.asText() : null;
         } catch (IOException e) {
-            throw new ModelStreamException("模型流式响应解析失败", e);
+            throw new RemoteException(RemoteErrorCode.LLM_STREAM_ERROR, "模型流式响应解析失败", e);
         }
     }
 
     private Request toHttpRequest(ModelStreamRequest request) {
         HttpUrl base = HttpUrl.parse(request.baseUrl());
         if (base == null) {
-            throw new ModelStreamException("模型 API 地址无效");
+            throw new RemoteException(RemoteErrorCode.LLM_CONFIG_ERROR, "模型 API 地址无效");
         }
         HttpUrl url = base.newBuilder()
                 .addPathSegments(trimSlashes(request.completionsPath()))
@@ -162,7 +165,7 @@ public class OkHttpSseModelStreamClient {
             }
             return objectMapper.writeValueAsString(payload);
         } catch (IOException e) {
-            throw new ModelStreamException("模型流式请求构建失败", e);
+            throw new RemoteException(RemoteErrorCode.LLM_STREAM_ERROR, "模型流式请求构建失败", e);
         }
     }
 

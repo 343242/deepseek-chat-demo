@@ -2,7 +2,8 @@ package com.smart.rag.infrastructure.provider;
 
 import com.smart.rag.infrastructure.model.ModelInfo;
 import com.smart.rag.infrastructure.model.ModelOptionSettings;
-import com.smart.rag.infrastructure.stream.ModelStreamException;
+import com.smart.rag.infrastructure.exception.RemoteException;
+import com.smart.rag.infrastructure.exception.errorcode.RemoteErrorCode;
 import com.smart.rag.infrastructure.stream.ModelStreamRequest;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.model.ChatModel;
@@ -140,6 +141,7 @@ public interface ModelProvider {
     default ModelStreamRequest createStreamRequest(ModelRouter.Route route,
                                                    String prompt,
                                                    ModelOptionSettings options) {
-        throw new ModelStreamException("模型厂商暂不支持 OkHttp 流式调用: " + getProviderId());
+        throw new RemoteException(RemoteErrorCode.LLM_PROVIDER_UNAVAILABLE,
+                "模型厂商暂不支持 OkHttp 流式调用: " + getProviderId());
     }
 }

@@ -59,8 +59,8 @@
 
 | 目标 | 度量 |
 |------|------|
-| **新增供应商零代码** | OpenAI 兼容 API 只需在 `providers` 中添加连接配置 + 在 `chat/embedding/rerank` candidates 中添加模型引用，不写 Java 代码 |
-| **新增能力类型可扩展** | 新增 TTS/STT 等能力只需扩展枚举 + 新增接口/抽象类/装饰器 + 在 `LlmClientRegistry` 和 `LlmProperties` 的 switch 中添加 case，已有调用方代码不修改 |
+| **OpenAI 兼容供应商零代码** | OpenAI 兼容 API 只需在 `providers` 中添加连接配置 + 在 `capabilities` 对应能力组中添加模型引用，不写 Java 代码。非标准 API 需手写 Provider + Client（见 §13 场景 B） |
+| **新增能力类型可扩展** | 新增能力只需扩展枚举 + 新增接口/抽象类/装饰器 + 实现 `CapabilityStrategy @Component`，在 YAML `capabilities` 中添加条目。`LlmConfig` 和 `EndpointConfig` 使用 `Map<LlmCapability, ...>` 驱动，无需修改 Java 代码 |
 | **重试/熔断统一** | 所有 LLM 调用共享同一套弹性策略配置，不分散在各调用点 |
 | **面向接口编程** | 简单调用方依赖能力接口（`ChatCapable` 等），编排调用方依赖 `LlmClientRegistry` + `FallbackExecutor` |
 | **配置驱动** | 模型声明、Fallback Chain、弹性参数全部 YAML 配置化 |
@@ -136,7 +136,7 @@
 > LlmProvider Bean → Provider 创建原始 CapabilityClient → Registry 统一包装 Resilient 装饰器 → 注册到索引。
 > **运行时调用**：Callers → FallbackExecutor（编排层，跨模型降级） → Resilient 装饰器（单模型重试/熔断/探测） → 原始 CapabilityClient → LLM API。
 > 供应商与模型解耦——Provider 只是工厂，ModelGroup 决定"用哪些模型"。
-> Callers 只依赖能力接口，通过 `asChatModel()` 按需获取 Spring AI ChatModel 视图（详见 §5.4）。
+> Callers 只依赖能力接口，通过 `asChatModel()` 按需获取 Spring AI ChatModel 视图（详见 §5.5）。
 > **弹性层与编排层职责分离**：ResilientClient 负责单模型重试/熔断，FallbackExecutor 负责跨模型降级——二者正交组合。
 
 ### 3.2 关键设计决策
@@ -147,15 +147,18 @@
 | LlmProvider 设计 | **轻量工厂接口**（id + config + createClient），不持有模型/clients | Provider 只是"怎么创建客户端"的工厂，模型配置独立管理 |
 | candidates = Fallback Chain | **候选列表按 priority 排序即为降级链**，不需要单独的 fallback 配置 | 配置简化，candidates 和 Fallback Chain 是同一个列表 |
 | 命名槽位 | **default-model + deep-thinking-model** | 调用方按场景选择模型，deep-thinking-model 可指向不同模型 |
-| 通用供应商 | **GenericOpenAiProvider**，由 Registrar 从 YAML 批量创建 | 90%+ 的供应商是 OpenAI 兼容 API，纯配置即可接入 |
-| 特殊 Client | **按 endpoint 路径自动识别**（如百炼 Embedding → BaiLianEmbeddingClient） | 不需要独立的百炼 Provider，特殊逻辑封装在 Client 中 |
+| 通用供应商 | **GenericOpenAiProvider**，由 Registrar 从 YAML 批量创建 | 90%+ 的供应商是 OpenAI 兼容 API（含百炼），纯配置即可接入 |
+| 百炼融入 OpenAI 体系 | **百炼已官方支持 OpenAI 兼容 API**，不再需要特殊 Client 和硬编码端点判断 | 消除魔法值（`endpoint.contains("/services/embeddings/")`），统一由 CapabilityStrategy 创建 |
+| ModelCandidate 类型安全 | **sealed interface + 抽象基类 + 三个子类型**（ChatCandidate / EmbeddingCandidate / RerankCandidate） | 编译期穷举检查（switch + permits），能力字段隔离（supportsThinking 仅在 ChatCandidate），YAML 绑定兼容（POJO getter/setter） |
 | 接口 vs 抽象类 | **CapabilityClient 用接口，三个能力客户端用抽象类** | 接口保证根的灵活性，抽象类提取公共字段避免重复 |
-| 弹性层粒度 | **`AbstractResilientClient` 公共基类 + 三个类型安全装饰器**（ResilientChatClient 同时实现 `ToolCallingCapable`，通过内部标志控制，详见 §7.7） | DRY：公共 CapabilityClient 委托代码只写一次；类型安全 + 装饰器透明性；消除独立的 ResilientToolCallingClient |
+| 弹性层粒度 | **`AbstractResilientClient` 公共基类 + 三个类型安全装饰器**（ResilientChatClient 仅实现 ChatCapable，不实现 ToolCallingCapable，详见 §7.7） | DRY + LSP 合规：工具调用能力由 Registry 层按 delegate 类型动态判定，确保返回的 ToolCallingCapable 引用在运行时一定可用 |
 | Spring AI 兼容 | **`ChatModelAdapter` 独立适配器**，通过 `chatCapable.asChatModel()` 按需获取 | ISP/LSP 合规：ChatCapable 不继承 ChatModel，桥接代码集中在 Adapter 一处，不污染能力接口 |
 | 重试 vs 降级判定 | **可重试 ≠ 可降级**，由 `RetryPolicy.isRetryable()` 和 `FallbackExecutor` 内的 `fallbackEligibility.isEligible()` 分别判定 | 三层职责严格正交：RetryPolicy 只管重试，FallbackExecutor 只管降级，不共享判定逻辑 |
 | 重试策略覆盖 | **全局默认 + 按能力类型可选覆盖** | YAML `resilience.retry-overrides` 按能力覆盖 |
 | 弹性与编排分离 | **ResilientClient 负责单模型重试/熔断，FallbackExecutor 负责跨模型降级** | 职责正交：弹性层不感知降级链，编排层不感知重试细节 |
 | 工具调用 ISP 拆分 | **`ToolCallingCapable` 独立接口**，不混入 ChatCapable | 只有 Agent 场景需要工具调用，避免非 Agent 调用方依赖不需要的方法 |
+| 降级事件解耦 | **FallbackEvent record（Observer 模式）**，FallbackExecutor 在降级切换时发布 | UI/metrics/logging 可消费降级事件，不依赖 FallbackExecutor 内部实现 |
+| Registry SRP 拆分 | **LlmClientFactory（创建+包装） + LlmClientRegistry（查询+状态管理）** | 单一职责：创建逻辑变化不影响查询 API，查询逻辑可独立测试 |
 
 ---
 
@@ -184,15 +187,32 @@ public enum LlmCapability {
     /** 向量嵌入 */
     EMBEDDING,
     /** 重排序 */
-    RERANKING;
-    // === 未来扩展示例（不参与 Phase 1-4 实施和迁移，详见 §13-C） ===
-    // TTS,              // 文本转语音
-    // SPEECH_TO_TEXT,   // 语音转文本
-    // IMAGE_GENERATION, // 图像生成
+    RERANKING
+    // 新增能力：在此添加枚举值 + 在 YAML capabilities 中添加对应条目 +
+    // 实现 CapabilityStrategy @Component（详见 §7.1）
 }
 ```
 
-### 4.2 `ModelCandidate` — 模型候选声明
+### 4.2 `ModelCandidate` — 模型候选声明（sealed interface）
+
+> **设计决策：sealed interface + 抽象基类**
+>
+> <b>为什么选择 sealed interface 而非继承</b>：
+> 1. **编译期穷举检查**：`switch(ModelCandidate mc)` 配合 `sealed` + `permits`，
+>    编译器确保所有子类型都被处理——新增能力类型时未处理的分支会编译失败（OCP + 类型安全）
+> 2. **能力字段隔离**：`ChatCandidate.supportsThinking()` 返回 `boolean`（非 `Boolean`），
+>    `EmbeddingCandidate.dimension()` 返回 `int`（非 `Integer`）——编译期保证能力字段不混用
+> 3. **YAML 绑定兼容**：抽象基类 `AbstractModelCandidate` 保留 POJO getter/setter，
+>    Spring Boot `@ConfigurationProperties` 绑定 YAML 到具体子类（`ChatCandidate` / `EmbeddingCandidate` 等），
+>    每个子类有无参构造器 + setter，与 Spring Boot 绑定机制兼容
+> 4. **`enabled` 默认值**：抽象基类字段声明处 `private boolean enabled = true`，
+>    YAML 不配置时默认启用——这是选择 POJO 抽象基类而非 record 的核心原因
+>
+> <b>YAML 绑定策略</b>：Spring Boot 绑定 `Map<LlmCapability, ModelGroup>` 时，
+> 每个 `ModelGroup` 的 `candidates` 列表中，YAML key 已隐含能力类型（chat / embedding / reranking）。
+> 使用自定义 `@ConfigurationProperties` 后处理器或 `@JsonTypeInfo` 将 YAML 条目绑定到对应子类。
+> 简化方案：`ModelGroup` 先绑定为 `List<AbstractModelCandidate>`（POJO 平铺），
+> 再由 `ModelGroup.postBind(capability)` 按 capability 创建对应 sealed 子类实例。
 
 ```java
 package com.smart.rag.infrastructure.llm;
@@ -200,77 +220,177 @@ package com.smart.rag.infrastructure.llm;
 import java.util.Map;
 
 /**
- * 模型候选声明——描述一个可调用的 LLM 模型
+ * 模型候选声明——sealed interface
  * <p>
- * 映射 YAML 中 {@code app.llm.<capability>.candidates[]} 的每个条目。
- * 供应商与模型解耦：候选声明引用供应商 id，不嵌套在供应商配置下。
+ * 每个候选声明且仅声明一种能力（由所属 {@code ModelGroup} 决定）。
+ * 三种子类型：{@link ChatCandidate}、{@link EmbeddingCandidate}、{@link RerankCandidate}。
  * <p>
- * <b>一对一约束</b>：每个候选声明且仅声明一种能力（由所属 {@code ModelGroup} 决定）。
- *
- * <pre>
- * YAML 示例：
- * chat:
- *   candidates:
- *     - id: qwen3-max           ← 候选唯一标识
- *       provider: bailian       ← 引用供应商 id
- *       model: qwen3-max        ← 发送给 LLM API 的原始模型名
- *       supports-thinking: true
- *       priority: 4
- * </pre>
+ * <b>公共方法</b>：所有子类型都实现 {@code id()}、{@code provider()}、{@code model()}、
+ * {@code priority()}、{@code capability()}、{@code enabled()}、{@code params()}。
+ * <p>
+ * <b>能力特定方法</b>：
+ * <ul>
+ *   <li>{@code supportsThinking()} / {@code supportsStreaming()} — 仅 {@code ChatCandidate} 返回有意义的值</li>
+ *   <li>{@code dimension()} — 仅 {@code EmbeddingCandidate} 返回有意义的值</li>
+ * </ul>
+ * 基类默认返回安全值（false / 0），子类覆写为实际值——避免调用方强制转型。
  */
-public record ModelCandidate(
-    /** 候选唯一标识（用于 default-model / deep-thinking-model 引用，如 "qwen3-max"） */
-    String id,
+public sealed interface ModelCandidate
+    permits AbstractModelCandidate {
 
-    /** 引用的供应商 id（如 "bailian"、"deepseek"、"ollama"） */
-    String provider,
+    /** 候选唯一标识（用于 default-model / deep-thinking-model 引用） */
+    String id();
 
-    /** 发送给 LLM API 的原始模型名（如 "qwen3-max"、"Qwen/Qwen3-Embedding-8B"） */
-    String model,
+    /** 引用的供应商 id */
+    String provider();
 
-    /** 优先级，数字越小越优先，candidates 按此排序即为 Fallback Chain */
-    int priority,
+    /** 发送给 LLM API 的原始模型名 */
+    String model();
 
-    /** 该候选声明的能力（由所属 ModelGroup 决定，冗存便于查询） */
-    LlmCapability capability,
+    /** 优先级，数字越小越优先 */
+    int priority();
 
-    // ====== 模型级元数据（可选，按能力类型使用） ======
-    // 注意：以下字段仅对特定能力有意义，其余场景为 null。
-    // Embedding candidate: dimension 非 null，supportsThinking/supportsStreaming 为 null
-    // Chat candidate: supportsThinking/supportsStreaming 非 null，dimension 为 null
+    /** 该候选声明的能力 */
+    LlmCapability capability();
 
-    /** 是否支持深度思考（仅 chat 场景，YAML: {@code supports-thinking}，非 chat 时为 null） */
-    Boolean supportsThinking,
+    /** 是否启用（默认 true） */
+    boolean enabled();
 
-    /** 向量维度（仅 embedding 场景，非 embedding 时为 null） */
-    Integer dimension,
+    /** 默认调用参数 */
+    Map<String, Object> params();
 
-    /** 是否支持流式输出（仅 chat 场景，YAML: {@code supports-streaming}，非 chat 时为 null） */
-    Boolean supportsStreaming,
+    // ====== 能力特定方法（基类默认返回安全值，子类覆写） ======
 
-    /** 默认调用参数（temperature、maxTokens 等），调用方可以覆盖 */
-    Map<String, Object> params,
+    /** 是否支持深度思考（仅 ChatCandidate 返回 true/false，其他返回 false） */
+    default boolean supportsThinking() { return false; }
 
-    /** 是否启用（默认 true，YAML: {@code enabled: false} 可声明式禁用单个候选） */
-    boolean enabled
-) {}
+    /** 向量维度（仅 EmbeddingCandidate 返回 > 0，其他返回 0） */
+    default int dimension() { return 0; }
+
+    /** 是否支持流式输出（仅 ChatCandidate 返回 true/false，其他返回 false） */
+    default boolean supportsStreaming() { return false; }
+}
 
 /**
- * <b>与已有 ModelCandidate 的关系</b>：
+ * 模型候选抽象基类——实现 sealed interface，提供 YAML 绑定支持
  * <p>
- * 当前代码库中 {@code com.smart.rag.infrastructure.fallback.ModelCandidate}
- * 仅包含 {@code id, provider, model, priority, enabled, supportsThinking} 字段，
- * 用于 FallbackChainProvider 的降级链排序。
+ * 保留 POJO getter/setter 供 Spring Boot {@code @ConfigurationProperties} 绑定。
+ * 子类（{@code ChatCandidate}、{@code EmbeddingCandidate}、{@code RerankCandidate}）
+ * 添加能力特定字段并覆写对应的 default 方法。
  * <p>
- * 本方案将其<b>就地扩展</b>为上述 record（新增 capability、dimension、
- * supportsStreaming、params、enabled）。旧 {@code enabled} 字段保留用于声明式禁用，
- * 运行时动态禁用通过 {@code CircuitBreaker.forceOpen()} 实现（详见 §9）。
- * 全量迁移无需保留 {@code compositeId()} 兼容方法。
- * <p>
- * 包路径从 {@code fallback} 迁移至 {@code infrastructure.llm}，
- * 与新的 SPI 层对齐。旧 {@code fallback.ModelCandidate} 在迁移完成后删除。
+ * <b>为什么用 POJO 而非 record</b>：{@code enabled} 字段需要默认值 {@code true}——
+ * YAML 不配置时 Spring Boot 会将 {@code boolean} 初始化为 {@code false}，
+ * 与"默认启用"语义矛盾。POJO 可在字段声明处直接赋默认值。
  */
+public abstract sealed class AbstractModelCandidate implements ModelCandidate
+    permits ChatCandidate, EmbeddingCandidate, RerankCandidate {
+
+    private String id;
+    private String provider;
+    private String model;
+    private int priority;
+    private LlmCapability capability;
+    private Map<String, Object> params = Map.of();
+    private boolean enabled = true;
+
+    // ====== sealed interface 实现（委托给字段） ======
+
+    @Override public String id() { return id; }
+    @Override public String provider() { return provider; }
+    @Override public String model() { return model; }
+    @Override public int priority() { return priority; }
+    @Override public LlmCapability capability() { return capability; }
+    @Override public boolean enabled() { return enabled; }
+    @Override public Map<String, Object> params() { return params; }
+
+    // ====== POJO getter/setter（Spring Boot @ConfigurationProperties 绑定需要） ======
+
+    public String getId() { return id; }
+    public void setId(String id) { this.id = id; }
+    public String getProvider() { return provider; }
+    public void setProvider(String provider) { this.provider = provider; }
+    public String getModel() { return model; }
+    public void setModel(String model) { this.model = model; }
+    public int getPriority() { return priority; }
+    public void setPriority(int priority) { this.priority = priority; }
+    public LlmCapability getCapability() { return capability; }
+    public void setCapability(LlmCapability capability) { this.capability = capability; }
+    public Map<String, Object> getParams() { return params; }
+    public void setParams(Map<String, Object> params) { this.params = params; }
+    public boolean isEnabled() { return enabled; }
+    public void setEnabled(boolean enabled) { this.enabled = enabled; }
+}
+
+/**
+ * Chat 候选——支持深度思考和流式输出
+ * <p>
+ * YAML 示例：
+ * <pre>
+ * - id: qwen3-max
+ *   provider: bailian
+ *   model: qwen3-max
+ *   supports-thinking: true
+ *   supports-streaming: true
+ *   priority: 4
+ * </pre>
+ */
+public final class ChatCandidate extends AbstractModelCandidate {
+
+    private boolean supportsThinking;
+    private boolean supportsStreaming;
+
+    @Override public boolean supportsThinking() { return supportsThinking; }
+    @Override public boolean supportsStreaming() { return supportsStreaming; }
+
+    public boolean isSupportsThinking() { return supportsThinking; }
+    public void setSupportsThinking(boolean supportsThinking) { this.supportsThinking = supportsThinking; }
+    public boolean isSupportsStreaming() { return supportsStreaming; }
+    public void setSupportsStreaming(boolean supportsStreaming) { this.supportsStreaming = supportsStreaming; }
+}
+
+/**
+ * Embedding 候选——包含向量维度
+ * <p>
+ * YAML 示例：
+ * <pre>
+ * - id: qwen-emb-8b
+ *   provider: bailian
+ *   model: Qwen/Qwen3-Embedding-8B
+ *   dimension: 1536
+ *   priority: 1
+ * </pre>
+ */
+public final class EmbeddingCandidate extends AbstractModelCandidate {
+
+    private int dimension;
+
+    @Override public int dimension() { return dimension; }
+
+    public int getDimension() { return dimension; }
+    public void setDimension(int dimension) { this.dimension = dimension; }
+}
+
+/**
+ * Rerank 候选——无额外字段
+ * <p>
+ * YAML 示例：
+ * <pre>
+ * - id: qwen3-rerank
+ *   provider: bailian
+ *   model: qwen3-rerank
+ *   priority: 1
+ * </pre>
+ */
+public final class RerankCandidate extends AbstractModelCandidate {
+    // 无额外字段，所有公共方法继承自 AbstractModelCandidate
+}
 ```
+
+> **与已有 ModelCandidate 的关系**：
+> 当前代码库中 `com.smart.rag.infrastructure.fallback.ModelCandidate` 仅包含
+> `id, provider, model, priority, enabled, supportsThinking` 字段。
+> 本方案将其重构为 sealed interface + 三个子类型，包路径迁移至 `infrastructure.llm`。
+> 旧 `fallback.ModelCandidate` 在迁移完成后删除。
 
 ### 4.3 `CapabilityClient` — 客户端根接口
 
@@ -365,16 +485,9 @@ public interface LlmProvider {
      */
     CapabilityClient createClient(ModelCandidate candidate);
 
-    /**
-     * 释放资源（连接池、线程池等），级联关闭其创建的所有 Client。
-     * <p>
-     * 不持有资源的 Provider（如纯配置驱动）无需覆写。
-     * 由 {@code LlmClientRegistry.destroy()} 在 Spring 容器关闭时统一调用。
-     */
-    @Override
-    default void close() {}
 }
 ```
+
 ### 4.5 `Message` — 对话消息
 
 ```java
@@ -464,17 +577,92 @@ public record ChatRequest(
     /** 额外参数，透传给底层 SDK */
     Map<String, Object> extraParams
 ) {
+    /** 最简请求：仅用户输入 */
     public static ChatRequest of(String input) {
         return new ChatRequest(input, null, List.of(),
             null, null, null, Map.of());
     }
 
+    /** 带 System Prompt 的请求 */
     public static ChatRequest withSystem(String systemPrompt, String input) {
         return new ChatRequest(input, systemPrompt, List.of(),
             null, null, null, Map.of());
     }
+
+    /**
+     * Builder — 构建多参数 ChatRequest
+     * <p>
+     * 替代 {@code new ChatRequest(input, null, List.of(), null, null, null, Map.of())}
+     * 这种可读性差的 7 参数构造。
+     * <p>
+     * <b>超参来源</b>：{@code temperature}、{@code maxTokens}、{@code topP} 等超参
+     * 优先从 {@link ModelCandidate#params()}（YAML 配置）获取默认值，
+     * 调用方可通过 Builder 覆盖（如特殊场景需要更低温度）。
+     * {@code null} 表示"使用模型默认值"——不硬编码魔法数字。
+     * <p>
+     * 使用示例：
+     * <pre>
+     * // 从 ModelCandidate.params 获取默认超参（YAML 配置驱动）
+     * ModelCandidate candidate = ...;
+     * Map&lt;String, Object&gt; defaults = candidate.params();
+     *
+     * // 仅覆盖需要特殊处理的超参，其余沿用模型默认值
+     * ChatRequest req = ChatRequest.builder(userInput)
+     *     .systemPrompt(systemPrompt)
+     *     .history(previousMessages)
+     *     .temperature((Double) defaults.getOrDefault("temperature", null))
+     *     .maxTokens((Integer) defaults.getOrDefault("maxTokens", null))
+     *     .build();
+     *
+     * // 最简场景：不设置超参，全部使用模型默认值
+     * ChatRequest req = ChatRequest.of(userInput);
+     * </pre>
+     */
+    public static Builder builder(String input) {
+        return new Builder(input);
+    }
+
+    /**
+     * 从 ModelCandidate.params 填充默认超参的便捷工厂
+     * <p>
+     * 将 {@code candidate.params()} 中的 temperature/maxTokens/topP 映射到 Builder，
+     * 调用方可在此基础上链式覆盖。
+     */
+    public static Builder fromDefaults(String input, ModelCandidate candidate) {
+        Map<String, Object> defaults = candidate.params();
+        return builder(input)
+            .temperature((Double) defaults.get("temperature"))
+            .maxTokens((Integer) defaults.get("maxTokens"))
+            .topP((Double) defaults.get("topP"));
+    }
+
+    public static class Builder {
+        private final String input;
+        private String systemPrompt;
+        private List<Message> history = List.of();
+        private Double temperature;   // null = 使用模型默认值（ModelCandidate.params）
+        private Integer maxTokens;    // null = 使用模型默认值
+        private Double topP;          // null = 使用模型默认值
+        private Map<String, Object> extraParams = Map.of();
+
+        private Builder(String input) { this.input = input; }
+
+        public Builder systemPrompt(String sp) { this.systemPrompt = sp; return this; }
+        public Builder history(List<Message> h) { this.history = h; return this; }
+        /** 覆盖模型默认温度（null = 使用 ModelCandidate.params 中的值） */
+        public Builder temperature(Double t) { this.temperature = t; return this; }
+        /** 覆盖模型默认 maxTokens（null = 使用 ModelCandidate.params 中的值） */
+        public Builder maxTokens(Integer mt) { this.maxTokens = mt; return this; }
+        /** 覆盖模型默认 topP（null = 使用 ModelCandidate.params 中的值） */
+        public Builder topP(Double tp) { this.topP = tp; return this; }
+        public Builder extraParams(Map<String, Object> ep) { this.extraParams = ep; return this; }
+
+        public ChatRequest build() {
+            return new ChatRequest(input, systemPrompt, history,
+                temperature, maxTokens, topP, extraParams);
+        }
+    }
 }
-```
 
 > **设计决策**：不再使用统一的 `ChatRequest` 万能 Record。Chat 使用 `ChatRequest`，
 > Embedding 使用 `embed(String text, EmbeddingType type)` 方法参数，
@@ -512,8 +700,9 @@ import java.util.Map;
  * <p>
  * 命名为 {@code LlmResponse} 以避免与 Spring AI 的
  * {@code org.springframework.ai.chat.model.ChatResponse} 类型冲突。
- * {@code ChatCapable} 继承 Spring AI {@code ChatModel}，
- * 子类实现 {@code call(Prompt)} 时返回 Spring AI 的 {@code ChatResponse}，
+ * {@code ChatCapable} 不继承 Spring AI {@code ChatModel}（ISP/LSP 合规），
+ * 桥接由 {@link com.smart.rag.infrastructure.llm.adapter.ChatModelAdapter} 独立完成：
+ * Adapter 的 {@code call(Prompt)} 返回 Spring AI 的 {@code ChatResponse}，
  * 而本 SPI 的 {@code chat()} 方法返回 {@code LlmResponse}。
  */
 public record LlmResponse(
@@ -783,9 +972,13 @@ public class ChatModelAdapter implements ChatModel {
      * 此方法从 {@code Prompt.getInstructions()} 中提取完整消息列表：
      * <ul>
      *   <li>SystemMessage → {@code ChatRequest.systemPrompt}</li>
-     *   <li>其他消息 → {@code ChatRequest.history}（保留多轮对话上下文）</li>
+     *   <li>其他消息 → {@code ChatRequest.history}（保留多轮对话上下文，不含最后一条 UserMessage）</li>
      *   <li>最后一条 UserMessage 文本 → {@code ChatRequest.input}</li>
      * </ul>
+     * <p>
+     * <b>消息去重约束</b>：对话历史严格按 User/Assistant/Tool 交叉排列，
+     * 最后一条 UserMessage 仅作为 {@code input} 传递，不重复出现在 {@code history} 中。
+     * 这避免了模型收到重复的用户消息。
      */
     private ChatRequest extractChatRequest(Prompt prompt) {
         String systemPrompt = null;
@@ -801,64 +994,36 @@ public class ChatModelAdapter implements ChatModel {
                     break;
                 }
             }
-            // 构建 history：排除 SystemMessage，保留 User/Assistant/Tool 消息
-            history = instructions.stream()
+            // 构建 history：排除 SystemMessage 和最后一条 UserMessage
+            // history 保留 User/Assistant/Tool 的交叉排列，最后一条 UserMessage 作为 input 传递
+            var nonSystemMessages = instructions.stream()
                 .filter(m -> !(m instanceof org.springframework.ai.chat.messages.SystemMessage))
-                .map(m -> new Message(
-                    m.getMessageType().name().toLowerCase(),
-                    m.getText()))
                 .toList();
+
+            if (!nonSystemMessages.isEmpty()) {
+                // 找到最后一条 UserMessage 的位置，排除它（它作为 input 传递）
+                int lastUserIdx = -1;
+                for (int i = nonSystemMessages.size() - 1; i >= 0; i--) {
+                    if (nonSystemMessages.get(i) instanceof org.springframework.ai.chat.messages.UserMessage) {
+                        lastUserIdx = i;
+                        break;
+                    }
+                }
+                final int excludeIdx = lastUserIdx;
+                history = nonSystemMessages.stream()
+                    .filter(m -> {
+                        int idx = nonSystemMessages.indexOf(m);
+                        return idx != excludeIdx;
+                    })
+                    .map(m -> new Message(
+                        m.getMessageType().name().toLowerCase(),
+                        m.getText()))
+                    .toList();
+            }
         }
 
         return new ChatRequest(userContent, systemPrompt, history,
             null, null, null, Map.of());
-    }
-}
-```
-
-### 5.2 `EmbeddingCapable` — Embedding 能力契约
-
-```java
-package com.smart.rag.infrastructure.llm;
-
-import java.util.List;
-
-/**
- * Embedding 能力契约
- */
-public interface EmbeddingCapable extends CapabilityClient {
-
-    /** 单条文本向量嵌入 */
-    float[] embed(String text, EmbeddingType type);
-
-    /** 批量文本向量嵌入（默认逐条调用，子类可覆写为批量 API） */
-    default List<float[]> embedBatch(List<String> texts, EmbeddingType type) {
-        return texts.stream().map(text -> embed(text, type)).toList();
-    }
-
-    /** 向量维度 */
-    int dimensions();
-}
-```
-
-### 5.3 `RerankCapable` — Rerank 能力契约
-
-```java
-package com.smart.rag.infrastructure.llm;
-
-import java.util.List;
-
-/**
- * Rerank 能力契约
- */
-public interface RerankCapable extends CapabilityClient {
-
-    /** 重排序 */
-    List<RerankResult> rerank(RerankRequest request);
-
-    /** 带 topN 截断的重排序（默认客户端截断，子类可覆写为服务端截断） */
-    default List<RerankResult> rerank(RerankRequest request, int topN) {
-        return rerank(request).stream().limit(topN).toList();
     }
 }
 ```
@@ -893,18 +1058,18 @@ import java.util.Set;
 public abstract class AbstractChatClient implements ChatCapable {
 
     protected final ModelCandidate candidate;
-    protected final String providerIdStr;
+    protected final String providerId;
 
     protected AbstractChatClient(ModelCandidate candidate, String providerId) {
         this.candidate = candidate;
-        this.providerIdStr = providerId;
+        this.providerId = providerId;
     }
 
     @Override
     public final String candidateId() { return candidate.id(); }
 
     @Override
-    public final String providerId() { return providerIdStr; }
+    public final String providerId() { return providerId; }
 
     @Override
     public final String modelName() { return candidate.model(); }
@@ -1167,7 +1332,7 @@ public class RetryPolicy {
     private final long baseDelayMs;
     private final long maxDelayMs;
     private final double multiplier;
-    public RetryPolicy(RetryProperties properties) {
+    public RetryPolicy(RetryConfig properties) {
         this.maxAttempts = properties.effectiveMaxAttempts();
         this.baseDelayMs = properties.effectiveBaseDelayMs();
         this.maxDelayMs = properties.effectiveMaxDelayMs();
@@ -1305,16 +1470,15 @@ import java.util.function.Function;
  *   Layer 2 — FallbackExecutor（跨模型编排）：降级链遍历，不感知重试细节
  *   Layer 3 — Caller（业务层）：组装 chain + 调用
  * </pre>
- * <b>调用层次</b>：
- * <pre>
- *   FallbackExecutor.execute(chain, client -> client.chat(request))
- *     │
- *     ├─ client = ResilientChatClient（已包装，含重试+熔断）
- *     │    └─ ResilientChatClient.chat() → circuitBreaker → retryPolicy → delegate.chat()
- *     │       └─ 重试耗尽 → 原样抛出异常（RetryPolicy 不判定降级）
- *     │
- *     └─ FallbackExecutor 捕获异常 → fallbackEligibility.isEligible(e) → 降级到下一个 client
- * </pre>
+ * <b>责任链语义</b>：Fallback Chain 本质上是一条责任链——每个节点（ResilientClient）
+ * 独立决定"成功"或"失败"，失败时传递给下一个节点。阻塞式 {@code execute()} 使用
+ * for-loop 遍历（等价于 Chain of Responsibility），流式 {@code executeStream()} 使用
+ * 递归 {@code onErrorResume} 实现惰性责任链（仅在运行时错误触发时深入下一层）。
+ * <p>
+ * <b>降级事件（Observer 模式）</b>：每次降级切换时发布 {@link FallbackEvent}，
+ * 供 UI 层提示用户、metrics 采集、日志追踪消费。调用方可通过
+ * {@code Flux.doOnNext(event -> ...)} 或 Spring EventListener 订阅。
+ * <p>
  * <b>关键约束</b>：传入 {@code action} 的 client 必须是已包装 Resilience 的客户端。
  * {@code fallbackEligibility.isEligible(e)} 是降级的唯一判定入口，
  * 与 {@code RetryPolicy.isRetryable(e)} 完全独立，不共享判定逻辑。
@@ -1325,13 +1489,22 @@ public class FallbackExecutor {
     private static final Logger log = LoggerFactory.getLogger(FallbackExecutor.class);
 
     private final FallbackEligibility fallbackEligibility;
+    /** 降级事件发布器（Observer 模式），可选 */
+    @Nullable
+    private final java.util.function.Consumer<FallbackEvent> eventPublisher;
 
     public FallbackExecutor(FallbackEligibility fallbackEligibility) {
+        this(fallbackEligibility, null);
+    }
+
+    public FallbackExecutor(FallbackEligibility fallbackEligibility,
+                            @Nullable java.util.function.Consumer<FallbackEvent> eventPublisher) {
         this.fallbackEligibility = fallbackEligibility;
+        this.eventPublisher = eventPublisher;
     }
 
     /**
-     * 执行 Fallback Chain（阻塞式）
+     * 执行 Fallback Chain（阻塞式，责任链语义）
      *
      * @param chain  按优先级排序的客户端列表
      * @param action 对单个客户端执行的操作
@@ -1342,11 +1515,18 @@ public class FallbackExecutor {
             List<T> chain,
             Function<T, R> action) {
 
+        // 入口预过滤：跳过全部已禁用的候选，避免误报 LLM_ALL_MODELS_FAILED
+        List<T> available = chain.stream()
+            .filter(CapabilityClient::isAvailable)
+            .toList();
+        if (available.isEmpty()) {
+            throw new RemoteException(RemoteErrorCode.LLM_CONFIG_ERROR,
+                "Fallback chain is empty — all candidates are disabled");
+        }
+
         Exception lastException = null;
-        for (T client : chain) {
-            if (!client.isAvailable()) {
-                continue;
-            }
+        for (int i = 0; i < available.size(); i++) {
+            T client = available.get(i);
             try {
                 return action.apply(client);
             } catch (Exception e) {
@@ -1357,45 +1537,60 @@ public class FallbackExecutor {
                 }
                 log.warn("Client '{}' failed, trying next: {}",
                     client.candidateId(), e.getMessage());
+                // 发布降级事件（Observer 模式）
+                if (eventPublisher != null && i + 1 < available.size()) {
+                    eventPublisher.accept(new FallbackEvent(
+                        client.capability(), client.candidateId(),
+                        available.get(i + 1).candidateId(), e));
+                }
             }
         }
         throw new RemoteException(RemoteErrorCode.LLM_ALL_MODELS_FAILED, "所有模型均不可用", lastException);
     }
 
     /**
-     * 执行 Fallback Chain（流式）
+     * 执行 Fallback Chain（流式，泛型 {@code <R>}，责任链语义）
      * <p>
-     * 语义：按 chain 顺序订阅 Flux，当前 client 的流报错时自动切换到下一个。
+     * 泛型 {@code R} 使本方法不限于 {@code Flux<String>}——未来流式响应可携带
+     * 结构化数据（如 {@code Flux<LlmStreamChunk>} 含 token 计数、finish reason），
+     * 无需修改 FallbackExecutor（OCP 合规）。
      * <p>
-     * <b>调用层次</b>：
+     * <b>调用层次（弹性层与编排层职责正交）</b>：
      * <pre>
      *   FallbackExecutor.executeStream(chain, c -> c.chatStream(req))
      *     │
-     *     ├─ 订阅 client_0 的 Flux（已包装 Resilient：circuitBreaker → retryStream → probeHandler）
-     *     │    ├─ 流正常 → 直接输出，不尝试下一个
-     *     │    └─ 流报错（重试+熔断均耗尽）→ 切换到 client_1 的 Flux
+     *     ├─ 订阅 client_0 的 chatStream()
+     *     │    │  ← client_0 是 ResilientChatClient，内部已编排：
+     *     │    │     circuitBreaker → retryPolicy → probeHandler → delegate
+     *     │    │  ← FallbackExecutor 不知道也不关心这个内部结构
+     *     │    │
+     *     │    ├─ 流正常 → 直接输出，不尝试下一个 client
+     *     │    └─ 流报错（ResilientClient 内部重试+熔断均耗尽后抛出最终异常）
+     *     │         → FallbackExecutor 只看到一个不可恢复的异常，切换到 client_1
      *     │
-     *     └─ 所有 client 均报错 → Flux.error(RemoteException)
+     *     └─ 所有 client 均报错 → Flux.error(RemoteException.LLM_ALL_MODELS_FAILED)
      * </pre>
-     * <b>注意</b>：切换发生在 Flux 信号层面（onErrorResume），
-     * 意味着已发送给下游的数据片段不会回滚。
-     * 流式降级的效果是"从头开始用新模型重新生成"，而非"续接上一个模型的输出"。
+     * <b>流式降级语义：从头开始用新模型重新生成</b>
      * <p>
-     * <b>⚠ 调用方须知</b>：由于切换发生在 {@code onErrorResume} 信号层面，
-     * 已发送给下游的数据片段不会回滚。若模型 A 在输出部分内容后失败，
-     * 调用方收到的将是「A 的不完整片段 + B 的完整输出」的拼接，内容可能不连贯。
+     * 切换发生在 {@code onErrorResume} 信号层面。当模型 A 在输出部分内容后失败：
+     * <ul>
+     *   <li>已发送给下游的数据片段（SSE chunks）不会回滚——这是 Flux 信号模型的固有特性</li>
+     *   <li>新模型 B 从头开始生成完整响应，不续接 A 的不完整片段</li>
+     * </ul>
      * <p>
-     * <b>建议</b>：对内容连贯性有要求的调用方，应在 {@code chatStream} 之外
-     * 自行处理拼接不连贯的情况（如丢弃模型 A 的片段后重新请求，
-     * 或在 UI 层提示用户"因模型切换，前文可能不完整"）。
+     * <b>⚠ 调用方须知</b>：若模型 A 已发出 N 个 token 后失败，调用方收到的将是
+     * 「A 的不完整片段 + B 的完整输出」的拼接，内容可能不连贯。
+     * 调用方应在 UI 层提示用户"因模型切换，前文可能不完整"——
+     * 通过 {@link FallbackEvent} 可获知降级发生的具体模型和异常原因。
      *
      * @param chain  按优先级排序的客户端列表
-     * @param action 对单个客户端执行的操作，返回 Flux
-     * @return 带降级语义的 Flux
+     * @param action 对单个客户端执行的操作，返回 Flux&lt;R&gt;。
+     *               FallbackExecutor 不感知 action 内部结构。
+     * @return 带降级语义的 Flux&lt;R&gt;
      */
-    public <T extends CapabilityClient> Flux<String> executeStream(
+    public <T extends CapabilityClient, R> Flux<R> executeStream(
             List<T> chain,
-            Function<T, Flux<String>> action) {
+            Function<T, Flux<R>> action) {
 
         // 预过滤不可用客户端，消除装配期急迫递归
         List<T> available = chain.stream()
@@ -1408,9 +1603,9 @@ public class FallbackExecutor {
         return buildStreamChain(available, action, 0);
     }
 
-    private <T extends CapabilityClient> Flux<String> buildStreamChain(
+    private <T extends CapabilityClient, R> Flux<R> buildStreamChain(
             List<T> chain,
-            Function<T, Flux<String>> action,
+            Function<T, Flux<R>> action,
             int index) {
 
         if (index >= chain.size()) {
@@ -1419,8 +1614,16 @@ public class FallbackExecutor {
 
         T client = chain.get(index);
 
-        // isAvailable 已在 executeStream 入口预过滤，此处无需再检查
         return action.apply(client)
+            .doOnError(e -> {
+                // 发布降级事件（Observer 模式），供 UI/metrics/logging 消费
+                if (eventPublisher != null && fallbackEligibility.isEligible(e)
+                        && index + 1 < chain.size()) {
+                    eventPublisher.accept(new FallbackEvent(
+                        client.capability(), client.candidateId(),
+                        chain.get(index + 1).candidateId(), e));
+                }
+            })
             .onErrorResume(e -> {
                 // 用户错误不降级，直接向下游传播
                 if (!fallbackEligibility.isEligible(e)) {
@@ -1428,11 +1631,41 @@ public class FallbackExecutor {
                 }
                 log.warn("Stream client '{}' failed at index {}, falling back to next: {}",
                     client.candidateId(), index, e.getMessage());
-                // 惰性递归：仅在运行时错误触发，每次只深入一层，不积累栈帧
+                // 惰性责任链：仅在运行时错误触发，每次只深入一层，不积累栈帧
                 return buildStreamChain(chain, action, index + 1);
             });
     }
 }
+```
+
+#### `FallbackEvent` — 降级事件（Observer 模式）
+
+```java
+package com.smart.rag.infrastructure.llm.resilience;
+
+import com.smart.rag.infrastructure.llm.LlmCapability;
+
+/**
+ * 降级事件 — 记录一次模型切换
+ * <p>
+ * 发布时机：阻塞式 {@code execute()} 和流式 {@code executeStream()} 在切换到下一个模型时发布。
+ * 消费方：
+ * <ul>
+ *   <li>UI 层：提示用户"因模型切换，前文可能不完整"</li>
+ *   <li>Metrics：采集 {@code llm.fallback.invocations} 计数器（标签：capability, from, to）</li>
+ *   <li>日志：记录降级链路追踪</li>
+ * </ul>
+ */
+public record FallbackEvent(
+    /** 发生降级的能力类型 */
+    LlmCapability capability,
+    /** 失败的模型 candidateId */
+    String fromCandidateId,
+    /** 降级目标模型 candidateId */
+    String toCandidateId,
+    /** 触发降级的异常 */
+    Exception cause
+) {}
 ```
 
 
@@ -1533,7 +1766,7 @@ public class CircuitBreaker {
             .doOnError(e -> {
                 // 仅基础设施异常计为熔断失败。
                 // 排除 ProbeTimeoutException：ProbeStreamHandler 已调用 breakers.recordFailure。
-                if (!(e instanceof ProbeTimeoutException) && isRetryable(e)) {
+                if (!(e instanceof ProbeTimeoutException) && isInfraFailure(e)) {
                     registry.recordFailure(candidateId);
                 }
                 registry.releaseProbe(candidateId);
@@ -1547,9 +1780,14 @@ public class CircuitBreaker {
     /**
      * 判断异常是否为基础设施异常（可触发熔断计数）
      * <p>
+     * 命名为 {@code isInfraFailure} 而非 {@code isRetryable}——避免与
+     * {@link RetryPolicy#isRetryable(Throwable)} 同名异义的维护混淆。
+     * RetryPolicy.isRetryable 判定"是否值得同模型重试"，
+     * 本方法判定"是否计入熔断器失败计数"——语义不同，命名应体现差异。
+     * <p>
      * 排除 {@link ProbeTimeoutException}（已由 ProbeStreamHandler 处理）。
      */
-    private boolean isRetryable(Throwable e) {
+    private boolean isInfraFailure(Throwable e) {
         if (e instanceof ProbeTimeoutException) {
             return false;
         }
@@ -1559,6 +1797,27 @@ public class CircuitBreaker {
     /** 当前状态（委托给已有实现） */
     public CircuitBreakerState getState() {
         return registry.stateOf(candidateId);
+    }
+
+    /**
+     * 探测成功回调 — 仅在 HALF_OPEN 状态下记录成功（触发 HALF_OPEN → CLOSED 转换）。
+     * <p>
+     * 在 CLOSED 状态下为空操作（no-op），不影响熔断计数。
+     * 由 {@link ProbeHandler#wrap} 在首包到达时通过 {@code onProbeSuccess} 回调调用。
+     * <p>
+     * <b>与 {@code doOnComplete → recordSuccess} 的关系</b>：
+     * <ul>
+     *   <li>{@code recordProbeSuccess} 在首包到达时触发，用于快速恢复 HALF_OPEN</li>
+     *   <li>{@code doOnComplete → recordSuccess} 在流正常结束时触发，用于 CLOSED 状态的持续健康记录</li>
+     *   <li>两者在 HALF_OPEN 下可能重复调用 {@code registry.recordSuccess()}，
+     *       但已有 {@code ModelCircuitBreakerRegistry.recordSuccess()} 是幂等的（仅改变状态，不累加计数）</li>
+     * </ul>
+     */
+    public void recordProbeSuccess() {
+        if (registry.stateOf(candidateId) == CircuitBreakerState.HALF_OPEN) {
+            registry.recordSuccess(candidateId);
+            log.info("Circuit breaker for '{}' recovered: HALF_OPEN → CLOSED (probe success)", candidateId);
+        }
     }
 }
 ```
@@ -1576,6 +1835,7 @@ import com.smart.rag.infrastructure.fallback.ModelCircuitBreakerRegistry;
  * <p>
  * 不创建新的熔断器实例，而是为每个 candidateId 创建 {@link CircuitBreaker} 适配器，
  * 底层委托给已有的 {@link ModelCircuitBreakerRegistry}。
+ */
 @Component
 public class LlmCircuitBreakerAdapterRegistry {
 
@@ -1620,10 +1880,20 @@ import com.smart.rag.infrastructure.fallback.probe.SharedProbeRegistry;
  * 额外集成 {@link SharedProbeRegistry} 探测去重：
  * <ul>
  *   <li>同一 candidateId 的并发探测共享同一个探测结果，避免重复探测</li>
+ * </ul>
  * <p>
- * 降级语义：
+ * <b>探测成功路径（HALF_OPEN → CLOSED 恢复）</b>：
  * <ul>
- *   <li>首包超时 → 已有 ProbeStreamHandler 调用 breakers.recordFailure() + 抛出 ProbeTimeoutException</li>
+ *   <li>首包到达 → 已有 ProbeStreamHandler 内部取消超时 timer → 返回带首包的 Flux</li>
+ *   <li>ProbeHandler 在 {@code doOnNext(first)} 中调用 {@code onProbeSuccess} 回调</li>
+ *   <li>回调委托给 {@link CircuitBreaker#recordProbeSuccess()} —— 仅在 HALF_OPEN 状态下
+ *       调用底层 {@code registry.recordSuccess(candidateId)}，将熔断器转回 CLOSED</li>
+ *   <li>正常 CLOSED 状态下的调用为空操作（no-op），不影响熔断计数</li>
+ * </ul>
+ * <p>
+ * <b>探测失败路径</b>：
+ * <ul>
+ *   <li>首包超时 → ProbeStreamHandler 调用 breakers.recordFailure() + 抛出 ProbeTimeoutException</li>
  *   <li>ProbeTimeoutException 被 {@link RetryPolicy#retryStream} 识别为可重试异常</li>
  *   <li>重试耗尽 → 异常冒泡到 {@link CircuitBreaker#executeStream} 的 doOnError → recordFailure</li>
  *   <li>由 {@link FallbackExecutor#executeStream} 降级到下一个模型</li>
@@ -1645,7 +1915,7 @@ public class ProbeHandler {
     }
 
     /**
-     * 包装 Flux，添加首包超时检测 + 探测去重
+     * 包装 Flux，添加首包超时检测 + 探测去重 + 成功回调
      * <p>
      * 探测去重语义：
      * <ul>
@@ -1655,11 +1925,14 @@ public class ProbeHandler {
      *   <li>无在飞探测 → 正常委托给 ProbeStreamHandler 进行首包探测</li>
      * </ul>
      *
-     * @param candidateId 用于日志、熔断记录、探测去重 key
-     * @param raw         原始流式响应
+     * @param candidateId    用于日志、熔断记录、探测去重 key
+     * @param raw            原始流式响应
+     * @param onProbeSuccess 首包到达后的成功回调（用于 HALF_OPEN → CLOSED 状态转换），
+     *                       为 null 时不添加回调（非 CHAT 能力无探测场景）
      * @return 带首包探测的 Flux
      */
-    public Flux<String> wrap(String candidateId, Flux<String> raw) {
+    public Flux<String> wrap(String candidateId, Flux<String> raw,
+                              @Nullable Runnable onProbeSuccess) {
         // 探测去重：如果已有同模型的探测在飞，等待其结果后跳过探测
         if (probeRegistry != null) {
             CompletableFuture<ProbeResult> inFlight = probeRegistry.getInFlight(candidateId);
@@ -1673,7 +1946,18 @@ public class ProbeHandler {
             }
         }
         // 委托给已有的 ProbeStreamHandler（内部已集成 breakers.recordFailure）
-        return delegate.wrapWithProbe(candidateId, raw);
+        Flux<String> probed = delegate.wrapWithProbe(candidateId, raw);
+
+        // 首包到达时触发成功回调（HALF_OPEN → CLOSED 状态转换）
+        if (onProbeSuccess != null) {
+            AtomicBoolean notified = new AtomicBoolean(false);
+            return probed.doOnNext(first -> {
+                if (notified.compareAndSet(false, true)) {
+                    onProbeSuccess.run();
+                }
+            });
+        }
+        return probed;
     }
 }
 ```
@@ -1686,8 +1970,10 @@ public class ProbeHandler {
 > 1. 装饰器**只实现能力接口**（`ChatCapable` / `EmbeddingCapable` / `RerankCapable`），不继承被装饰者的抽象类。
 >    调用方通过接口交互，无法区分原始客户端和弹性包装——这正是装饰器的透明性。
 > 2. 三个 Resilient 装饰器共享 `AbstractResilientClient<T>` 基类，消除 `CapabilityClient` 委托的 DRY 违反。
-> 3. `chatWithTools` 已提取到 `ToolCallingCapable`（§5.4），对应的弹性包装为 `ResilientToolCallingClient`，
->    由 Registry 按 `delegate instanceof ToolCallingCapable` 条件创建。
+> 3. **`ResilientChatClient` 仅实现 `ChatCapable`，不实现 `ToolCallingCapable`**（LSP 合规）。
+>    工具调用能力由 `LlmClientRegistry` 在查询层按 `delegate instanceof ToolCallingCapable` 动态判定，
+>    确保返回的 `ToolCallingCapable` 引用在运行时确实可用——避免 `chatWithTools()` 抛出
+>    `UnsupportedOperationException` 的 LSP 违反。
 > 4. Spring AI `ChatModel` 桥接代码集中在 `ChatModelAdapter`（§5.5），Resilient 装饰器不感知 Spring AI。
 
 ```java
@@ -1696,7 +1982,6 @@ package com.smart.rag.infrastructure.llm.resilience;
 import com.smart.rag.infrastructure.llm.*;
 import com.smart.rag.infrastructure.llm.client.*;
 import reactor.core.publisher.Flux;
-import java.util.List;
 
 /**
  * AbstractResilientClient — 弹性装饰器公共基类
@@ -1728,7 +2013,14 @@ abstract class AbstractResilientClient<T extends CapabilityClient> implements Ca
 }
 
 /**
- * ResilientChatClient — Chat 能力的弹性装饰器
+ * ResilientChatClient — Chat 能力的弹性装饰器（仅实现 ChatCapable）
+ * <p>
+ * <b>LSP 合规</b>：本类不实现 {@code ToolCallingCapable}。
+ * 工具调用能力的动态检测由 {@code LlmClientRegistry.getToolCallingClient()} 负责——
+ * Registry 通过 {@code delegate instanceof ToolCallingCapable} 判断底层客户端是否支持工具调用，
+ * 若支持则将 {@code delegate} 向上转型为 {@code ToolCallingCapable} 返回给调用方。
+ * 这确保了任何持有 {@code ToolCallingCapable} 引用的调用方都能安全调用 {@code chatWithTools()}，
+ * 不会遇到 {@code UnsupportedOperationException}。
  * <p>
  * 策略矩阵：
  * <pre>
@@ -1739,16 +2031,11 @@ abstract class AbstractResilientClient<T extends CapabilityClient> implements Ca
  * │ chatStream   │ 指数退避重试   │ ✓            │ ✓ ProbeHandler│
  * └──────────────┴──────────────┴──────────────┴──────────────┘
  * </pre>
- * <p>
- * 工具调用（{@code chatWithTools}）已提取到 {@code ToolCallingCapable}（§5.4），
- * ResilientChatClient 同时实现 ChatCapable 和 ToolCallingCapable，
- * 通过内部 {@code supportsToolCalling} 标志控制工具调用能力。
  */
-public class ResilientChatClient extends AbstractResilientClient<ChatCapable> 
-        implements ChatCapable, ToolCallingCapable {
+public class ResilientChatClient extends AbstractResilientClient<ChatCapable>
+        implements ChatCapable {
 
     private final ProbeHandler probeHandler;
-    private final boolean supportsToolCalling;
 
     public ResilientChatClient(ChatCapable delegate,
                                 CircuitBreaker circuitBreaker,
@@ -1756,7 +2043,14 @@ public class ResilientChatClient extends AbstractResilientClient<ChatCapable>
                                 ProbeHandler probeHandler) {
         super(delegate, circuitBreaker, retryPolicy);
         this.probeHandler = probeHandler;
-        this.supportsToolCalling = delegate instanceof ToolCallingCapable;
+    }
+
+    /** 返回被装饰的原始 ChatCapable delegate（供 Registry 层检查 ToolCallingCapable） */
+    public ChatCapable delegate() { return delegate; }
+
+    /** 底层 delegate 是否支持工具调用（Registry 层用于 LSP 安全的 ToolCallingCapable 获取） */
+    public boolean delegateSupportsToolCalling() {
+        return delegate instanceof ToolCallingCapable;
     }
 
     // ======== Chat 操作（带弹性包装） ========
@@ -1778,7 +2072,7 @@ public class ResilientChatClient extends AbstractResilientClient<ChatCapable>
             retryPolicy.retryStream(() -> {
                 Flux<String> raw = delegate.chatStream(request);
                 return probeHandler != null
-                    ? probeHandler.wrap(candidateId(), raw)
+                    ? probeHandler.wrap(candidateId(), raw, circuitBreaker::recordProbeSuccess)
                     : raw;
             })
         );
@@ -1788,29 +2082,16 @@ public class ResilientChatClient extends AbstractResilientClient<ChatCapable>
     public boolean supportsStreaming() {
         return delegate.supportsStreaming();
     }
-
-    // ======== ToolCalling 操作（仅 delegate 支持时可用） ========
-
-    @Override
-    public LlmResponse chatWithTools(ChatRequest request, List<Object> tools) {
-        if (!supportsToolCalling) {
-            throw new UnsupportedOperationException(
-                "Client '%s' does not support tool calling".formatted(candidateId()));
-        }
-        return circuitBreaker.execute(() ->
-            retryPolicy.executeWithBackoff(() ->
-                ((ToolCallingCapable) delegate).chatWithTools(request, tools)
-            )
-        );
-    }
 }
 ```
 
-> **设计决策**：ResilientChatClient 同时实现 `ChatCapable` 和 `ToolCallingCapable`，
-> 通过 `delegate instanceof ToolCallingCapable` 在构造时检测能力。
-> 消除了独立的 `ResilientToolCallingClient` 子类——调用方通过
-> `client instanceof ToolCallingCapable` 检查能力，语义不变。
-> 三个装饰器（Chat / Embedding / Rerank）各有独立类型，不再有第四个子类。
+> **工具调用的弹性保护**：当 Registry 返回的 `ToolCallingCapable` 引用实际指向
+> `ResilientChatClient` 的 `delegate`（即底层 `GenericChatClient implements ToolCallingCapable`）时，
+> 弹性保护由 `ResilientChatClient` 的 `chat()` 方法间接提供——`chatWithTools()` 调用方
+> 可通过 `((ChatCapable) toolCallingClient).chat(request)` 获得弹性保护，
+> 或由 Registry 在包装层额外处理（详见 §9 工具调用客户端获取策略）。
+>
+> **三个装饰器**（Chat / Embedding / Rerank）各有独立类型，均仅实现对应的能力接口。
 
 ```java
 /**
@@ -1902,7 +2183,7 @@ public class ResilientRerankClient extends AbstractResilientClient<RerankCapable
 
 ### 7.8 Capability 策略（消除 switch 扩展瓶颈）
 
-**问题**：`GenericOpenAiProvider.createClient()`、`LlmClientRegistry.wrapWithResilience()`、`LlmProperties.modelGroup()` 三处均使用 `switch(capability)` 硬编码能力分支。每新增一个能力（如 TTS、IMAGE）需同时改 3+ 处，违反 OCP。
+**问题**：`GenericOpenAiProvider.createClient()`、`LlmClientRegistry.wrapWithResilience()`、`LlmConfig.modelGroup()` 三处均使用 `switch(capability)` 硬编码能力分支。每新增一个能力（如 TTS、IMAGE）需同时改 3+ 处，违反 OCP。
 
 **方案**：引入 `CapabilityStrategy` 接口，每种能力注册独立策略，新增能力只需添加一个策略实现。
 
@@ -1929,10 +2210,23 @@ public interface CapabilityStrategy {
     /** 此策略负责的能力类型 */
     LlmCapability capability();
 
-    /** 端点选择：从 ProviderConfig 中取出此能力对应的 endpoint */
+    /**
+     * 端点选择：从 ProviderConfig 中取出此能力对应的 endpoint。
+     * <p>
+     * 由 {@link LlmProvider#createClient(ModelCandidate)} 内部调用——
+     * Provider 持有 {@code ProviderConfig}（包含 url + EndpointConfig），
+     * 通过 Strategy 解析出具体能力的端点路径，再传回 {@code createClient()}。
+     */
     String resolveEndpoint(ProviderConfig config);
 
-    /** 客户端创建：基于 endpoint + candidate 构建原始 CapabilityClient */
+    /**
+     * 客户端创建：基于 Provider 解析后的连接参数 + candidate 构建原始 CapabilityClient。
+     * <p>
+     * 调用方是 {@link GenericOpenAiProvider#createClient(ModelCandidate)}：
+     * Provider 从自身 {@code config()} 中解析 {@code baseUrl}、{@code apiKey}、{@code endpoint}，
+     * 然后传递给此方法。Strategy 不感知 ProviderConfig，只消费已解析的参数——
+     * 这保持了 {@link LlmProvider#createClient(ModelCandidate)} 签名的简洁性。
+     */
     CapabilityClient createClient(String baseUrl, String endpoint,
                                   String apiKey, ModelCandidate candidate);
 
@@ -1955,7 +2249,7 @@ public class ChatCapabilityStrategy implements CapabilityStrategy {
 
     @Override
     public String resolveEndpoint(ProviderConfig config) {
-        return config.endpoints().chat();
+        return config.endpoints().get(capability());
     }
 
     @Override
@@ -1969,8 +2263,9 @@ public class ChatCapabilityStrategy implements CapabilityStrategy {
                                                 CircuitBreaker cb,
                                                 RetryPolicy retry,
                                                 @Nullable ProbeHandler probe) {
-        boolean supportsTools = raw instanceof ToolCallingCapable;
-        return new ResilientChatClient((ChatCapable) raw, cb, retry, probe, supportsTools);
+        // supportsToolCalling 由 ResilientChatClient 内部通过
+        // delegate instanceof ToolCallingCapable 自动检测，无需外部传入
+        return new ResilientChatClient((ChatCapable) raw, cb, retry, probe);
     }
 }
 
@@ -1982,7 +2277,7 @@ public class EmbeddingCapabilityStrategy implements CapabilityStrategy {
 
     @Override
     public String resolveEndpoint(ProviderConfig config) {
-        return config.endpoints().embedding();
+        return config.endpoints().get(capability());
     }
 
     @Override
@@ -2002,13 +2297,13 @@ public class EmbeddingCapabilityStrategy implements CapabilityStrategy {
 
 /** RERANKING 策略 */
 @Component
-public class RerankingCapabilityStrategy implements CapabilityStrategy {
+public class RerankCapabilityStrategy implements CapabilityStrategy {
 
     @Override public LlmCapability capability() { return LlmCapability.RERANKING; }
 
     @Override
     public String resolveEndpoint(ProviderConfig config) {
-        return config.endpoints().rerank();
+        return config.endpoints().get(capability());
     }
 
     @Override
@@ -2062,8 +2357,9 @@ public class CapabilityStrategyRegistry {
 }
 ```
 
-> **扩展示例**：新增 TTS 能力时，只需创建 `TtsCapabilityStrategy @Component`，
-> 系统自动注册——无需修改任何现有代码（详见 §13-C）。
+> **扩展示例**：新增能力时，只需：(1) 在 `LlmCapability` 添加枚举值，
+> (2) 在 YAML `capabilities` 和 `endpoints` 中添加对应条目，
+> (3) 实现 `CapabilityStrategy @Component`。系统自动注册——无需修改任何现有代码（详见 §7.1）。
 
 ---
 
@@ -2085,31 +2381,26 @@ import com.smart.rag.infrastructure.llm.config.ProviderConfig;
  * 模型配置独立管理（{@code ModelGroup} + {@code ModelCandidate}），
  * 通过 {@code candidate.provider()} 引用此 Provider。
  * <p>
- * 按 {@code candidate.capability()} 选择对应 endpoint，构建 HTTP 客户端。
- * 特殊 Client（如 {@code BaiLianEmbeddingClient}）在 endpoint 匹配时创建。
+ * 按 {@code candidate.capability()} 通过 {@link CapabilityStrategy} 创建对应客户端。
+ * <b>不再硬编码特殊 Client 判断</b>——百炼（Bailian）等供应商已融入 OpenAI 兼容体系，
+ * 所有客户端统一由 CapabilityStrategy 按能力类型创建。
  */
 public class GenericOpenAiProvider implements LlmProvider {
 
     private final String id;
     private final ProviderConfig config;
-
-    /** id 从 YAML Map key 传入（Spring Boot 不自动注入 Map key 到值对象字段） */
-    public GenericOpenAiProvider(String id, ProviderConfig config) {
-        this.id = id;
-        this.config = config;
-    }
-
-    @Override public String id() { return id; }
-    @Override public ProviderConfig config() { return config; }
-
     private final CapabilityStrategyRegistry strategyRegistry;
 
+    /** 唯一构造函数。id 从 YAML Map key 传入；strategyRegistry 由 Spring 自动注入。 */
     public GenericOpenAiProvider(String id, ProviderConfig config,
                                   CapabilityStrategyRegistry strategyRegistry) {
         this.id = id;
         this.config = config;
         this.strategyRegistry = strategyRegistry;
     }
+
+    @Override public String id() { return id; }
+    @Override public ProviderConfig config() { return config; }
 
     @Override
     public CapabilityClient createClient(ModelCandidate candidate) {
@@ -2119,17 +2410,10 @@ public class GenericOpenAiProvider implements LlmProvider {
             throw new RemoteException(RemoteErrorCode.LLM_CONFIG_ERROR,
                 "Provider '" + id() + "' missing endpoint for " + candidate.capability());
         }
-
-        // 特殊 Client：百炼 Embedding 有非标准 API（批量分片、text_type 路由）
-        if (candidate.capability() == LlmCapability.EMBEDDING
-                && endpoint.contains("/services/embeddings/")) {
-            return new BaiLianEmbeddingClient(config.url(), endpoint, config.apiKey(), candidate);
-        }
-
+        // 统一由 CapabilityStrategy 创建客户端，无硬编码分支
         return strategy.createClient(config.url(), endpoint, config.apiKey(), candidate);
     }
 }
-```
 
 **多供应商注册器**（为没有对应 `@Component` Bean 的 YAML 条目创建 `GenericOpenAiProvider`）：
 
@@ -2139,8 +2423,13 @@ package com.smart.rag.infrastructure.llm.provider.generic;
 import com.smart.rag.infrastructure.llm.config.ProviderConfig;
 import org.springframework.beans.factory.support.BeanDefinitionRegistry;
 import org.springframework.beans.factory.support.BeanDefinitionRegistryPostProcessor;
+import org.springframework.beans.factory.support.AbstractBeanDefinition;
 import org.springframework.beans.factory.support.GenericBeanDefinition;
+import org.springframework.boot.context.properties.bind.Binder;
+import org.springframework.boot.context.properties.bind.TypeReference;
+import org.springframework.context.EnvironmentAware;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.core.env.Environment;
 
 /**
  * 通用 Provider 注册器
@@ -2163,132 +2452,189 @@ import org.springframework.context.annotation.Configuration;
  * 在文档中明确约定，避免依赖覆盖行为。
  */
 @Configuration
-public class GenericOpenAiProviderRegistrar implements BeanDefinitionRegistryPostProcessor {
+public class GenericOpenAiProviderRegistrar implements BeanDefinitionRegistryPostProcessor, EnvironmentAware {
+
+    private Environment environment;
+    private BeanDefinitionRegistry registry;
+
+    @Override
+    public void setEnvironment(Environment environment) {
+        this.environment = environment;
+    }
 
     @Override
     public void postProcessBeanDefinitionRegistry(BeanDefinitionRegistry registry) {
+        this.registry = registry;
         for (var entry : loadGenericConfigs().entrySet()) {
             GenericBeanDefinition bd = new GenericBeanDefinition();
             bd.setBeanClass(GenericOpenAiProvider.class);
             bd.getConstructorArgumentValues().addIndexedArgumentValue(0, entry.getKey());
             bd.getConstructorArgumentValues().addIndexedArgumentValue(1, entry.getValue());
+            // 第 3 个参数 CapabilityStrategyRegistry 由 Spring 自动装配注入
+            bd.setAutowireMode(AbstractBeanDefinition.AUTOWIRE_CONSTRUCTOR);
             registry.registerBeanDefinition("llmProvider_" + entry.getKey(), bd);
         }
     }
 
     private Map<String, ProviderConfig> loadGenericConfigs() {
-        // 从 Environment 读取 app.llm.providers（Map<String, ProviderConfig>）
-        // 过滤：排除有对应 @Component LlmProvider Bean 的 id
-        ...
+        // 1. 从 Environment 绑定 app.llm.providers
+        Map<String, ProviderConfig> allProviders = Binder.get(environment)
+            .bind("app.llm.providers", new TypeReference<Map<String, ProviderConfig>>() {})
+            .orElse(Map.of());
+
+        // 2. 过滤：排除已有 Bean 定义的供应商（如 @Component 标注的自定义 Provider）
+        return allProviders.entrySet().stream()
+            .filter(entry -> {
+                String beanName = "llmProvider_" + entry.getKey();
+                String altBeanName = entry.getKey() + "Provider";
+                if (registry.containsBeanDefinition(beanName) || registry.containsBeanDefinition(altBeanName)) {
+                    log.warn("Skipping YAML provider '{}': a @Component LlmProvider with the same id " +
+                             "already exists. If unintentional, ensure YAML provider id and " +
+                             "@Component LlmProvider.id() are mutually exclusive.", entry.getKey());
+                    return false;
+                }
+                return true;
+            })
+            .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
     }
 }
 ```
 
 
-### 8.2 特殊 Client：BaiLianEmbeddingClient
+### 8.2 通用 Client 定义
 
-> **设计决策**：百炼 Embedding API 有非标准逻辑（批量分片、text_type 路由、零向量缓存），
-> 封装为独立的 `BaiLianEmbeddingClient`，由 `GenericOpenAiProvider` 在 endpoint 匹配时自动创建。
-> 不需要独立的百炼 Provider。
+> **设计决策**：三个通用 Client 分别继承对应的抽象基类，封装 OpenAI 兼容 API 的 HTTP 调用。
+> 由 `CapabilityStrategy.createClient()` 按 endpoint 统一创建，不需要 Spring Bean 注册。
 
 ```java
-package com.smart.rag.infrastructure.llm.provider.bailian;
-
-import com.smart.rag.infrastructure.llm.*;
-import com.smart.rag.infrastructure.llm.client.AbstractEmbeddingClient;
-import com.smart.rag.infrastructure.llm.config.ProviderConfig;
+package com.smart.rag.infrastructure.llm.client.generic;
 
 /**
- * 百炼 Embedding 客户端 — 封装非标准 API 逻辑
+ * 通用 Chat 客户端 — OpenAI 兼容 /chat/completions API。
  * <p>
- * 从已有 {@code DashScopeEmbeddingModel} 迁移而来。
- * 批量分片、text_type 路由、零向量缓存等特殊逻辑全部保留。
- * 重试/熔断由外层 {@code ResilientEmbeddingClient} 统一处理。
- * <p>
- * 由 {@code GenericOpenAiProvider.createClient()} 在 endpoint 匹配时自动创建，
- * 不需要独立的 Provider 类。
+ * 支持 ToolCallingCapable（工具调用），由 {@code GenericOpenAiProvider} 创建。
  */
-public class BaiLianEmbeddingClient extends AbstractEmbeddingClient {
+public class GenericChatClient extends AbstractChatClient implements ToolCallingCapable {
 
-    private final String url;
-    private final String endpoint;
-    private final String apiKey;
-    private final RestClient restClient;
+    private final RestClient httpClient;
 
-    public BaiLianEmbeddingClient(String url, String endpoint, String apiKey, ModelCandidate candidate) {
+    public GenericChatClient(String baseUrl, String endpoint,
+                              String apiKey, ModelCandidate candidate) {
         super(candidate, candidate.provider());
-        this.url = url;
-        this.endpoint = endpoint;
-        this.apiKey = apiKey;
-        this.restClient = RestClient.builder()
-            .baseUrl(url)
+        this.httpClient = RestClient.builder()
+            .baseUrl(baseUrl)
+            .defaultHeader("Authorization", "Bearer " + apiKey)
+            .build();
+    }
+
+    @Override
+    public LlmResponse chat(ChatRequest request) {
+        // POST endpoint，序列化 OpenAI 兼容请求体，反序列化响应
+        ...
+    }
+
+    @Override
+    public Flux<String> chatStream(ChatRequest request) {
+        // SSE 流式请求，使用 OkHttp 或 WebClient
+        ...
+    }
+
+    @Override
+    public LlmResponse chatWithTools(ChatRequest request, List<Object> tools) {
+        // POST endpoint，携带 tools 参数
+        ...
+    }
+}
+
+/**
+ * 通用 Embedding 客户端 — OpenAI 兼容 /embeddings API。
+ */
+public class GenericEmbeddingClient extends AbstractEmbeddingClient {
+
+    private final RestClient httpClient;
+
+    public GenericEmbeddingClient(String baseUrl, String endpoint,
+                                   String apiKey, ModelCandidate candidate) {
+        super(candidate, candidate.provider());
+        this.httpClient = RestClient.builder()
+            .baseUrl(baseUrl)
             .defaultHeader("Authorization", "Bearer " + apiKey)
             .build();
     }
 
     @Override
     public float[] embed(String text, EmbeddingType type) {
-        // 从已有 DashScopeEmbeddingModel.embedWithTextType() 迁移
-        // text_type 路由：QUERY → "query"，DOCUMENT → "document"
-        ...
-    }
-
-    @Override
-    public List<float[]> embedBatch(List<String> texts, EmbeddingType type) {
-        // 从已有 DashScopeEmbeddingModel 批量分片逻辑迁移
-        // 百炼 API 单次最多 25 条，超过自动分片
-        ...
-    }
-
-    @Override
-    public int dimensions() {
-        return candidate().dimension() != null ? candidate().dimension() : 1536;
-    }
-
-    /** 供 PgVectorStore 注入（向后兼容） */
-    public EmbeddingModel asEmbeddingModel() {
-        // 返回适配器，桥接 EmbeddingCapable → EmbeddingModel
+        // POST endpoint，序列化 OpenAI 兼容请求体，反序列化响应
         ...
     }
 }
-```
-
-
-### 8.3 特殊 Client：BaiLianRerankClient
-
-```java
-package com.smart.rag.infrastructure.llm.provider.bailian;
-
-import com.smart.rag.infrastructure.llm.*;
-import com.smart.rag.infrastructure.llm.client.AbstractRerankClient;
 
 /**
- * 百炼 Rerank 客户端 — 调用 /api/v1/services/rerank 非标准端点
- * <p>
- * 从已有 {@code BailianRerankPostProcessor} 迁移而来，
- * REST 调用逻辑复用，重试/熔断由 {@code ResilientRerankClient} 统一处理。
- * 由 {@code GenericOpenAiProvider.createClient()} 在 endpoint 匹配时自动创建。
+ * 通用 Rerank 客户端 — 兼容 Cohere / Jina rerank API。
  */
-public class BaiLianRerankClient extends AbstractRerankClient {
+public class GenericRerankClient extends AbstractRerankClient {
 
-    private final RestClient restClient;
+    private final RestClient httpClient;
 
-    public BaiLianRerankClient(String url, String endpoint, String apiKey, ModelCandidate candidate) {
+    public GenericRerankClient(String baseUrl, String endpoint,
+                                String apiKey, ModelCandidate candidate) {
         super(candidate, candidate.provider());
-        this.restClient = RestClient.builder()
-            .baseUrl(url)
+        this.httpClient = RestClient.builder()
+            .baseUrl(baseUrl)
             .defaultHeader("Authorization", "Bearer " + apiKey)
             .build();
     }
 
     @Override
     public List<RerankResult> rerank(RerankRequest request) {
-        // 调用百炼 rerank API（与已有 BailianRerankPostProcessor 逻辑一致）
+        // POST endpoint，序列化 rerank 请求体，反序列化响应
         ...
     }
 }
 ```
-## 9. Registry — 统一发现 + 注册 + 装饰
+
+
+### 8.3 百炼（Bailian）融入 OpenAI 兼容体系
+
+> **设计决策**：百炼已官方支持 OpenAI 兼容 API 格式，不再需要独立的特殊 Client。
+> `BaiLianEmbeddingClient` 和 `BaiLianRerankClient` 已废弃，百炼的 Embedding 和 Rerank
+> 统一由 `GenericEmbeddingClient` 和 `GenericRerankClient` 处理，使用标准 OpenAI 兼容端点。
+>
+> **YAML 配置变更**：百炼供应商的 endpoints 使用 OpenAI 兼容路径：
+> ```yaml
+> bailian:
+>   url: https://dashscope.aliyuncs.com/compatible-mode/v1
+>   api-key: ${BAILIAN_API_KEY:}
+>   endpoints:
+>     chat: /chat/completions
+>     embedding: /embeddings
+>     reranking: /rerank
+> ```
+>
+> **特殊逻辑迁移**：
+> - 百炼 Embedding 的批量分片（单次最多 25 条）→ 由 `GenericEmbeddingClient.embedBatch()` 统一处理
+>   （在 `AbstractEmbeddingClient.embedBatch()` 默认实现基础上覆写为批量 API 调用 + 自动分片）
+> - 百炼 Embedding 的 text_type 路由 → 由 `EmbeddingType` 枚举映射到 API 参数 `encoding_format`
+> - 百炼 Rerank 的非标准端点 → 统一使用 `/rerank` 标准路径
+> - 零向量缓存 → 可选，由 `GenericEmbeddingClient` 的缓存装饰器处理
+>
+> **消除的魔法值**：
+> - ❌ `endpoint.contains("/services/embeddings/")` 硬编码判断（原 §8.1）
+> - ❌ `provider/bailian/` 独立子包
+> - ❌ `BaiLianEmbeddingClient` / `BaiLianRerankClient` 特殊类
+> - ✅ 统一由 `CapabilityStrategy` 按能力类型创建通用 Client
+## 9. Registry — 统一查询 + 快照管理（SRP 拆分）
+
+> **SRP 拆分**：原 `LlmClientRegistry` 职责过多（创建 + 包装 + 注册 + 查询 + 禁用 + 刷新 + 销毁）。
+> 拆分为两个类：
+> - **`LlmClientFactory`**（新建）：负责 `buildSnapshot()` + `wrapWithResilience()` + `validateCandidateReferences()`——
+>   纯粹的客户端创建与 Resilient 包装逻辑，无状态，可独立测试
+> - **`LlmClientRegistry`**（保留）：负责查询（`getDefault` / `get` / `getFallbackChain` / `getChainFor`）+ 
+>   快照管理（`disableCandidate` / `enableCandidate` / `refresh` / `destroy`）——
+>   持有 `AtomicReference<RegistrySnapshot>`，委托 `LlmClientFactory` 构建快照
+>
+> 这确保了 `LlmClientRegistry` 的单一职责：**查询与状态管理**。
+> 创建逻辑的变化（新增能力类型、新增 Provider）不影响 Registry 的查询 API。
 
 ```java
 package com.smart.rag.infrastructure.llm.registry;
@@ -2320,7 +2666,7 @@ record RegistrySnapshot(
 /**
  * LLM 客户端注册表
  * <p>
- * 启动时遍历 {@code LlmProperties} 中的 {@code ModelGroup}，
+ * 启动时遍历 {@code LlmConfig} 中的 {@code ModelGroup}，
  * 按 {@code candidate.provider} 查找 {@code LlmProvider}，
  * 通过 Provider 创建原始客户端，统一包装 Resilient 装饰器。
  * <p>
@@ -2330,8 +2676,6 @@ record RegistrySnapshot(
  *   <li>策略驱动：通过 {@link CapabilityStrategyRegistry} 消除所有 switch 分支</li>
  *   <li>声明式 + 运行时禁用：YAML {@code enabled: false} 声明式；
  *       {@code disableCandidate()} 运行时动态禁用（通过快照重建）</li>
- * </ul>
- * <p>
  * 注册表示例：
  * <pre>
  * candidateId        | provider  | Client 类型              | Capability
@@ -2340,8 +2684,8 @@ record RegistrySnapshot(
  * deepseek-v4-flash  | deepseek  | GenericChatClient        | CHAT
  * qwen3-local        | ollama    | GenericChatClient        | CHAT
  * qwen3-max          | bailian   | GenericChatClient        | CHAT
- * qwen-emb-8b        | bailian   | BaiLianEmbeddingClient   | EMBEDDING
- * qwen3-rerank       | bailian   | BaiLianRerankClient      | RERANKING
+ * qwen-emb-8b        | bailian   | GenericEmbeddingClient   | EMBEDDING
+ * qwen3-rerank       | bailian   | GenericRerankClient      | RERANKING
  * </pre>
  */
 @Component
@@ -2354,11 +2698,9 @@ public class LlmClientRegistry implements DisposableBean {
     /** 弹性层组件（跨快照复用，不随 refresh 重建） */
     private final LlmCircuitBreakerAdapterRegistry circuitBreakers;
     private final CapabilityStrategyRegistry strategyRegistry;
-    /** 禁用集持久化 — refresh 时继承上一轮禁用状态 */
-    private volatile Set<String> persistentDisabled = Set.of();
 
     public LlmClientRegistry(
-            LlmProperties properties,
+            LlmConfig properties,
             List<LlmProvider> providers,
             LlmCircuitBreakerAdapterRegistry circuitBreakers,
             ProbeHandler probeHandler,
@@ -2393,6 +2735,43 @@ public class LlmClientRegistry implements DisposableBean {
     /** 获取深度思考模型（仅 chat 能力） */
     public ChatCapable getDeepThinkingModel() {
         return (ChatCapable) snapshotRef.get().deepThinking();
+    }
+
+    /**
+     * 获取支持工具调用的 Chat 客户端（仅 CHAT 能力）。
+     * <p>
+     * <b>LSP 合规设计</b>：{@link ResilientChatClient} 不再实现 {@code ToolCallingCapable}（§7.7）。
+     * 本方法通过 {@link ResilientChatClient#delegateSupportsToolCalling()} 检查底层 delegate
+     * 是否支持工具调用，若支持则将 delegate 向上转型为 {@code ToolCallingCapable} 返回。
+     * <p>
+     * <b>弹性保护说明</b>：返回的 {@code ToolCallingCapable} 引用指向原始 delegate
+     * （如 {@code GenericChatClient}），不经过 Resilience 包装。
+     * 工具调用的弹性保护由调用方通过 {@code chat()} 方法间接获得，
+     * 或由 Agent 编排层（如 {@code AgentModeStrategy}）自行处理重试。
+     *
+     * @param candidateId 候选模型 id
+     * @return 支持工具调用的底层客户端，不存在或不支持时返回 Optional.empty()
+     */
+    public Optional<ToolCallingCapable> getToolCallingClient(String candidateId) {
+        return get(candidateId, ChatCapable.class)
+            .filter(c -> c instanceof ResilientChatClient rcc && rcc.delegateSupportsToolCalling())
+            .map(c -> (ToolCallingCapable) ((ResilientChatClient) c).delegate());
+    }
+
+    /**
+     * 获取 Chat Fallback Chain 中第一个支持工具调用的客户端。
+     * <p>
+     * <b>LSP 合规</b>：本方法只返回确认支持工具调用的客户端，
+     * 调用方持有的 {@code ToolCallingCapable} 引用在运行时一定可用，
+     * 不会遇到 {@code UnsupportedOperationException}。
+     *
+     * @return 第一个支持工具调用的底层客户端，无可用时返回 Optional.empty()
+     */
+    public Optional<ToolCallingCapable> getFirstToolCallingClient() {
+        return getFallbackChain(LlmCapability.CHAT, ChatCapable.class).stream()
+            .filter(c -> c instanceof ResilientChatClient rcc && rcc.delegateSupportsToolCalling())
+            .map(c -> (ToolCallingCapable) ((ResilientChatClient) c).delegate())
+            .findFirst();
     }
 
     /** 获取指定候选 id 的客户端（不存在或已禁用时返回 Optional.empty） */
@@ -2450,20 +2829,22 @@ public class LlmClientRegistry implements DisposableBean {
      * @return true 如果状态变更（之前未禁用）
      */
     public boolean disableCandidate(String candidateId) {
-        RegistrySnapshot prev = snapshotRef.get();
-        if (prev.isDisabled(candidateId)) return false;
+        while (true) {
+            RegistrySnapshot prev = snapshotRef.get();
+            if (prev.isDisabled(candidateId)) return false;
 
-        Set<String> newDisabled = new HashSet<>(prev.disabledSet());
-        newDisabled.add(candidateId);
-        persistentDisabled = Set.copyOf(newDisabled);
+            Set<String> newDisabled = new HashSet<>(prev.disabledSet());
+            newDisabled.add(candidateId);
 
-        RegistrySnapshot next = new RegistrySnapshot(
-            prev.clientsById(), prev.fallbackChains(),
-            prev.defaultClients(), prev.deepThinking(), persistentDisabled);
-        snapshotRef.set(next);
-
-        log.warn("Candidate '{}' disabled at runtime", candidateId);
-        return true;
+            RegistrySnapshot next = new RegistrySnapshot(
+                prev.clientsById(), prev.fallbackChains(),
+                prev.defaultClients(), prev.deepThinking(), Set.copyOf(newDisabled));
+            if (snapshotRef.compareAndSet(prev, next)) {
+                log.warn("Candidate '{}' disabled at runtime", candidateId);
+                return true;
+            }
+            // CAS 失败——其他线程已修改快照，重试
+        }
     }
 
     /**
@@ -2472,20 +2853,22 @@ public class LlmClientRegistry implements DisposableBean {
      * @return true 如果状态变更（之前已禁用）
      */
     public boolean enableCandidate(String candidateId) {
-        RegistrySnapshot prev = snapshotRef.get();
-        if (!prev.isDisabled(candidateId)) return false;
+        while (true) {
+            RegistrySnapshot prev = snapshotRef.get();
+            if (!prev.isDisabled(candidateId)) return false;
 
-        Set<String> newDisabled = new HashSet<>(prev.disabledSet());
-        newDisabled.remove(candidateId);
-        persistentDisabled = Set.copyOf(newDisabled);
+            Set<String> newDisabled = new HashSet<>(prev.disabledSet());
+            newDisabled.remove(candidateId);
 
-        RegistrySnapshot next = new RegistrySnapshot(
-            prev.clientsById(), prev.fallbackChains(),
-            prev.defaultClients(), prev.deepThinking(), persistentDisabled);
-        snapshotRef.set(next);
-
-        log.info("Candidate '{}' re-enabled at runtime", candidateId);
-        return true;
+            RegistrySnapshot next = new RegistrySnapshot(
+                prev.clientsById(), prev.fallbackChains(),
+                prev.defaultClients(), prev.deepThinking(), Set.copyOf(newDisabled));
+            if (snapshotRef.compareAndSet(prev, next)) {
+                log.info("Candidate '{}' re-enabled at runtime", candidateId);
+                return true;
+            }
+            // CAS 失败——其他线程已修改快照，重试
+        }
     }
 
     /** 获取客户端健康状态（供监控端点使用） */
@@ -2500,19 +2883,56 @@ public class LlmClientRegistry implements DisposableBean {
 
     // ====== 生命周期 ======
 
-    /** 热刷新：重建快照（继承持久化禁用集，旧快照在飞请求安全） */
-    public void refresh(LlmProperties properties, List<LlmProvider> providers,
+    /**
+     * 热刷新：重建快照（从当前快照继承禁用集），关闭已移除的旧客户端。
+     * <p>
+     * <b>触发机制</b>：由 Spring {@code @EventListener(EnvironmentChangeEvent.class)} 自动触发，
+     * 或通过管理端点手动调用。刷新是全量的——每次重建所有 Client + Resilient 包装。
+     * <p>
+     * <b>进行中请求的安全性</b>：使用 {@code AtomicReference<RegistrySnapshot>} 的 CAS 语义保证：
+     * <ul>
+     *   <li>进行中的 FallbackExecutor 调用持有旧 Snapshot 引用，
+     *       其 Fallback Chain 中的 Client 在旧 Snapshot 中仍然可达（不被 GC）</li>
+     *   <li>新请求通过 {@code getDefault()} / {@code getFallbackChain()} 获取新 Snapshot</li>
+     *   <li>新旧 Snapshot 完全隔离，不存在中间状态</li>
+     * </ul>
+     * <p>
+     * <b>旧客户端资源释放</b>：
+     * <ul>
+     *   <li>新 Snapshot 中不存在的 Client（被 YAML 移除）立即调用 {@code close()}</li>
+     *   <li>新 Snapshot 中仍存在的 Client（同一 candidateId）保持不变——不重建，不关闭</li>
+     *   <li>被旧 Snapshot 中进行中请求引用的 Client 不会提前释放——
+     *       GC 在所有引用断开后自然回收（旧 Snapshot → Client 引用链随请求结束而断开）</li>
+     * </ul>
+     * <p>
+     * <b>熔断器状态保留</b>：刷新不重置 {@code CircuitBreaker} 状态——
+     * 同一 candidateId 的熔断器在刷新前后共享底层 {@code ModelCircuitBreakerRegistry} 条目，
+     * HALF_OPEN/OPEN 状态跨刷新保留。
+     */
+    public void refresh(LlmConfig properties, List<LlmProvider> providers,
                         ProbeHandler probeHandler) {
         Map<String, LlmProvider> providerMap = providers.stream()
             .collect(Collectors.toMap(LlmProvider::id, p -> p));
         validateCandidateReferences(properties, providerMap.keySet());
 
+        Set<String> currentDisabled = snapshotRef.get().disabledSet();
         RegistrySnapshot fresh = buildSnapshot(
-            properties, providerMap, circuitBreakers, probeHandler, persistentDisabled);
-        snapshotRef.set(fresh);
+            properties, providerMap, circuitBreakers, probeHandler, currentDisabled);
 
-        log.info("LlmClientRegistry refreshed: {} candidates, {} disabled",
-            fresh.clientsById().size(), fresh.disabledSet().size());
+        // 替换快照并清理不再使用的旧客户端
+        RegistrySnapshot prev = snapshotRef.getAndSet(fresh);
+        Set<String> freshIds = fresh.clientsById().keySet();
+        for (var entry : prev.clientsById().entrySet()) {
+            if (!freshIds.contains(entry.getKey())) {
+                try { entry.getValue().close(); } catch (Exception e) {
+                    log.warn("Error closing removed client '{}': {}", entry.getKey(), e.getMessage());
+                }
+            }
+        }
+
+        log.info("LlmClientRegistry refreshed: {} candidates, {} disabled, {} removed",
+            fresh.clientsById().size(), fresh.disabledSet().size(),
+            prev.clientsById().size() - freshIds.size());
     }
 
     @Override
@@ -2529,7 +2949,7 @@ public class LlmClientRegistry implements DisposableBean {
     // ====== 内部方法 ======
 
     private RegistrySnapshot buildSnapshot(
-            LlmProperties properties,
+            LlmConfig properties,
             Map<String, LlmProvider> providerMap,
             LlmCircuitBreakerAdapterRegistry cbRegistry,
             ProbeHandler probeHandler,
@@ -2584,7 +3004,7 @@ public class LlmClientRegistry implements DisposableBean {
 
         // deep-thinking-model 解析
         CapabilityClient deepThinking = null;
-        ModelGroup chatGroup = properties.chat();
+        ModelGroup chatGroup = properties.capabilities().get(LlmCapability.CHAT);
         if (chatGroup != null && chatGroup.deepThinkingModel() != null) {
             deepThinking = clientsById.get(chatGroup.deepThinkingModel());
         }
@@ -2605,12 +3025,12 @@ public class LlmClientRegistry implements DisposableBean {
             LlmCircuitBreakerAdapterRegistry cbRegistry,
             ProbeHandler probeHandler) {
 
-        RetryPolicy retryPolicy = new RetryPolicy(resilience.resolveRetry(strategy.capability()));
+        RetryPolicy retryPolicy = new RetryPolicy(resilience.resolveRetryConfig(strategy.capability()));
         CircuitBreaker cb = cbRegistry.getOrCreate(raw.candidateId());
         return strategy.wrapWithResilience(raw, cb, retryPolicy, probeHandler);
     }
 
-    private void validateCandidateReferences(LlmProperties properties, Set<String> providerIds) {
+    private void validateCandidateReferences(LlmConfig properties, Set<String> providerIds) {
         // 见 §10.4 配置校验
     }
 }
@@ -2620,7 +3040,7 @@ public class LlmClientRegistry implements DisposableBean {
 ### 10.1 设计原则
 
 - **供应商与模型解耦**：供应商只关心连接信息（url、api-key、endpoints），模型独立声明并引用供应商
-- **按能力分组**：模型按 CHAT / EMBEDDING / RERANKING 分组管理，每组有 default-model 和候选列表
+- **按能力分组**：模型按 `Map<LlmCapability, ModelGroup>` 映射管理，新增能力只需在 YAML 中添加条目，无需修改 Java 代码
 - **candidates = Fallback Chain**：候选列表按 priority 排序，不需要单独的 fallback 配置
 - **命名槽位**：`default-model` 和 `deep-thinking-model` 是命名槽位，调用方按场景选择
 
@@ -2634,10 +3054,10 @@ app:
       bailian:
         url: https://dashscope.aliyuncs.com
         api-key: ${BAILIAN_API_KEY:}
-        endpoints:
+        endpoints:                          # Map<LlmCapability, String>，key 匹配枚举名
           chat: /compatible-mode/v1/chat/completions
           embedding: /api/v1/services/embeddings/text-embedding/text-embedding
-          rerank: /api/v1/services/rerank/text-rerank/text-rerank
+          reranking: /api/v1/services/rerank/text-rerank/text-rerank
 
       deepseek:
         url: https://api.deepseek.com
@@ -2662,7 +3082,7 @@ app:
         api-key: ${SILICONFLOW_API_KEY:}
         endpoints:
           embedding: /embeddings
-          rerank: /rerank
+          reranking: /rerank
 
       ollama:
         url: http://10.0.0.50:11434
@@ -2670,57 +3090,58 @@ app:
         endpoints:
           chat: /api/chat
 
-    # ==================== Chat 模型组 ====================
-    chat:
-      default-model: qwen3-max
-      deep-thinking-model: qwen3-max
-      candidates:
-        - id: qwen-plus
-          provider: bailian
-          model: qwen-plus-latest
-          priority: 1
-        - id: deepseek-v4-flash
-          provider: deepseek
-          model: deepseek-v4-flash
-          supports-streaming: true
-          priority: 2
-        - id: qwen3-local
-          provider: ollama
-          model: qwen3:8b-fp16
-          priority: 3
-        - id: qwen3-max
-          provider: bailian
-          model: qwen3-max           # id 与 model 值相同是合法的——id 是内部引用标识（default-model / deep-thinking-model），model 是 API 真实模型名；当两者一致时无需区分
-          supports-thinking: true
-          priority: 4
+    # ==================== 能力模型组（Map<LlmCapability, ModelGroup>） ====================
+    # key 匹配 LlmCapability 枚举名（Spring Boot 大小写不敏感绑定），
+    # 新增能力只需在此处添加新条目，无需修改 Java 代码。
+    capabilities:
+      chat:
+        default-model: qwen3-max
+        deep-thinking-model: qwen3-max
+        candidates:
+          - id: qwen-plus
+            provider: bailian
+            model: qwen-plus-latest
+            priority: 1
+          - id: deepseek-v4-flash
+            provider: deepseek
+            model: deepseek-v4-flash
+            supports-streaming: true
+            priority: 2
+          - id: qwen3-local
+            provider: ollama
+            model: qwen3:8b-fp16
+            priority: 3
+          - id: qwen3-max
+            provider: bailian
+            model: qwen3-max           # id 与 model 值相同是合法的——id 是内部引用标识（default-model / deep-thinking-model），model 是 API 真实模型名；当两者一致时无需区分
+            supports-thinking: true
+            priority: 4
 
-    # ==================== Embedding 模型组 ====================
-    embedding:
-      default-model: qwen-emb-8b
-      candidates:
-        - id: qwen-emb-8b
-          provider: bailian
-          model: Qwen/Qwen3-Embedding-8B
-          dimension: 1536
-          priority: 1
-        - id: bge-large-zh
-          provider: siliconflow
-          model: BAAI/bge-large-zh-v1.5
-          dimension: 1024
-          priority: 2
+      embedding:
+        default-model: qwen-emb-8b
+        candidates:
+          - id: qwen-emb-8b
+            provider: bailian
+            model: Qwen/Qwen3-Embedding-8B
+            dimension: 1536
+            priority: 1
+          - id: bge-large-zh
+            provider: siliconflow
+            model: BAAI/bge-large-zh-v1.5
+            dimension: 1024
+            priority: 2
 
-    # ==================== Rerank 模型组 ====================
-    rerank:
-      default-model: qwen3-rerank
-      candidates:
-        - id: qwen3-rerank
-          provider: bailian
-          model: qwen3-rerank
-          priority: 1
-        - id: qwen3-rerank-sf
-          provider: siliconflow
-          model: Qwen/Qwen3-Rerank
-          priority: 2
+      reranking:
+        default-model: qwen3-rerank
+        candidates:
+          - id: qwen3-rerank
+            provider: bailian
+            model: qwen3-rerank
+            priority: 1
+          - id: qwen3-rerank-sf
+            provider: siliconflow
+            model: Qwen/Qwen3-Rerank
+            priority: 2
 
     # ==================== 弹性策略配置 ====================
     resilience:
@@ -2766,30 +3187,23 @@ import java.util.Map;
  * 供应商与模型解耦：供应商只关心连接，模型按能力分组并引用供应商。
  */
 @ConfigurationProperties(prefix = "app.llm")
-public record LlmProperties(
+public record LlmConfig(
     /** 供应商配置（Map<供应商id, 连接配置>） */
     Map<String, ProviderConfig> providers,
-    /** Chat 模型组 */
-    ModelGroup chat,
-    /** Embedding 模型组 */
-    ModelGroup embedding,
-    /** Rerank 模型组 */
-    ModelGroup rerank,
+    /** 能力 → 模型组映射。新增能力只需在 YAML 中添加条目，无需修改 Java 代码。
+     *  YAML key 必须匹配 LlmCapability 枚举名（Spring Boot 大小写不敏感绑定）。 */
+    Map<LlmCapability, ModelGroup> capabilities,
     /** 弹性策略配置 */
     ResilienceConfig resilience
 ) {
-    /** 能力 → 模型组映射（新增能力只需添加 case，或改为 Map 初始化） */
-    private static final Map<LlmCapability, Function<LlmProperties, ModelGroup>> GROUP_ACCESSORS =
-        Map.of(
-            LlmCapability.CHAT,      LlmProperties::chat,
-            LlmCapability.EMBEDDING, LlmProperties::embedding,
-            LlmCapability.RERANKING, LlmProperties::rerank
-        );
-
-    /** 按能力获取模型组 — 策略驱动，无 switch */
+    /** 按能力获取模型组。未配置的能力抛 LLM_CONFIG_ERROR */
     public ModelGroup modelGroup(LlmCapability cap) {
-        Function<LlmProperties, ModelGroup> accessor = GROUP_ACCESSORS.get(cap);
-        return accessor != null ? accessor.apply(this) : null;
+        ModelGroup group = capabilities.get(cap);
+        if (group == null) {
+            throw new RemoteException(RemoteErrorCode.LLM_CONFIG_ERROR,
+                "No ModelGroup configured for capability: " + cap);
+        }
+        return group;
     }
 
     /** 按 id 查找供应商配置，不存在时抛出 LLM_CONFIG_ERROR */
@@ -2810,7 +3224,7 @@ public record LlmProperties(
  * <p>
  * <b>注意</b>：{@code id} 不作为 record 字段——Spring Boot {@code @ConfigurationProperties}
  * 绑定 {@code Map<String, ProviderConfig>} 时，Map key 不会注入到值对象的字段中。
- * {@code id} 由 {@code LlmProperties} 或调用方从 Map key 显式传入。
+ * {@code id} 由 {@code LlmConfig} 或调用方从 Map key 显式传入。
  */
 public record ProviderConfig(
     /** 基地址（如 "https://dashscope.aliyuncs.com"） */
@@ -2831,20 +3245,27 @@ public record ProviderConfig(
  * <p>
  * 每个端点为完整路径（从 url 之后开始），null 表示该供应商不支持此能力。
  * 拼接方式：{@code url + endpoint}（不做智能去重，配置者有责任保持一致性）。
+ * <p>
+ * 使用 {@code Map<LlmCapability, String>} 而非命名字段，新增能力无需修改 Java 代码。
+ * YAML key 必须匹配 {@code LlmCapability} 枚举名（Spring Boot 大小写不敏感绑定），
+ * 例如 {@code chat} → {@code CHAT}，{@code reranking} → {@code RERANKING}。
  */
 public record EndpointConfig(
-    /** Chat 端点（null 表示不支持 chat） */
-    String chat,
-    /** Embedding 端点（null 表示不支持 embedding） */
-    String embedding,
-    /** Rerank 端点（null 表示不支持 rerank） */
-    String rerank
-) {}
+    /** 能力 → 端点路径映射。未配置的能力返回 null，表示该供应商不支持此能力 */
+    Map<LlmCapability, String> endpoints
+) {
+    public EndpointConfig() { this(Map.of()); }
+
+    /** 获取指定能力的端点路径，不存在时返回 null */
+    public String get(LlmCapability cap) {
+        return endpoints != null ? endpoints.get(cap) : null;
+    }
+}
 
 /**
  * 按能力分组的模型配置
  * <p>
- * 映射 YAML 中 {@code app.llm.chat} / {@code app.llm.embedding} / {@code app.llm.rerank} 节点。
+ * 映射 YAML 中 {@code app.llm.capabilities.<capability>} 节点（如 chat、embedding、reranking）。
  * candidates 列表按 priority 排序即为 Fallback Chain。
  */
 public record ModelGroup(
@@ -2873,21 +3294,27 @@ public record ModelGroup(
 // ====== Resilience 配置（不变） ======
 
 public record ResilienceConfig(
-    RetryProperties retry,
+    RetryConfig retry,
     CircuitBreakerProperties circuitBreaker,
     ProbeProperties probe,
-    Map<LlmCapability, RetryProperties> retryOverrides
+    Map<LlmCapability, RetryConfig> retryOverrides
 ) {
-    public RetryProperties resolveRetry(LlmCapability capability) {
-        RetryProperties override = retryOverrides.get(capability);
+    /**
+     * 解析指定能力的重试配置：全局默认 + 按能力覆盖
+     * <p>
+     * 命名为 {@code resolveRetryConfig} 而非 {@code resolveRetry}——
+     * 明确返回值是 {@code RetryConfig} 配置对象，而非"重试"动作本身。
+     */
+    public RetryConfig resolveRetryConfig(LlmCapability capability) {
+        RetryConfig override = retryOverrides.get(capability);
         if (override == null) {
             return retry;
         }
-        return retry.mergeWith(override);
+        return retry.mergeWithOverride(override);
     }
 }
 
-public record RetryProperties(
+public record RetryConfig(
     /** 最大重试次数（null 表示未覆盖，使用全局值） */
     Integer maxAttempts,
     /** 基础退避延迟毫秒（null 表示未覆盖） */
@@ -2900,10 +3327,13 @@ public record RetryProperties(
     /**
      * 合并覆盖值：override 中非 null 的字段覆盖 this 的值。
      * <p>
+     * 命名为 {@code mergeWithOverride} 而非 {@code mergeWith}——
+     * 明确参数语义是"覆盖配置"，而非任意的 RetryConfig 合并。
+     * <p>
      * 使用 nullable 类型而非 sentinel 值（如 0），避免"用户显式设置 0"与"未覆盖"的歧义。
      */
-    public RetryProperties mergeWith(RetryProperties override) {
-        return new RetryProperties(
+    public RetryConfig mergeWithOverride(RetryConfig override) {
+        return new RetryConfig(
             override.maxAttempts() != null ? override.maxAttempts() : this.maxAttempts,
             override.baseDelayMs() != null ? override.baseDelayMs() : this.baseDelayMs,
             override.maxDelayMs() != null ? override.maxDelayMs() : this.maxDelayMs,
@@ -2947,12 +3377,14 @@ public record ProbeProperties(
 
 > **YAML 绑定注意事项**：
 > - `providers` 是 `Map<String, ProviderConfig>`，YAML key 即供应商 id（如 `bailian`、`deepseek`）
-> - `resilience.retryOverrides` 的 key 为 `LlmCapability` 枚举名，推荐统一使用大写（`EMBEDDING`、`RERANKING`）
+> - `capabilities` 是 `Map<LlmCapability, ModelGroup>`，YAML key 必须匹配枚举名（Spring Boot 大小写不敏感），如 `chat` → `CHAT`、`reranking` → `RERANKING`
+> - `providers.<id>.endpoints` 是 `Map<LlmCapability, String>`，YAML key 同理匹配枚举名
+> - `resilience.retry-overrides` 的 key 为 `LlmCapability` 枚举名，推荐统一使用大写（`EMBEDDING`、`RERANKING`）
 > - YAML 中使用 kebab-case（如 `default-model`、`deep-thinking-model`、`retry-overrides`），Spring Boot 自动映射到 Java camelCase
 
 ```java
 // LlmClientRegistry 构造时增加引用校验
-private void validateCandidateReferences(LlmProperties properties, Set<String> providerIds) {
+private void validateCandidateReferences(LlmConfig properties, Set<String> providerIds) {
     for (LlmCapability cap : LlmCapability.values()) {
         ModelGroup group = properties.modelGroup(cap);
         if (group == null) continue;
@@ -2974,6 +3406,19 @@ private void validateCandidateReferences(LlmProperties properties, Set<String> p
             if (!providerIds.contains(candidate.provider())) {
                 throw new RemoteException(LLM_CONFIG_ERROR,
                     "Candidate '" + candidate.id() + "' references unknown provider: " + candidate.provider());
+            }
+        }
+    }
+
+    // 校验 candidate.id 全局唯一性（跨能力组）
+    Set<String> seenIds = new HashSet<>();
+    for (LlmCapability cap : LlmCapability.values()) {
+        ModelGroup group = properties.modelGroup(cap);
+        if (group == null) continue;
+        for (ModelCandidate candidate : group.candidates()) {
+            if (!seenIds.add(candidate.id())) {
+                throw new RemoteException(LLM_CONFIG_ERROR,
+                    "Duplicate candidate.id '" + candidate.id() + "' — must be globally unique across all capabilities");
             }
         }
     }
@@ -3043,6 +3488,51 @@ LLM_TRANSIENT_ERROR(301007, "LLM 瞬态错误（可重试）"),
 | `IOException` / `SocketTimeoutException` | 网络层 | ✓ | ✓ | ✓ |
 | `LlmTransientException` | LLM 瞬态错误（供应商 5xx、超时等） | ✓ | ✓ | ✓ |
 > 所有 C 类异常（`RemoteException` 及其子类）均通过 `FallbackEligibility.isEligible()` 返回 `true`，可触发跨模型降级。
+
+### 11.3.1 异常包装链：从原始异常到 FallbackExecutor 的完整路径
+
+弹性层与编排层的正交性依赖于一条明确的异常包装链。FallbackExecutor 不知道 ResilientClient 内部的重试/熔断状态——它只消费最终的异常对象。
+
+**阻塞调用链路**：
+```
+LLM API 抛出 SocketTimeoutException
+  ↓
+RetryPolicy.executeWithBackoff()
+  ├─ isRetryable(e) → true → 重试（最多 maxAttempts 次）
+  └─ 重试耗尽 → 包装为 LlmTransientException(cause=SocketTimeoutException) 抛出
+  ↓
+CircuitBreaker.execute()
+  ├─ 捕获 LlmTransientException → registry.recordFailure(candidateId) → 向上抛出
+  └─ 非基础设施异常 → 不计熔断，直接向上抛出
+  ↓
+FallbackExecutor.execute()
+  ├─ 收到 LlmTransientException（C 类） → fallbackEligibility.isEligible() → true → 降级到下一个 client
+  └─ 收到 ContentFilteredException（A 类） → isEligible() → false → 直接向上抛出，不降级
+```
+
+**流式调用链路**：
+```
+LLM API 流首包超时
+  ↓
+ProbeHandler.wrap()
+  └─ 抛出 ProbeTimeoutException → 已有 ProbeStreamHandler 内部调用 breakers.recordFailure()
+  ↓
+RetryPolicy.retryStream()
+  ├─ ProbeTimeoutException.isRetryable() → true → 重新订阅（最多 maxAttempts 次）
+  └─ 重试耗尽 → 包装为 LlmTransientException(cause=ProbeTimeoutException) 抛出
+  ↓
+CircuitBreaker.executeStream().doOnError()
+  ├─ LlmTransientException → 排除 ProbeTimeoutException（已由 ProbeStreamHandler 处理）→ recordFailure
+  └─ 向上抛出
+  ↓
+FallbackExecutor.executeStream()
+  └─ 收到 LlmTransientException → onErrorResume → 降级到下一个 client 的 Flux
+```
+
+**关键设计约束**：
+1. **RetryPolicy 是唯一的异常包装点**：所有原始异常（IOException、SocketTimeoutException 等）在重试耗尽后统一包装为 `LlmTransientException`。FallbackExecutor 不处理原始异常。
+2. **CircuitBreaker 是异常过滤点**：通过 `fallbackEligibility.isEligible()` 决定是否计入熔断计数，但**不改变异常类型**——透传给 FallbackExecutor。
+3. **FallbackEligibility 是降级判定点**：基于异常类型（A/B/C 类）决定是否降级，不依赖异常消息或上下文。
 
 ### 11.4 `ProbeTimeoutException` / `ModelCircuitOpenException` / `LlmTransientException` — 已纳入 RemoteException 体系
 
@@ -3238,9 +3728,22 @@ public class ChatServiceImpl implements ChatService {
 }
 ```
 
+> **LoD（迪米特法则）改进**：
+> - **Before**：ChatServiceImpl 直接持有 8 个 LLM 基础设施组件（`ChatClientRegistry`、`ModelRouter`、
+>   `FallbackChainProvider`、`FallbackEligibility`、`StreamRetryHandler`、`ProbeStreamHandler`、
+>   `ModelCircuitBreakerRegistry`、`ChatFallbackProperties`），需要了解每个组件的内部结构和交互方式
+> - **After**：ChatServiceImpl 只依赖 2 个组件（`LlmClientRegistry` + `FallbackExecutor`），
+>   通过 `registry.getChainFor()` 获取降级链，通过 `fallbackExecutor.execute/executeStream()` 执行——
+>   不感知重试策略、熔断器状态、首包探测的内部细节
+> - **FallbackEvent 解耦**：降级事件通过 `FallbackEvent` record 发布（Observer 模式），
+>   ChatServiceImpl 可选择性订阅（如通过 `eventPublisher` 回调通知 UI 层），
+>   但不依赖 FallbackExecutor 的内部实现——事件格式稳定，内部实现可自由变化
+> - **调用链简化**：`chat()` 和 `chatStream()` 各只需 2 行代码（`resolveChain` + `execute`），
+>   所有弹性行为（重试/熔断/探测/降级）由下层透明处理
+
 > **降级时序示例**（流式路径）：
 > ```
-> 请求 → deepseek:deepseek-v4-flash (priority=10)
+> 请求 → deepseek-v4-flash (priority=2)
 >   → CircuitBreaker: CLOSED ✓
 >   → RetryPolicy.retryStream()
 >     → ProbeHandler: 首包 3s 超时 → ProbeTimeoutException
@@ -3250,10 +3753,16 @@ public class ChatServiceImpl implements ChatService {
 >   → CircuitBreaker: recordFailure() → failures=1（未达阈值 5）
 >   → FallbackExecutor.onErrorResume → 切换到下一个
 >
-> 请求 → minimax:minimax-text-01 (priority=30)
+> 请求 → qwen3-local (priority=3)
 >   → CircuitBreaker: CLOSED ✓
 >   → 正常流式输出 → onComplete → recordSuccess()
 > ```
+
+> **⚠ 流式降级使用约束**：
+> - **内容不连贯**：若模型 A 在输出部分内容后失败，`onErrorResume` 切换到模型 B 时，下游收到的是「A 的不完整片段 + B 的完整输出」拼接。已发送的片段不会回滚。
+> - **适用场景**：流式降级适合**容错优先**的场景（如实时聊天），而非**内容连贯优先**的场景（如文档生成）。
+> - **调用方处理建议**：对连贯性有要求的调用方，应在 `chatStream` 之外自行处理拼接不连贯的情况——例如丢弃模型 A 的片段后重新请求，或在 UI 层提示用户"因模型切换，前文可能不完整"。
+> - **降级链配置**：建议为同能力候选配置语义相近的模型（如同一系列的不同规格），以减小切换后的风格差异。
 
 
 ---
@@ -3276,14 +3785,15 @@ app:
         endpoints:
           chat: /v1/chat/completions
 
-    chat:
-      default-model: model-a
-      candidates:
-        - id: model-a
-          provider: newprovider
-          model: model-name
-          supports-streaming: true
-          priority: 30
+    capabilities:
+      chat:
+        default-model: model-a
+        candidates:
+          - id: model-a
+            provider: newprovider
+            model: model-name
+            supports-streaming: true
+            priority: 30
 ```
 
 启动后自动：`GenericOpenAiProvider` 创建 → `GenericChatClient` → `ResilientChatClient` 包装 → Fallback Chain 包含。
@@ -3304,31 +3814,32 @@ app:
           embedding: /v1/embeddings
           rerank: /v1/rerank
 
-    chat:
-      default-model: gpt-4o
-      candidates:
-        - id: gpt-4o
-          provider: aggregated
-          model: gpt-4o
-          supports-streaming: true
-          priority: 10
+    capabilities:
+      chat:
+        default-model: gpt-4o
+        candidates:
+          - id: gpt-4o
+            provider: aggregated
+            model: gpt-4o
+            supports-streaming: true
+            priority: 10
 
-    embedding:
-      default-model: emb-large
-      candidates:
-        - id: emb-large
-          provider: aggregated
-          model: text-embedding-3-large
-          dimension: 3072
-          priority: 10
+      embedding:
+        default-model: emb-large
+        candidates:
+          - id: emb-large
+            provider: aggregated
+            model: text-embedding-3-large
+            dimension: 3072
+            priority: 10
 
-    rerank:
-      default-model: rerank-v1
-      candidates:
-        - id: rerank-v1
-          provider: aggregated
-          model: rerank-v1
-          priority: 10
+      reranking:
+        default-model: rerank-v1
+        candidates:
+          - id: rerank-v1
+            provider: aggregated
+            model: rerank-v1
+            priority: 10
 ```
 
 **A3. 用户自定义供应商（私有部署 / 内网代理）**
@@ -3356,33 +3867,34 @@ app:
           embedding: /v1/embeddings
           rerank: /v1/rerank
 
-    chat:
-      default-model: qwen-local
-      candidates:
-        - id: qwen-local
-          provider: my-vllm
-          model: Qwen/Qwen2.5-72B-Instruct
-          supports-streaming: true
-          priority: 1
-        - id: gpt-4o-proxy
-          provider: my-oneapi
-          model: gpt-4o
-          priority: 2
+    capabilities:
+      chat:
+        default-model: qwen-local
+        candidates:
+          - id: qwen-local
+            provider: my-vllm
+            model: Qwen/Qwen2.5-72B-Instruct
+            supports-streaming: true
+            priority: 1
+          - id: gpt-4o-proxy
+            provider: my-oneapi
+            model: gpt-4o
+            priority: 2
 
-    embedding:
-      default-model: bge-m3
-      candidates:
-        - id: bge-m3
-          provider: my-ollama
-          model: bge-m3
-          dimension: 1024
-          priority: 1
+      embedding:
+        default-model: bge-m3
+        candidates:
+          - id: bge-m3
+            provider: my-ollama
+            model: bge-m3
+            dimension: 1024
+            priority: 1
 ```
 
 > **关键设计意图**：OpenAI 兼容供应商完全由 YAML 驱动。
 > 用户不需要理解 Provider/Client/Resilience 的内部结构，只需声明：
 > - 我的服务地址和端点是什么（`providers.<id>.url` + `endpoints`）
-> - 我有哪些模型（`chat/embedding/rerank.candidates`）
+> - 我有哪些模型（`capabilities.<capability>.candidates`）
 > - 每个模型由哪个供应商提供（`candidate.provider` 引用 `providers` 中的 id）
 >
 > 声明完成后，`GenericOpenAiProvider` 自动创建客户端 → `LlmClientRegistry` 自动注册 → Resilient 自动包装 → Fallback Chain 自动包含。
@@ -3398,7 +3910,7 @@ app:
 public class XxxProvider implements LlmProvider {
     private final ProviderConfig config;
 
-    public XxxProvider(LlmProperties properties) {
+    public XxxProvider(LlmConfig properties) {
         this.config = properties.requireProvider("xxx");
     }
 
@@ -3420,57 +3932,30 @@ public class XxxEmbeddingClient extends AbstractEmbeddingClient {
 }
 ```
 
-### 场景 C：全新能力类型（以 TTS 为例，仅供演示扩展流程，不参与 Phase 1-4 实施）
-
-> **注意**：本节 TTS 相关代码仅为"新增能力类型"扩展流程的演示示例，
-> 不参与 Phase 1-4 的实际迁移。`LlmCapability` 枚举在 Phase 1-4 期间只包含 CHAT / EMBEDDING / RERANKING。
-> 新增能力类型时不再需要修改 switch 语句——通过 `CapabilityStrategy` 注册即可（详见 §7.1）。
-
-```java
-// 1. 扩展枚举
-public enum LlmCapability {
-    CHAT, EMBEDDING, RERANKING,
-    TTS  // 新增
-}
-
-// 2. 新增能力契约接口（与 ChatCapable / EmbeddingCapable / RerankCapable 同级）
-public interface TtsCapable extends CapabilityClient {
-    byte[] synthesize(String text, TtsConfig config);
-}
-
-// 3. 新增抽象类
-public abstract class AbstractTtsClient implements TtsCapable {
-    // 公共字段（candidateId、candidate 等）由基类统一处理
-}
-
-// 4. 新增 Resilient 装饰器
-public class ResilientTtsClient extends AbstractResilientClient<TtsCapable> implements TtsCapable {
-    // 与 ResilientChatClient / ResilientEmbeddingClient / ResilientRerankClient 同级
-}
-
-// 5. 注册 CapabilityStrategy（框架自动发现，无需修改 switch）：
-class TtsCapabilityStrategy implements CapabilityStrategy<TtsCapable> {
-    @Override public LlmCapability capability() { return LlmCapability.TTS; }
-    @Override public CapabilityClient wrapWithResilience(...) { return new ResilientTtsClient(...); }
-    @Override public ModelGroup getModelGroup(LlmProperties props) { return props.tts(); }
-}
-// 新增调用方代码（如 TTSService）只需注入 TtsCapable，不接触框架内部。
----
-
 ## 14. 目录结构
 
 ```
 com.smart.rag.infrastructure.llm/
 │
 ├── LlmCapability.java                      # 能力枚举（CHAT / EMBEDDING / RERANKING）
-├── ModelCandidate.java                      # 模型候选声明（替代 ModelSpec）
+├── ModelCandidate.java                      # sealed interface — 模型候选声明
+│   ├── AbstractModelCandidate.java          #   抽象基类（公共字段 + getter/setter）
+│   ├── ChatCandidate.java                   #   Chat 候选（supportsThinking / supportsStreaming）
+│   ├── EmbeddingCandidate.java              #   Embedding 候选（dimension）
+│   └── RerankCandidate.java                 #   Rerank 候选（无额外字段）
 ├── CapabilityClient.java                    # 客户端根接口（candidateId / providerId / modelName）
 ├── ChatCapable.java                         # Chat 能力契约
 ├── EmbeddingCapable.java                    # Embedding 能力契约
 ├── RerankCapable.java                       # Rerank 能力契约
+├── ToolCallingCapable.java                  # 工具调用能力（ISP 拆分，extends ChatCapable）
 ├── LlmProvider.java                         # 供应商接口（轻量工厂：id + config + createClient）
+├── ChatModelAdapter.java                    # Spring AI ChatModel 适配器（ISP/LSP/SRP 桥接）
+├── CapabilityStrategy.java                  # 能力策略接口（OCP：新增能力只添加策略 Bean）
+├── CapabilityStrategyRegistry.java          # 能力策略注册表（自动收集 @Component 策略）
+├── LlmClientFactory.java                   # 客户端工厂（创建 + Resilient 包装，SRP 拆分）
+├── LlmClientRegistry.java                   # 统一注册表（查询 + 快照管理 + 禁用/启用）
 ├── Message.java                             # 对话消息
-├── ChatRequest.java                         # Chat 请求
+├── ChatRequest.java                         # Chat 请求（含 Builder）
 ├── LlmResponse.java                         # Chat 响应
 ├── EmbeddingType.java                       # 嵌入类型
 ├── RerankRequest.java                       # 重排请求
@@ -3482,39 +3967,40 @@ com.smart.rag.infrastructure.llm/
 │   └── AbstractRerankClient.java
 │
 ├── resilience/                              # 统一弹性层
-│   ├── ResilientChatClient.java             # Chat 装饰器（含 emitted 追踪）
+│   ├── ResilientChatClient.java             # Chat 装饰器（仅 implements ChatCapable）
 │   ├── ResilientEmbeddingClient.java        # Embedding 装饰器
 │   ├── ResilientRerankClient.java           # Rerank 装饰器
-│   ├── RetryPolicy.java                     # 统一重试策略（复用 FallbackEligibility）
-│   ├── FallbackExecutor.java                # 跨模型降级执行器
-│   ├── CircuitBreaker.java                  # 熔断器适配器（首包超时 + 异常过滤）
+│   ├── RetryPolicy.java                     # 统一重试策略
+│   ├── FallbackExecutor.java                # 跨模型降级执行器（泛型 Flux<R>，责任链语义）
+│   ├── FallbackEvent.java                   # 降级事件 record（Observer 模式，供 UI/metrics 消费）
+│   ├── CircuitBreaker.java                  # 熔断器适配器（包装 ModelCircuitBreakerRegistry）
 │   ├── LlmCircuitBreakerAdapterRegistry.java # 熔断器注册表
 │   └── ProbeHandler.java                    # 首包探测
 │
 ├── provider/                                # 供应商实现
-│   ├── generic/                             # 通用 OpenAI 兼容 Provider
-│   │   ├── GenericOpenAiProvider.java       # 轻量工厂，按 endpoint 创建 Client
+│   ├── generic/                             # 通用 OpenAI 兼容 Provider（含百炼等 OpenAI 兼容供应商）
+│   │   ├── GenericOpenAiProvider.java       # 轻量工厂，按 capability 策略创建 Client
 │   │   ├── GenericOpenAiProviderRegistrar.java # BeanDefinitionRegistryPostProcessor
 │   │   ├── GenericChatClient.java
 │   │   ├── GenericEmbeddingClient.java
 │   │   └── GenericRerankClient.java
-│   ├── bailian/                             # 百炼特殊 Client（由 GenericOpenAiProvider 按 endpoint 自动创建）
-│   │   ├── BaiLianEmbeddingClient.java     # 百炼 Embedding（批量分片 + text_type 路由）
-│   │   └── BaiLianRerankClient.java        # 百炼 Rerank（非标准端点）
 │
 ├── config/                                  # 配置（供应商与模型解耦）
-│   ├── LlmProperties.java                  # @ConfigurationProperties（providers + chat/embedding/rerank ModelGroups）
-│   ├── ProviderConfig.java                  # 供应商连接配置（id / url / apiKey / endpoints）
-│   ├── EndpointConfig.java                  # 端点路径配置（chat / embedding / rerank）
-│   ├── ModelGroup.java                      # 按能力分组（default-model / deep-thinking-model / candidates）
+│   ├── LlmConfig.java                       # @ConfigurationProperties（providers + capabilities）
+│   ├── ProviderConfig.java                  # 供应商连接配置（url / apiKey / endpoints）
+│   ├── EndpointConfig.java                  # 端点路径配置（Map<LlmCapability, String>）
+│   ├── ModelGroup.java                      # 按能力分组（default-model / candidates）
 │   ├── ResilienceConfig.java
-│   ├── RetryProperties.java
+│   ├── RetryConfig.java
 │   ├── CircuitBreakerProperties.java
 │   └── ProbeProperties.java
-│
-└── registry/
-    └── LlmClientRegistry.java               # 统一注册表（遍历 ModelGroup → Provider 创建 Client → Resilient 包装）
 ```
+
+> **目录按功能域划分**，而非按实现模式（adapter/strategy/registry）划分。
+> 核心类型（接口、工厂、注册表、适配器、策略）集中在 `llm/` 根包下，
+> 子包仅用于 `client`（抽象层）、`resilience`（弹性层）、`provider`（供应商实现）、`config`（配置）。
+> 百炼（Bailian）已融入 OpenAI 兼容体系，由 `GenericOpenAiProvider` 统一管理，
+> 不再有独立的 `provider/bailian/` 子包和硬编码端点判断。
 
 ---
 
@@ -3599,8 +4085,8 @@ com.smart.rag.infrastructure.llm/
 | `DashScopeEmbeddingModel` 多实现 `EmbeddingCapable` 后 PgVectorStore 兼容性 | 保留 `@Primary implements EmbeddingModel`，PgVectorStore 注入不变，行为不变 |
 | Embedding 批量分片逻辑 | 已有 `DashScopeEmbeddingModel.callBatch()` 中实现，迁移后保留，由 `ResilientEmbeddingClient` 包装重试 |
 | Evaluation Profile 独立 ChatClient | `LlmClientRegistry` 支持条件注册，evaluation 专用模型按 Profile 过滤 |
-| 旧 `compositeId`（`provider/model` 格式）对应 `get(compositeId, type)` 查询 | 新 `candidateId`（YAML candidate.id，全局唯一）对应一个 client 实例，能力由 `capability()` 声明（类型系统强制一对一） |
-| 两 Registry 共存期（Phase 2-3） | 本地开发阶段可容忍。旧 `ChatClientRegistry` 用 `"provider/model"` 格式 ID，新 `LlmClientRegistry` 用 `"provider:model"` 格式 ID，互不冲突。熔断器共享底层 `ModelCircuitBreakerRegistry`，状态一致 |
+| 旧 `compositeId`（`provider/model` 格式，已删除）对应 `get(compositeId, type)` 查询 | 新 `candidateId`（YAML candidate.id，全局唯一）对应一个 client 实例，能力由 `capability()` 声明（类型系统强制一对一） |
+| 两 Registry 共存期（Phase 2-3） | 本地开发阶段可容忍。旧 `ChatClientRegistry` 用 `"provider/model"` 格式 ID，新 `LlmClientRegistry` 用 YAML `candidate.id` 全局唯一标识（如 `qwen3-max`），命名空间互不冲突。熔断器共享底层 `ModelCircuitBreakerRegistry`，状态一致 |
 | HTTP 连接池碎片化 | 每个 `GenericOpenAiProvider` 实例创建独立 RestClient。5 个供应商 = 5 个连接池，本地开发阶段可接受。生产化时考虑注入共享 `RestClient.Builder` |
 | Token 使用量追踪 | `LlmResponse.TokenUsage` 由调用方（如 `ChatServiceImpl`）回传到 `ChatUsageTracker`，与现有追踪系统集成方式不变 |
 | LlmJudge 隔离性 | **本次不迁移**，维持独立 `@Bean("judgeChatClient")`，评估专用模型不受聊天路径弹性策略影响 |
@@ -3635,11 +4121,12 @@ com.smart.rag.infrastructure.llm/
 
 ### 18.2 方案
 
-§4.4 的 `LlmProvider` 接口已定义 `default void close() {}` 方法。持有资源的 Provider 覆写此方法：
+持有资源的 Provider 直接实现 `DisposableBean`，由 Spring 容器在关闭时统一调用 `destroy()`：
 
 实现示例：
-- `GenericOpenAiProvider` — 实现 `DisposableBean`，`destroy()` 调用 `close()` 关闭 RestClient 连接池
-- `BaiLianRerankClient` — 内部线程池在 `close()` 中优雅关闭；`DashScopeEmbeddingModel` 委托给已有资源管理
+- `GenericOpenAiProvider` — 实现 `DisposableBean`，`destroy()` 中关闭 RestClient 连接池
+- `BaiLianRerankClient` — 实现 `CapabilityClient` 的 `close()` 方法，内部线程池优雅关闭
+- `DashScopeEmbeddingModel` — 委托给已有资源管理
 
 ### 18.3 共享 HTTP 基础设施（生产化建议）
 
@@ -3706,3 +4193,13 @@ public LlmResponse chat(ChatRequest request) {
 ```
 
 > **实施建议**：Phase 1 先搭建接口 + 弹性层，Metrics 作为 Phase 4（可观测性增强）加入，不影响核心架构。
+
+---
+
+## 20. 测试策略
+
+> 完整测试策略已拆分至独立文档：[llm-unified-spi-testing.md](llm-unified-spi-testing.md)
+>
+> 覆盖范围：弹性层单元测试（CircuitBreaker / ProbeHandler / RetryPolicy）、编排层测试（FallbackExecutor）、Registry 并发刷新测试、集成测试（WireMock 联合）、新 Provider 验收模板、Mock 模式、命名与标签约定。
+>
+> **实施建议**：设计文档稳定后同步修复测试代码。弹性层优先级最高（RetryPolicy → CircuitBreaker → ProbeHandler），编排层次之，Registry 并发测试最后补齐。

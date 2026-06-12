@@ -2,7 +2,7 @@ package com.smart.rag.chat.service;
 
 import com.smart.rag.chat.context.RequestContext;
 import com.smart.rag.chat.dto.ChatRequest;
-import com.smart.rag.infrastructure.provider.ModelRouter;
+import org.jspecify.annotations.Nullable;
 import org.springframework.ai.chat.client.ChatClient;
 
 /**
@@ -10,14 +10,15 @@ import org.springframework.ai.chat.client.ChatClient;
  */
 public record StrategyExecutionContext(
     ChatClient chatClient,
-    ModelRouter.Route route,
+    /** 候选模型 ID（对应 YAML candidate.id） */
+    String candidateId,
     ChatRequest request,
     /** 隔离后的 ID -- 内部使用（消息保存、usage 记录） */
     String conversationId,
     /** 原始 ID -- 返回给客户端的 DTO */
     String rawConversationId,
     Long userId,
-    RequestContext cagContext,
+    @Nullable RequestContext cagContext,
     /** 创建时间戳，供 elapsed() 计算 */
     long startTimeMs
 ) {

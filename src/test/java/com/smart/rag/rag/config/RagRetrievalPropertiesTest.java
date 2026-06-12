@@ -19,7 +19,7 @@ class RagRetrievalPropertiesTest {
             var props = new RagRetrievalProperties(
                     true, true, "jiebacfg",
                     30, 30, 60,
-                    false, "", "", "", 5,
+                    false,
                     true, 0.5, 10, 0.5,
                     null, null
             );
@@ -33,7 +33,7 @@ class RagRetrievalPropertiesTest {
             var props = new RagRetrievalProperties(
                     true, true, "jiebacfg",
                     30, 30, 60,
-                    false, "", "", "", 5,
+                    false,
                     true, 0.5, 10, 0.5,
                     "deepseek/deepseek-chat", 0.2
             );

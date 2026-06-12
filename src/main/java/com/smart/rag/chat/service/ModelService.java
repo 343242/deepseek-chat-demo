@@ -1,7 +1,5 @@
 package com.smart.rag.chat.service;
 
-import com.smart.rag.infrastructure.model.ProviderModelInfo;
-
 import java.util.List;
 
 /**
@@ -9,9 +7,9 @@ import java.util.List;
  */
 public interface ModelService {
 
-    List<ProviderModelInfo> listModels();
+    List<String> listModelIds();
 
-    boolean isModelAvailable(String modelId);
+    boolean isModelAvailable(String candidateId);
 
     boolean refreshModels();
 }

@@ -2,6 +2,8 @@ package com.smart.rag.infrastructure.llm.resilience;
 
 import com.smart.rag.infrastructure.llm.EmbeddingCapable;
 import com.smart.rag.infrastructure.llm.EmbeddingType;
+import com.smart.rag.infrastructure.llm.metrics.LlmMetrics;
+import org.springframework.lang.Nullable;
 
 import java.util.List;
 
@@ -20,19 +22,24 @@ public class ResilientEmbeddingClient extends AbstractResilientClient<EmbeddingC
 
     public ResilientEmbeddingClient(EmbeddingCapable delegate,
                                       CircuitBreaker circuitBreaker,
-                                      RetryPolicy retryPolicy) {
-        super(delegate, circuitBreaker, retryPolicy);
+                                      RetryPolicy retryPolicy,
+                                      @Nullable LlmMetrics metrics) {
+        super(delegate, circuitBreaker, retryPolicy, metrics);
     }
 
     @Override
     public float[] embed(String text, EmbeddingType type) {
+        long start = metrics != null ? metrics.startNanos() : 0;
         try {
-            return circuitBreaker.execute(() ->
+            float[] result = circuitBreaker.execute(() ->
                 retryPolicy.executeWithBackoff(() ->
                     delegate.embed(text, type)
                 )
             );
+            if (metrics != null) metrics.recordEmbedLatency(candidateId(), start, "success");
+            return result;
         } catch (Exception e) {
+            if (metrics != null) metrics.recordEmbedLatency(candidateId(), start, "error");
             if (e instanceof RuntimeException re) throw re;
             throw new RuntimeException(e);
         }
@@ -40,13 +47,17 @@ public class ResilientEmbeddingClient extends AbstractResilientClient<EmbeddingC
 
     @Override
     public List<float[]> embedBatch(List<String> texts, EmbeddingType type) {
+        long start = metrics != null ? metrics.startNanos() : 0;
         try {
-            return circuitBreaker.execute(() ->
+            List<float[]> result = circuitBreaker.execute(() ->
                 retryPolicy.executeWithBackoff(() ->
                     delegate.embedBatch(texts, type)
                 )
             );
+            if (metrics != null) metrics.recordEmbedLatency(candidateId(), start, "success");
+            return result;
         } catch (Exception e) {
+            if (metrics != null) metrics.recordEmbedLatency(candidateId(), start, "error");
             if (e instanceof RuntimeException re) throw re;
             throw new RuntimeException(e);
         }

@@ -6,6 +6,7 @@ import com.smart.rag.infrastructure.llm.LlmCapability;
 import com.smart.rag.infrastructure.llm.ModelCandidate;
 import com.smart.rag.infrastructure.llm.client.generic.GenericChatClient;
 import com.smart.rag.infrastructure.llm.config.ProviderConfig;
+import com.smart.rag.infrastructure.llm.metrics.LlmMetrics;
 import com.smart.rag.infrastructure.llm.resilience.CircuitBreaker;
 import com.smart.rag.infrastructure.llm.resilience.ProbeHandler;
 import com.smart.rag.infrastructure.llm.resilience.RetryPolicy;
@@ -20,7 +21,7 @@ public class ChatCapabilityStrategy implements CapabilityStrategy {
 
     @Override
     public String resolveEndpoint(ProviderConfig config) {
-        return config.endpoints().get(capability().name());
+        return config.getEndpoint(capability());
     }
 
     @Override
@@ -33,8 +34,9 @@ public class ChatCapabilityStrategy implements CapabilityStrategy {
     public CapabilityClient wrapWithResilience(CapabilityClient raw,
                                                 CircuitBreaker cb,
                                                 RetryPolicy retry,
-                                                @Nullable ProbeHandler probe) {
+                                                @Nullable ProbeHandler probe,
+                                                @Nullable LlmMetrics metrics) {
         return new com.smart.rag.infrastructure.llm.resilience.ResilientChatClient(
-            (ChatCapable) raw, cb, retry, probe);
+            (ChatCapable) raw, cb, retry, probe, metrics);
     }
 }

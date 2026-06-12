@@ -47,12 +47,13 @@ spring:
           min-idle: 4
           max-wait: 3000ms
   ai:
-    deepseek:
-      base-url: https://api.deepseek.com
-      api-key: ${DEEPSEEK_API_KEY}
-      chat:
-        model: ${DEEPSEEK_CHAT_MODEL:deepseek-chat}
-        temperature: 0.7
+    vectorstore:
+      pgvector:
+        index-type: HNSW
+        distance-type: COSINE_DISTANCE
+        dimensions: 1024
+        initialize-schema: true
+        table-name: vector_store
     chat:
       memory:
         repository:
@@ -70,6 +71,77 @@ app:
     epoch: ${SNOWFLAKE_EPOCH:2026-01-01T00:00:00+08:00}
     datacenter-id: ${SNOWFLAKE_DATACENTER_ID:0}
     worker-id: ${SNOWFLAKE_WORKER_ID:0}
+
+  # LLM 统一 SPI 配置
+  llm:
+    providers:
+      bailian:
+        url: https://dashscope.aliyuncs.com/compatible-mode/v1
+        api-key: ${DASHSCOPE_API_KEY}
+        endpoints:
+          chat: /chat/completions
+      deepseek:
+        url: https://api.deepseek.com
+        api-key: ${DEEPSEEK_API_KEY}
+        endpoints:
+          chat: /chat/completions
+      zhipu:
+        url: https://open.bigmodel.cn/api/paas/v4
+        api-key: ${ZHIPU_API_KEY}
+        endpoints:
+          chat: /chat/completions
+      minimax:
+        url: https://api.minimaxi.com/v1
+        api-key: ${MINIMAX_API_KEY}
+        endpoints:
+          chat: /v1/text/chatcompletion_v2
+    capabilities:
+      chat:
+        default-model: qwen3-max
+        deep-thinking-model: qwen3-max
+        candidates:
+          - id: qwen-plus
+            provider: bailian
+            model: qwen-plus-latest
+            priority: 1
+          - id: deepseek-v4-flash
+            provider: deepseek
+            model: deepseek-v4-flash
+            supports-streaming: true
+            priority: 2
+          - id: qwen3-max
+            provider: bailian
+            model: qwen3-max
+            supports-thinking: true
+            priority: 4
+      embedding:
+        default-model: qwen-emb-8b
+        candidates:
+          - id: qwen-emb-8b
+            provider: bailian
+            model: Qwen/Qwen3-Embedding-8B
+            dimension: 1024
+            priority: 1
+      reranking:
+        default-model: qwen3-rerank
+        candidates:
+          - id: qwen3-rerank
+            provider: bailian
+            model: qwen3-rerank
+            priority: 1
+    resilience:
+      retry:
+        max-attempts: 3
+        base-delay-ms: 500
+        max-delay-ms: 5000
+        multiplier: 2.0
+      circuit-breaker:
+        failure-threshold: 5
+        open-duration-ms: 30000
+        half-open-max-calls: 2
+      probe:
+        probe-timeout-ms: 3000
+        enabled: true
 
   # ETL 线程池 + 快速通道配置
   etl:

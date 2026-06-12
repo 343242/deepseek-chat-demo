@@ -4,7 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smart.rag.agent.dto.ToolResult;
 import com.smart.rag.agent.workspace.RetrievedDocument;
 import com.smart.rag.agent.workspace.ToolWorkspace;
-import com.smart.rag.rag.retrieval.BailianRerankPostProcessor;
+import com.smart.rag.rag.retrieval.RerankDocumentPostProcessor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.document.Document;
@@ -20,7 +20,7 @@ import java.util.Map;
 /**
  * Rerank Tool -- 对已检索文档进行语义精排
  * <p>
- * 委托 {@link BailianRerankPostProcessor} 单例 Bean 执行精排（百炼 qwen3-rerank 模型）。
+ * 委托 {@link RerankDocumentPostProcessor} 单例 Bean 执行精排。
  * 从 workspace 获取已检索文档，调用 Rerank API 后替换 workspace 中的文档列表。
  */
 @Component
@@ -28,7 +28,7 @@ public class RerankTool implements RagTool {
 
     private static final Logger log = LoggerFactory.getLogger(RerankTool.class);
 
-    private final BailianRerankPostProcessor reranker;
+    private final RerankDocumentPostProcessor reranker;
     private final ObjectMapper objectMapper;
 
     /**
@@ -37,7 +37,7 @@ public class RerankTool implements RagTool {
      * 使用 required=false 因为 Bean 仅在 rerank-enabled=true 时存在。
      * {@link #execute} 内部会检查 reranker 是否可用。
      */
-    public RerankTool(@Autowired(required = false) BailianRerankPostProcessor reranker,
+    public RerankTool(@Autowired(required = false) RerankDocumentPostProcessor reranker,
                       ObjectMapper objectMapper) {
         this.reranker = reranker;
         this.objectMapper = objectMapper;

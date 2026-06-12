@@ -1,77 +1,50 @@
 package com.smart.rag.chat.service.impl;
 
-import com.smart.rag.infrastructure.client.ChatClientRegistry;
-import com.smart.rag.infrastructure.model.ModelInfo;
-import com.smart.rag.infrastructure.model.ProviderModelInfo;
-import com.smart.rag.infrastructure.provider.ModelProvider;
-import com.smart.rag.infrastructure.provider.ProviderRegistry;
-import com.smart.rag.chat.service.ModelRegistryRefresher;
+import com.smart.rag.infrastructure.llm.CapabilityClient;
+import com.smart.rag.infrastructure.llm.LlmCapability;
+import com.smart.rag.infrastructure.llm.registry.LlmClientRegistry;
 import com.smart.rag.chat.service.ModelService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
-import java.util.ArrayList;
 import java.util.List;
 
 /**
  * 模型管理服务
  * <p>
- * 依赖 ChatClientRegistry 查询、ModelRegistryRefresher 刷新、ProviderRegistry 获取厂商信息。
- * 不再直接依赖 RestClient / ChatClientFactory / Config 类。
- * <p>
- * 多 Provider 支持：listModels() 返回 ProviderModelInfo（含厂商信息），
- * 替代原有的纯 ModelInfo 列表。
+ * 通过 {@link LlmClientRegistry} 查询已注册的模型候选。
  */
 @Service
 public class ModelServiceImpl implements ModelService {
 
     private static final Logger log = LoggerFactory.getLogger(ModelServiceImpl.class);
 
-    private final ChatClientRegistry registry;
-    private final ModelRegistryRefresher refresher;
-    private final ProviderRegistry providerRegistry;
+    private final LlmClientRegistry llmRegistry;
 
-    public ModelServiceImpl(ChatClientRegistry registry,
-                            ModelRegistryRefresher refresher,
-                            ProviderRegistry providerRegistry) {
-        this.registry = registry;
-        this.refresher = refresher;
-        this.providerRegistry = providerRegistry;
+    public ModelServiceImpl(LlmClientRegistry llmRegistry) {
+        this.llmRegistry = llmRegistry;
     }
 
     @Override
-    public List<ProviderModelInfo> listModels() {
-        List<ModelInfo> cachedModels = registry.getCachedModels();
-        List<ProviderModelInfo> result = new ArrayList<>(cachedModels.size());
-
-        for (ModelInfo model : cachedModels) {
-            String providerId = refresher.getProviderIdForModel(model.id());
-            if (providerId != null) {
-                ModelProvider provider = providerRegistry.get(providerId);
-                result.add(ProviderModelInfo.from(model,
-                        provider.getProviderId(),
-                        provider.getDisplayName()));
-            } else {
-                log.warn("Model '{}' not found in provider index, skipping", model.id());
-            }
-        }
-
-        return result;
+    public List<String> listModelIds() {
+        return List.copyOf(llmRegistry.registeredCandidateIds());
     }
 
     @Override
-    public boolean isModelAvailable(String modelId) {
-        return registry.contains(modelId);
+    public boolean isModelAvailable(String candidateId) {
+        CapabilityClient client = llmRegistry.find(candidateId);
+        return client != null && client.isAvailable();
     }
 
     @Override
     public boolean refreshModels() {
-        boolean success = refresher.refresh();
-        if (!success) {
-            log.warn("Model refresh completed with failures — some providers may be unavailable");
+        try {
+            llmRegistry.refresh();
+            return true;
+        } catch (Exception e) {
+            log.warn("Model refresh failed: {}", e.getMessage());
+            return false;
         }
-        return success;
     }
-
 }

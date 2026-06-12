@@ -1,5 +1,6 @@
 package com.smart.rag.infrastructure.messaging;
 
+import com.smart.rag.infrastructure.messaging.MessagingCircuitBreakerState;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -36,7 +37,7 @@ class SendCircuitBreakerTest {
         @Test
         void staysClosedOnSuccess() {
             cb.recordSuccess();
-            assertEquals(CircuitBreakerState.CLOSED, cb.state());
+            assertEquals(MessagingCircuitBreakerState.CLOSED, cb.state());
         }
 
         @Test
@@ -46,7 +47,7 @@ class SendCircuitBreakerTest {
             assertTrue(cb.isCallAllowed()); // still closed, only 2 failures (threshold=3)
             cb.recordFailure(); // 3rd failure = threshold reached
             assertFalse(cb.isCallAllowed());
-            assertEquals(CircuitBreakerState.OPEN, cb.state());
+            assertEquals(MessagingCircuitBreakerState.OPEN, cb.state());
         }
     }
 
@@ -68,7 +69,7 @@ class SendCircuitBreakerTest {
         @Test
         void transitionsToHalfOpenAfterCooldown() {
             clock.advanceMs(10_001);
-            assertEquals(CircuitBreakerState.HALF_OPEN, cb.state());
+            assertEquals(MessagingCircuitBreakerState.HALF_OPEN, cb.state());
             assertTrue(cb.isCallAllowed());
         }
     }
@@ -94,7 +95,7 @@ class SendCircuitBreakerTest {
         void probeSuccessClosesCircuit() {
             cb.isCallAllowed(); // consume probe slot
             cb.recordSuccess();
-            assertEquals(CircuitBreakerState.CLOSED, cb.state());
+            assertEquals(MessagingCircuitBreakerState.CLOSED, cb.state());
             assertTrue(cb.isCallAllowed());
         }
 
@@ -102,7 +103,7 @@ class SendCircuitBreakerTest {
         void probeFailureReopensCircuit() {
             cb.isCallAllowed(); // consume probe slot
             cb.recordFailure();
-            assertEquals(CircuitBreakerState.OPEN, cb.state());
+            assertEquals(MessagingCircuitBreakerState.OPEN, cb.state());
             assertFalse(cb.isCallAllowed());
         }
     }

@@ -6,6 +6,7 @@ import com.smart.rag.infrastructure.llm.LlmCapability;
 import com.smart.rag.infrastructure.llm.ModelCandidate;
 import com.smart.rag.infrastructure.llm.client.generic.GenericEmbeddingClient;
 import com.smart.rag.infrastructure.llm.config.ProviderConfig;
+import com.smart.rag.infrastructure.llm.metrics.LlmMetrics;
 import com.smart.rag.infrastructure.llm.resilience.CircuitBreaker;
 import com.smart.rag.infrastructure.llm.resilience.ProbeHandler;
 import com.smart.rag.infrastructure.llm.resilience.RetryPolicy;
@@ -42,7 +43,7 @@ public class EmbeddingCapabilityStrategy implements CapabilityStrategy {
 
     @Override
     public String resolveEndpoint(ProviderConfig config) {
-        return config.endpoints().get(capability().name());
+        return config.getEndpoint(capability());
     }
 
     @Override
@@ -60,7 +61,8 @@ public class EmbeddingCapabilityStrategy implements CapabilityStrategy {
     public CapabilityClient wrapWithResilience(CapabilityClient raw,
                                                 CircuitBreaker cb,
                                                 RetryPolicy retry,
-                                                @Nullable ProbeHandler probe) {
-        return new ResilientEmbeddingClient((EmbeddingCapable) raw, cb, retry);
+                                                @Nullable ProbeHandler probe,
+                                                @Nullable LlmMetrics metrics) {
+        return new ResilientEmbeddingClient((EmbeddingCapable) raw, cb, retry, metrics);
     }
 }

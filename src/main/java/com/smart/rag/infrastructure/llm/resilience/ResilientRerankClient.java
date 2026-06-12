@@ -3,6 +3,8 @@ package com.smart.rag.infrastructure.llm.resilience;
 import com.smart.rag.infrastructure.llm.RerankCapable;
 import com.smart.rag.infrastructure.llm.RerankRequest;
 import com.smart.rag.infrastructure.llm.RerankResult;
+import com.smart.rag.infrastructure.llm.metrics.LlmMetrics;
+import org.springframework.lang.Nullable;
 
 import java.util.List;
 
@@ -20,19 +22,24 @@ public class ResilientRerankClient extends AbstractResilientClient<RerankCapable
 
     public ResilientRerankClient(RerankCapable delegate,
                                    CircuitBreaker circuitBreaker,
-                                   RetryPolicy retryPolicy) {
-        super(delegate, circuitBreaker, retryPolicy);
+                                   RetryPolicy retryPolicy,
+                                   @Nullable LlmMetrics metrics) {
+        super(delegate, circuitBreaker, retryPolicy, metrics);
     }
 
     @Override
     public List<RerankResult> rerank(RerankRequest request) {
+        long start = metrics != null ? metrics.startNanos() : 0;
         try {
-            return circuitBreaker.execute(() ->
+            List<RerankResult> result = circuitBreaker.execute(() ->
                 retryPolicy.executeWithBackoff(() ->
                     delegate.rerank(request)
                 )
             );
+            if (metrics != null) metrics.recordRerankLatency(candidateId(), start, "success");
+            return result;
         } catch (Exception e) {
+            if (metrics != null) metrics.recordRerankLatency(candidateId(), start, "error");
             if (e instanceof RuntimeException re) throw re;
             throw new RuntimeException(e);
         }
@@ -40,13 +47,17 @@ public class ResilientRerankClient extends AbstractResilientClient<RerankCapable
 
     @Override
     public List<RerankResult> rerank(RerankRequest request, int topN) {
+        long start = metrics != null ? metrics.startNanos() : 0;
         try {
-            return circuitBreaker.execute(() ->
+            List<RerankResult> result = circuitBreaker.execute(() ->
                 retryPolicy.executeWithBackoff(() ->
                     delegate.rerank(request, topN)
                 )
             );
+            if (metrics != null) metrics.recordRerankLatency(candidateId(), start, "success");
+            return result;
         } catch (Exception e) {
+            if (metrics != null) metrics.recordRerankLatency(candidateId(), start, "error");
             if (e instanceof RuntimeException re) throw re;
             throw new RuntimeException(e);
         }

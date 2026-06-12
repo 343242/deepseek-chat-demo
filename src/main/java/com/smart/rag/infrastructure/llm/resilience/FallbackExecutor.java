@@ -4,6 +4,7 @@ import com.smart.rag.infrastructure.exception.RemoteException;
 import com.smart.rag.infrastructure.exception.errorcode.RemoteErrorCode;
 import com.smart.rag.infrastructure.fallback.FallbackEligibility;
 import com.smart.rag.infrastructure.llm.CapabilityClient;
+import com.smart.rag.infrastructure.llm.metrics.LlmMetrics;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.lang.Nullable;
@@ -41,15 +42,24 @@ public class FallbackExecutor {
     private final FallbackEligibility fallbackEligibility;
     @Nullable
     private final Consumer<FallbackEvent> eventPublisher;
+    @Nullable
+    private final LlmMetrics metrics;
 
     public FallbackExecutor(FallbackEligibility fallbackEligibility) {
-        this(fallbackEligibility, null);
+        this(fallbackEligibility, null, null);
     }
 
     public FallbackExecutor(FallbackEligibility fallbackEligibility,
                             @Nullable Consumer<FallbackEvent> eventPublisher) {
+        this(fallbackEligibility, eventPublisher, null);
+    }
+
+    public FallbackExecutor(FallbackEligibility fallbackEligibility,
+                            @Nullable Consumer<FallbackEvent> eventPublisher,
+                            @Nullable LlmMetrics metrics) {
         this.fallbackEligibility = fallbackEligibility;
         this.eventPublisher = eventPublisher;
+        this.metrics = metrics;
     }
 
     /**
@@ -84,6 +94,10 @@ public class FallbackExecutor {
                 }
                 log.warn("Client '{}' failed, trying next: {}",
                     client.candidateId(), e.getMessage());
+                if (metrics != null && i + 1 < available.size()) {
+                    metrics.recordFallback(client.capability(),
+                        client.candidateId(), available.get(i + 1).candidateId());
+                }
                 if (eventPublisher != null && i + 1 < available.size()) {
                     eventPublisher.accept(new FallbackEvent(
                         client.capability(), client.candidateId(),
@@ -135,6 +149,11 @@ public class FallbackExecutor {
 
             result = Flux.defer(() -> action.apply(client))
                 .doOnError(e -> {
+                    if (metrics != null && fallbackEligibility.isEligible(e)
+                            && index + 1 < chain.size()) {
+                        metrics.recordFallback(client.capability(),
+                            client.candidateId(), chain.get(index + 1).candidateId());
+                    }
                     if (eventPublisher != null && fallbackEligibility.isEligible(e)
                             && index + 1 < chain.size()) {
                         eventPublisher.accept(new FallbackEvent(

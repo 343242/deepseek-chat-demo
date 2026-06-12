@@ -1,28 +1,26 @@
 package com.smart.rag.chat.service.impl;
 
-import com.smart.rag.infrastructure.client.ChatClientRegistry;
 import com.smart.rag.chat.context.CagProperties;
 import com.smart.rag.chat.context.RequestContextManager;
 import com.smart.rag.chat.dto.ChatRequest;
 import com.smart.rag.chat.dto.ChatResponse;
-import com.smart.rag.infrastructure.fallback.ChatFallbackProperties;
-import com.smart.rag.infrastructure.fallback.ModelCircuitBreakerRegistry;
-import com.smart.rag.infrastructure.fallback.FallbackChainProvider;
+import com.smart.rag.infrastructure.exception.ProviderNotFoundException;
+import com.smart.rag.infrastructure.exception.ContentFilteredException;
 import com.smart.rag.infrastructure.fallback.FallbackEligibility;
-import com.smart.rag.infrastructure.fallback.StreamRetryHandler;
+import com.smart.rag.infrastructure.llm.CapabilityClient;
+import com.smart.rag.infrastructure.llm.ChatCapable;
+import com.smart.rag.infrastructure.llm.LlmCapability;
+import com.smart.rag.infrastructure.llm.registry.LlmClientRegistry;
 import com.smart.rag.chat.service.SseStreamBridge;
 import com.smart.rag.chat.service.UserContextProvider;
 import com.smart.rag.chat.mode.ChatMode;
 import com.smart.rag.chat.mode.ChatModeStrategy;
 import com.smart.rag.chat.mode.ModeRouter;
-import com.smart.rag.infrastructure.provider.ModelRouter;
 import com.smart.rag.chat.service.ChatConversationHelper;
 import com.smart.rag.chat.service.ChatUsageTracker;
 import com.smart.rag.chat.service.StrategyExecuteResult;
 import com.smart.rag.chat.service.StrategyExecutionContext;
 import com.smart.rag.common.util.ConversationIdUtil;
-import com.smart.rag.infrastructure.exception.ContentFilteredException;
-import com.smart.rag.infrastructure.exception.ProviderNotFoundException;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -32,6 +30,7 @@ import org.mockito.Mock;
 import org.mockito.MockedStatic;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.model.ChatModel;
 
 import java.util.List;
 
@@ -39,82 +38,60 @@ import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
-/**
- * ChatServiceImpl 单元测试
- * <p>
- * 测试阻塞式聊天的模式路由、降级链行为。
- * UserContextProvider 注入 mock 替代静态 SecurityUtils 调用。
- */
 @ExtendWith(MockitoExtension.class)
 @DisplayName("ChatServiceImpl 单元测试")
 class ChatServiceImplTest {
 
-    @Mock private ChatClientRegistry registry;
-    @Mock private ModelRouter modelRouter;
+    @Mock private LlmClientRegistry llmRegistry;
+    @Mock private FallbackEligibility fallbackEligibility;
     @Mock private ModeRouter modeRouter;
     @Mock private ChatUsageTracker usageTracker;
     @Mock private ChatConversationHelper conversationHelper;
-    @Mock private ChatFallbackProperties fallbackProperties;
-    @Mock private FallbackChainProvider fallbackChainProvider;
-    @Mock private FallbackEligibility fallbackEligibility;
-    @Mock private StreamRetryHandler streamRetryHandler;
-    @Mock private ModelCircuitBreakerRegistry circuitBreakers;
     @Mock private SseStreamBridge sseStreamBridge;
     @Mock private RequestContextManager cagContextManager;
     @Mock private CagProperties cagProperties;
     @Mock private UserContextProvider userContextProvider;
-    @Mock private ChatClient chatClient;
     @Mock private ChatModeStrategy modeStrategy;
+    @Mock private ChatModel chatModel;
 
     private MockedStatic<ConversationIdUtil> conversationIdUtilMock;
 
     private static final Long USER_ID = 42L;
     private static final String RAW_CONV_ID = "conv-abc123";
     private static final String ISOLATED_CONV_ID = "u_42_conv-abc123";
-    private static final String MODEL_ID = "deepseek/deepseek-chat";
+    private static final String CANDIDATE_ID = "qwen-plus";
 
     private ChatServiceImpl createService() {
         return new ChatServiceImpl(
-                registry, modelRouter, modeRouter, usageTracker, conversationHelper,
-                fallbackProperties, fallbackChainProvider, fallbackEligibility,
-                streamRetryHandler, null, circuitBreakers, sseStreamBridge, cagContextManager, cagProperties,
-                userContextProvider);
+                llmRegistry, fallbackEligibility, modeRouter, usageTracker,
+                conversationHelper, sseStreamBridge, cagContextManager,
+                cagProperties, userContextProvider);
+    }
+
+    private ChatRequest buildRequest() {
+        return new ChatRequest(CANDIDATE_ID, "hello", RAW_CONV_ID, false, "SIMPLE", false, null);
     }
 
     private void setupCommonMocks(ChatRequest request) {
         when(userContextProvider.getCurrentUserId()).thenReturn(USER_ID);
         conversationIdUtilMock.when(() -> ConversationIdUtil.buildIsolatedId(USER_ID, RAW_CONV_ID))
                 .thenReturn(ISOLATED_CONV_ID);
-
-        when(modeRouter.route(request.mode())).thenReturn(modeStrategy);
-        when(modeStrategy.getMode()).thenReturn(ChatMode.SIMPLE);
-
-        setupModelMocks(request.model(), "deepseek", "deepseek-chat");
-
-        doNothing().when(conversationHelper).ensureConversationExists(eq(USER_ID), eq(ISOLATED_CONV_ID), anyString());
-        when(cagProperties.isEnabled()).thenReturn(false);
-    }
-
-    private void setupRequestContextOnly(ChatRequest request) {
-        when(userContextProvider.getCurrentUserId()).thenReturn(USER_ID);
-        conversationIdUtilMock.when(() -> ConversationIdUtil.buildIsolatedId(USER_ID, RAW_CONV_ID))
-                .thenReturn(ISOLATED_CONV_ID);
-
         when(modeRouter.route(request.mode())).thenReturn(modeStrategy);
         when(modeStrategy.getMode()).thenReturn(ChatMode.SIMPLE);
         doNothing().when(conversationHelper).ensureConversationExists(eq(USER_ID), eq(ISOLATED_CONV_ID), anyString());
         when(cagProperties.isEnabled()).thenReturn(false);
     }
 
-    private void setupModelMocks(String requestedModel, String providerId, String modelId) {
-        ModelRouter.Route route = new ModelRouter.Route(providerId, modelId);
-        String compositeId = providerId + "/" + modelId;
-        when(modelRouter.resolve(requestedModel)).thenReturn(route);
-        when(registry.get(compositeId)).thenReturn(chatClient);
-    }
-
-    private StrategyExecuteResult buildStandardResult(String content) {
-        return StrategyExecuteResult.standard(null, content);
+    private ChatCapable mockChatClient(String candidateId) {
+        ChatCapable client = mock(ChatCapable.class, invocation -> {
+            if ("candidateId".equals(invocation.getMethod().getName())) return candidateId;
+            if ("providerId".equals(invocation.getMethod().getName())) return "test-provider";
+            if ("modelName".equals(invocation.getMethod().getName())) return candidateId;
+            if ("isAvailable".equals(invocation.getMethod().getName())) return true;
+            return null;
+        });
+        when(client.asChatModel()).thenReturn(chatModel);
+        return client;
     }
 
     @AfterEach
@@ -123,172 +100,103 @@ class ChatServiceImplTest {
     }
 
     @Nested
-    @DisplayName("chat (fallback disabled)")
-    class ChatFallbackDisabled {
+    @DisplayName("chat (single model success)")
+    class ChatSingleModel {
 
         @Test
-        @DisplayName("chat_fallbackDisabled_delegatesToStrategy")
-        void chat_fallbackDisabled_delegatesToStrategy() {
+        @DisplayName("chat_singleModel_delegatesToStrategy")
+        void chat_singleModel_delegatesToStrategy() {
             conversationIdUtilMock = mockStatic(ConversationIdUtil.class);
-
-            ChatRequest request = new ChatRequest(MODEL_ID, "hello", RAW_CONV_ID, false, "SIMPLE", false, null);
+            ChatRequest request = buildRequest();
             setupCommonMocks(request);
 
-            String reply = "Hi there!";
-            when(modeStrategy.execute(any(StrategyExecutionContext.class)))
-                    .thenReturn(buildStandardResult(reply));
+            ChatCapable client = mockChatClient(CANDIDATE_ID);
+            when(llmRegistry.getChain(LlmCapability.CHAT)).thenReturn(List.of(client));
 
-            when(fallbackProperties.enabled()).thenReturn(false);
+            when(modeStrategy.execute(any(StrategyExecutionContext.class)))
+                    .thenReturn(StrategyExecuteResult.standard(null, "Hi there!"));
 
             ChatServiceImpl service = createService();
-            ChatResponse response = service.chat(request);
+            var response = service.chat(request);
 
-            assertEquals(reply, response.content());
-            assertEquals(MODEL_ID, response.model());
+            assertEquals("Hi there!", response.content());
+            assertEquals(CANDIDATE_ID, response.model());
             assertEquals(RAW_CONV_ID, response.conversationId());
             assertNull(response.fallback());
 
-            verify(usageTracker).recordUsage(eq(ISOLATED_CONV_ID), eq(MODEL_ID),
-                    anyLong());
+            verify(usageTracker).recordUsage(eq(ISOLATED_CONV_ID), eq(CANDIDATE_ID), anyLong());
             verify(conversationHelper).saveMessagesAndNotify(eq(ISOLATED_CONV_ID),
-                    eq("hello"), eq(reply), eq(MODEL_ID), isNull(), anyLong());
+                    eq("hello"), eq("Hi there!"), eq(CANDIDATE_ID), isNull(), anyLong());
         }
     }
 
     @Nested
-    @DisplayName("chat (fallback enabled)")
-    class ChatFallbackEnabled {
+    @DisplayName("chat (fallback)")
+    class ChatFallback {
 
         @Test
-        @DisplayName("chat_fallbackEnabled_successOnFirstModel")
-        void chat_fallbackEnabled_successOnFirstModel() {
+        @DisplayName("chat_fallback_firstFails_secondSucceeds")
+        void chat_fallback_firstFails_secondSucceeds() {
             conversationIdUtilMock = mockStatic(ConversationIdUtil.class);
-
-            ChatRequest request = new ChatRequest(MODEL_ID, "hello", RAW_CONV_ID, false, "SIMPLE", false, null);
+            ChatRequest request = buildRequest();
             setupCommonMocks(request);
 
-            when(modeStrategy.execute(any(StrategyExecutionContext.class)))
-                    .thenReturn(buildStandardResult("OK"));
-            when(fallbackProperties.enabled()).thenReturn(true);
-            when(fallbackChainProvider.resolve(MODEL_ID, false)).thenReturn(List.of(MODEL_ID));
-            when(circuitBreakers.isCallAllowed(MODEL_ID)).thenReturn(true);
+            String fallbackCandidate = "deepseek-v4-flash";
+            ChatCapable primaryClient = mockChatClient(CANDIDATE_ID);
+            ChatCapable fallbackClient = mockChatClient(fallbackCandidate);
 
-            ChatServiceImpl service = createService();
-            ChatResponse response = service.chat(request);
-
-            assertEquals("OK", response.content());
-            assertNull(response.fallback());
-            verify(circuitBreakers).recordSuccess(MODEL_ID);
-        }
-
-        @Test
-        @DisplayName("chat_fallbackEnabled_firstFails_secondSucceeds")
-        void chat_fallbackEnabled_firstFails_secondSucceeds() {
-            conversationIdUtilMock = mockStatic(ConversationIdUtil.class);
-
-            ChatRequest request = new ChatRequest(MODEL_ID, "hello", RAW_CONV_ID, false, "SIMPLE", false, null);
-            setupCommonMocks(request);
-
-            String fallbackModel = "zhipu/glm-4-flash";
-            ModelRouter.Route fallbackRoute = new ModelRouter.Route("zhipu", "glm-4-flash");
-            when(modelRouter.resolve(fallbackModel)).thenReturn(fallbackRoute);
-            when(registry.get("zhipu/glm-4-flash")).thenReturn(chatClient);
+            when(llmRegistry.getChain(LlmCapability.CHAT))
+                    .thenReturn(List.of(primaryClient, fallbackClient));
+            when(fallbackEligibility.isEligible(any(RuntimeException.class))).thenReturn(true);
 
             when(modeStrategy.execute(any(StrategyExecutionContext.class)))
                     .thenThrow(new RuntimeException("provider timeout"))
-                    .thenReturn(buildStandardResult("Fallback OK"));
-
-            when(fallbackProperties.enabled()).thenReturn(true);
-            when(fallbackChainProvider.resolve(MODEL_ID, false))
-                    .thenReturn(List.of(MODEL_ID, fallbackModel));
-            when(fallbackEligibility.isEligible(any(RuntimeException.class))).thenReturn(true);
-            when(circuitBreakers.isCallAllowed(MODEL_ID)).thenReturn(true);
-            when(circuitBreakers.isCallAllowed(fallbackModel)).thenReturn(true);
+                    .thenReturn(StrategyExecuteResult.standard(null, "Fallback OK"));
 
             ChatServiceImpl service = createService();
-            ChatResponse response = service.chat(request);
+            var response = service.chat(request);
 
             assertEquals("Fallback OK", response.content());
             assertNotNull(response.fallback());
-            assertEquals(MODEL_ID, response.fallback().requestedModel());
+            assertEquals(CANDIDATE_ID, response.fallback().requestedModel());
             assertTrue(response.fallback().fallback());
-            verify(circuitBreakers).recordFailure(MODEL_ID);
-            verify(circuitBreakers).recordSuccess(fallbackModel);
         }
 
         @Test
-        @DisplayName("chat_fallbackEnabled_openBreaker_skipsModelAndUsesNextCandidate")
-        void chat_fallbackEnabled_openBreaker_skipsModelAndUsesNextCandidate() {
+        @DisplayName("chat_fallback_ineligibleException_propagatesImmediately")
+        void chat_fallback_ineligibleException_propagatesImmediately() {
             conversationIdUtilMock = mockStatic(ConversationIdUtil.class);
-
-            ChatRequest request = new ChatRequest(MODEL_ID, "hello", RAW_CONV_ID, false, "SIMPLE", false, null);
-            String fallbackModel = "zhipu/glm-4-flash";
-            setupRequestContextOnly(request);
-            setupModelMocks(fallbackModel, "zhipu", "glm-4-flash");
-            when(modeStrategy.execute(any(StrategyExecutionContext.class)))
-                    .thenReturn(buildStandardResult("Fallback OK"));
-            when(fallbackProperties.enabled()).thenReturn(true);
-            when(fallbackChainProvider.resolve(MODEL_ID, false))
-                    .thenReturn(List.of(MODEL_ID, fallbackModel));
-            when(circuitBreakers.isCallAllowed(MODEL_ID)).thenReturn(false);
-            when(circuitBreakers.isCallAllowed(fallbackModel)).thenReturn(true);
-
-            ChatServiceImpl service = createService();
-            ChatResponse response = service.chat(request);
-
-            assertEquals("Fallback OK", response.content());
-            assertNotNull(response.fallback());
-            assertEquals(MODEL_ID, response.fallback().requestedModel());
-            verify(modelRouter, never()).resolve(MODEL_ID);
-            verify(circuitBreakers, never()).recordFailure(MODEL_ID);
-            verify(circuitBreakers).recordSuccess(fallbackModel);
-        }
-
-        @Test
-        @DisplayName("chat_fallbackEnabled_ineligibleException_propagatesImmediately")
-        void chat_fallbackEnabled_ineligibleException_propagatesImmediately() {
-            conversationIdUtilMock = mockStatic(ConversationIdUtil.class);
-
-            ChatRequest request = new ChatRequest(MODEL_ID, "hello", RAW_CONV_ID, false, "SIMPLE", false, null);
+            ChatRequest request = buildRequest();
             setupCommonMocks(request);
+
+            ChatCapable client = mockChatClient(CANDIDATE_ID);
+            when(llmRegistry.getChain(LlmCapability.CHAT)).thenReturn(List.of(client));
+            when(fallbackEligibility.isEligible(any(ContentFilteredException.class))).thenReturn(false);
 
             when(modeStrategy.execute(any(StrategyExecutionContext.class)))
                     .thenThrow(new ContentFilteredException("content filtered"));
 
-            when(fallbackProperties.enabled()).thenReturn(true);
-            when(fallbackChainProvider.resolve(MODEL_ID, false))
-                    .thenReturn(List.of(MODEL_ID, "zhipu/glm-4-flash"));
-            when(fallbackEligibility.isEligible(any(ContentFilteredException.class))).thenReturn(false);
-            when(circuitBreakers.isCallAllowed(MODEL_ID)).thenReturn(true);
-
             ChatServiceImpl service = createService();
             assertThrows(ContentFilteredException.class, () -> service.chat(request));
-            verify(circuitBreakers, never()).recordFailure(MODEL_ID);
         }
 
         @Test
-        @DisplayName("chat_fallbackEnabled_allExhausted_throwsProviderNotFoundException")
-        void chat_fallbackEnabled_allExhausted_throwsProviderNotFoundException() {
+        @DisplayName("chat_fallback_allExhausted_throwsProviderNotFoundException")
+        void chat_fallback_allExhausted_throwsProviderNotFoundException() {
             conversationIdUtilMock = mockStatic(ConversationIdUtil.class);
-
-            ChatRequest request = new ChatRequest(MODEL_ID, "hello", RAW_CONV_ID, false, "SIMPLE", false, null);
+            ChatRequest request = buildRequest();
             setupCommonMocks(request);
-            setupModelMocks("zhipu/glm-4-flash", "zhipu", "glm-4-flash");
+
+            ChatCapable client1 = mockChatClient(CANDIDATE_ID);
+            ChatCapable client2 = mockChatClient("deepseek-v4-flash");
+            when(llmRegistry.getChain(LlmCapability.CHAT)).thenReturn(List.of(client1, client2));
+            when(fallbackEligibility.isEligible(any(RuntimeException.class))).thenReturn(true);
 
             when(modeStrategy.execute(any(StrategyExecutionContext.class)))
                     .thenThrow(new RuntimeException("timeout"));
 
-            when(fallbackProperties.enabled()).thenReturn(true);
-            when(fallbackChainProvider.resolve(MODEL_ID, false))
-                    .thenReturn(List.of(MODEL_ID, "zhipu/glm-4-flash"));
-            when(fallbackEligibility.isEligible(any(RuntimeException.class))).thenReturn(true);
-            when(circuitBreakers.isCallAllowed(anyString())).thenReturn(true);
-
             ChatServiceImpl service = createService();
-            ProviderNotFoundException ex = assertThrows(ProviderNotFoundException.class, () -> service.chat(request));
-            assertNotNull(ex.getErrorCode());
-            verify(circuitBreakers).recordFailure(MODEL_ID);
-            verify(circuitBreakers).recordFailure("zhipu/glm-4-flash");
+            assertThrows(RuntimeException.class, () -> service.chat(request));
         }
     }
 }

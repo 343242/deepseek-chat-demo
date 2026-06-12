@@ -3,6 +3,8 @@ package com.smart.rag.infrastructure.llm.resilience;
 import com.smart.rag.infrastructure.fallback.CircuitBreakerState;
 import com.smart.rag.infrastructure.llm.CapabilityClient;
 import com.smart.rag.infrastructure.llm.LlmCapability;
+import com.smart.rag.infrastructure.llm.metrics.LlmMetrics;
+import org.springframework.lang.Nullable;
 
 /**
  * AbstractResilientClient — 弹性装饰器公共基类
@@ -16,11 +18,14 @@ abstract class AbstractResilientClient<T extends CapabilityClient> implements Ca
     protected final T delegate;
     protected final CircuitBreaker circuitBreaker;
     protected final RetryPolicy retryPolicy;
+    @Nullable
+    protected final LlmMetrics metrics;
 
-    protected AbstractResilientClient(T delegate, CircuitBreaker circuitBreaker, RetryPolicy retryPolicy) {
+    protected AbstractResilientClient(T delegate, CircuitBreaker circuitBreaker, RetryPolicy retryPolicy, @Nullable LlmMetrics metrics) {
         this.delegate = delegate;
         this.circuitBreaker = circuitBreaker;
         this.retryPolicy = retryPolicy;
+        this.metrics = metrics;
     }
 
     @Override public String candidateId() { return delegate.candidateId(); }

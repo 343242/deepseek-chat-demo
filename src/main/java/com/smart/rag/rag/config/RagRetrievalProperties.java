@@ -18,10 +18,6 @@ public record RagRetrievalProperties(
         int bm25TopK,
         int rrfK,
         boolean rerankEnabled,
-        String rerankBaseUrl,
-        String rerankApiKey,
-        String rerankModel,
-        int rerankTopN,
         boolean mmrEnabled,
         double mmrLambda,
         int mmrTopK,
@@ -34,17 +30,6 @@ public record RagRetrievalProperties(
     public RagRetrievalProperties {
         if (ftsConfig == null || ftsConfig.isBlank()) {
             ftsConfig = "jiebacfg";
-        }
-        if (rerankBaseUrl == null || rerankBaseUrl.isBlank()) {
-            rerankBaseUrl = "https://dashscope.aliyuncs.com/compatible-api/v1";
-        }
-        if (rerankModel == null || rerankModel.isBlank()) {
-            rerankModel = "qwen3-rerank";
-        }
-        // fail-fast：rerank 启用但 apiKey 为空时立即报错
-        if (rerankEnabled && (rerankApiKey == null || rerankApiKey.isBlank())) {
-            throw new IllegalArgumentException(
-                    "app.rag.rerank-api-key must be set when app.rag.rerank-enabled is true");
         }
     }
 
@@ -62,10 +47,6 @@ public record RagRetrievalProperties(
                 bm25TopKOverride != null ? bm25TopKOverride : bm25TopK,
                 rrfKOverride != null ? rrfKOverride : rrfK,
                 rerankEnabled,
-                rerankBaseUrl,
-                rerankApiKey,
-                rerankModel,
-                rerankTopN,
                 mmrEnabled,
                 mmrLambda,
                 mmrTopK,

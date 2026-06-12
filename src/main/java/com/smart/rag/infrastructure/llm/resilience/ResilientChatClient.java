@@ -4,6 +4,7 @@ import com.smart.rag.infrastructure.llm.ChatCapable;
 import com.smart.rag.infrastructure.llm.ChatRequest;
 import com.smart.rag.infrastructure.llm.LlmResponse;
 import com.smart.rag.infrastructure.llm.ToolCallingCapable;
+import com.smart.rag.infrastructure.llm.metrics.LlmMetrics;
 import org.springframework.lang.Nullable;
 import reactor.core.publisher.Flux;
 
@@ -35,8 +36,9 @@ public class ResilientChatClient extends AbstractResilientClient<ChatCapable>
     public ResilientChatClient(ChatCapable delegate,
                                 CircuitBreaker circuitBreaker,
                                 RetryPolicy retryPolicy,
-                                @Nullable ProbeHandler probeHandler) {
-        super(delegate, circuitBreaker, retryPolicy);
+                                @Nullable ProbeHandler probeHandler,
+                                @Nullable LlmMetrics metrics) {
+        super(delegate, circuitBreaker, retryPolicy, metrics);
         this.probeHandler = probeHandler;
     }
 
@@ -49,13 +51,23 @@ public class ResilientChatClient extends AbstractResilientClient<ChatCapable>
 
     @Override
     public LlmResponse chat(ChatRequest request) {
+        long start = metrics != null ? metrics.startNanos() : 0;
         try {
-            return circuitBreaker.execute(() ->
+            LlmResponse response = circuitBreaker.execute(() ->
                 retryPolicy.executeWithBackoff(() ->
                     delegate.chat(request)
                 )
             );
+            if (metrics != null) {
+                metrics.recordChatLatency(candidateId(), start, "success");
+                if (response.tokenUsage() != null) {
+                    metrics.recordTokens(candidateId(), "prompt", response.tokenUsage().promptTokens());
+                    metrics.recordTokens(candidateId(), "completion", response.tokenUsage().completionTokens());
+                }
+            }
+            return response;
         } catch (Exception e) {
+            if (metrics != null) metrics.recordChatLatency(candidateId(), start, "error");
             if (e instanceof RuntimeException re) throw re;
             throw new RuntimeException(e);
         }
@@ -63,6 +75,7 @@ public class ResilientChatClient extends AbstractResilientClient<ChatCapable>
 
     @Override
     public Flux<String> chatStream(ChatRequest request) {
+        long start = metrics != null ? metrics.startNanos() : 0;
         return circuitBreaker.executeStream(() ->
             retryPolicy.retryStream(() -> {
                 Flux<String> raw = delegate.chatStream(request);
@@ -70,7 +83,11 @@ public class ResilientChatClient extends AbstractResilientClient<ChatCapable>
                     ? probeHandler.wrap(candidateId(), raw, circuitBreaker::recordProbeSuccess)
                     : raw;
             })
-        );
+        ).doOnComplete(() -> {
+            if (metrics != null) metrics.recordChatLatency(candidateId(), start, "success");
+        }).doOnError(e -> {
+            if (metrics != null) metrics.recordChatLatency(candidateId(), start, "error");
+        });
     }
 
     // ======== Tool Calling 操作（统一弹性路径） ========
@@ -81,13 +98,17 @@ public class ResilientChatClient extends AbstractResilientClient<ChatCapable>
             throw new UnsupportedOperationException(
                 "Delegate '" + candidateId() + "' does not support tool calling");
         }
+        long start = metrics != null ? metrics.startNanos() : 0;
         try {
-            return circuitBreaker.execute(() ->
+            LlmResponse response = circuitBreaker.execute(() ->
                 retryPolicy.executeWithBackoff(() ->
                     tc.chatWithTools(request, tools)
                 )
             );
+            if (metrics != null) metrics.recordChatLatency(candidateId(), start, "success");
+            return response;
         } catch (Exception e) {
+            if (metrics != null) metrics.recordChatLatency(candidateId(), start, "error");
             if (e instanceof RuntimeException re) throw re;
             throw new RuntimeException(e);
         }

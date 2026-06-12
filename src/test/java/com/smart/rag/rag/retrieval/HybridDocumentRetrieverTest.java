@@ -46,8 +46,8 @@ class HybridDocumentRetrieverTest {
 
     // Record 字段顺序（与源码一致）:
     // queryRewriteEnabled, hybridRetrievalEnabled, ftsConfig, vectorTopK, bm25TopK,
-    // rrfK, rerankEnabled, rerankBaseUrl, rerankApiKey, rerankModel, rerankTopN,
-    // mmrEnabled, mmrLambda, mmrTopK, similarityThreshold
+    // rrfK, rerankEnabled, mmrEnabled, mmrLambda, mmrTopK, similarityThreshold,
+    // queryRewriteModel, queryRewriteTemperature
 
     private static RagRetrievalProperties defaultProperties() {
         return new RagRetrievalProperties(
@@ -58,10 +58,6 @@ class HybridDocumentRetrieverTest {
                 10,     // bm25TopK
                 60,     // rrfK
                 false,  // rerankEnabled
-                "https://example.com", // rerankBaseUrl
-                null,   // rerankApiKey (disabled)
-                "qwen3-rerank",
-                5,      // rerankTopN
                 false,  // mmrEnabled
                 0.7,    // mmrLambda
                 5,      // mmrTopK
@@ -76,7 +72,7 @@ class HybridDocumentRetrieverTest {
                 false,  // hybridRetrievalEnabled
                 "jiebacfg",
                 10, 10, 60,
-                false, "https://example.com", null, "qwen3-rerank", 5,
+                false,  // rerankEnabled
                 false, 0.7, 5, 0.0,
                 null, null
         );

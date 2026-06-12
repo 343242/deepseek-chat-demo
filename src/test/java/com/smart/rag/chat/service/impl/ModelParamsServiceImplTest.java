@@ -12,6 +12,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.transaction.support.TransactionCallback;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.List;
@@ -50,7 +52,16 @@ class ModelParamsServiceImplTest {
     private void runTransactionsImmediately() {
         when(transactionTemplate.execute(any())).thenAnswer(invocation -> {
             TransactionCallback<?> cb = invocation.getArgument(0);
-            return cb.doInTransaction(null);
+            TransactionSynchronizationManager.initSynchronization();
+            try {
+                Object result = cb.doInTransaction(null);
+                for (TransactionSynchronization sync : TransactionSynchronizationManager.getSynchronizations()) {
+                    sync.afterCommit();
+                }
+                return result;
+            } finally {
+                TransactionSynchronizationManager.clearSynchronization();
+            }
         });
     }
 

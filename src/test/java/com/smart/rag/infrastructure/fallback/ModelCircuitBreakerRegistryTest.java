@@ -1,9 +1,9 @@
 package com.smart.rag.infrastructure.fallback;
 
+import com.smart.rag.infrastructure.llm.config.CircuitBreakerProperties;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
@@ -20,7 +20,7 @@ class ModelCircuitBreakerRegistryTest {
     @DisplayName("opens a single model after failure threshold without affecting another model")
     void opensSingleModelAfterThreshold() {
         var registry = new ModelCircuitBreakerRegistry(
-                new ModelCircuitBreakerProperties(true, 2, Duration.ofSeconds(5), 1));
+                new CircuitBreakerProperties(2, 5000L, 1), java.time.Clock.systemUTC());
 
         registry.recordFailure("deepseek/chat");
         assertThat(registry.isCallAllowed("deepseek/chat")).isTrue();
@@ -38,7 +38,7 @@ class ModelCircuitBreakerRegistryTest {
     @DisplayName("moves to half open after cooldown and closes on successful probe")
     void halfOpenProbeSuccessClosesBreaker() throws Exception {
         var registry = new ModelCircuitBreakerRegistry(
-                new ModelCircuitBreakerProperties(true, 1, Duration.ofMillis(30), 1));
+                new CircuitBreakerProperties(1, 30L, 1), java.time.Clock.systemUTC());
 
         registry.recordFailure("deepseek/chat");
         assertThat(registry.isCallAllowed("deepseek/chat")).isFalse();
@@ -58,7 +58,7 @@ class ModelCircuitBreakerRegistryTest {
     @DisplayName("half open failure reopens breaker and restarts cooldown")
     void halfOpenFailureReopensBreaker() throws Exception {
         var registry = new ModelCircuitBreakerRegistry(
-                new ModelCircuitBreakerProperties(true, 1, Duration.ofMillis(60), 1));
+                new CircuitBreakerProperties(1, 60L, 1), java.time.Clock.systemUTC());
 
         registry.recordFailure("deepseek/chat");
         Thread.sleep(80);
@@ -74,7 +74,7 @@ class ModelCircuitBreakerRegistryTest {
     @DisplayName("limits concurrent half open probes")
     void limitsConcurrentHalfOpenProbes() throws Exception {
         var registry = new ModelCircuitBreakerRegistry(
-                new ModelCircuitBreakerProperties(true, 1, Duration.ofMillis(20), 1));
+                new CircuitBreakerProperties(1, 20L, 1), java.time.Clock.systemUTC());
         registry.recordFailure("deepseek/chat");
         Thread.sleep(40);
 
@@ -116,7 +116,7 @@ class ModelCircuitBreakerRegistryTest {
     @DisplayName("releases half open probe without changing state when request is cancelled")
     void releaseHalfOpenProbeAllowsAnotherProbe() throws Exception {
         var registry = new ModelCircuitBreakerRegistry(
-                new ModelCircuitBreakerProperties(true, 1, Duration.ofMillis(20), 1));
+                new CircuitBreakerProperties(1, 20L, 1), java.time.Clock.systemUTC());
         registry.recordFailure("deepseek/chat");
         Thread.sleep(40);
 
@@ -127,18 +127,5 @@ class ModelCircuitBreakerRegistryTest {
 
         assertThat(registry.stateOf("deepseek/chat")).isEqualTo(CircuitBreakerState.HALF_OPEN);
         assertThat(registry.isCallAllowed("deepseek/chat")).isTrue();
-    }
-
-    @Test
-    @DisplayName("disabled breaker always allows calls and ignores state transitions")
-    void disabledBreakerAlwaysAllowsCalls() {
-        var registry = new ModelCircuitBreakerRegistry(
-                new ModelCircuitBreakerProperties(false, 1, Duration.ofSeconds(5), 1));
-
-        registry.recordFailure("deepseek/chat");
-        registry.recordFailure("deepseek/chat");
-
-        assertThat(registry.isCallAllowed("deepseek/chat")).isTrue();
-        assertThat(registry.stateOf("deepseek/chat")).isEqualTo(CircuitBreakerState.CLOSED);
     }
 }

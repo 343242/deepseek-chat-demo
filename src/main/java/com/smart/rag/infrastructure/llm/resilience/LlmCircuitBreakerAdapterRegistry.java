@@ -2,6 +2,8 @@ package com.smart.rag.infrastructure.llm.resilience;
 
 import com.smart.rag.infrastructure.fallback.FallbackEligibility;
 import com.smart.rag.infrastructure.fallback.ModelCircuitBreakerRegistry;
+import com.smart.rag.infrastructure.llm.metrics.LlmMetrics;
+import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Component;
 
 import java.util.concurrent.ConcurrentHashMap;
@@ -17,17 +19,21 @@ public class LlmCircuitBreakerAdapterRegistry {
 
     private final ModelCircuitBreakerRegistry delegate;
     private final FallbackEligibility fallbackEligibility;
+    @Nullable
+    private final LlmMetrics metrics;
     private final ConcurrentHashMap<String, CircuitBreaker> adapters = new ConcurrentHashMap<>();
 
     public LlmCircuitBreakerAdapterRegistry(ModelCircuitBreakerRegistry delegate,
-                                            FallbackEligibility fallbackEligibility) {
+                                            FallbackEligibility fallbackEligibility,
+                                            @Nullable LlmMetrics metrics) {
         this.delegate = delegate;
         this.fallbackEligibility = fallbackEligibility;
+        this.metrics = metrics;
     }
 
     /** 获取或创建指定 candidateId 的熔断器适配器 */
     public CircuitBreaker getOrCreate(String candidateId) {
         return adapters.computeIfAbsent(candidateId,
-            id -> new CircuitBreaker(delegate, fallbackEligibility, id));
+            id -> new CircuitBreaker(delegate, fallbackEligibility, id, metrics));
     }
 }

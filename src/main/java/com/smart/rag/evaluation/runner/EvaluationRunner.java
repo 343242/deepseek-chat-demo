@@ -11,7 +11,7 @@ import com.smart.rag.evaluation.metrics.retrieval.RetrievalMetrics;
 import com.smart.rag.evaluation.metrics.retrieval.RetrievalMetricsCalculator;
 import com.smart.rag.evaluation.result.EvaluationResult;
 import com.smart.rag.rag.config.RagRetrievalProperties;
-import com.smart.rag.rag.retrieval.BailianRerankPostProcessor;
+import com.smart.rag.rag.retrieval.RerankDocumentPostProcessor;
 import com.smart.rag.rag.mapper.VectorStoreMapper;
 import com.smart.rag.rag.retrieval.HybridDocumentRetriever;
 import com.smart.rag.rag.retrieval.MmrDocumentPostProcessor;
@@ -61,7 +61,7 @@ public class EvaluationRunner {
     private final DatasetRepository datasetRepo;
 
     /** Rerank 单例 Bean（null when rerank-enabled=false），生命周期由 Spring 容器管理 */
-    private final BailianRerankPostProcessor rerankPostProcessor;
+    private final RerankDocumentPostProcessor rerankPostProcessor;
 
     public EvaluationRunner(VectorStore vectorStore,
                             VectorStoreMapper vectorStoreMapper,
@@ -76,7 +76,7 @@ public class EvaluationRunner {
                             GenerationMetricsCalculator generationMetricsCalculator,
                             ObjectMapper objectMapper,
                             DatasetRepository datasetRepo,
-                            @Nullable BailianRerankPostProcessor rerankPostProcessor) {
+                            @Nullable RerankDocumentPostProcessor rerankPostProcessor) {
         this.vectorStore = vectorStore;
         this.vectorStoreMapper = vectorStoreMapper;
         this.jdbcTemplate = jdbcTemplate;

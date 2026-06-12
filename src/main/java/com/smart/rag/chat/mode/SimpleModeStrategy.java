@@ -4,9 +4,7 @@ import com.smart.rag.chat.service.AdvisorChainContext;
 import com.smart.rag.chat.service.AdvisorInfrastructure;
 import com.smart.rag.chat.service.ChatRequestSpecFactory;
 import com.smart.rag.chat.service.ChatUsageTracker;
-import com.smart.rag.chat.service.ModelStreamRequestFactory;
 import com.smart.rag.chat.service.ModeChainResult;
-import com.smart.rag.infrastructure.stream.OkHttpSseModelStreamClient;
 import org.springframework.ai.chat.client.advisor.api.Advisor;
 import org.springframework.stereotype.Component;
 
@@ -21,10 +19,8 @@ public class SimpleModeStrategy extends AbstractModeStrategy {
 
     public SimpleModeStrategy(AdvisorInfrastructure infra,
                               ChatRequestSpecFactory requestSpecFactory,
-                              ChatUsageTracker usageTracker,
-                              ModelStreamRequestFactory streamRequestFactory,
-                              OkHttpSseModelStreamClient streamClient) {
-        super(infra, requestSpecFactory, usageTracker, streamRequestFactory, streamClient);
+                              ChatUsageTracker usageTracker) {
+        super(infra, requestSpecFactory, usageTracker);
     }
 
     @Override

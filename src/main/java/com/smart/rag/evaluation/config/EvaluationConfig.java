@@ -25,7 +25,7 @@ import org.springframework.context.annotation.Profile;
  * 生产环境默认关闭，确保零侵入。
  * </p>
  * <p>
- * Judge 模型完全独立于 Provider 路由体系（ChatClientRegistry），
+ * Judge 模型完全独立于 Provider 路由体系（LlmClientRegistry），
  * 通过 app.evaluation.judge.* 配置直连厂商 API，评估模块作为数据孤岛。
  * </p>
  */
@@ -39,7 +39,7 @@ public class EvaluationConfig {
     /**
      * 创建 Judge 专用 ChatClient
      * <p>
-     * 直接通过 ZhiPuAiApi 创建，不经过 ChatClientRegistry / ProviderRegistry。
+     * 直接通过 ZhiPuAiApi 创建，不经过 LlmClientRegistry。
      * temperature=0 确保评分确定性。
      */
     @Bean("judgeChatClient")

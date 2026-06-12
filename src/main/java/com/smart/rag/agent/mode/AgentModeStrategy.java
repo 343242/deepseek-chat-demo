@@ -1,7 +1,6 @@
 package com.smart.rag.agent.mode;
 
 import com.smart.rag.infrastructure.advisor.ConversationContextAdvisor;
-import com.smart.rag.infrastructure.client.ChatClientRegistry;
 import com.smart.rag.chat.context.ContextPromptInjector;
 import com.smart.rag.infrastructure.exception.ClientException;
 import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;
@@ -9,7 +8,8 @@ import com.smart.rag.chat.mode.ChatMode;
 import com.smart.rag.chat.mode.ChatModeStrategy;
 import com.smart.rag.chat.mode.MultiTurnModeStrategy;
 import com.smart.rag.chat.mode.AbstractModeStrategy;
-import com.smart.rag.infrastructure.provider.ModelRouter;
+import com.smart.rag.infrastructure.llm.ChatCapable;
+import com.smart.rag.infrastructure.llm.registry.LlmClientRegistry;
 import com.smart.rag.chat.service.AdvisorChainContext;
 import com.smart.rag.chat.service.AdvisorInfrastructure;
 import com.smart.rag.chat.service.ModeChainResult;
@@ -89,7 +89,7 @@ public class AgentModeStrategy implements ChatModeStrategy {
     private final AgentToolCallbackFactory agentToolCallbackFactory;
     private final AgentRagProperties agentProperties;
     private final ContextPromptInjector contextPromptInjector;
-    private final ChatClientRegistry chatClientRegistry;
+    private final LlmClientRegistry llmRegistry;
     private final AgentDegradationStrategy degradationStrategy;
     private final ObjectProvider<MultiTurnModeStrategy> multiTurnProvider;
 
@@ -99,7 +99,7 @@ public class AgentModeStrategy implements ChatModeStrategy {
                               AgentToolCallbackFactory agentToolCallbackFactory,
                               AgentRagProperties agentProperties,
                               ContextPromptInjector contextPromptInjector,
-                              ChatClientRegistry chatClientRegistry,
+                              LlmClientRegistry llmRegistry,
                               AgentDegradationStrategy degradationStrategy,
                               ObjectProvider<MultiTurnModeStrategy> multiTurnProvider) {
         this.infra = infra;
@@ -108,7 +108,7 @@ public class AgentModeStrategy implements ChatModeStrategy {
         this.agentToolCallbackFactory = agentToolCallbackFactory;
         this.agentProperties = agentProperties;
         this.contextPromptInjector = contextPromptInjector;
-        this.chatClientRegistry = chatClientRegistry;
+        this.llmRegistry = llmRegistry;
         this.degradationStrategy = degradationStrategy;
         this.multiTurnProvider = multiTurnProvider;
     }
@@ -160,7 +160,7 @@ public class AgentModeStrategy implements ChatModeStrategy {
 
         // Step 7: AgentSystemPromptAdvisor -- 动态 System Prompt + 每轮中间答案注入 + 护栏检查
         String mergedPrompt = resolveAgentPrompt(intentResult.intent(), ctx.cagContext());
-        AgentGuardrails guardrails = createGuardrails(ctx.route());
+        AgentGuardrails guardrails = createGuardrails(ctx.candidateId());
         chain.add(new AgentSystemPromptAdvisor(intentResult.intent(), mergedPrompt, workspace, guardrails));
 
         // Step 8: 对话记忆
@@ -173,19 +173,18 @@ public class AgentModeStrategy implements ChatModeStrategy {
     }
 
     /**
-     * 基于 ctx.route() 指向的模型构建 guardrails。
-     * <p>
-     * 旧逻辑从 ChatClientRegistry 遍历取第一个可用模型（可能与本次请求模型不一致），
-     * 现在通过 AdvisorChainContext.route 显式传入，确保 tokenCountingModel 包装的是正确的 ChatModel。
+     * 基于 candidateId 指向的模型构建 guardrails。
      */
-    private AgentGuardrails createGuardrails(ModelRouter.Route route) {
-        ChatModel chatModel = chatClientRegistry.getChatModel(route.toCompositeId());
+    private AgentGuardrails createGuardrails(String candidateId) {
+        ChatModel chatModel = null;
+        ChatCapable chatCapable = llmRegistry.get(candidateId, ChatCapable.class);
+        if (chatCapable != null) {
+            chatModel = chatCapable.asChatModel();
+        }
 
         TokenCountingChatModel tokenCountingModel;
-        // 无法获取 ChatModel，创建一个仅用字符估算的兜底计数器
         tokenCountingModel = new TokenCountingChatModel(Objects.requireNonNullElseGet(chatModel, NoOpChatModel::new));
 
-        // token 上限估算：128K 默认上下文窗口 x contextWindowRatio
         long tokenLimit = (long) (128_000 * agentProperties.contextWindowRatio());
 
         return new AgentGuardrails(agentProperties, tokenCountingModel, tokenLimit);
@@ -234,7 +233,7 @@ public class AgentModeStrategy implements ChatModeStrategy {
         try {
             AdvisorChainContext chainCtx = new AdvisorChainContext(
                 ctx.conversationId(), ctx.request(), ctx.userId(),
-                ctx.cagContext(), ctx.route());
+                ctx.cagContext(), ctx.candidateId());
             ModeChainResult result = buildAdvisorChain(chainCtx);
 
             ChatClient countingClient = ChatClient.builder(result.tokenCountingModel()).build();

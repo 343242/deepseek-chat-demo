@@ -15,7 +15,6 @@ import org.springframework.boot.context.properties.ConfigurationPropertiesScan;
         scanBasePackages = "com.smart.rag",
         exclude = {
                 org.springframework.ai.model.zhipuai.autoconfigure.ZhiPuAiChatAutoConfiguration.class,
-                org.springframework.ai.model.minimax.autoconfigure.MiniMaxChatAutoConfiguration.class,
                 org.springframework.boot.autoconfigure.security.servlet.UserDetailsServiceAutoConfiguration.class
         }
 )

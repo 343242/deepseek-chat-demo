@@ -4,6 +4,7 @@ import com.smart.rag.infrastructure.llm.CapabilityClient;
 import com.smart.rag.infrastructure.llm.LlmCapability;
 import com.smart.rag.infrastructure.llm.ModelCandidate;
 import com.smart.rag.infrastructure.llm.config.ProviderConfig;
+import com.smart.rag.infrastructure.llm.metrics.LlmMetrics;
 import com.smart.rag.infrastructure.llm.resilience.CircuitBreaker;
 import com.smart.rag.infrastructure.llm.resilience.ProbeHandler;
 import com.smart.rag.infrastructure.llm.resilience.RetryPolicy;
@@ -38,5 +39,6 @@ public interface CapabilityStrategy {
     CapabilityClient wrapWithResilience(CapabilityClient raw,
                                         CircuitBreaker circuitBreaker,
                                         RetryPolicy retryPolicy,
-                                        @Nullable ProbeHandler probeHandler);
+                                        @Nullable ProbeHandler probeHandler,
+                                        @Nullable LlmMetrics metrics);
 }

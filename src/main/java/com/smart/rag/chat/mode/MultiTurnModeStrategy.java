@@ -6,10 +6,8 @@ import com.smart.rag.chat.service.AdvisorInfrastructure;
 import com.smart.rag.chat.service.ChatConversationHelper;
 import com.smart.rag.chat.service.ChatRequestSpecFactory;
 import com.smart.rag.chat.service.ChatUsageTracker;
-import com.smart.rag.chat.service.ModelStreamRequestFactory;
 import com.smart.rag.chat.service.ModeChainResult;
 import com.smart.rag.chat.service.StrategyExecutionContext;
-import com.smart.rag.infrastructure.stream.OkHttpSseModelStreamClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
@@ -35,10 +33,8 @@ public class MultiTurnModeStrategy extends AbstractModeStrategy {
     public MultiTurnModeStrategy(AdvisorInfrastructure infra,
                                  ChatRequestSpecFactory requestSpecFactory,
                                  ChatUsageTracker usageTracker,
-                                 ChatConversationHelper conversationHelper,
-                                 ModelStreamRequestFactory streamRequestFactory,
-                                 OkHttpSseModelStreamClient streamClient) {
-        super(infra, requestSpecFactory, usageTracker, streamRequestFactory, streamClient);
+                                 ChatConversationHelper conversationHelper) {
+        super(infra, requestSpecFactory, usageTracker);
         this.conversationHelper = conversationHelper;
     }
 
@@ -74,20 +70,23 @@ public class MultiTurnModeStrategy extends AbstractModeStrategy {
         final int maxContentLength = 1 << 20;
         AtomicBoolean usageRecorded = new AtomicBoolean(false);
 
-        return streamClient.stream(streamRequestFactory.create(ctx.route(), ctx.request()))
-        .doOnNext(text -> {
-            if (text != null && collectedContent.length() < maxContentLength) {
-                int remaining = maxContentLength - collectedContent.length();
-                collectedContent.append(text, 0, Math.min(text.length(), remaining));
-            }
-        })
-        .doFinally(signal -> {
-            onStreamComplete(ctx, collectedContent.toString(), signal);
+        return ctx.chatClient().prompt()
+                .user(ctx.request().message())
+                .stream()
+                .content()
+                .doOnNext(text -> {
+                    if (text != null && collectedContent.length() < maxContentLength) {
+                        int remaining = maxContentLength - collectedContent.length();
+                        collectedContent.append(text, 0, Math.min(text.length(), remaining));
+                    }
+                })
+                .doFinally(signal -> {
+                    onStreamComplete(ctx, collectedContent.toString(), signal);
 
-            if (usageRecorded.compareAndSet(false, true)) {
-                recordUsage(usageTracker, ctx, null);
-            }
-        });
+                    if (usageRecorded.compareAndSet(false, true)) {
+                        recordUsage(usageTracker, ctx, null);
+                    }
+                });
     }
 
     protected void onStreamComplete(StrategyExecutionContext ctx, String content,
@@ -96,7 +95,7 @@ public class MultiTurnModeStrategy extends AbstractModeStrategy {
             case ON_COMPLETE -> {
                 conversationHelper.saveMessagesAndNotify(ctx.conversationId(),
                     ctx.request().message(), content,
-                    ctx.route().toCompositeId(), null, ctx.elapsed());
+                    ctx.candidateId(), null, ctx.elapsed());
             }
             case ON_ERROR, CANCEL -> {
                 log.warn("Stream {} for conversation {}: collected {} chars",

@@ -3,7 +3,7 @@ package com.smart.rag.rag.config;
 import com.smart.rag.agent.service.HybridSearchService;
 import com.smart.rag.rag.chunk.ParentDocumentPostProcessor;
 import com.smart.rag.rag.mapper.VectorStoreMapper;
-import com.smart.rag.rag.retrieval.BailianRerankPostProcessor;
+import com.smart.rag.rag.retrieval.RerankDocumentPostProcessor;
 import com.smart.rag.rag.retrieval.HybridDocumentRetriever;
 import com.smart.rag.rag.retrieval.MmrDocumentPostProcessor;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -50,7 +50,7 @@ public class RagAdvisorFactory {
     private final ObjectMapper objectMapper;
 
     /** Rerank 单例 Bean（null when rerank-enabled=false），生命周期由 Spring 容器管理 */
-    private final BailianRerankPostProcessor rerankPostProcessor;
+    private final RerankDocumentPostProcessor rerankPostProcessor;
 
     /** 缓存的 PostProcessor 列表，避免每次请求重建 */
     private volatile List<org.springframework.ai.rag.postretrieval.document.DocumentPostProcessor> cachedPostProcessors;
@@ -64,7 +64,7 @@ public class RagAdvisorFactory {
                              ParentDocumentPostProcessor parentDocumentPostProcessor,
                              QueryTransformer rewriteQueryTransformer,
                              ObjectMapper objectMapper,
-                             @Nullable BailianRerankPostProcessor rerankPostProcessor) {
+                             @Nullable RerankDocumentPostProcessor rerankPostProcessor) {
         this.chatClientBuilder = chatClientBuilder;
         this.vectorStore = vectorStore;
         this.vectorStoreMapper = vectorStoreMapper;

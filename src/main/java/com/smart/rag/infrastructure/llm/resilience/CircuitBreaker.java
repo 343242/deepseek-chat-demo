@@ -5,8 +5,10 @@ import com.smart.rag.infrastructure.fallback.FallbackEligibility;
 import com.smart.rag.infrastructure.fallback.ModelCircuitBreakerRegistry;
 import com.smart.rag.infrastructure.fallback.ModelCircuitOpenException;
 import com.smart.rag.infrastructure.fallback.ProbeTimeoutException;
+import com.smart.rag.infrastructure.llm.metrics.LlmMetrics;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.lang.Nullable;
 import reactor.core.publisher.Flux;
 
 import java.util.function.Supplier;
@@ -31,10 +33,14 @@ public class CircuitBreaker {
 
     public CircuitBreaker(ModelCircuitBreakerRegistry registry,
                           FallbackEligibility fallbackEligibility,
-                          String candidateId) {
+                          String candidateId,
+                          @Nullable LlmMetrics metrics) {
         this.registry = registry;
         this.fallbackEligibility = fallbackEligibility;
         this.candidateId = candidateId;
+        if (metrics != null) {
+            metrics.registerCircuitBreakerGauge(candidateId, this::getState);
+        }
     }
 
     /**

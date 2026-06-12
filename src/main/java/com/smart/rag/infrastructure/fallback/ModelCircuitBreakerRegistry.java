@@ -1,5 +1,7 @@
 package com.smart.rag.infrastructure.fallback;
 
+import com.smart.rag.infrastructure.llm.config.CircuitBreakerProperties;
+import com.smart.rag.infrastructure.llm.config.ResilienceConfig;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
@@ -11,45 +13,33 @@ import java.util.concurrent.ConcurrentMap;
 @Component
 public class ModelCircuitBreakerRegistry {
 
-    private final ModelCircuitBreakerProperties properties;
+    private final CircuitBreakerProperties properties;
     private final Clock clock;
     private final ConcurrentMap<String, ModelCircuitBreaker> breakers = new ConcurrentHashMap<>();
 
     @Autowired
-    public ModelCircuitBreakerRegistry(ModelCircuitBreakerProperties properties) {
-        this(properties, Clock.systemUTC());
+    public ModelCircuitBreakerRegistry(ResilienceConfig resilienceConfig) {
+        this(resilienceConfig.resolveCircuitBreaker(), Clock.systemUTC());
     }
 
-    ModelCircuitBreakerRegistry(ModelCircuitBreakerProperties properties, Clock clock) {
+    ModelCircuitBreakerRegistry(CircuitBreakerProperties properties, Clock clock) {
         this.properties = properties;
         this.clock = clock;
     }
 
     public boolean isCallAllowed(String modelId) {
-        if (!properties.isEnabled()) {
-            return true;
-        }
         return breaker(modelId).isCallAllowed(clock.millis());
     }
 
     public void recordSuccess(String modelId) {
-        if (!properties.isEnabled()) {
-            return;
-        }
         breaker(modelId).recordSuccess();
     }
 
     public void recordFailure(String modelId) {
-        if (!properties.isEnabled()) {
-            return;
-        }
         breaker(modelId).recordFailure(clock.millis());
     }
 
     public void releaseProbe(String modelId) {
-        if (!properties.isEnabled()) {
-            return;
-        }
         ModelCircuitBreaker breaker = breakers.get(modelId);
         if (breaker != null) {
             breaker.releaseProbe();
@@ -57,17 +47,14 @@ public class ModelCircuitBreakerRegistry {
     }
 
     public CircuitBreakerState stateOf(String modelId) {
-        if (!properties.isEnabled()) {
-            return CircuitBreakerState.CLOSED;
-        }
         return breaker(modelId).state(clock.millis());
     }
 
     private ModelCircuitBreaker breaker(String modelId) {
         return breakers.computeIfAbsent(modelId, ignored -> new ModelCircuitBreaker(
-                properties.failureThreshold(),
-                properties.cooldown(),
-                properties.halfOpenMaxProbes()));
+                properties.effectiveFailureThreshold(),
+                Duration.ofMillis(properties.effectiveOpenDurationMs()),
+                properties.effectiveHalfOpenMaxCalls()));
     }
 
     private static final class ModelCircuitBreaker {

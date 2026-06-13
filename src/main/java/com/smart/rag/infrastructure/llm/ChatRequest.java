@@ -20,6 +20,14 @@ public record ChatRequest(
     Double topP,
     Map<String, Object> extraParams
 ) {
+    public ChatRequest {
+        if (input == null) {
+            throw new ClientException(ClientErrorCode.BAD_REQUEST, "输入内容不能为 null");
+        }
+        history = history != null ? List.copyOf(history) : List.of();
+        extraParams = extraParams != null ? Map.copyOf(extraParams) : Map.of();
+    }
+
     public static ChatRequest of(String input) {
         return new ChatRequest(input, null, List.of(),
             null, null, null, Map.of());

@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/code-review-checklist.md", "reason": "10 维度审查标准 — 维度 3（资源管理）、4（边界条件）、5（并发）、7（异常处理）、9（可扩展性）、10（DRY/KISS）"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Forbidden Patterns 表 + Concurrency Rules — 验证修复不引入禁止模式"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "三级异常体系 + IErrorCode 规范 — RemoteErrorCode 新增 LLM_RESPONSE_PARSE_ERROR 必须符合规范；更新范围表"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "参数化日志 + 级别规范 — P2-1 中 LLM client init failure counter 的 WARN 日志风格"}
+{"file": ".trellis/tasks/06-13-code-review-infrastructure-llm-module-63-files/review-report.md", "reason": "原始审查报告 — 验证 P0/P1 修复状态，确认本次仅处理 NEW-P1/P2 和 Mimo 发现"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "跨层影响分析 — RegistrySnapshot/destroy 重构影响 LlmClientRegistry 调用方"}

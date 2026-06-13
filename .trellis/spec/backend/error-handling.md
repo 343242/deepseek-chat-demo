@@ -124,7 +124,7 @@ new RemoteException(RemoteErrorCode.PROVIDER_NOT_FOUND)
 |------|------|------|
 | `ClientErrorCode` | 100001–105013 | 通用、认证、用户冲突、聊天客户端、RAG上传、团队客户端 |
 | `ServiceErrorCode` | 200001–205007 | 通用、用户/角色/权限、会话、聊天、RAG、团队 |
-| `RemoteErrorCode` | 300001–300003 | 厂商、模型超时、向量数据库 |
+| `RemoteErrorCode` | 300001–301010 | 厂商、模型超时、向量数据库、LLM 弹性层（熔断/限流/解析等） |
 | `MessagingErrorCode` | 400001–400011 | 消息发送、消费、DLQ、熔断、Topic/Tag/Group 校验、消息体超限、配置无效 |
 | `ErrorCode` (旧版) | 0–50099 | 保留兼容，逐步迁移 |
 

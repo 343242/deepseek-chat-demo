@@ -1,5 +1,7 @@
 package com.smart.rag.infrastructure.llm.resilience;
 
+import com.smart.rag.infrastructure.exception.RemoteException;
+import com.smart.rag.infrastructure.exception.errorcode.RemoteErrorCode;
 import com.smart.rag.infrastructure.fallback.CircuitBreakerState;
 import com.smart.rag.infrastructure.llm.CapabilityClient;
 import com.smart.rag.infrastructure.llm.LlmCapability;
@@ -80,7 +82,10 @@ public abstract class AbstractResilientClient<T extends CapabilityClient> implem
         } catch (Exception e) {
             if (metrics != null) errorRecorder.accept(candidateId(), start);
             if (e instanceof RuntimeException re) throw re;
-            throw new RuntimeException(e);
+            // Checked exceptions from circuitBreaker.execute(...) are wrapped as RemoteException
+            // to stay within AbstractException hierarchy so GlobalExceptionHandler handles them.
+            throw new RemoteException(RemoteErrorCode.LLM_STREAM_ERROR,
+                "Unexpected checked exception from LLM action: " + e.getMessage(), e);
         }
     }
 }

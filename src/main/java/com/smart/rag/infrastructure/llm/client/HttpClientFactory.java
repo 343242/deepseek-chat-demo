@@ -1,17 +1,33 @@
 package com.smart.rag.infrastructure.llm.client;
 
+import jakarta.annotation.PreDestroy;
+import okhttp3.OkHttpClient;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
+import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 
 import java.net.http.HttpClient;
 import java.time.Duration;
 import java.util.Objects;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * HTTP 客户端工厂 — 封装 RestClient + HttpClient 的标准构建模板
  * <p>
  * 5 个 LLM 客户端（Generic/Bailian × Chat/Embedding/Rerank）共享相同的 HTTP 构建模式，
  * 仅有超时值差异。本工厂统一封装该模式，返回 {@link HttpHandles} 持有者。
+ * <p>
+ * <b>OkHttpClient 共享单例</b>（实例方法 {@link #sharedOkHttpClient}）：按
+ * (connectTimeout, readTimeout) 缓存 OkHttpClient 实例。OkHttp 官方建议单例复用
+ * （每实例持有独立连接池 + dispatcher 线程池），N 个 Generic Chat candidate 共享
+ * 同一个 OkHttpClient 可避免连接池/dispatcher 资源放大 N 倍。生命周期由本工厂
+ * {@link #closeAll()} 统一管理，使用方 {@code close()} 不应关闭共享实例。
+ * <p>
+ * <b>buildRestClient 为何保持 static</b>：该方法无状态、返回 per-candidate 的
+ * RestClient（每 candidate 独立 baseUrl/apiKey/timeout 必须独立实例）。static 调用
+ * 减少注入成本，5 个客户端已有调用点无需改动。
  * <p>
  * 设计原则：
  * <ul>
@@ -20,14 +36,21 @@ import java.util.Objects;
  *   <li>OCP — 新增传输配置（代理、连接池）只改本工厂，不动基类层级</li>
  * </ul>
  */
-public final class HttpClientFactory {
+@Component
+public class HttpClientFactory {
 
-    private HttpClientFactory() {}
+    private static final Logger log = LoggerFactory.getLogger(HttpClientFactory.class);
+
+    /** Shared OkHttp clients keyed by "connect_read" timeout signature */
+    private final ConcurrentHashMap<String, OkHttpClient> sharedOkHttpClients = new ConcurrentHashMap<>();
 
     /**
      * 构建 RestClient + HttpClient 持有者，含标准 Bearer + JSON 头。
      * <p>
      * 调用方负责在 {@link AutoCloseable#close()} 中调用 {@link HttpHandles#close()}。
+     * <p>
+     * 保持 static：该方法无状态，且每个 candidate 的 baseUrl/apiKey/timeout 不同，
+     * 必须返回独立实例，不存在共享语义。
      *
      * @param baseUrl        基础 URL
      * @param apiKey         Bearer token
@@ -36,7 +59,7 @@ public final class HttpClientFactory {
      * @return 持有 HttpClient + RestClient 的不可变记录，AutoCloseable
      */
     public static HttpHandles buildRestClient(String baseUrl, String apiKey,
-                                               Duration connectTimeout, Duration readTimeout) {
+                                              Duration connectTimeout, Duration readTimeout) {
         Objects.requireNonNull(baseUrl, "baseUrl must not be null");
         Objects.requireNonNull(apiKey, "apiKey must not be null");
         Objects.requireNonNull(connectTimeout, "connectTimeout must not be null");
@@ -54,6 +77,49 @@ public final class HttpClientFactory {
             .requestFactory(requestFactory)
             .build();
         return new HttpHandles(httpClient, restClient);
+    }
+
+    /**
+     * 获取共享的 OkHttpClient 实例（按超时参数缓存）。
+     * <p>
+     * 相同 (connectTimeout, readTimeout) 组合返回同一实例。共享实例由本工厂统一管理
+     * 生命周期（{@link #closeAll()}），调用方不应在其 close() 中关闭。
+     *
+     * @param connectTimeout 连接超时
+     * @param readTimeout    读取超时
+     * @return 共享 OkHttpClient
+     */
+    public OkHttpClient sharedOkHttpClient(Duration connectTimeout, Duration readTimeout) {
+        Objects.requireNonNull(connectTimeout, "connectTimeout must not be null");
+        Objects.requireNonNull(readTimeout, "readTimeout must not be null");
+        String key = connectTimeout.toMillis() + "_" + readTimeout.toMillis();
+        return sharedOkHttpClients.computeIfAbsent(key, k -> {
+            log.info("Creating shared OkHttpClient: connectTimeout={}ms, readTimeout={}ms",
+                connectTimeout.toMillis(), readTimeout.toMillis());
+            return new OkHttpClient.Builder()
+                .connectTimeout(connectTimeout)
+                .readTimeout(readTimeout)
+                .build();
+        });
+    }
+
+    /**
+     * 关闭所有共享 OkHttpClient 实例。由 Spring @PreDestroy 自动调用。
+     */
+    @PreDestroy
+    public void closeAll() {
+        int count = sharedOkHttpClients.size();
+        if (count == 0) return;
+        sharedOkHttpClients.forEach((key, client) -> {
+            try {
+                client.dispatcher().executorService().shutdown();
+                client.connectionPool().evictAll();
+            } catch (Exception e) {
+                log.warn("Failed to close shared OkHttpClient (key={}): {}", key, e.getMessage());
+            }
+        });
+        sharedOkHttpClients.clear();
+        log.info("Closed {} shared OkHttpClient instances", count);
     }
 
     /**

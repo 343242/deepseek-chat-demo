@@ -118,8 +118,7 @@ public class GenericEmbeddingClient extends AbstractEmbeddingClient {
             JsonNode root = objectMapper.readTree(json);
             JsonNode data = root.path("data");
             if (!data.isArray() || data.size() <= index) {
-                // LLM_STREAM_ERROR used as catch-all for parse failures (no dedicated parse error code)
-                throw new RemoteException(RemoteErrorCode.LLM_STREAM_ERROR,
+                throw new RemoteException(RemoteErrorCode.LLM_RESPONSE_PARSE_ERROR,
                     "Embedding response missing data at index " + index);
             }
             JsonNode embeddingNode = data.get(index).path("embedding");
@@ -131,8 +130,7 @@ public class GenericEmbeddingClient extends AbstractEmbeddingClient {
         } catch (RemoteException e) {
             throw e;
         } catch (IOException e) {
-            // LLM_STREAM_ERROR used as catch-all for parse failures (no dedicated parse error code)
-            throw new RemoteException(RemoteErrorCode.LLM_STREAM_ERROR,
+            throw new RemoteException(RemoteErrorCode.LLM_RESPONSE_PARSE_ERROR,
                 "Failed to parse embedding response: " + e.getMessage(), e);
         }
     }

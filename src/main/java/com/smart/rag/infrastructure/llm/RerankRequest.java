@@ -18,8 +18,12 @@ public record RerankRequest(
     List<String> documents
 ) {
     public RerankRequest {
-        Objects.requireNonNull(query, "查询文本不能为空");
-        Objects.requireNonNull(documents, "文档列表不能为空");
-        if (documents.isEmpty()) throw new ClientException(ClientErrorCode.BAD_REQUEST, "文档列表不能为空");
+        if (query == null || query.isBlank()) {
+            throw new ClientException(ClientErrorCode.BAD_REQUEST, "查询文本不能为空");
+        }
+        if (documents == null || documents.isEmpty()) {
+            throw new ClientException(ClientErrorCode.BAD_REQUEST, "文档列表不能为空");
+        }
+        documents = List.copyOf(documents);
     }
 }

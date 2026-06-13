@@ -83,8 +83,7 @@ public abstract class AbstractRerankClient implements RerankCapable {
             }
             return rerankResults;
         } catch (IOException e) {
-            // LLM_STREAM_ERROR used as catch-all for parse failures (no dedicated parse error code)
-            throw new RemoteException(RemoteErrorCode.LLM_STREAM_ERROR,
+            throw new RemoteException(RemoteErrorCode.LLM_RESPONSE_PARSE_ERROR,
                 "Failed to parse rerank response: " + e.getMessage(), e);
         }
     }

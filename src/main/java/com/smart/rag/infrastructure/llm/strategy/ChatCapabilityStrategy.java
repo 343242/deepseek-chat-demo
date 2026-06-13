@@ -5,6 +5,7 @@ import com.smart.rag.infrastructure.llm.ChatCapable;
 import com.smart.rag.infrastructure.llm.LlmCapability;
 import com.smart.rag.infrastructure.llm.ModelCandidate;
 import com.smart.rag.infrastructure.llm.ToolCallingCapable;
+import com.smart.rag.infrastructure.llm.client.HttpClientFactory;
 import com.smart.rag.infrastructure.llm.client.generic.GenericChatClient;
 import com.smart.rag.infrastructure.llm.config.ProviderConfig;
 import com.smart.rag.infrastructure.llm.metrics.LlmMetrics;
@@ -20,6 +21,12 @@ import org.springframework.stereotype.Component;
 @Component
 public class ChatCapabilityStrategy implements CapabilityStrategy {
 
+    private final HttpClientFactory httpClientFactory;
+
+    public ChatCapabilityStrategy(HttpClientFactory httpClientFactory) {
+        this.httpClientFactory = httpClientFactory;
+    }
+
     @Override public LlmCapability capability() { return LlmCapability.CHAT; }
 
     @Override
@@ -30,7 +37,7 @@ public class ChatCapabilityStrategy implements CapabilityStrategy {
     @Override
     public CapabilityClient createClient(String baseUrl, String endpoint,
                                           String apiKey, ModelCandidate candidate) {
-        return new GenericChatClient(baseUrl, endpoint, apiKey, candidate);
+        return new GenericChatClient(baseUrl, endpoint, apiKey, candidate, httpClientFactory);
     }
 
     @Override

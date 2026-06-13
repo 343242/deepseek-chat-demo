@@ -61,6 +61,10 @@ public class LlmClientFactory {
     @Nullable
     private final LlmMetrics metrics;
 
+    /** Cached singleton ProbeHandler — created once (stateless after construction) */
+    @Nullable
+    private volatile ProbeHandler cachedProbeHandler;
+
     public LlmClientFactory(LlmConfig llmConfig,
                             Map<String, LlmProvider> providers,
                             CapabilityStrategyRegistry strategyRegistry,
@@ -178,6 +182,7 @@ public class LlmClientFactory {
             return provider.createClient(candidate);
         } catch (Exception e) {
             log.error("Failed to create client for candidate '{}'", candidate.id(), e);
+            if (metrics != null) metrics.recordClientInitFailure(candidate.id());
             return null;
         }
     }
@@ -192,12 +197,29 @@ public class LlmClientFactory {
         CircuitBreaker cb = circuitBreakerRegistry.getOrCreate(raw.candidateId());
         RetryPolicy retry = new RetryPolicy(retryConfig);
 
-        ProbeHandler probe = isProbeEnabled(probeProps)
-            ? new ProbeHandler(probeStreamHandler, sharedProbeRegistry,
-                resolveProbeTimeout(probeProps))
-            : null;
+        ProbeHandler probe = getOrCreateProbeHandler(probeProps);
 
         return strategy.wrapWithResilience(raw, cb, retry, probe, metrics);
+    }
+
+    /**
+     * 获取或创建缓存的 ProbeHandler 单例。
+     * <p>
+     * ProbeHandler 在构造后无状态（仅持有 final 依赖），可被多 candidate 安全共享。
+     * 首次调用时根据 ProbeProperties 决定是否启用，后续 candidate 复用同一实例。
+     */
+    @Nullable
+    private ProbeHandler getOrCreateProbeHandler(@Nullable ProbeProperties probeProps) {
+        if (!isProbeEnabled(probeProps)) return null;
+        ProbeHandler existing = cachedProbeHandler;
+        if (existing != null) return existing;
+        synchronized (this) {
+            if (cachedProbeHandler == null) {
+                cachedProbeHandler = new ProbeHandler(probeStreamHandler, sharedProbeRegistry,
+                    resolveProbeTimeout(probeProps));
+            }
+            return cachedProbeHandler;
+        }
     }
 
     /** Check whether probe is enabled (null-safe) */

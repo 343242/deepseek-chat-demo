@@ -20,7 +20,8 @@ public enum RemoteErrorCode implements IErrorCode {
     LLM_PROVIDER_UNAVAILABLE(301006, "模型厂商不可用"),
     LLM_RESPONSE_TRUNCATED(301007, "模型响应被截断"),
     LLM_STREAM_ERROR(301008, "模型流式调用失败"),
-    LLM_TRANSIENT_ERROR(301009, "模型调用瞬态失败（重试耗尽）");
+    LLM_TRANSIENT_ERROR(301009, "模型调用瞬态失败（重试耗尽）"),
+    LLM_RESPONSE_PARSE_ERROR(301010, "模型响应解析失败");
 
     private final int code;
     private final String message;

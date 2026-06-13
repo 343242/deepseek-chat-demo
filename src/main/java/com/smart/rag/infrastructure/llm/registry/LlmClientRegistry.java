@@ -1,5 +1,10 @@
 package com.smart.rag.infrastructure.llm.registry;
 
+import com.smart.rag.infrastructure.concurrent.ScopeOptions;
+import com.smart.rag.infrastructure.concurrent.ScopePolicy;
+import com.smart.rag.infrastructure.concurrent.ScopeTimeoutException;
+import com.smart.rag.infrastructure.concurrent.ScopedTasks;
+import com.smart.rag.infrastructure.concurrent.TaskScope;
 import com.smart.rag.infrastructure.exception.RemoteException;
 import com.smart.rag.infrastructure.exception.errorcode.RemoteErrorCode;
 import com.smart.rag.infrastructure.llm.CapabilityClient;
@@ -10,6 +15,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -37,11 +43,19 @@ public class LlmClientRegistry {
 
     private static final Logger log = LoggerFactory.getLogger(LlmClientRegistry.class);
 
+    /** Global timeout for parallel close on registry destroy */
+    private static final Duration DESTROY_TIMEOUT = Duration.ofSeconds(30);
+
+    /** Max parallelism for client close operations */
+    private static final int DESTROY_CONCURRENCY = 8;
+
     private final LlmClientFactory factory;
+    private final ScopedTasks scopedTasks;
     private final AtomicReference<RegistrySnapshot> snapshotRef;
 
-    public LlmClientRegistry(LlmClientFactory factory) {
+    public LlmClientRegistry(LlmClientFactory factory, ScopedTasks scopedTasks) {
         this.factory = factory;
+        this.scopedTasks = scopedTasks;
         this.snapshotRef = new AtomicReference<>(RegistrySnapshot.empty());
     }
 
@@ -61,12 +75,36 @@ public class LlmClientRegistry {
     @PreDestroy
     public void destroy() {
         RegistrySnapshot snapshot = snapshotRef.getAndSet(RegistrySnapshot.empty());
-        snapshot.clientsById().values().forEach(client -> {
-            try { client.close(); } catch (Exception e) {
-                log.warn("Failed to close client {}: {}", client.candidateId(), e.getMessage());
+        if (snapshot.clientsById().isEmpty()) {
+            log.info("LlmClientRegistry destroyed (no clients)");
+            return;
+        }
+
+        ScopeOptions options = ScopeOptions.builder("llm-registry-destroy")
+            .policy(ScopePolicy.COLLECT_ALL)
+            .maxConcurrency(DESTROY_CONCURRENCY)
+            .build();
+
+        int total = snapshot.clientsById().size();
+        try (TaskScope scope = scopedTasks.open("llm-registry-destroy", options)) {
+            snapshot.clientsById().forEach((id, client) -> {
+                scope.fork("close-" + id, () -> {
+                    try {
+                        client.close();
+                    } catch (Exception e) {
+                        log.warn("Failed to close client {}: {}", id, e.getMessage());
+                    }
+                    return null;
+                });
+            });
+            try {
+                scope.joinUntil(DESTROY_TIMEOUT);
+            } catch (ScopeTimeoutException e) {
+                log.warn("LlmClientRegistry destroy timed out after {} — {} clients may still be closing",
+                    DESTROY_TIMEOUT, total);
             }
-        });
-        log.info("LlmClientRegistry destroyed");
+        }
+        log.info("LlmClientRegistry destroyed ({} clients closed in parallel)", total);
     }
 
     /** 重新构建快照（配置变更时调用） */
@@ -74,10 +112,7 @@ public class LlmClientRegistry {
         // Preserve runtime disabledSet across refresh
         Set<String> preservedDisabled = snapshotRef.get().disabledSet();
         RegistrySnapshot fresh = factory.buildSnapshot();
-        RegistrySnapshot newSnapshot = new RegistrySnapshot(
-            fresh.clientsById(), fresh.fallbackChains(),
-            fresh.defaultClients(), fresh.deepThinkingClients(),
-            fresh.filteredChains(), preservedDisabled);
+        RegistrySnapshot newSnapshot = fresh.withDisabledSet(preservedDisabled);
         RegistrySnapshot old = snapshotRef.getAndSet(newSnapshot);
         // Close old clients that are no longer in the new snapshot
         if (old != null) {
@@ -171,11 +206,7 @@ public class LlmClientRegistry {
             if (newDisabled.add(candidateId)) {
                 log.info("Disabled candidate: {}", candidateId);
             }
-            return new RegistrySnapshot(
-                current.clientsById(), current.fallbackChains(),
-                current.defaultClients(), current.deepThinkingClients(),
-                Map.of(),
-                Set.copyOf(newDisabled));
+            return current.withDisabledSet(Set.copyOf(newDisabled));
         });
     }
 
@@ -186,11 +217,7 @@ public class LlmClientRegistry {
             if (newDisabled.remove(candidateId)) {
                 log.info("Enabled candidate: {}", candidateId);
             }
-            return new RegistrySnapshot(
-                current.clientsById(), current.fallbackChains(),
-                current.defaultClients(), current.deepThinkingClients(),
-                Map.of(),
-                Set.copyOf(newDisabled));
+            return current.withDisabledSet(Set.copyOf(newDisabled));
         });
     }
 

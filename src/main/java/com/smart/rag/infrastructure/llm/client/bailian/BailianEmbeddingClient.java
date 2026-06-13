@@ -46,9 +46,7 @@ public class BailianEmbeddingClient extends AbstractEmbeddingClient implements E
     private final ObjectMapper objectMapper;
     private final HttpClientFactory.HttpHandles http;
     private final ScopedTasks scopedTasks;
-    // DCL pattern: volatile guarantees the float[] reference is safely published.
-    // The array contents (all zeros) are read-only after construction, so no further synchronization is needed.
-    private volatile float[] zeroVector;
+    private final float[] zeroVector;
 
     private final String baseUrl;
     private final String endpoint;
@@ -64,6 +62,7 @@ public class BailianEmbeddingClient extends AbstractEmbeddingClient implements E
         this.endpoint = endpoint;
         this.scopedTasks = scopedTasks;
         this.objectMapper = new ObjectMapper();
+        this.zeroVector = new float[candidate.dimension()];
         this.http = HttpClientFactory.buildRestClient(baseUrl, apiKey,
             Duration.ofSeconds(CONNECT_TIMEOUT_SECONDS), Duration.ofSeconds(READ_TIMEOUT_SECONDS));
         this.restClient = http.restClient();
@@ -230,19 +229,12 @@ public class BailianEmbeddingClient extends AbstractEmbeddingClient implements E
     }
 
     private float[] getZeroVector() {
-        if (zeroVector == null) {
-            synchronized (this) {
-                if (zeroVector == null) {
-                    zeroVector = new float[candidate.dimension()];
-                }
-            }
-        }
         return zeroVector;
     }
 
     private static float[] toFloatArray(JsonNode node) {
         if (!node.isArray()) throw new RemoteException(
-            RemoteErrorCode.LLM_STREAM_ERROR, "Expected JSON array for embedding vector");
+            RemoteErrorCode.LLM_RESPONSE_PARSE_ERROR, "Expected JSON array for embedding vector");
         float[] floats = new float[node.size()];
         for (int i = 0; i < node.size(); i++) {
             floats[i] = (float) node.get(i).asDouble();
@@ -251,7 +243,7 @@ public class BailianEmbeddingClient extends AbstractEmbeddingClient implements E
     }
 
     private static RemoteException emptyResponse() {
-        return new RemoteException(RemoteErrorCode.LLM_STREAM_ERROR,
+        return new RemoteException(RemoteErrorCode.LLM_RESPONSE_PARSE_ERROR,
             "DashScope embedding API returned empty response");
     }
 

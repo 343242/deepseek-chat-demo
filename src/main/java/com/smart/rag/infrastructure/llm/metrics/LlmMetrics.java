@@ -97,4 +97,17 @@ public class LlmMetrics {
         registry.counter("llm.retry.attempts", "candidateId", candidateId, "result", result)
             .increment();
     }
+
+    // ==================== Client Initialization ====================
+
+    /**
+     * Record a client initialization failure. Allows monitoring/alerting when
+     * {@code LlmClientFactory.createRawClient} silently skips a misconfigured candidate
+     * (returns null instead of failing fast).
+     */
+    public void recordClientInitFailure(String candidateId) {
+        if (registry == null) return;
+        registry.counter("llm.client.init.failures", "candidateId", candidateId)
+            .increment();
+    }
 }

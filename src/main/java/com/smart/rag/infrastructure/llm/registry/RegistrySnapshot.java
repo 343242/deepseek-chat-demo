@@ -98,4 +98,18 @@ public record RegistrySnapshot(
     public int size() {
         return clientsById.size();
     }
+
+    /**
+     * 返回一个新快照，仅替换 disabledSet（filteredChains 由 compact constructor 自动重算）。
+     * <p>
+     * 用于 {@code LlmClientRegistry.disable/enable/refresh} 的 copy-on-write 更新，
+     * 避免在三处调用点重复 6 字段构造器。
+     *
+     * @param newDisabled 新的禁用集合
+     * @return 新快照（其他字段不变）
+     */
+    public RegistrySnapshot withDisabledSet(java.util.Set<String> newDisabled) {
+        return new RegistrySnapshot(clientsById, fallbackChains, defaultClients,
+            deepThinkingClients, Map.of(), newDisabled);
+    }
 }

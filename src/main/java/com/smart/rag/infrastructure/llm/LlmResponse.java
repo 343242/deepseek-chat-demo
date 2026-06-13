@@ -28,9 +28,9 @@ public record LlmResponse(
     Map<String, Object> responseMetadata
 ) {
     public LlmResponse {
-        if (content == null) content = "";
-        if (toolCalls == null) toolCalls = List.of();
-        if (responseMetadata == null) responseMetadata = Map.of();
+        content = content != null ? content : "";
+        toolCalls = toolCalls != null ? List.copyOf(toolCalls) : List.of();
+        responseMetadata = responseMetadata != null ? Map.copyOf(responseMetadata) : Map.of();
     }
 
     public record TokenUsage(int promptTokens, int completionTokens, int totalTokens) {}

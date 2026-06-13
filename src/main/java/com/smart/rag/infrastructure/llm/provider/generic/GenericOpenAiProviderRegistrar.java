@@ -31,7 +31,7 @@ public class GenericOpenAiProviderRegistrar implements BeanDefinitionRegistryPos
 
     private static final Logger log = LoggerFactory.getLogger(GenericOpenAiProviderRegistrar.class);
 
-    private Environment environment;
+    private volatile Environment environment;
 
     @Override
     public void setEnvironment(Environment environment) {

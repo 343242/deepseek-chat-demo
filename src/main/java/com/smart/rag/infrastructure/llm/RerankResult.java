@@ -17,7 +17,14 @@ public record RerankResult(
     String document
 ) {
     public RerankResult {
-        Objects.requireNonNull(document, "文档内容不能为空");
-        if (originalIndex < 0) throw new ClientException(ClientErrorCode.BAD_REQUEST, "文档索引不能为负数: " + originalIndex);
+        if (document == null) {
+            throw new ClientException(ClientErrorCode.BAD_REQUEST, "文档内容不能为空");
+        }
+        if (originalIndex < 0) {
+            throw new ClientException(ClientErrorCode.BAD_REQUEST, "文档索引不能为负数: " + originalIndex);
+        }
+        if (Double.isNaN(score) || Double.isInfinite(score)) {
+            throw new ClientException(ClientErrorCode.BAD_REQUEST, "文档得分无效: " + score);
+        }
     }
 }

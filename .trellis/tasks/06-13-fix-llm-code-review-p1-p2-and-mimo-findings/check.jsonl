@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/code-review-checklist.md", "reason": "验收清单 — 自检 10 维度，重点关注维度 3/5/7 修复后是否真正满足 spec"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "验证 RemoteErrorCode 新增符合 IErrorCode 接口；error-handling.md 文档表更新"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Forbidden Patterns — 验证 0 引入 @Autowired/IllegalArgumentException/System.out/new Thread/Executors"}
+{"file": ".trellis/tasks/06-13-code-review-infrastructure-llm-module-63-files/review-report.md", "reason": "对照原始审查 — 确认 NEW-P1-1/2/3 + NEW-P2-1~6 + Mimo 7.1/3.1/3.2/3.3 全部修复"}

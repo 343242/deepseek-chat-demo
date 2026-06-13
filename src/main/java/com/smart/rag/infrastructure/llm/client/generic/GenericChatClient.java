@@ -49,25 +49,30 @@ public class GenericChatClient extends AbstractChatClient {
     private final String apiKey;
 
     private final RestClient restClient;
-    private final Call.Factory callFactory;
+    private final OkHttpClient okHttpClient;
     private final ObjectMapper objectMapper;
     private final HttpClientFactory.HttpHandles http;
 
     public GenericChatClient(String baseUrl, String endpoint,
-                             String apiKey, ModelCandidate candidate) {
+                             String apiKey, ModelCandidate candidate,
+                             HttpClientFactory httpClientFactory) {
         super(Objects.requireNonNull(candidate, "candidate must not be null"), candidate.provider());
         this.baseUrl = Objects.requireNonNull(baseUrl, "baseUrl must not be null");
         this.endpoint = Objects.requireNonNull(endpoint, "endpoint must not be null");
         this.apiKey = Objects.requireNonNull(apiKey, "apiKey must not be null");
+        Objects.requireNonNull(httpClientFactory, "httpClientFactory must not be null");
         this.objectMapper = new ObjectMapper();
         this.http = HttpClientFactory.buildRestClient(baseUrl, apiKey,
             Duration.ofSeconds(CONNECT_TIMEOUT_SECONDS), Duration.ofSeconds(READ_TIMEOUT_SECONDS));
         this.restClient = http.restClient();
 
-        this.callFactory = new OkHttpClient.Builder()
-            .connectTimeout(CONNECT_TIMEOUT_SECONDS, java.util.concurrent.TimeUnit.SECONDS)
-            .readTimeout(STREAM_READ_TIMEOUT_SECONDS, java.util.concurrent.TimeUnit.SECONDS)
-            .build();
+        // Share OkHttpClient across all GenericChatClient instances (per timeout signature).
+        // OkHttp officially recommends single instance reuse — each instance owns a connection
+        // pool + dispatcher ExecutorService; N candidates × N pools multiplies resource cost.
+        // The shared instance is managed by HttpClientFactory.closeAll() — do NOT close here.
+        this.okHttpClient = httpClientFactory.sharedOkHttpClient(
+            Duration.ofSeconds(CONNECT_TIMEOUT_SECONDS),
+            Duration.ofSeconds(STREAM_READ_TIMEOUT_SECONDS));
 
         log.info("GenericChatClient initialized: model={}, endpoint={}", candidate.model(), endpoint);
     }
@@ -113,7 +118,7 @@ public class GenericChatClient extends AbstractChatClient {
                 .post(RequestBody.create(jsonBody, JSON_MEDIA))
                 .build();
 
-            Call call = callFactory.newCall(httpRequest);
+            Call call = okHttpClient.newCall(httpRequest);
             sink.onCancel(call::cancel);
             sink.onDispose(call::cancel);
 
@@ -134,8 +139,10 @@ public class GenericChatClient extends AbstractChatClient {
                 }
             } catch (RemoteException e) {
                 if (!sink.isCancelled()) sink.error(e);
-            } catch (IOException e) {
-                if (!sink.isCancelled()) sink.error(e);
+            } catch (Exception e) {
+                if (!sink.isCancelled()) {
+                    sink.error(HttpClientErrorHandler.translate("Chat Stream", url, e));
+                }
             }
         }).subscribeOn(Schedulers.boundedElastic());
     }
@@ -222,8 +229,7 @@ public class GenericChatClient extends AbstractChatClient {
             LlmResponse.TokenUsage tokenUsage = parseTokenUsage(root.path("usage"));
             return new LlmResponse(content, truncated, tokenUsage, toolCalls, Map.of());
         } catch (IOException e) {
-            // LLM_STREAM_ERROR used as catch-all for parse failures (no dedicated parse error code)
-            throw new RemoteException(RemoteErrorCode.LLM_STREAM_ERROR,
+            throw new RemoteException(RemoteErrorCode.LLM_RESPONSE_PARSE_ERROR,
                 "Failed to parse chat response: " + e.getMessage(), e);
         }
     }
@@ -252,10 +258,8 @@ public class GenericChatClient extends AbstractChatClient {
 
     @Override
     public void close() {
+        // Note: okHttpClient is a shared singleton managed by HttpClientFactory.closeAll().
+        // Only the per-instance RestClient/JdkHttpClient resources are released here.
         http.close();
-        if (callFactory instanceof OkHttpClient ok) {
-            ok.dispatcher().executorService().shutdown();
-            ok.connectionPool().evictAll();
-        }
     }
 }

@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 8
+- **Total Sessions**: 9
 - **Last Active**: 2026-06-14
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~272 | Active |
+| `journal-1.md` | ~305 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 9 | 2026-06-14 | LLM module self-review P2/P3 follow-ups (11 issues) | `c35b2fe` | `agentic-rag-dev` |
 | 8 | 2026-06-14 | LLM module self-review P1 fixes (3 issues) | `488413e` | `agentic-rag-dev` |
 | 7 | 2026-06-14 | LLM module Mimo P1/P2 fixes (6 issues) | `49c150c` | `agentic-rag-dev` |
 | 6 | 2026-06-06 | Messaging Bus Phase A + remove enabled toggle | `d2baf8c`, `5dc4ca0` | `agentic-rag-dev` |

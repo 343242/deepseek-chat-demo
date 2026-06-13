@@ -270,3 +270,36 @@ Fixed 3 self-review P1 findings: HttpClientErrorHandler.translate() refactored f
 ### Next Steps
 
 - None - task complete
+
+
+## Session 9: LLM module self-review P2/P3 follow-ups (11 issues)
+
+**Date**: 2026-06-14
+**Task**: LLM module self-review P2/P3 follow-ups (11 issues)
+**Branch**: `agentic-rag-dev`
+
+### Summary
+
+Completed 11 P2/P3 self-review fixes: HttpClientErrorHandler 5xx→ERROR log + ResourceAccessException unwrap; ProbeHandler extracted wrapWithInFlightProbeOrDelegate helper + corrected Javadoc + non-@Component rationale; BailianEmbeddingClient split Spring AI EmbeddingModel adapter (260→218 lines) into BailianSpringAiEmbeddingAdapter; LlmAutoConfiguration primaryEmbeddingModel() detects/wraps adapter; LlmClientRegistry externalized DESTROY_TIMEOUT/CONCURRENCY via constructor injection + @Autowired for multi-constructor Spring resolution; ChatRequest error messages now name the field; CircuitBreaker.execute() Javadoc clarifies recordSuccess no-op in non-CLOSED state. 532/532 tests green across LLM + downstream chat/agent/rag modules. trellis-check found 1 Spring autowiring issue and self-fixed.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c35b2fe` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

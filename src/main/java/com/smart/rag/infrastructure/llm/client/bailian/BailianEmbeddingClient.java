@@ -2,6 +2,10 @@ package com.smart.rag.infrastructure.llm.client.bailian;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.smart.rag.infrastructure.concurrent.ScopeOptions;
+import com.smart.rag.infrastructure.concurrent.ScopePolicy;
+import com.smart.rag.infrastructure.concurrent.ScopedTasks;
+import com.smart.rag.infrastructure.concurrent.TaskScope;
 import com.smart.rag.infrastructure.exception.RemoteException;
 import com.smart.rag.infrastructure.exception.errorcode.RemoteErrorCode;
 import com.smart.rag.infrastructure.llm.*;
@@ -18,7 +22,6 @@ import org.springframework.ai.embedding.EmbeddingResponse;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.web.client.RestClient;
 
-import java.io.IOException;
 import java.net.http.HttpClient;
 import java.time.Duration;
 import java.util.*;
@@ -27,6 +30,7 @@ import java.util.*;
  * 百炼 Embedding 客户端 — DashScope 原生 API
  * <p>
  * 使用 DashScope 原生端点（从配置注入），支持 text_type、instruct 等高级参数。
+ * 子批次使用结构化并发（{@link ScopedTasks}）并行调用，加速大批量向量化。
  * <p>
  * 同时实现 {@link EmbeddingCapable}（SPI 层）和 Spring AI {@link EmbeddingModel}（框架层），
  * 供 PgVectorStore + AnswerRelevanceScorer 直接使用。
@@ -35,12 +39,14 @@ public class BailianEmbeddingClient extends AbstractEmbeddingClient implements E
 
     private static final Logger log = LoggerFactory.getLogger(BailianEmbeddingClient.class);
     private static final int MAX_BATCH_SIZE = 10;
+    private static final int MAX_CONCURRENCY = 4;
     private static final int CONNECT_TIMEOUT_SECONDS = 10;
     private static final int READ_TIMEOUT_SECONDS = 30;
 
     private final RestClient restClient;
     private final ObjectMapper objectMapper;
     private final HttpClient httpClient;
+    private final ScopedTasks scopedTasks;
     // DCL pattern: volatile guarantees the float[] reference is safely published.
     // The array contents (all zeros) are read-only after construction, so no further synchronization is needed.
     private volatile float[] zeroVector;
@@ -48,13 +54,16 @@ public class BailianEmbeddingClient extends AbstractEmbeddingClient implements E
     private final String baseUrl;
     private final String endpoint;
 
-    public BailianEmbeddingClient(String baseUrl, String endpoint, String apiKey, ModelCandidate candidate) {
+    public BailianEmbeddingClient(String baseUrl, String endpoint, String apiKey,
+                                   ModelCandidate candidate, ScopedTasks scopedTasks) {
         super(Objects.requireNonNull(candidate, "candidate must not be null"), candidate.provider());
         Objects.requireNonNull(baseUrl, "baseUrl must not be null");
         Objects.requireNonNull(endpoint, "endpoint must not be null");
         Objects.requireNonNull(apiKey, "apiKey must not be null");
+        Objects.requireNonNull(scopedTasks, "scopedTasks must not be null");
         this.baseUrl = baseUrl;
         this.endpoint = endpoint;
+        this.scopedTasks = scopedTasks;
         this.objectMapper = new ObjectMapper();
 
         this.httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(CONNECT_TIMEOUT_SECONDS)).build();
@@ -87,11 +96,10 @@ public class BailianEmbeddingClient extends AbstractEmbeddingClient implements E
     public List<float[]> embedBatch(List<String> texts, EmbeddingType type) {
         if (texts == null || texts.isEmpty()) return List.of();
         String textType = (type == EmbeddingType.DOCUMENT) ? "document" : "query";
+        float[][][] batches = executeBatchesConcurrently(texts, textType);
         List<float[]> results = new ArrayList<>(texts.size());
-        for (int i = 0; i < texts.size(); i += MAX_BATCH_SIZE) {
-            List<String> batch = texts.subList(i, Math.min(i + MAX_BATCH_SIZE, texts.size()));
-            float[][] batchResult = callApiBatch(batch, textType);
-            for (float[] f : batchResult) results.add(f);
+        for (float[][] batch : batches) {
+            for (float[] f : batch) results.add(f);
         }
         return results;
     }
@@ -119,12 +127,12 @@ public class BailianEmbeddingClient extends AbstractEmbeddingClient implements E
     @Override
     public @NonNull EmbeddingResponse call(@NonNull EmbeddingRequest request) {
         List<String> texts = request.getInstructions();
-        List<Embedding> allEmbeddings = new ArrayList<>();
-        for (int i = 0; i < texts.size(); i += MAX_BATCH_SIZE) {
-            List<String> batch = texts.subList(i, Math.min(i + MAX_BATCH_SIZE, texts.size()));
-            float[][] vectors = callApiBatch(batch, "query");
-            for (int j = 0; j < vectors.length; j++) {
-                allEmbeddings.add(new Embedding(vectors[j], i + j));
+        float[][][] batches = executeBatchesConcurrently(texts, "query");
+        List<Embedding> allEmbeddings = new ArrayList<>(texts.size());
+        int globalIndex = 0;
+        for (float[][] batch : batches) {
+            for (float[] vector : batch) {
+                allEmbeddings.add(new Embedding(vector, globalIndex++));
             }
         }
         return new EmbeddingResponse(allEmbeddings);
@@ -138,6 +146,35 @@ public class BailianEmbeddingClient extends AbstractEmbeddingClient implements E
     @Override
     public int dimensions() {
         return candidate.dimension();
+    }
+
+    // ======================== Concurrent Batch Execution ========================
+
+    private float[][][] executeBatchesConcurrently(List<String> texts, String textType) {
+        int batchCount = (texts.size() + MAX_BATCH_SIZE - 1) / MAX_BATCH_SIZE;
+        if (batchCount <= 1) {
+            return new float[][][] { callApiBatch(texts, textType) };
+        }
+
+        float[][][] batchResults = new float[batchCount][][];
+        ScopeOptions options = ScopeOptions.builder("embed-batch")
+            .policy(ScopePolicy.SHUTDOWN_ON_FAILURE)
+            .maxConcurrency(MAX_CONCURRENCY)
+            .build();
+
+        try (TaskScope scope = scopedTasks.open("embed-batch", options)) {
+            for (int i = 0; i < texts.size(); i += MAX_BATCH_SIZE) {
+                List<String> batch = texts.subList(i, Math.min(i + MAX_BATCH_SIZE, texts.size()));
+                int idx = i / MAX_BATCH_SIZE;
+                scope.fork("batch-" + idx, () -> {
+                    batchResults[idx] = callApiBatch(batch, textType);
+                    return null;
+                });
+            }
+            scope.join();
+        }
+
+        return batchResults;
     }
 
     // ======================== DashScope Native API ========================

@@ -1,7 +1,7 @@
 package com.smart.rag.infrastructure.llm.strategy.provider;
 
+import com.smart.rag.infrastructure.concurrent.ScopedTasks;
 import com.smart.rag.infrastructure.llm.CapabilityClient;
-import com.smart.rag.infrastructure.llm.EmbeddingCapable;
 import com.smart.rag.infrastructure.llm.LlmCapability;
 import com.smart.rag.infrastructure.llm.ModelCandidate;
 import com.smart.rag.infrastructure.llm.client.bailian.BailianEmbeddingClient;
@@ -17,6 +17,12 @@ import org.springframework.stereotype.Component;
 @Component
 public class BailianEmbeddingClientFactory implements ProviderClientFactory {
 
+    private final ScopedTasks scopedTasks;
+
+    public BailianEmbeddingClientFactory(ScopedTasks scopedTasks) {
+        this.scopedTasks = scopedTasks;
+    }
+
     @Override
     public String providerId() {
         return "bailian";
@@ -29,6 +35,6 @@ public class BailianEmbeddingClientFactory implements ProviderClientFactory {
 
     @Override
     public CapabilityClient create(String baseUrl, String endpoint, String apiKey, ModelCandidate candidate) {
-        return new BailianEmbeddingClient(baseUrl, endpoint, apiKey, candidate);
+        return new BailianEmbeddingClient(baseUrl, endpoint, apiKey, candidate, scopedTasks);
     }
 }

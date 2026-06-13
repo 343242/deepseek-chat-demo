@@ -11,6 +11,7 @@ import com.smart.rag.infrastructure.exception.errorcode.RemoteErrorCode;
 import com.smart.rag.infrastructure.llm.*;
 import com.smart.rag.infrastructure.llm.client.AbstractEmbeddingClient;
 import com.smart.rag.infrastructure.llm.client.HttpClientErrorHandler;
+import com.smart.rag.infrastructure.llm.client.HttpClientFactory;
 import org.jspecify.annotations.NonNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -19,10 +20,8 @@ import org.springframework.ai.embedding.Embedding;
 import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.ai.embedding.EmbeddingRequest;
 import org.springframework.ai.embedding.EmbeddingResponse;
-import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.web.client.RestClient;
 
-import java.net.http.HttpClient;
 import java.time.Duration;
 import java.util.*;
 
@@ -45,7 +44,7 @@ public class BailianEmbeddingClient extends AbstractEmbeddingClient implements E
 
     private final RestClient restClient;
     private final ObjectMapper objectMapper;
-    private final HttpClient httpClient;
+    private final HttpClientFactory.HttpHandles http;
     private final ScopedTasks scopedTasks;
     // DCL pattern: volatile guarantees the float[] reference is safely published.
     // The array contents (all zeros) are read-only after construction, so no further synchronization is needed.
@@ -65,17 +64,9 @@ public class BailianEmbeddingClient extends AbstractEmbeddingClient implements E
         this.endpoint = endpoint;
         this.scopedTasks = scopedTasks;
         this.objectMapper = new ObjectMapper();
-
-        this.httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(CONNECT_TIMEOUT_SECONDS)).build();
-        JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(httpClient);
-        requestFactory.setReadTimeout(Duration.ofSeconds(READ_TIMEOUT_SECONDS));
-
-        this.restClient = RestClient.builder()
-            .baseUrl(baseUrl)
-            .defaultHeader("Authorization", "Bearer " + apiKey)
-            .defaultHeader("Content-Type", "application/json")
-            .requestFactory(requestFactory)
-            .build();
+        this.http = HttpClientFactory.buildRestClient(baseUrl, apiKey,
+            Duration.ofSeconds(CONNECT_TIMEOUT_SECONDS), Duration.ofSeconds(READ_TIMEOUT_SECONDS));
+        this.restClient = http.restClient();
 
         log.info("BailianEmbeddingClient initialized: model={}, dimension={}, candidate={}, baseUrl={}",
             candidate.model(), candidate.dimension(), candidate.id(), baseUrl);
@@ -266,8 +257,6 @@ public class BailianEmbeddingClient extends AbstractEmbeddingClient implements E
 
     @Override
     public void close() {
-        if (httpClient != null) {
-            httpClient.close();
-        }
+        http.close();
     }
 }

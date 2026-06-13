@@ -7,12 +7,12 @@ import com.smart.rag.infrastructure.exception.errorcode.RemoteErrorCode;
 import com.smart.rag.infrastructure.llm.*;
 import com.smart.rag.infrastructure.llm.client.AbstractChatClient;
 import com.smart.rag.infrastructure.llm.client.HttpClientErrorHandler;
+import com.smart.rag.infrastructure.llm.client.HttpClientFactory;
 import okhttp3.*;
 import okhttp3.OkHttpClient;
 import okio.BufferedSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.web.client.RestClient;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.FluxSink;
@@ -20,7 +20,6 @@ import reactor.core.scheduler.Schedulers;
 
 import java.io.IOException;
 import java.net.URI;
-import java.net.http.HttpClient;
 import java.time.Duration;
 import java.util.*;
 
@@ -52,7 +51,7 @@ public class GenericChatClient extends AbstractChatClient {
     private final RestClient restClient;
     private final Call.Factory callFactory;
     private final ObjectMapper objectMapper;
-    private final HttpClient httpClient;
+    private final HttpClientFactory.HttpHandles http;
 
     public GenericChatClient(String baseUrl, String endpoint,
                              String apiKey, ModelCandidate candidate) {
@@ -61,17 +60,9 @@ public class GenericChatClient extends AbstractChatClient {
         this.endpoint = Objects.requireNonNull(endpoint, "endpoint must not be null");
         this.apiKey = Objects.requireNonNull(apiKey, "apiKey must not be null");
         this.objectMapper = new ObjectMapper();
-
-        this.httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(CONNECT_TIMEOUT_SECONDS)).build();
-        JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(httpClient);
-        requestFactory.setReadTimeout(Duration.ofSeconds(READ_TIMEOUT_SECONDS));
-
-        this.restClient = RestClient.builder()
-            .baseUrl(baseUrl)
-            .defaultHeader("Authorization", "Bearer " + apiKey)
-            .defaultHeader("Content-Type", "application/json")
-            .requestFactory(requestFactory)
-            .build();
+        this.http = HttpClientFactory.buildRestClient(baseUrl, apiKey,
+            Duration.ofSeconds(CONNECT_TIMEOUT_SECONDS), Duration.ofSeconds(READ_TIMEOUT_SECONDS));
+        this.restClient = http.restClient();
 
         this.callFactory = new OkHttpClient.Builder()
             .connectTimeout(CONNECT_TIMEOUT_SECONDS, java.util.concurrent.TimeUnit.SECONDS)
@@ -224,29 +215,11 @@ public class GenericChatClient extends AbstractChatClient {
             if (choices.isArray() && !choices.isEmpty()) {
                 JsonNode message = choices.get(0).path("message");
                 content = message.path("content").asText("");
-                String finishReason = choices.get(0).path("finish_reason").asText("");
-                truncated = "length".equals(finishReason);
-
-                JsonNode tcNode = message.path("tool_calls");
-                if (tcNode.isArray() && !tcNode.isEmpty()) {
-                    toolCalls = new ArrayList<>();
-                    for (JsonNode tc : tcNode) {
-                        toolCalls.add(new LlmResponse.ToolCall(
-                            tc.path("id").asText(),
-                            tc.path("function").path("name").asText(),
-                            tc.path("function").path("arguments").asText()
-                        ));
-                    }
-                }
+                truncated = "length".equals(choices.get(0).path("finish_reason").asText(""));
+                toolCalls = parseToolCalls(message);
             }
 
-            JsonNode usage = root.path("usage");
-            LlmResponse.TokenUsage tokenUsage = new LlmResponse.TokenUsage(
-                usage.path("prompt_tokens").asInt(0),
-                usage.path("completion_tokens").asInt(0),
-                usage.path("total_tokens").asInt(0)
-            );
-
+            LlmResponse.TokenUsage tokenUsage = parseTokenUsage(root.path("usage"));
             return new LlmResponse(content, truncated, tokenUsage, toolCalls, Map.of());
         } catch (IOException e) {
             // LLM_STREAM_ERROR used as catch-all for parse failures (no dedicated parse error code)
@@ -255,11 +228,31 @@ public class GenericChatClient extends AbstractChatClient {
         }
     }
 
+    private List<LlmResponse.ToolCall> parseToolCalls(JsonNode message) {
+        JsonNode tcNode = message.path("tool_calls");
+        if (!tcNode.isArray() || tcNode.isEmpty()) return List.of();
+        List<LlmResponse.ToolCall> toolCalls = new ArrayList<>(tcNode.size());
+        for (JsonNode tc : tcNode) {
+            toolCalls.add(new LlmResponse.ToolCall(
+                tc.path("id").asText(),
+                tc.path("function").path("name").asText(),
+                tc.path("function").path("arguments").asText()
+            ));
+        }
+        return toolCalls;
+    }
+
+    private LlmResponse.TokenUsage parseTokenUsage(JsonNode usage) {
+        return new LlmResponse.TokenUsage(
+            usage.path("prompt_tokens").asInt(0),
+            usage.path("completion_tokens").asInt(0),
+            usage.path("total_tokens").asInt(0)
+        );
+    }
+
     @Override
     public void close() {
-        if (httpClient != null) {
-            httpClient.close();
-        }
+        http.close();
         if (callFactory instanceof OkHttpClient ok) {
             ok.dispatcher().executorService().shutdown();
             ok.connectionPool().evictAll();

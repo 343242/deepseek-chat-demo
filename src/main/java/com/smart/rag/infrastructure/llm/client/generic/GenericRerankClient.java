@@ -5,12 +5,11 @@ import com.smart.rag.infrastructure.exception.RemoteException;
 import com.smart.rag.infrastructure.llm.*;
 import com.smart.rag.infrastructure.llm.client.AbstractRerankClient;
 import com.smart.rag.infrastructure.llm.client.HttpClientErrorHandler;
+import com.smart.rag.infrastructure.llm.client.HttpClientFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.web.client.RestClient;
 
-import java.net.http.HttpClient;
 import java.time.Duration;
 import java.util.*;
 
@@ -28,30 +27,21 @@ public class GenericRerankClient extends AbstractRerankClient {
 
     private final String baseUrl;
     private final String endpoint;
-    private final String apiKey;
-
     private final RestClient restClient;
     private final ObjectMapper objectMapper;
-    private final HttpClient httpClient;
+    private final HttpClientFactory.HttpHandles http;
 
     public GenericRerankClient(String baseUrl, String endpoint,
                                String apiKey, ModelCandidate candidate) {
         super(Objects.requireNonNull(candidate, "candidate must not be null"), candidate.provider());
         this.baseUrl = Objects.requireNonNull(baseUrl, "baseUrl must not be null");
-        this.endpoint = Objects.requireNonNull(endpoint, "endpoint must not be null");
-        this.apiKey = Objects.requireNonNull(apiKey, "apiKey must not be null");
+        Objects.requireNonNull(endpoint, "endpoint must not be null");
+        Objects.requireNonNull(apiKey, "apiKey must not be null");
+        this.endpoint = endpoint;
         this.objectMapper = new ObjectMapper();
-
-        this.httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(CONNECT_TIMEOUT_SECONDS)).build();
-        JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(httpClient);
-        requestFactory.setReadTimeout(Duration.ofSeconds(READ_TIMEOUT_SECONDS));
-
-        this.restClient = RestClient.builder()
-            .baseUrl(baseUrl)
-            .defaultHeader("Authorization", "Bearer " + apiKey)
-            .defaultHeader("Content-Type", "application/json")
-            .requestFactory(requestFactory)
-            .build();
+        this.http = HttpClientFactory.buildRestClient(baseUrl, apiKey,
+            Duration.ofSeconds(CONNECT_TIMEOUT_SECONDS), Duration.ofSeconds(READ_TIMEOUT_SECONDS));
+        this.restClient = http.restClient();
 
         log.info("GenericRerankClient initialized: model={}, endpoint={}", candidate.model(), endpoint);
     }
@@ -85,8 +75,6 @@ public class GenericRerankClient extends AbstractRerankClient {
 
     @Override
     public void close() {
-        if (httpClient != null) {
-            httpClient.close();
-        }
+        http.close();
     }
 }

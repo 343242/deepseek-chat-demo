@@ -18,5 +18,13 @@ public enum LlmCapability {
     /** 向量嵌入 */
     EMBEDDING,
     /** 重排序 */
-    RERANKING
+    RERANKING;
+
+    /**
+     * 对应的 YAML 配置 key（用于 {@code app.llm.providers.<id>.endpoints.<yamlKey>}）。
+     * 大多数能力直接用枚举名小写；个别能力（如 RERANKING → "rerank"）遵循社区命名约定。
+     */
+    public String yamlKey() {
+        return this == RERANKING ? "rerank" : name().toLowerCase();
+    }
 }

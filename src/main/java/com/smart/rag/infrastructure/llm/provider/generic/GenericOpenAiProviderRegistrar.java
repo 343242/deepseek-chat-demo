@@ -77,8 +77,7 @@ public class GenericOpenAiProviderRegistrar implements BeanDefinitionRegistryPos
             Map<String, String> endpoints = new java.util.HashMap<>();
             for (LlmCapability cap : LlmCapability.values()) {
                 String mapKey = cap.name().toLowerCase();
-                String yamlKey = mapKey.equals("reranking") ? "rerank" : mapKey;
-                String value = environment.getProperty(prefix + "." + id + ".endpoints." + yamlKey);
+                String value = environment.getProperty(prefix + "." + id + ".endpoints." + cap.yamlKey());
                 if (value != null) {
                     endpoints.put(mapKey, value);
                 }

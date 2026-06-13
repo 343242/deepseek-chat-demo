@@ -1,0 +1,3 @@
+{"file":".trellis/spec/backend/error-handling.md","reason":"Error handling guidelines for retry policy and error codes"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Quality standards for null safety, immutability, and defensive copies"}
+{"file":"docs/reviews/2026-06-12-llm-unified-spi-code-review.md","reason":"Original code review with P1 findings and proposed fixes"}

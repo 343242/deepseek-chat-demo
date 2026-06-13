@@ -26,7 +26,7 @@ public class BailianRerankClientFactory implements ProviderClientFactory {
     }
 
     @Override
-    public CapabilityClient create(String baseUrl, String apiKey, ModelCandidate candidate) {
-        return new BailianRerankClient(baseUrl, apiKey, candidate);
+    public CapabilityClient create(String baseUrl, String endpoint, String apiKey, ModelCandidate candidate) {
+        return new BailianRerankClient(baseUrl, endpoint, apiKey, candidate);
     }
 }

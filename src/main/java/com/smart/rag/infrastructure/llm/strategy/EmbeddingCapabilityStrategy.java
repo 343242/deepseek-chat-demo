@@ -55,7 +55,7 @@ public class EmbeddingCapabilityStrategy implements CapabilityStrategy {
         ProviderClientFactory factory = providerFactories.get(
             candidate.provider() + ":" + capability());
         if (factory != null) {
-            return factory.create(baseUrl, apiKey, candidate);
+            return factory.create(baseUrl, endpoint, apiKey, candidate);
         }
         return new GenericEmbeddingClient(baseUrl, endpoint, apiKey, candidate);
     }

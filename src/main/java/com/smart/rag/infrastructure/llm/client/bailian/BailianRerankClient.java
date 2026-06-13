@@ -29,11 +29,14 @@ public class BailianRerankClient extends AbstractRerankClient {
     private final RestClient restClient;
     private final ObjectMapper objectMapper;
     private final HttpClient httpClient;
+    private final String endpoint;
 
-    public BailianRerankClient(String baseUrl, String apiKey, ModelCandidate candidate) {
+    public BailianRerankClient(String baseUrl, String endpoint, String apiKey, ModelCandidate candidate) {
         super(Objects.requireNonNull(candidate, "candidate must not be null"), candidate.provider());
         Objects.requireNonNull(baseUrl, "baseUrl must not be null");
+        Objects.requireNonNull(endpoint, "endpoint must not be null");
         Objects.requireNonNull(apiKey, "apiKey must not be null");
+        this.endpoint = endpoint;
         this.objectMapper = new ObjectMapper();
 
         this.httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(CONNECT_TIMEOUT_SECONDS)).build();
@@ -65,7 +68,7 @@ public class BailianRerankClient extends AbstractRerankClient {
 
         try {
             String json = restClient.post()
-                .uri("/reranks")
+                .uri(endpoint)
                 .body(body)
                 .retrieve()
                 .body(String.class);
@@ -74,7 +77,7 @@ public class BailianRerankClient extends AbstractRerankClient {
         } catch (RemoteException e) {
             throw e;
         } catch (Exception e) {
-            throw HttpClientErrorHandler.translate("Bailian Rerank", "/reranks", e);
+            throw HttpClientErrorHandler.translate("Bailian Rerank", endpoint, e);
         }
     }
 

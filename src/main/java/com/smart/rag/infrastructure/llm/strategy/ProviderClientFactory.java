@@ -25,9 +25,10 @@ public interface ProviderClientFactory {
      * 创建专用客户端（使用原生 API）
      *
      * @param baseUrl   供应商基础 URL
+     * @param endpoint  能力对应的端点路径（从配置解析）
      * @param apiKey    供应商 API Key
      * @param candidate 模型候选声明
      * @return 专用能力客户端（已实现对应的 CapabilityClient 子接口）
      */
-    CapabilityClient create(String baseUrl, String apiKey, ModelCandidate candidate);
+    CapabilityClient create(String baseUrl, String endpoint, String apiKey, ModelCandidate candidate);
 }

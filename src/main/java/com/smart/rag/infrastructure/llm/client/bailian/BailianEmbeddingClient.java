@@ -1,5 +1,6 @@
 package com.smart.rag.infrastructure.llm.client.bailian;
 
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smart.rag.infrastructure.exception.RemoteException;
 import com.smart.rag.infrastructure.exception.errorcode.RemoteErrorCode;
@@ -17,6 +18,7 @@ import org.springframework.ai.embedding.EmbeddingResponse;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.web.client.RestClient;
 
+import java.io.IOException;
 import java.net.http.HttpClient;
 import java.time.Duration;
 import java.util.*;
@@ -24,8 +26,7 @@ import java.util.*;
 /**
  * 百炼 Embedding 客户端 — DashScope 原生 API
  * <p>
- * 使用 DashScope 原生 /api/v1/services/embeddings/text-embedding/text-embedding 端点，
- * 支持 text_type、instruct 等高级参数（OpenAI 兼容接口不支持）。
+ * 使用 DashScope 原生端点（从配置注入），支持 text_type、instruct 等高级参数。
  * <p>
  * 同时实现 {@link EmbeddingCapable}（SPI 层）和 Spring AI {@link EmbeddingModel}（框架层），
  * 供 PgVectorStore + AnswerRelevanceScorer 直接使用。
@@ -36,8 +37,6 @@ public class BailianEmbeddingClient extends AbstractEmbeddingClient implements E
     private static final int MAX_BATCH_SIZE = 10;
     private static final int CONNECT_TIMEOUT_SECONDS = 10;
     private static final int READ_TIMEOUT_SECONDS = 30;
-    private static final String EMBEDDING_PATH =
-        "/api/v1/services/embeddings/text-embedding/text-embedding";
 
     private final RestClient restClient;
     private final ObjectMapper objectMapper;
@@ -47,11 +46,15 @@ public class BailianEmbeddingClient extends AbstractEmbeddingClient implements E
     private volatile float[] zeroVector;
 
     private final String baseUrl;
+    private final String endpoint;
 
-    public BailianEmbeddingClient(String baseUrl, String apiKey, ModelCandidate candidate) {
+    public BailianEmbeddingClient(String baseUrl, String endpoint, String apiKey, ModelCandidate candidate) {
         super(Objects.requireNonNull(candidate, "candidate must not be null"), candidate.provider());
+        Objects.requireNonNull(baseUrl, "baseUrl must not be null");
+        Objects.requireNonNull(endpoint, "endpoint must not be null");
         Objects.requireNonNull(apiKey, "apiKey must not be null");
-        this.baseUrl = Objects.requireNonNull(baseUrl, "baseUrl must not be null");
+        this.baseUrl = baseUrl;
+        this.endpoint = endpoint;
         this.objectMapper = new ObjectMapper();
 
         this.httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(CONNECT_TIMEOUT_SECONDS)).build();
@@ -140,17 +143,16 @@ public class BailianEmbeddingClient extends AbstractEmbeddingClient implements E
     // ======================== DashScope Native API ========================
 
     private float[] callApi(List<String> texts, String textType, boolean withInstruct) {
-        Map<String, Object> response = doPost(texts, textType, withInstruct);
+        JsonNode response = doPost(texts, textType, withInstruct);
         return extractFirst(response);
     }
 
     private float[][] callApiBatch(List<String> texts, String textType) {
-        Map<String, Object> response = doPost(texts, textType, false);
-        return extractAll(response, texts.size());
+        JsonNode response = doPost(texts, textType, false);
+        return extractAll(response);
     }
 
-    @SuppressWarnings("unchecked")
-    private Map<String, Object> doPost(List<String> texts, String textType, boolean withInstruct) {
+    private JsonNode doPost(List<String> texts, String textType, boolean withInstruct) {
         Map<String, Object> parameters = new LinkedHashMap<>();
         parameters.put("dimension", candidate.dimension());
         parameters.put("text_type", textType);
@@ -168,41 +170,33 @@ public class BailianEmbeddingClient extends AbstractEmbeddingClient implements E
 
         try {
             String json = restClient.post()
-                .uri(EMBEDDING_PATH)
+                .uri(endpoint)
                 .body(body)
                 .retrieve()
                 .body(String.class);
 
-            // Safe: DashScope API returns unstructured metadata; a typed POJO would add maintenance
-            // overhead with no real type-safety benefit for this provider-specific response shape.
-            return objectMapper.readValue(json, Map.class);
+            return objectMapper.readTree(json);
         } catch (RemoteException e) {
             throw e;
         } catch (Exception e) {
             throw HttpClientErrorHandler.translate("DashScope Embedding",
-                baseUrl + EMBEDDING_PATH, e);
+                baseUrl + endpoint, e);
         }
     }
 
-    @SuppressWarnings("unchecked")
-    private float[] extractFirst(Map<String, Object> response) {
-        Map<String, Object> output = (Map<String, Object>) response.get("output");
-        if (output == null) throw emptyResponse();
-        List<Map<String, Object>> embeddings = (List<Map<String, Object>>) output.get("embeddings");
-        if (embeddings == null || embeddings.isEmpty()) throw emptyResponse();
-        return toFloatArray((List<Number>) embeddings.get(0).get("embedding"));
+    private float[] extractFirst(JsonNode response) {
+        JsonNode embeddings = response.path("output").path("embeddings");
+        if (!embeddings.isArray() || embeddings.isEmpty()) throw emptyResponse();
+        return toFloatArray(embeddings.get(0).path("embedding"));
     }
 
-    @SuppressWarnings("unchecked")
-    private float[][] extractAll(Map<String, Object> response, int count) {
-        Map<String, Object> output = (Map<String, Object>) response.get("output");
-        if (output == null) throw emptyResponse();
-        List<Map<String, Object>> embeddings = (List<Map<String, Object>>) output.get("embeddings");
-        if (embeddings == null) throw emptyResponse();
+    private float[][] extractAll(JsonNode response) {
+        JsonNode embeddings = response.path("output").path("embeddings");
+        if (!embeddings.isArray() || embeddings.isEmpty()) throw emptyResponse();
 
         float[][] result = new float[embeddings.size()][];
         for (int i = 0; i < embeddings.size(); i++) {
-            result[i] = toFloatArray((List<Number>) embeddings.get(i).get("embedding"));
+            result[i] = toFloatArray(embeddings.get(i).path("embedding"));
         }
         return result;
     }
@@ -218,16 +212,17 @@ public class BailianEmbeddingClient extends AbstractEmbeddingClient implements E
         return zeroVector;
     }
 
-    private static float[] toFloatArray(List<Number> doubles) {
-        float[] floats = new float[doubles.size()];
-        for (int i = 0; i < doubles.size(); i++) {
-            floats[i] = doubles.get(i).floatValue();
+    private static float[] toFloatArray(JsonNode node) {
+        if (!node.isArray()) throw new RemoteException(
+            RemoteErrorCode.LLM_STREAM_ERROR, "Expected JSON array for embedding vector");
+        float[] floats = new float[node.size()];
+        for (int i = 0; i < node.size(); i++) {
+            floats[i] = (float) node.get(i).asDouble();
         }
         return floats;
     }
 
     private static RemoteException emptyResponse() {
-        // LLM_STREAM_ERROR used as catch-all for parse failures (no dedicated parse error code)
         return new RemoteException(RemoteErrorCode.LLM_STREAM_ERROR,
             "DashScope embedding API returned empty response");
     }

@@ -1,8 +1,8 @@
 package com.smart.rag.infrastructure.llm.config;
 
-import com.smart.rag.infrastructure.llm.EmbeddingCapable;
 import com.smart.rag.infrastructure.llm.LlmCapability;
 import com.smart.rag.infrastructure.llm.client.bailian.BailianEmbeddingClient;
+import com.smart.rag.infrastructure.llm.client.bailian.BailianSpringAiEmbeddingAdapter;
 import com.smart.rag.infrastructure.llm.metrics.LlmMetrics;
 import com.smart.rag.infrastructure.llm.registry.LlmClientRegistry;
 import com.smart.rag.infrastructure.llm.resilience.AbstractResilientClient;
@@ -21,9 +21,17 @@ import org.springframework.lang.Nullable;
  * <p>
  * 职责：
  * <ol>
- *   <li>注册 {@link BailianEmbeddingClient} 为 {@code @Primary EmbeddingModel}，
- *       供 PgVectorStore + AnswerRelevanceScorer 直接注入使用</li>
+ *   <li>将默认 embedding 客户端注册为 {@code @Primary EmbeddingModel}，
+ *       供 PgVectorStore + AnswerRelevanceScorer 直接注入使用。</li>
  * </ol>
+ * <p>
+ * <b>EmbeddingModel 适配策略</b>：SPI 客户端（如 {@link BailianEmbeddingClient}）只实现
+ * {@code EmbeddingCapable}，不直接实现 Spring AI {@link EmbeddingModel}。本配置负责在
+ * SPI 客户端与 Spring AI 之间架桥：
+ * <ul>
+ *   <li>{@link BailianEmbeddingClient} → {@link BailianSpringAiEmbeddingAdapter} 包装为 EmbeddingModel</li>
+ *   <li>其他已实现 {@code EmbeddingModel} 的客户端 → 直接返回</li>
+ * </ul>
  * <p>
  * LlmConfig 的配置绑定由主应用的 {@code @ConfigurationPropertiesScan("com.smart.rag")} 处理，
  * 无需在此显式注册。
@@ -46,10 +54,14 @@ public class LlmAutoConfiguration {
     }
 
     /**
-     * 将 BailianEmbeddingClient 注册为 @Primary EmbeddingModel
+     * 将默认 embedding 客户端注册为 {@code @Primary EmbeddingModel}。
      * <p>
-     * PgVectorStore 和 AnswerRelevanceScorer 需要 EmbeddingModel bean，
-     * BailianEmbeddingClient 同时实现了 EmbeddingCapable（SPI）和 EmbeddingModel（Spring AI）。
+     * PgVectorStore 和 AnswerRelevanceScorer 需要 EmbeddingModel bean。
+     * SPI 客户端只实现 EmbeddingCapable，需通过适配器桥接到 Spring AI。
+     * <ul>
+     *   <li>{@link BailianEmbeddingClient} → 包装为 {@link BailianSpringAiEmbeddingAdapter}</li>
+     *   <li>其他 EmbeddingModel 实现 → 直接返回</li>
+     * </ul>
      */
     @Bean
     @Primary
@@ -57,15 +69,19 @@ public class LlmAutoConfiguration {
     public EmbeddingModel primaryEmbeddingModel(LlmClientRegistry registry) {
         var client = registry.getDefault(LlmCapability.EMBEDDING);
         Object target = client instanceof AbstractResilientClient<?> arc ? arc.getDelegate() : client;
+        if (target instanceof BailianSpringAiEmbeddingAdapter adapter) {
+            log.info("Registered BailianSpringAiEmbeddingAdapter as @Primary EmbeddingModel");
+            return adapter;
+        }
         if (target instanceof BailianEmbeddingClient bec) {
-            log.info("Registered BailianEmbeddingClient as @Primary EmbeddingModel");
-            return bec;
+            log.info("Wrapping BailianEmbeddingClient with BailianSpringAiEmbeddingAdapter as @Primary EmbeddingModel");
+            return new BailianSpringAiEmbeddingAdapter(bec);
         }
         if (target instanceof EmbeddingModel em) {
             log.info("Registered {} as @Primary EmbeddingModel", target.getClass().getSimpleName());
             return em;
         }
         throw new IllegalStateException(
-            "Default embedding client does not implement EmbeddingModel: " + client.getClass().getName());
+            "Default embedding client cannot be adapted to EmbeddingModel: " + client.getClass().getName());
     }
 }

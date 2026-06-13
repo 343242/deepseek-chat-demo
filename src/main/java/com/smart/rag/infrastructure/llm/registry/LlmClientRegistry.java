@@ -13,6 +13,8 @@ import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
@@ -43,20 +45,45 @@ public class LlmClientRegistry {
 
     private static final Logger log = LoggerFactory.getLogger(LlmClientRegistry.class);
 
-    /** Global timeout for parallel close on registry destroy */
-    private static final Duration DESTROY_TIMEOUT = Duration.ofSeconds(30);
+    /** Default global timeout for parallel close on registry destroy */
+    private static final Duration DEFAULT_DESTROY_TIMEOUT = Duration.ofSeconds(30);
 
-    /** Max parallelism for client close operations */
-    private static final int DESTROY_CONCURRENCY = 8;
+    /** Default max parallelism for client close operations */
+    private static final int DEFAULT_DESTROY_CONCURRENCY = 8;
 
     private final LlmClientFactory factory;
     private final ScopedTasks scopedTasks;
+    private final Duration destroyTimeout;
+    private final int destroyConcurrency;
     private final AtomicReference<RegistrySnapshot> snapshotRef;
 
-    public LlmClientRegistry(LlmClientFactory factory, ScopedTasks scopedTasks) {
+    /**
+     * @param factory             客户端工厂
+     * @param scopedTasks         结构化并发引擎
+     * @param destroyTimeout      销毁时并行关闭的总超时（null 使用默认 30s）
+     * @param destroyConcurrency  销毁时并行关闭的最大并发（null 使用默认 8）
+     */
+    public LlmClientRegistry(LlmClientFactory factory, ScopedTasks scopedTasks,
+                              @Nullable Duration destroyTimeout,
+                              @Nullable Integer destroyConcurrency) {
         this.factory = factory;
         this.scopedTasks = scopedTasks;
+        this.destroyTimeout = destroyTimeout != null ? destroyTimeout : DEFAULT_DESTROY_TIMEOUT;
+        this.destroyConcurrency = destroyConcurrency != null ? destroyConcurrency : DEFAULT_DESTROY_CONCURRENCY;
         this.snapshotRef = new AtomicReference<>(RegistrySnapshot.empty());
+    }
+
+    /**
+     * 兼容构造器：使用默认超时和并发参数。
+     * 保留以支持现有调用方与单元测试（不显式提供 destroy 参数时）。
+     * <p>
+     * 当 Spring 注入本组件时，由于本类有多个构造器，必须显式标注 {@link Autowired}
+     * 指定优先使用本构造器（仅依赖 {@code LlmClientFactory} 和 {@code ScopedTasks} 两个 bean）。
+     * 需要自定义 destroy 参数的场景应通过 Java 配置类手动 new（绕过组件扫描）。
+     */
+    @Autowired
+    public LlmClientRegistry(LlmClientFactory factory, ScopedTasks scopedTasks) {
+        this(factory, scopedTasks, null, null);
     }
 
     // ======================== Lifecycle ========================
@@ -82,7 +109,7 @@ public class LlmClientRegistry {
 
         ScopeOptions options = ScopeOptions.builder("llm-registry-destroy")
             .policy(ScopePolicy.COLLECT_ALL)
-            .maxConcurrency(DESTROY_CONCURRENCY)
+            .maxConcurrency(destroyConcurrency)
             .build();
 
         int total = snapshot.clientsById().size();
@@ -98,10 +125,10 @@ public class LlmClientRegistry {
                 });
             });
             try {
-                scope.joinUntil(DESTROY_TIMEOUT);
+                scope.joinUntil(destroyTimeout);
             } catch (ScopeTimeoutException e) {
                 log.warn("LlmClientRegistry destroy timed out after {} — {} clients may still be closing",
-                    DESTROY_TIMEOUT, total);
+                    destroyTimeout, total);
             }
         }
         log.info("LlmClientRegistry destroyed ({} clients closed in parallel)", total);

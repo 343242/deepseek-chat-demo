@@ -4,6 +4,7 @@ import com.smart.rag.infrastructure.exception.RemoteException;
 import com.smart.rag.infrastructure.exception.errorcode.RemoteErrorCode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestClientResponseException;
 
 import java.io.IOException;
@@ -15,6 +16,8 @@ import java.io.IOException;
  * <ul>
  *   <li>IOException — 包装为 {@code RemoteException(LLM_TRANSIENT_ERROR)}，保留原始 cause，
  *       使 RetryPolicy 通过 {@code getErrorCode() == LLM_TRANSIENT_ERROR} 判定可重试</li>
+ *   <li>ResourceAccessException — Spring {@code RestClient} 抛出的资源访问异常，
+ *       当其 cause 为 {@link IOException} 时解包并按 IOException 路径处理</li>
  *   <li>RemoteException — 原样返回（已是正确类型）</li>
  *   <li>RestClientResponseException — 按 HTTP 状态码映射为对应的 RemoteException</li>
  *   <li>其他 Exception — 包装为 RemoteException(LLM_STREAM_ERROR)</li>
@@ -49,6 +52,10 @@ public final class HttpClientErrorHandler {
         if (e instanceof RemoteException re) {
             return re;
         }
+        // Unwrap Spring RestClient ResourceAccessException → IOException (same semantics)
+        if (e instanceof ResourceAccessException rae && rae.getCause() instanceof IOException ioCause) {
+            return translate(operation, url, ioCause);
+        }
         if (e instanceof IOException io) {
             log.warn("{} 请求 IO 异常: {} - {}", operation, url, io.getMessage());
             return new RemoteException(RemoteErrorCode.LLM_TRANSIENT_ERROR,
@@ -59,11 +66,13 @@ public final class HttpClientErrorHandler {
             String body = rcre.getResponseBodyAsString();
             RemoteErrorCode code;
             if (status == 429) {
+                // 429 is transient/retriable — WARN is appropriate
                 code = RemoteErrorCode.LLM_RATE_LIMITED;
                 log.warn("{} 请求被限流: HTTP 429 from {} - {}", operation, url, body);
             } else if (status >= 500) {
+                // 5xx is a server-side fault (business-visible) — ERROR for ops alerting
                 code = RemoteErrorCode.LLM_TRANSIENT_ERROR;
-                log.warn("{} 请求服务端错误: HTTP {} from {} - {}", operation, status, url, body);
+                log.error("{} 请求服务端错误: HTTP {} from {} - {}", operation, status, url, body);
             } else {
                 code = RemoteErrorCode.LLM_STREAM_ERROR;
             }

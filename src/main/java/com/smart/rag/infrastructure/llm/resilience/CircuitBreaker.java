@@ -50,6 +50,12 @@ public class CircuitBreaker {
      * <p>
      * OPEN → 抛出 {@link ModelCircuitOpenException}
      * HALF_OPEN → 放行（由已有 halfOpenMaxProbes 控制并发数）
+     * <p>
+     * <b>recordSuccess 在非 CLOSED 状态下为 no-op</b>：{@code registry.recordSuccess(candidateId)}
+     * 仅在 CLOSED 状态下累加成功计数。在 OPEN / HALF_OPEN 状态下，{@code ModelCircuitBreakerRegistry}
+     * 内部会忽略该调用，调用方无需根据当前状态决定是否调用——状态转换的语义由 registry 内部统一保证。
+     * 因此 {@code isCallAllowed → action.get() → recordSuccess} 三步之间即使状态被其他线程翻转，
+     * 也不会导致错误的 CLOSED 转换（HALF_OPEN → CLOSED 仅由 {@link #recordProbeSuccess()} 触发）。
      */
     public <T> T execute(RetryPolicy.CheckedSupplier<T> action) throws Exception {
         if (!registry.isCallAllowed(candidateId)) {

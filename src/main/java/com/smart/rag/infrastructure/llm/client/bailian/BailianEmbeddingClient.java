@@ -12,14 +12,8 @@ import com.smart.rag.infrastructure.llm.*;
 import com.smart.rag.infrastructure.llm.client.AbstractEmbeddingClient;
 import com.smart.rag.infrastructure.llm.client.HttpClientErrorHandler;
 import com.smart.rag.infrastructure.llm.client.HttpClientFactory;
-import org.jspecify.annotations.NonNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.ai.document.Document;
-import org.springframework.ai.embedding.Embedding;
-import org.springframework.ai.embedding.EmbeddingModel;
-import org.springframework.ai.embedding.EmbeddingRequest;
-import org.springframework.ai.embedding.EmbeddingResponse;
 import org.springframework.web.client.RestClient;
 
 import java.time.Duration;
@@ -31,10 +25,13 @@ import java.util.*;
  * 使用 DashScope 原生端点（从配置注入），支持 text_type、instruct 等高级参数。
  * 子批次使用结构化并发（{@link ScopedTasks}）并行调用，加速大批量向量化。
  * <p>
- * 同时实现 {@link EmbeddingCapable}（SPI 层）和 Spring AI {@link EmbeddingModel}（框架层），
- * 供 PgVectorStore + AnswerRelevanceScorer 直接使用。
+ * 仅实现 {@link EmbeddingCapable}（SPI 层）。需要 Spring AI {@code EmbeddingModel}
+ * 视图的调用方（PgVectorStore、AnswerRelevanceScorer 等）应通过
+ * {@link BailianSpringAiEmbeddingAdapter} 包装本客户端，由
+ * {@link com.smart.rag.infrastructure.llm.config.LlmAutoConfiguration#primaryEmbeddingModel}
+ * 自动装配。
  */
-public class BailianEmbeddingClient extends AbstractEmbeddingClient implements EmbeddingModel {
+public class BailianEmbeddingClient extends AbstractEmbeddingClient {
 
     private static final Logger log = LoggerFactory.getLogger(BailianEmbeddingClient.class);
     private static final int MAX_BATCH_SIZE = 10;
@@ -96,45 +93,6 @@ public class BailianEmbeddingClient extends AbstractEmbeddingClient implements E
 
     @Override
     public int dimension() {
-        return candidate.dimension();
-    }
-
-    // ======================== Spring AI EmbeddingModel ========================
-
-    @Override
-    public float @NonNull [] embed(@NonNull Document document) {
-        String content = document.getText();
-        if (content == null || content.isBlank()) return getZeroVector();
-        return callApi(List.of(content), "document", false);
-    }
-
-    @Override
-    public float @NonNull [] embed(@NonNull String text) {
-        if (text.isBlank()) return getZeroVector();
-        return callApi(List.of(text), "query", true);
-    }
-
-    @Override
-    public @NonNull EmbeddingResponse call(@NonNull EmbeddingRequest request) {
-        List<String> texts = request.getInstructions();
-        float[][][] batches = executeBatchesConcurrently(texts, "query");
-        List<Embedding> allEmbeddings = new ArrayList<>(texts.size());
-        int globalIndex = 0;
-        for (float[][] batch : batches) {
-            for (float[] vector : batch) {
-                allEmbeddings.add(new Embedding(vector, globalIndex++));
-            }
-        }
-        return new EmbeddingResponse(allEmbeddings);
-    }
-
-    @Override
-    public @NonNull List<float[]> embed(@NonNull List<String> texts) {
-        return embedBatch(texts, EmbeddingType.QUERY);
-    }
-
-    @Override
-    public int dimensions() {
         return candidate.dimension();
     }
 

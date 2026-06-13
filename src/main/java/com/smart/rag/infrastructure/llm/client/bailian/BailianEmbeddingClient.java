@@ -6,6 +6,7 @@ import com.smart.rag.infrastructure.exception.RemoteException;
 import com.smart.rag.infrastructure.exception.errorcode.RemoteErrorCode;
 import com.smart.rag.infrastructure.llm.*;
 import com.smart.rag.infrastructure.llm.client.AbstractEmbeddingClient;
+import com.smart.rag.infrastructure.llm.client.HttpClientErrorHandler;
 import org.jspecify.annotations.NonNull;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -39,14 +40,15 @@ public class BailianEmbeddingClient extends AbstractEmbeddingClient implements E
 
     private final RestClient restClient;
     private final ObjectMapper objectMapper;
+    private final HttpClient httpClient;
     private volatile float[] zeroVector;
 
     public BailianEmbeddingClient(String apiKey, ModelCandidate candidate) {
         super(candidate, candidate.provider());
         this.objectMapper = new ObjectMapper();
 
-        JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(
-            HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build());
+        this.httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
+        JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(httpClient);
         requestFactory.setReadTimeout(Duration.ofSeconds(30));
 
         this.restClient = RestClient.builder()
@@ -165,9 +167,11 @@ public class BailianEmbeddingClient extends AbstractEmbeddingClient implements E
                 .body(String.class);
 
             return objectMapper.readValue(json, Map.class);
+        } catch (RemoteException e) {
+            throw e;
         } catch (Exception e) {
-            throw new RemoteException(RemoteErrorCode.LLM_STREAM_ERROR,
-                "DashScope embedding API failed: " + e.getMessage(), e);
+            throw HttpClientErrorHandler.translate("DashScope Embedding",
+                "https://dashscope.aliyuncs.com" + EMBEDDING_PATH, e);
         }
     }
 
@@ -214,7 +218,15 @@ public class BailianEmbeddingClient extends AbstractEmbeddingClient implements E
     }
 
     private static RemoteException emptyResponse() {
+        // LLM_STREAM_ERROR used as catch-all for parse failures (no dedicated parse error code)
         return new RemoteException(RemoteErrorCode.LLM_STREAM_ERROR,
             "DashScope embedding API returned empty response");
+    }
+
+    @Override
+    public void close() {
+        if (httpClient != null) {
+            httpClient.close();
+        }
     }
 }

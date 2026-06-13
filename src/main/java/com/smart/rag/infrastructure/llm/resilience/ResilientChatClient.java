@@ -11,11 +11,13 @@ import reactor.core.publisher.Flux;
 import java.util.List;
 
 /**
- * ResilientChatClient — Chat 能力的弹性装饰器（实现 ChatCapable + ToolCallingCapable）
+ * ResilientChatClient — Chat 能力的弹性装饰器（实现 ChatCapable）
  * <p>
- * 工具调用已是主流大模型标配能力，chatWithTools() 与 chat() 共享同一弹性保护路径。
- * 当底层 delegate 不支持 {@code ToolCallingCapable} 时，{@code chatWithTools()} 抛出
- * {@code UnsupportedOperationException}——这是能力缺失的正确语义。
+ * 当底层 delegate 支持 {@link ToolCallingCapable} 时，chatWithTools() 可正常调用；
+ * 否则抛出 {@code UnsupportedOperationException}。
+ * <p>
+ * 工具调用条件暴露：由 {@link ResilientToolCallingChatClient} 装饰器在 delegate 支持
+ * {@code ToolCallingCapable} 时额外暴露 {@code ToolCallingCapable} 接口。
  * <p>
  * 策略矩阵：
  * <pre>
@@ -28,7 +30,7 @@ import java.util.List;
  * </pre>
  */
 public class ResilientChatClient extends AbstractResilientClient<ChatCapable>
-        implements ChatCapable, ToolCallingCapable {
+        implements ChatCapable {
 
     @Nullable
     private final ProbeHandler probeHandler;
@@ -90,9 +92,8 @@ public class ResilientChatClient extends AbstractResilientClient<ChatCapable>
         });
     }
 
-    // ======== Tool Calling 操作（统一弹性路径） ========
+    // ======== Tool Calling 操作（委托给底层 delegate） ========
 
-    @Override
     public LlmResponse chatWithTools(ChatRequest request, List<Object> tools) {
         if (!(delegate instanceof ToolCallingCapable tc)) {
             throw new UnsupportedOperationException(
@@ -105,7 +106,13 @@ public class ResilientChatClient extends AbstractResilientClient<ChatCapable>
                     tc.chatWithTools(request, tools)
                 )
             );
-            if (metrics != null) metrics.recordChatLatency(candidateId(), start, "success");
+            if (metrics != null) {
+                metrics.recordChatLatency(candidateId(), start, "success");
+                if (response.tokenUsage() != null) {
+                    metrics.recordTokens(candidateId(), "prompt", response.tokenUsage().promptTokens());
+                    metrics.recordTokens(candidateId(), "completion", response.tokenUsage().completionTokens());
+                }
+            }
             return response;
         } catch (Exception e) {
             if (metrics != null) metrics.recordChatLatency(candidateId(), start, "error");

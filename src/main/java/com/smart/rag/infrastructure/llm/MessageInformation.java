@@ -1,5 +1,7 @@
 package com.smart.rag.infrastructure.llm;
 
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 
@@ -27,7 +29,7 @@ public final class MessageInformation {
         this.role = role;
         this.content = content;
         this.toolCallId = toolCallId;
-        this.metadata = metadata != null ? metadata : Map.of();
+        this.metadata = metadata != null ? new LinkedHashMap<>(metadata) : new LinkedHashMap<>();
     }
 
     public static MessageInformation user(String content) {
@@ -57,7 +59,7 @@ public final class MessageInformation {
     public String role() { return role; }
     public String content() { return content; }
     public String toolCallId() { return toolCallId; }
-    public Map<String, Object> metadata() { return metadata; }
+    public Map<String, Object> metadata() { return Collections.unmodifiableMap(metadata); }
 
     @Override
     public boolean equals(Object o) {

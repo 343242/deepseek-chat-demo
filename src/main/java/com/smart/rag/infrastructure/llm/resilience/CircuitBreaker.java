@@ -112,8 +112,7 @@ public class CircuitBreaker {
      * 在 CLOSED 状态下为空操作（no-op），不影响熔断计数。
      */
     public void recordProbeSuccess() {
-        if (registry.stateOf(candidateId) == CircuitBreakerState.HALF_OPEN) {
-            registry.recordSuccess(candidateId);
+        if (registry.tryRecoverFromHalfOpen(candidateId)) {
             log.info("Circuit breaker for '{}' recovered: HALF_OPEN → CLOSED (probe success)", candidateId);
         }
     }

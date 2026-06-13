@@ -13,7 +13,7 @@ import org.springframework.lang.Nullable;
  * 泛型 {@code <T>} 约束为 {@code CapabilityClient} 的子接口（如 {@code ChatCapable}），
  * 子类通过 {@code extends AbstractResilientClient<ChatCapable>} 获得统一的委托实现。
  */
-abstract class AbstractResilientClient<T extends CapabilityClient> implements CapabilityClient {
+public abstract class AbstractResilientClient<T extends CapabilityClient> implements CapabilityClient {
 
     protected final T delegate;
     protected final CircuitBreaker circuitBreaker;
@@ -38,4 +38,7 @@ abstract class AbstractResilientClient<T extends CapabilityClient> implements Ca
     }
 
     @Override public void close() { delegate.close(); }
+
+    /** 返回被包装的底层客户端，用于需要访问原始接口（如 EmbeddingModel）的场景 */
+    public T getDelegate() { return delegate; }
 }

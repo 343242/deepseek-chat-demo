@@ -49,14 +49,20 @@ public class LlmClientRegistry {
     @PostConstruct
     public void init() {
         refresh();
-        log.info("LlmClientRegistry initialized: {} clients registered", snapshotRef.get().size());
+        int size = snapshotRef.get().size();
+        if (size == 0) {
+            log.warn("LlmClientRegistry initialized with 0 clients — check app.llm configuration");
+        }
+        log.info("LlmClientRegistry initialized: {} clients registered", size);
     }
 
     @PreDestroy
     public void destroy() {
         RegistrySnapshot snapshot = snapshotRef.getAndSet(RegistrySnapshot.empty());
         snapshot.clientsById().values().forEach(client -> {
-            try { client.close(); } catch (Exception e) { /* ignore */ }
+            try { client.close(); } catch (Exception e) {
+                log.warn("Failed to close client {}: {}", client.candidateId(), e.getMessage());
+            }
         });
         log.info("LlmClientRegistry destroyed");
     }
@@ -69,7 +75,9 @@ public class LlmClientRegistry {
         if (old != null) {
             old.clientsById().forEach((id, client) -> {
                 if (!newSnapshot.clientsById().containsKey(id)) {
-                    try { client.close(); } catch (Exception e) { /* ignore */ }
+                    try { client.close(); } catch (Exception e) {
+                        log.warn("Failed to close old client {}: {}", id, e.getMessage());
+                    }
                 }
             });
         }

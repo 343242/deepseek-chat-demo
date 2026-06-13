@@ -80,6 +80,7 @@ public class ModelGroup {
             if (raw.getParams() != null) {
                 c.setParams(raw.getParams());
             }
+            c.validate();
             return (ModelCandidate) c;
         }).toList();
     }

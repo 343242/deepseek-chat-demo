@@ -6,6 +6,7 @@ import com.smart.rag.infrastructure.exception.RemoteException;
 import com.smart.rag.infrastructure.exception.errorcode.RemoteErrorCode;
 import com.smart.rag.infrastructure.llm.*;
 import com.smart.rag.infrastructure.llm.client.AbstractChatClient;
+import com.smart.rag.infrastructure.llm.client.HttpClientErrorHandler;
 import okhttp3.*;
 import okhttp3.OkHttpClient;
 import okio.BufferedSource;
@@ -41,6 +42,7 @@ public class GenericChatClient extends AbstractChatClient {
     private final RestClient restClient;
     private final Call.Factory callFactory;
     private final ObjectMapper objectMapper;
+    private final HttpClient httpClient;
 
     public GenericChatClient(String baseUrl, String endpoint,
                              String apiKey, ModelCandidate candidate) {
@@ -50,8 +52,8 @@ public class GenericChatClient extends AbstractChatClient {
         this.apiKey = apiKey;
         this.objectMapper = new ObjectMapper();
 
-        JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(
-            HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build());
+        this.httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
+        JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(httpClient);
         requestFactory.setReadTimeout(Duration.ofSeconds(60));
 
         this.restClient = RestClient.builder()
@@ -80,9 +82,10 @@ public class GenericChatClient extends AbstractChatClient {
                 .body(String.class);
 
             return parseResponse(responseJson);
+        } catch (RemoteException e) {
+            throw e;
         } catch (Exception e) {
-            throw new RemoteException(RemoteErrorCode.LLM_STREAM_ERROR,
-                "Chat call failed: " + e.getMessage(), e);
+            throw HttpClientErrorHandler.translate("Chat", url, e);
         }
     }
 
@@ -128,10 +131,7 @@ public class GenericChatClient extends AbstractChatClient {
             } catch (RemoteException e) {
                 if (!sink.isCancelled()) sink.error(e);
             } catch (IOException e) {
-                if (!sink.isCancelled()) {
-                    sink.error(new RemoteException(RemoteErrorCode.LLM_STREAM_ERROR,
-                        "Stream request failed", e));
-                }
+                if (!sink.isCancelled()) sink.error(e);
             }
         }).subscribeOn(Schedulers.boundedElastic());
     }
@@ -235,6 +235,7 @@ public class GenericChatClient extends AbstractChatClient {
 
             return new LlmResponse(content, truncated, tokenUsage, toolCalls, Map.of());
         } catch (IOException e) {
+            // LLM_STREAM_ERROR used as catch-all for parse failures (no dedicated parse error code)
             throw new RemoteException(RemoteErrorCode.LLM_STREAM_ERROR,
                 "Failed to parse chat response: " + e.getMessage(), e);
         }
@@ -242,6 +243,9 @@ public class GenericChatClient extends AbstractChatClient {
 
     @Override
     public void close() {
+        if (httpClient != null) {
+            httpClient.close();
+        }
         if (callFactory instanceof OkHttpClient ok) {
             ok.dispatcher().executorService().shutdown();
             ok.connectionPool().evictAll();

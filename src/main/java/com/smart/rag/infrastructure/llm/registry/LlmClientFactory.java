@@ -68,7 +68,8 @@ public class LlmClientFactory {
                             @Nullable SharedProbeRegistry sharedProbeRegistry,
                             @Nullable LlmMetrics metrics) {
         this.llmConfig = llmConfig;
-        this.providers = providers;
+        this.providers = providers.values().stream()
+            .collect(Collectors.toMap(LlmProvider::id, p -> p));
         this.strategyRegistry = strategyRegistry;
         this.circuitBreakerRegistry = circuitBreakerRegistry;
         this.fallbackEligibility = fallbackEligibility;
@@ -118,8 +119,13 @@ public class LlmClientFactory {
             }
 
             // 默认模型
-            if (group.getDefaultModel() != null) {
-                defaultClients.put(cap, group.getDefaultModel());
+            String defaultId = group.getDefaultModel();
+            if (defaultId != null) {
+                if (!clientsById.containsKey(defaultId)) {
+                    throw new IllegalStateException(
+                        cap + ".default-model '" + defaultId + "' references unknown candidate");
+                }
+                defaultClients.put(cap, defaultId);
             } else if (!chain.isEmpty()) {
                 defaultClients.put(cap, chain.get(0).candidateId());
             }

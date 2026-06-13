@@ -6,6 +6,7 @@ import com.smart.rag.infrastructure.exception.RemoteException;
 import com.smart.rag.infrastructure.exception.errorcode.RemoteErrorCode;
 import com.smart.rag.infrastructure.llm.*;
 import com.smart.rag.infrastructure.llm.client.AbstractRerankClient;
+import com.smart.rag.infrastructure.llm.client.HttpClientErrorHandler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
@@ -32,6 +33,7 @@ public class GenericRerankClient extends AbstractRerankClient {
 
     private final RestClient restClient;
     private final ObjectMapper objectMapper;
+    private final HttpClient httpClient;
 
     public GenericRerankClient(String baseUrl, String endpoint,
                                String apiKey, ModelCandidate candidate) {
@@ -41,8 +43,8 @@ public class GenericRerankClient extends AbstractRerankClient {
         this.apiKey = apiKey;
         this.objectMapper = new ObjectMapper();
 
-        JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(
-            HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build());
+        this.httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
+        JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(httpClient);
         requestFactory.setReadTimeout(Duration.ofSeconds(15));
 
         this.restClient = RestClient.builder()
@@ -72,9 +74,11 @@ public class GenericRerankClient extends AbstractRerankClient {
                 .body(String.class);
 
             return parseResponse(responseJson, request.documents());
+        } catch (RemoteException e) {
+            throw e;
         } catch (Exception e) {
-            throw new RemoteException(RemoteErrorCode.LLM_STREAM_ERROR,
-                "Rerank call failed: " + e.getMessage(), e);
+            String url = baseUrl + (endpoint.startsWith("/") ? endpoint : "/" + endpoint);
+            throw HttpClientErrorHandler.translate("Rerank", url, e);
         }
     }
 
@@ -96,8 +100,16 @@ public class GenericRerankClient extends AbstractRerankClient {
             }
             return rerankResults;
         } catch (IOException e) {
+            // LLM_STREAM_ERROR used as catch-all for parse failures (no dedicated parse error code)
             throw new RemoteException(RemoteErrorCode.LLM_STREAM_ERROR,
                 "Failed to parse rerank response: " + e.getMessage(), e);
+        }
+    }
+
+    @Override
+    public void close() {
+        if (httpClient != null) {
+            httpClient.close();
         }
     }
 }

@@ -115,7 +115,8 @@ public class RetryPolicy {
             return false;
         }
         if (e instanceof RemoteException re) {
-            return re.getErrorCode() == RemoteErrorCode.LLM_RATE_LIMITED;
+            return re.getErrorCode() == RemoteErrorCode.LLM_RATE_LIMITED
+                || re.getErrorCode() == RemoteErrorCode.LLM_TRANSIENT_ERROR;
         }
         return e instanceof IOException
             || e instanceof ProbeTimeoutException;

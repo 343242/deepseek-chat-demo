@@ -43,10 +43,10 @@ public record ProviderConfig(
         return new ProviderConfig(url, apiKey, EndpointConfig.of(endpoints));
     }
 
-    /** 供应商是否可用（url 和 apiKey 非空） */
+    /** 供应商是否可用（url 非空；apiKey 可为空，如本地 ollama） */
     public boolean isAvailable() {
         return url != null && !url.isBlank()
-            && apiKey != null && !apiKey.isBlank();
+            && (apiKey == null || !apiKey.isBlank());
     }
 
     /** 按能力获取端点路径 */

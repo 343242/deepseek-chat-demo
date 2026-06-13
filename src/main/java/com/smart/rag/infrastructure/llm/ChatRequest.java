@@ -34,9 +34,19 @@ public record ChatRequest(
     public static Builder fromDefaults(String input, ModelCandidate candidate) {
         Map<String, Object> defaults = candidate.params();
         return builder(input)
-            .temperature((Double) defaults.get("temperature"))
-            .maxTokens((Integer) defaults.get("maxTokens"))
-            .topP((Double) defaults.get("topP"));
+            .temperature(toDouble(defaults, "temperature"))
+            .maxTokens(toInt(defaults, "maxTokens"))
+            .topP(toDouble(defaults, "topP"));
+    }
+
+    private static Double toDouble(Map<String, Object> m, String key) {
+        Object v = m.get(key);
+        return v instanceof Number n ? n.doubleValue() : null;
+    }
+
+    private static Integer toInt(Map<String, Object> m, String key) {
+        Object v = m.get(key);
+        return v instanceof Number n ? n.intValue() : null;
     }
 
     public static class Builder {
@@ -51,11 +61,11 @@ public record ChatRequest(
         private Builder(String input) { this.input = input; }
 
         public Builder systemPrompt(String sp) { this.systemPrompt = sp; return this; }
-        public Builder history(List<MessageInformation> h) { this.history = h; return this; }
+        public Builder history(List<MessageInformation> h) { this.history = h != null ? List.copyOf(h) : List.of(); return this; }
         public Builder temperature(Double t) { this.temperature = t; return this; }
         public Builder maxTokens(Integer mt) { this.maxTokens = mt; return this; }
         public Builder topP(Double tp) { this.topP = tp; return this; }
-        public Builder extraParams(Map<String, Object> ep) { this.extraParams = ep; return this; }
+        public Builder extraParams(Map<String, Object> ep) { this.extraParams = ep != null ? Map.copyOf(ep) : Map.of(); return this; }
 
         public ChatRequest build() {
             return new ChatRequest(input, systemPrompt, history,

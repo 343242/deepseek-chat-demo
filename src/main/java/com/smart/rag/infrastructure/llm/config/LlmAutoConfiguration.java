@@ -5,12 +5,12 @@ import com.smart.rag.infrastructure.llm.LlmCapability;
 import com.smart.rag.infrastructure.llm.client.bailian.BailianEmbeddingClient;
 import com.smart.rag.infrastructure.llm.metrics.LlmMetrics;
 import com.smart.rag.infrastructure.llm.registry.LlmClientRegistry;
+import com.smart.rag.infrastructure.llm.resilience.AbstractResilientClient;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
@@ -20,13 +20,14 @@ import org.springframework.context.annotation.Primary;
  * <p>
  * 职责：
  * <ol>
- *   <li>启用 {@code app.llm} 配置绑定</li>
  *   <li>注册 {@link BailianEmbeddingClient} 为 {@code @Primary EmbeddingModel}，
  *       供 PgVectorStore + AnswerRelevanceScorer 直接注入使用</li>
  * </ol>
+ * <p>
+ * LlmConfig 的配置绑定由主应用的 {@code @ConfigurationPropertiesScan("com.smart.rag")} 处理，
+ * 无需在此显式注册。
  */
 @Configuration
-@EnableConfigurationProperties(LlmConfig.class)
 public class LlmAutoConfiguration {
 
     private static final Logger log = LoggerFactory.getLogger(LlmAutoConfiguration.class);
@@ -49,12 +50,13 @@ public class LlmAutoConfiguration {
     @Primary
     public EmbeddingModel primaryEmbeddingModel(LlmClientRegistry registry) {
         var client = registry.getDefault(LlmCapability.EMBEDDING);
-        if (client instanceof BailianEmbeddingClient bec) {
+        Object target = client instanceof AbstractResilientClient<?> arc ? arc.getDelegate() : client;
+        if (target instanceof BailianEmbeddingClient bec) {
             log.info("Registered BailianEmbeddingClient as @Primary EmbeddingModel");
             return bec;
         }
-        if (client instanceof EmbeddingModel em) {
-            log.info("Registered {} as @Primary EmbeddingModel", client.getClass().getSimpleName());
+        if (target instanceof EmbeddingModel em) {
+            log.info("Registered {} as @Primary EmbeddingModel", target.getClass().getSimpleName());
             return em;
         }
         throw new IllegalStateException(

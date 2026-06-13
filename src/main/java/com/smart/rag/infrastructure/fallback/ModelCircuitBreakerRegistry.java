@@ -1,7 +1,7 @@
 package com.smart.rag.infrastructure.fallback;
 
 import com.smart.rag.infrastructure.llm.config.CircuitBreakerProperties;
-import com.smart.rag.infrastructure.llm.config.ResilienceConfig;
+import com.smart.rag.infrastructure.llm.config.LlmConfig;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
@@ -18,8 +18,8 @@ public class ModelCircuitBreakerRegistry {
     private final ConcurrentMap<String, ModelCircuitBreaker> breakers = new ConcurrentHashMap<>();
 
     @Autowired
-    public ModelCircuitBreakerRegistry(ResilienceConfig resilienceConfig) {
-        this(resilienceConfig.resolveCircuitBreaker(), Clock.systemUTC());
+    public ModelCircuitBreakerRegistry(LlmConfig llmConfig) {
+        this(llmConfig.resolveResilience().resolveCircuitBreaker(), Clock.systemUTC());
     }
 
     ModelCircuitBreakerRegistry(CircuitBreakerProperties properties, Clock clock) {
@@ -48,6 +48,10 @@ public class ModelCircuitBreakerRegistry {
 
     public CircuitBreakerState stateOf(String modelId) {
         return breaker(modelId).state(clock.millis());
+    }
+
+    public boolean tryRecoverFromHalfOpen(String modelId) {
+        return breaker(modelId).tryRecoverFromHalfOpen();
     }
 
     private ModelCircuitBreaker breaker(String modelId) {
@@ -90,7 +94,17 @@ public class ModelCircuitBreakerRegistry {
         synchronized void recordSuccess() {
             failureCount = 0;
             activeHalfOpenProbes = 0;
+            if (state == CircuitBreakerState.HALF_OPEN) {
+                state = CircuitBreakerState.CLOSED;
+            }
+        }
+
+        synchronized boolean tryRecoverFromHalfOpen() {
+            if (state != CircuitBreakerState.HALF_OPEN) return false;
             state = CircuitBreakerState.CLOSED;
+            failureCount = 0;
+            activeHalfOpenProbes = 0;
+            return true;
         }
 
         synchronized void recordFailure(long nowMs) {

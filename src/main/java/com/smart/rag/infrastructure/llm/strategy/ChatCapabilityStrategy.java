@@ -4,11 +4,14 @@ import com.smart.rag.infrastructure.llm.CapabilityClient;
 import com.smart.rag.infrastructure.llm.ChatCapable;
 import com.smart.rag.infrastructure.llm.LlmCapability;
 import com.smart.rag.infrastructure.llm.ModelCandidate;
+import com.smart.rag.infrastructure.llm.ToolCallingCapable;
 import com.smart.rag.infrastructure.llm.client.generic.GenericChatClient;
 import com.smart.rag.infrastructure.llm.config.ProviderConfig;
 import com.smart.rag.infrastructure.llm.metrics.LlmMetrics;
 import com.smart.rag.infrastructure.llm.resilience.CircuitBreaker;
 import com.smart.rag.infrastructure.llm.resilience.ProbeHandler;
+import com.smart.rag.infrastructure.llm.resilience.ResilientChatClient;
+import com.smart.rag.infrastructure.llm.resilience.ResilientToolCallingChatClient;
 import com.smart.rag.infrastructure.llm.resilience.RetryPolicy;
 import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Component;
@@ -36,7 +39,11 @@ public class ChatCapabilityStrategy implements CapabilityStrategy {
                                                 RetryPolicy retry,
                                                 @Nullable ProbeHandler probe,
                                                 @Nullable LlmMetrics metrics) {
-        return new com.smart.rag.infrastructure.llm.resilience.ResilientChatClient(
+        ResilientChatClient resilient = new ResilientChatClient(
             (ChatCapable) raw, cb, retry, probe, metrics);
+        if (raw instanceof ToolCallingCapable) {
+            return new ResilientToolCallingChatClient(resilient);
+        }
+        return resilient;
     }
 }

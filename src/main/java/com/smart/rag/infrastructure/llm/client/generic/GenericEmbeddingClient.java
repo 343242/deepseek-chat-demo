@@ -6,6 +6,7 @@ import com.smart.rag.infrastructure.exception.RemoteException;
 import com.smart.rag.infrastructure.exception.errorcode.RemoteErrorCode;
 import com.smart.rag.infrastructure.llm.*;
 import com.smart.rag.infrastructure.llm.client.AbstractEmbeddingClient;
+import com.smart.rag.infrastructure.llm.client.HttpClientErrorHandler;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
@@ -32,6 +33,7 @@ public class GenericEmbeddingClient extends AbstractEmbeddingClient {
 
     private final RestClient restClient;
     private final ObjectMapper objectMapper;
+    private final HttpClient httpClient;
 
     public GenericEmbeddingClient(String baseUrl, String endpoint,
                                   String apiKey, ModelCandidate candidate) {
@@ -41,8 +43,8 @@ public class GenericEmbeddingClient extends AbstractEmbeddingClient {
         this.apiKey = apiKey;
         this.objectMapper = new ObjectMapper();
 
-        JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(
-            HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build());
+        this.httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
+        JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(httpClient);
         requestFactory.setReadTimeout(Duration.ofSeconds(30));
 
         this.restClient = RestClient.builder()
@@ -96,15 +98,24 @@ public class GenericEmbeddingClient extends AbstractEmbeddingClient {
     }
 
     private String callApi(Map<String, Object> body) {
+        String url = baseUrl + (endpoint.startsWith("/") ? endpoint : "/" + endpoint);
         try {
             return restClient.post()
                 .uri(endpoint)
                 .body(body)
                 .retrieve()
                 .body(String.class);
+        } catch (RemoteException e) {
+            throw e;
         } catch (Exception e) {
-            throw new RemoteException(RemoteErrorCode.LLM_STREAM_ERROR,
-                "Embedding call failed: " + e.getMessage(), e);
+            throw HttpClientErrorHandler.translate("Embedding", url, e);
+        }
+    }
+
+    @Override
+    public void close() {
+        if (httpClient != null) {
+            httpClient.close();
         }
     }
 
@@ -113,6 +124,7 @@ public class GenericEmbeddingClient extends AbstractEmbeddingClient {
             JsonNode root = objectMapper.readTree(json);
             JsonNode data = root.path("data");
             if (!data.isArray() || data.size() <= index) {
+                // LLM_STREAM_ERROR used as catch-all for parse failures (no dedicated parse error code)
                 throw new RemoteException(RemoteErrorCode.LLM_STREAM_ERROR,
                     "Embedding response missing data at index " + index);
             }
@@ -125,6 +137,7 @@ public class GenericEmbeddingClient extends AbstractEmbeddingClient {
         } catch (RemoteException e) {
             throw e;
         } catch (IOException e) {
+            // LLM_STREAM_ERROR used as catch-all for parse failures (no dedicated parse error code)
             throw new RemoteException(RemoteErrorCode.LLM_STREAM_ERROR,
                 "Failed to parse embedding response: " + e.getMessage(), e);
         }

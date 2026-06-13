@@ -27,6 +27,11 @@ public record LlmResponse(
     /** 供应商原始响应元数据（调试用，不暴露未类型化对象） */
     Map<String, Object> responseMetadata
 ) {
+    public LlmResponse {
+        if (toolCalls == null) toolCalls = List.of();
+        if (responseMetadata == null) responseMetadata = Map.of();
+    }
+
     public record TokenUsage(int promptTokens, int completionTokens, int totalTokens) {}
     public record ToolCall(String id, String name, String arguments) {}
 }

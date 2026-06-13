@@ -1,6 +1,7 @@
 package com.smart.rag.infrastructure.llm;
 
 import java.util.Map;
+import java.util.Objects;
 
 /**
  * 模型候选抽象基类——实现 sealed interface，提供 YAML 绑定支持
@@ -46,4 +47,15 @@ public abstract sealed class AbstractModelCandidate implements ModelCandidate
     public void setParams(Map<String, Object> params) { this.params = params; }
     public boolean isEnabled() { return enabled; }
     public void setEnabled(boolean enabled) { this.enabled = enabled; }
+
+    /**
+     * 校验必填字段是否已设置
+     *
+     * @throws NullPointerException if id, provider, or model is null
+     */
+    public void validate() {
+        Objects.requireNonNull(id, "candidate id is required");
+        Objects.requireNonNull(provider, "candidate provider is required");
+        Objects.requireNonNull(model, "candidate model is required");
+    }
 }

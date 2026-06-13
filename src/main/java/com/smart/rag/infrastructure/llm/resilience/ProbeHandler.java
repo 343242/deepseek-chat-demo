@@ -1,6 +1,7 @@
 package com.smart.rag.infrastructure.llm.resilience;
 
 import com.smart.rag.infrastructure.fallback.ProbeStreamHandler;
+import com.smart.rag.infrastructure.fallback.ProbeTimeoutException;
 import com.smart.rag.infrastructure.fallback.probe.ProbeResult;
 import com.smart.rag.infrastructure.fallback.probe.SharedProbeRegistry;
 import org.springframework.lang.Nullable;
@@ -46,10 +47,17 @@ public class ProbeHandler {
         if (probeRegistry != null) {
             CompletableFuture<ProbeResult> inFlight = probeRegistry.getInFlight(candidateId);
             if (inFlight != null) {
-                return Mono.fromFuture(() -> inFlight)
+                return Mono.<ProbeResult>fromFuture(() -> inFlight)
                     .timeout(Duration.ofMillis(probeTimeoutMs))
-                    .onErrorResume(e -> Mono.empty())
-                    .thenMany(raw);
+                    .flatMap(probeResult -> {
+                        if (!probeResult.success()) {
+                            return Mono.error(new ProbeTimeoutException(
+                                "In-flight probe failed for " + candidateId));
+                        }
+                        return Mono.empty();
+                    })
+                    .thenMany(raw)
+                    .timeout(Duration.ofMillis(probeTimeoutMs));
             }
         }
         Flux<String> probed = delegate.wrapWithProbe(candidateId, raw);

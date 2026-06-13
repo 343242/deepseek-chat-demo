@@ -24,9 +24,14 @@ public record ResilienceConfig(
     @Nullable Map<String, RetryConfig> retryOverrides
 ) {
 
+    /** Cached default instances — avoids creating new objects on every resolve call */
+    private static final RetryConfig DEFAULT_RETRY = new RetryConfig(null, null, null, null);
+    private static final CircuitBreakerProperties DEFAULT_CB = new CircuitBreakerProperties(null, null, null);
+    private static final ProbeProperties DEFAULT_PROBE = new ProbeProperties(null, null);
+
     /** 获取重试配置（带按能力覆盖合并） */
     public RetryConfig resolveRetryConfig(LlmCapability capability) {
-        RetryConfig base = retry != null ? retry : new RetryConfig(null, null, null, null);
+        RetryConfig base = retry != null ? retry : DEFAULT_RETRY;
         if (retryOverrides == null) {
             return base;
         }
@@ -36,11 +41,11 @@ public record ResilienceConfig(
 
     /** 获取熔断器配置（null-safe） */
     public CircuitBreakerProperties resolveCircuitBreaker() {
-        return circuitBreaker != null ? circuitBreaker : new CircuitBreakerProperties(null, null, null);
+        return circuitBreaker != null ? circuitBreaker : DEFAULT_CB;
     }
 
     /** 获取探测配置（null-safe） */
     public ProbeProperties resolveProbe() {
-        return probe != null ? probe : new ProbeProperties(null, null);
+        return probe != null ? probe : DEFAULT_PROBE;
     }
 }

@@ -1,6 +1,5 @@
 package com.smart.rag.infrastructure.llm.config;
 
-import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.lang.Nullable;
 
 /**
@@ -8,8 +7,10 @@ import org.springframework.lang.Nullable;
  * <p>
  * 所有 LLM 操作共用同一套重试参数。按能力类型可选覆盖。
  * 字段 nullable 以支持 mergeWithOverride 合并语义。
+ * <p>
+ * 不需要独立的 @ConfigurationProperties 注解——作为 ResilienceConfig 的嵌套属性，
+ * 由 {@link ResilienceConfig} 统一绑定。
  */
-@ConfigurationProperties(prefix = "app.llm.resilience.retry")
 public record RetryConfig(
     /** 最大重试次数（含首次调用） */
     @Nullable Integer maxAttempts,

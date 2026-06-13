@@ -204,3 +204,36 @@ Implemented messaging bus Phase A (SPI interfaces, RocketMQ 5.x core, circuit br
 ### Next Steps
 
 - None - task complete
+
+
+## Session 7: LLM module Mimo P1/P2 fixes (6 issues)
+
+**Date**: 2026-06-14
+**Task**: LLM module Mimo P1/P2 fixes (6 issues)
+**Branch**: `agentic-rag-dev`
+
+### Summary
+
+Verified Mimo review's 7 findings against current code: 6 real (P1×2 + P2×4), 1 stale (P2-3 validate already wired in ModelGroup). Fixed: RetryConfig mergeWithOverride null semantics; AbstractModelCandidate getParams null-safety; CapabilityStrategyRegistry IllegalStateException convention; AbstractResilientClient LLM_TRANSIENT_ERROR; EmbeddingCapable immutability Javadoc + BailianEmbeddingClient defensive clone; AbstractProviderFactoryAwareStrategy DRY extraction. Added RetryConfigTest (7 cases). 95/95 LLM tests green.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `49c150c` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

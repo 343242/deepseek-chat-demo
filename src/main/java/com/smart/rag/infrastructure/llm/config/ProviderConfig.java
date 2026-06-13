@@ -43,10 +43,13 @@ public record ProviderConfig(
         return new ProviderConfig(url, apiKey, EndpointConfig.of(endpoints));
     }
 
-    /** 供应商是否可用（url 非空；apiKey 可为空，如本地 ollama） */
+    /** 供应商是否可用（url 非空；apiKey 可为空仅限本地供应商如 Ollama） */
     public boolean isAvailable() {
-        return url != null && !url.isBlank()
-            && (apiKey == null || !apiKey.isBlank());
+        if (url == null || url.isBlank()) return false;
+        if (apiKey == null || apiKey.isBlank()) {
+            return url.contains("localhost") || url.contains("127.0.0.1");
+        }
+        return true;
     }
 
     /** 按能力获取端点路径 */

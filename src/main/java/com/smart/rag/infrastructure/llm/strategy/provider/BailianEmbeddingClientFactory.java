@@ -28,7 +28,7 @@ public class BailianEmbeddingClientFactory implements ProviderClientFactory {
     }
 
     @Override
-    public CapabilityClient create(String apiKey, ModelCandidate candidate) {
-        return new BailianEmbeddingClient(apiKey, candidate);
+    public CapabilityClient create(String baseUrl, String apiKey, ModelCandidate candidate) {
+        return new BailianEmbeddingClient(baseUrl, apiKey, candidate);
     }
 }

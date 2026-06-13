@@ -29,38 +29,20 @@ public class ResilientEmbeddingClient extends AbstractResilientClient<EmbeddingC
 
     @Override
     public float[] embed(String text, EmbeddingType type) {
-        long start = metrics != null ? metrics.startNanos() : 0;
-        try {
-            float[] result = circuitBreaker.execute(() ->
-                retryPolicy.executeWithBackoff(() ->
-                    delegate.embed(text, type)
-                )
-            );
-            if (metrics != null) metrics.recordEmbedLatency(candidateId(), start, "success");
-            return result;
-        } catch (Exception e) {
-            if (metrics != null) metrics.recordEmbedLatency(candidateId(), start, "error");
-            if (e instanceof RuntimeException re) throw re;
-            throw new RuntimeException(e);
-        }
+        return executeResilient(
+            () -> delegate.embed(text, type),
+            (cid, start) -> metrics.recordEmbedLatency(cid, start, "success"),
+            (cid, start) -> metrics.recordEmbedLatency(cid, start, "error")
+        );
     }
 
     @Override
     public List<float[]> embedBatch(List<String> texts, EmbeddingType type) {
-        long start = metrics != null ? metrics.startNanos() : 0;
-        try {
-            List<float[]> result = circuitBreaker.execute(() ->
-                retryPolicy.executeWithBackoff(() ->
-                    delegate.embedBatch(texts, type)
-                )
-            );
-            if (metrics != null) metrics.recordEmbedLatency(candidateId(), start, "success");
-            return result;
-        } catch (Exception e) {
-            if (metrics != null) metrics.recordEmbedLatency(candidateId(), start, "error");
-            if (e instanceof RuntimeException re) throw re;
-            throw new RuntimeException(e);
-        }
+        return executeResilient(
+            () -> delegate.embedBatch(texts, type),
+            (cid, start) -> metrics.recordEmbedLatency(cid, start, "success"),
+            (cid, start) -> metrics.recordEmbedLatency(cid, start, "error")
+        );
     }
 
     @Override

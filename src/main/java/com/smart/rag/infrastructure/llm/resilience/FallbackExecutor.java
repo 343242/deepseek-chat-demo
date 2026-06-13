@@ -134,6 +134,9 @@ public class FallbackExecutor {
 
     /**
      * 构建流式降级链（迭代构造，避免递归 onErrorResume 累积操作符深度）
+     * <p>
+     * 操作符深度为 O(N)（N = chain size），但 fallback chain 通常为 3-5 个候选，
+     * 不会造成实际性能问题。如需支持超长链（>10），应考虑改为轮询策略。
      */
     private <T extends CapabilityClient, R> Flux<R> buildStreamChain(
             List<T> chain,

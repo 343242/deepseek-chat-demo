@@ -36,7 +36,10 @@ public class RerankCapabilityStrategy implements CapabilityStrategy {
             .filter(f -> f.capability() == LlmCapability.RERANKING)
             .collect(Collectors.toUnmodifiableMap(
                 f -> f.providerId() + ":" + f.capability(),
-                Function.identity()));
+                Function.identity(),
+                (a, b) -> { throw new IllegalStateException(
+                    "Duplicate ProviderClientFactory for RERANKING provider '" + a.providerId()
+                    + "': " + a.getClass().getName() + " vs " + b.getClass().getName()); }));
     }
 
     @Override public LlmCapability capability() { return LlmCapability.RERANKING; }
@@ -52,7 +55,7 @@ public class RerankCapabilityStrategy implements CapabilityStrategy {
         ProviderClientFactory factory = providerFactories.get(
             candidate.provider() + ":" + capability());
         if (factory != null) {
-            return factory.create(apiKey, candidate);
+            return factory.create(baseUrl, apiKey, candidate);
         }
         return new GenericRerankClient(baseUrl, endpoint, apiKey, candidate);
     }
@@ -63,6 +66,10 @@ public class RerankCapabilityStrategy implements CapabilityStrategy {
                                                 RetryPolicy retry,
                                                 @Nullable ProbeHandler probe,
                                                 @Nullable LlmMetrics metrics) {
-        return new ResilientRerankClient((RerankCapable) raw, cb, retry, metrics);
+        if (!(raw instanceof RerankCapable rerankCapable)) {
+            throw new IllegalStateException(
+                "RERANKING client '" + raw.candidateId() + "' does not implement RerankCapable");
+        }
+        return new ResilientRerankClient(rerankCapable, cb, retry, metrics);
     }
 }

@@ -1,9 +1,7 @@
 package com.smart.rag.infrastructure.llm.client.generic;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smart.rag.infrastructure.exception.RemoteException;
-import com.smart.rag.infrastructure.exception.errorcode.RemoteErrorCode;
 import com.smart.rag.infrastructure.llm.*;
 import com.smart.rag.infrastructure.llm.client.AbstractRerankClient;
 import com.smart.rag.infrastructure.llm.client.HttpClientErrorHandler;
@@ -12,7 +10,6 @@ import org.slf4j.LoggerFactory;
 import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.web.client.RestClient;
 
-import java.io.IOException;
 import java.net.http.HttpClient;
 import java.time.Duration;
 import java.util.*;
@@ -26,10 +23,12 @@ import java.util.*;
 public class GenericRerankClient extends AbstractRerankClient {
 
     private static final Logger log = LoggerFactory.getLogger(GenericRerankClient.class);
+    private static final int CONNECT_TIMEOUT_SECONDS = 5;
+    private static final int READ_TIMEOUT_SECONDS = 15;
 
-    protected final String baseUrl;
-    protected final String endpoint;
-    protected final String apiKey;
+    private final String baseUrl;
+    private final String endpoint;
+    private final String apiKey;
 
     private final RestClient restClient;
     private final ObjectMapper objectMapper;
@@ -37,15 +36,15 @@ public class GenericRerankClient extends AbstractRerankClient {
 
     public GenericRerankClient(String baseUrl, String endpoint,
                                String apiKey, ModelCandidate candidate) {
-        super(candidate, candidate.provider());
-        this.baseUrl = baseUrl;
-        this.endpoint = endpoint;
-        this.apiKey = apiKey;
+        super(Objects.requireNonNull(candidate, "candidate must not be null"), candidate.provider());
+        this.baseUrl = Objects.requireNonNull(baseUrl, "baseUrl must not be null");
+        this.endpoint = Objects.requireNonNull(endpoint, "endpoint must not be null");
+        this.apiKey = Objects.requireNonNull(apiKey, "apiKey must not be null");
         this.objectMapper = new ObjectMapper();
 
-        this.httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
+        this.httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(CONNECT_TIMEOUT_SECONDS)).build();
         JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(httpClient);
-        requestFactory.setReadTimeout(Duration.ofSeconds(15));
+        requestFactory.setReadTimeout(Duration.ofSeconds(READ_TIMEOUT_SECONDS));
 
         this.restClient = RestClient.builder()
             .baseUrl(baseUrl)
@@ -53,6 +52,8 @@ public class GenericRerankClient extends AbstractRerankClient {
             .defaultHeader("Content-Type", "application/json")
             .requestFactory(requestFactory)
             .build();
+
+        log.info("GenericRerankClient initialized: model={}, endpoint={}", candidate.model(), endpoint);
     }
 
     @Override
@@ -73,36 +74,12 @@ public class GenericRerankClient extends AbstractRerankClient {
                 .retrieve()
                 .body(String.class);
 
-            return parseResponse(responseJson, request.documents());
+            return parseRerankResponse(objectMapper, responseJson, request.documents());
         } catch (RemoteException e) {
             throw e;
         } catch (Exception e) {
             String url = baseUrl + (endpoint.startsWith("/") ? endpoint : "/" + endpoint);
             throw HttpClientErrorHandler.translate("Rerank", url, e);
-        }
-    }
-
-    private List<RerankResult> parseResponse(String json, List<String> documents) {
-        try {
-            JsonNode root = objectMapper.readTree(json);
-            JsonNode results = root.path("results");
-            if (!results.isArray()) {
-                return List.of();
-            }
-
-            List<RerankResult> rerankResults = new ArrayList<>(results.size());
-            for (JsonNode item : results) {
-                int index = item.path("index").asInt(-1);
-                double score = item.path("relevance_score").asDouble(0.0);
-                if (index >= 0 && index < documents.size()) {
-                    rerankResults.add(new RerankResult(index, score, documents.get(index)));
-                }
-            }
-            return rerankResults;
-        } catch (IOException e) {
-            // LLM_STREAM_ERROR used as catch-all for parse failures (no dedicated parse error code)
-            throw new RemoteException(RemoteErrorCode.LLM_STREAM_ERROR,
-                "Failed to parse rerank response: " + e.getMessage(), e);
         }
     }
 

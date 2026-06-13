@@ -16,8 +16,10 @@ import java.util.List;
  * {@link com.smart.rag.infrastructure.llm.strategy.ChatCapabilityStrategy}
  * 包装 {@link ResilientChatClient} 生成此装饰器。
  * <p>
- * 所有 {@link ChatCapable} 方法直接委托给底层 ResilientChatClient（已包含弹性保护），
- * {@link #chatWithTools(ChatRequest, List)} 也委托给 ResilientChatClient 的同名方法。
+ * Design note: This class intentionally uses delegation (not inheritance) to
+ * avoid constructing a second circuit-breaker / retry-policy wrapping the same
+ * inner delegate. All {@link ChatCapable} and {@link ToolCallingCapable} methods
+ * delegate to the already-resilient {@link ResilientChatClient}.
  */
 public class ResilientToolCallingChatClient implements ChatCapable, ToolCallingCapable {
 
@@ -26,6 +28,8 @@ public class ResilientToolCallingChatClient implements ChatCapable, ToolCallingC
     public ResilientToolCallingChatClient(ResilientChatClient delegate) {
         this.delegate = delegate;
     }
+
+    // ======== ChatCapable — 委托给已含弹性保护的 ResilientChatClient ========
 
     @Override
     public LlmResponse chat(ChatRequest request) {
@@ -42,40 +46,19 @@ public class ResilientToolCallingChatClient implements ChatCapable, ToolCallingC
         return delegate.supportsStreaming();
     }
 
+    // ======== ToolCallingCapable ========
+
     @Override
     public LlmResponse chatWithTools(ChatRequest request, List<Object> tools) {
         return delegate.chatWithTools(request, tools);
     }
 
-    // ======== CapabilityClient delegation ========
+    // ======== CapabilityClient — 透传 ========
 
-    @Override
-    public String candidateId() {
-        return delegate.candidateId();
-    }
-
-    @Override
-    public String providerId() {
-        return delegate.providerId();
-    }
-
-    @Override
-    public String modelName() {
-        return delegate.modelName();
-    }
-
-    @Override
-    public LlmCapability capability() {
-        return delegate.capability();
-    }
-
-    @Override
-    public boolean isAvailable() {
-        return delegate.isAvailable();
-    }
-
-    @Override
-    public void close() {
-        delegate.close();
-    }
+    @Override public String candidateId() { return delegate.candidateId(); }
+    @Override public String providerId()  { return delegate.providerId(); }
+    @Override public String modelName()   { return delegate.modelName(); }
+    @Override public LlmCapability capability() { return delegate.capability(); }
+    @Override public boolean isAvailable() { return delegate.isAvailable(); }
+    @Override public void close() { delegate.close(); }
 }

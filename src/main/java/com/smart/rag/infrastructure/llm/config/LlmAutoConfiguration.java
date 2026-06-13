@@ -11,6 +11,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Primary;
@@ -32,10 +33,14 @@ public class LlmAutoConfiguration {
 
     private static final Logger log = LoggerFactory.getLogger(LlmAutoConfiguration.class);
 
-    @Autowired(required = false)
-    private MeterRegistry meterRegistry;
+    private final MeterRegistry meterRegistry;
+
+    public LlmAutoConfiguration(@Autowired(required = false) MeterRegistry meterRegistry) {
+        this.meterRegistry = meterRegistry;
+    }
 
     @Bean
+    @ConditionalOnMissingBean
     public LlmMetrics llmMetrics() {
         return new LlmMetrics(meterRegistry);
     }
@@ -48,6 +53,7 @@ public class LlmAutoConfiguration {
      */
     @Bean
     @Primary
+    @ConditionalOnMissingBean(EmbeddingModel.class)
     public EmbeddingModel primaryEmbeddingModel(LlmClientRegistry registry) {
         var client = registry.getDefault(LlmCapability.EMBEDDING);
         Object target = client instanceof AbstractResilientClient<?> arc ? arc.getDelegate() : client;

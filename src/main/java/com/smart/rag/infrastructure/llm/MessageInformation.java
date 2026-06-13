@@ -29,6 +29,7 @@ public final class MessageInformation {
         this.role = role;
         this.content = content;
         this.toolCallId = toolCallId;
+        // LinkedHashMap 保证序列化/日志输出的字段顺序稳定，便于调试
         this.metadata = metadata != null ? new LinkedHashMap<>(metadata) : new LinkedHashMap<>();
     }
 

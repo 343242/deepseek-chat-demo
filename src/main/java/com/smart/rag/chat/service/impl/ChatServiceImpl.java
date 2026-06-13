@@ -10,6 +10,7 @@ import com.smart.rag.infrastructure.exception.ProviderNotFoundException;
 import com.smart.rag.infrastructure.fallback.FallbackEligibility;
 import com.smart.rag.infrastructure.llm.CapabilityClient;
 import com.smart.rag.infrastructure.llm.ChatCapable;
+import com.smart.rag.infrastructure.llm.adapter.ChatModelAdapter;
 import com.smart.rag.infrastructure.llm.LlmCapability;
 import com.smart.rag.infrastructure.llm.resilience.FallbackExecutor;
 import com.smart.rag.infrastructure.llm.registry.LlmClientRegistry;
@@ -88,7 +89,7 @@ public class ChatServiceImpl implements ChatService {
         try {
             return fallbackExecutor.execute(chain, client -> {
                 ChatCapable chatCapable = (ChatCapable) client;
-                ChatClient chatClient = ChatClient.builder(chatCapable.asChatModel()).build();
+                ChatClient chatClient = ChatClient.builder(new ChatModelAdapter(chatCapable)).build();
                 StrategyExecutionContext execCtx = new StrategyExecutionContext(
                     chatClient, client.candidateId(), request,
                     pctx.conversationId, pctx.rawConversationId, pctx.userId,
@@ -115,7 +116,7 @@ public class ChatServiceImpl implements ChatService {
 
         Flux<String> stream = fallbackExecutor.executeStream(chain, client -> {
             ChatCapable chatCapable = (ChatCapable) client;
-            ChatClient chatClient = ChatClient.builder(chatCapable.asChatModel()).build();
+            ChatClient chatClient = ChatClient.builder(new ChatModelAdapter(chatCapable)).build();
             StrategyExecutionContext execCtx = new StrategyExecutionContext(
                 chatClient, client.candidateId(), request,
                 pctx.conversationId, pctx.rawConversationId, pctx.userId,

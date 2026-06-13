@@ -26,10 +26,12 @@ public class GenericEmbeddingClient extends AbstractEmbeddingClient {
 
     private static final Logger log = LoggerFactory.getLogger(GenericEmbeddingClient.class);
     private static final int BATCH_SIZE = 10;
+    private static final int CONNECT_TIMEOUT_SECONDS = 10;
+    private static final int READ_TIMEOUT_SECONDS = 30;
 
-    protected final String baseUrl;
-    protected final String endpoint;
-    protected final String apiKey;
+    private final String baseUrl;
+    private final String endpoint;
+    private final String apiKey;
 
     private final RestClient restClient;
     private final ObjectMapper objectMapper;
@@ -37,15 +39,15 @@ public class GenericEmbeddingClient extends AbstractEmbeddingClient {
 
     public GenericEmbeddingClient(String baseUrl, String endpoint,
                                   String apiKey, ModelCandidate candidate) {
-        super(candidate, candidate.provider());
-        this.baseUrl = baseUrl;
-        this.endpoint = endpoint;
-        this.apiKey = apiKey;
+        super(Objects.requireNonNull(candidate, "candidate must not be null"), candidate.provider());
+        this.baseUrl = Objects.requireNonNull(baseUrl, "baseUrl must not be null");
+        this.endpoint = Objects.requireNonNull(endpoint, "endpoint must not be null");
+        this.apiKey = Objects.requireNonNull(apiKey, "apiKey must not be null");
         this.objectMapper = new ObjectMapper();
 
-        this.httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
+        this.httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(CONNECT_TIMEOUT_SECONDS)).build();
         JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(httpClient);
-        requestFactory.setReadTimeout(Duration.ofSeconds(30));
+        requestFactory.setReadTimeout(Duration.ofSeconds(READ_TIMEOUT_SECONDS));
 
         this.restClient = RestClient.builder()
             .baseUrl(baseUrl)
@@ -53,6 +55,8 @@ public class GenericEmbeddingClient extends AbstractEmbeddingClient {
             .defaultHeader("Content-Type", "application/json")
             .requestFactory(requestFactory)
             .build();
+
+        log.info("GenericEmbeddingClient initialized: model={}, endpoint={}", candidate.model(), endpoint);
     }
 
     @Override
@@ -76,6 +80,8 @@ public class GenericEmbeddingClient extends AbstractEmbeddingClient {
             return List.of();
         }
 
+        log.debug("embedBatch called with EmbeddingType={}, but OpenAI-compatible /v1/embeddings does not support text_type; ignoring", type);
+
         List<float[]> results = new ArrayList<>(texts.size());
         for (int i = 0; i < texts.size(); i += BATCH_SIZE) {
             List<String> batch = texts.subList(i, Math.min(i + BATCH_SIZE, texts.size()));
@@ -98,7 +104,6 @@ public class GenericEmbeddingClient extends AbstractEmbeddingClient {
     }
 
     private String callApi(Map<String, Object> body) {
-        String url = baseUrl + (endpoint.startsWith("/") ? endpoint : "/" + endpoint);
         try {
             return restClient.post()
                 .uri(endpoint)
@@ -108,7 +113,8 @@ public class GenericEmbeddingClient extends AbstractEmbeddingClient {
         } catch (RemoteException e) {
             throw e;
         } catch (Exception e) {
-            throw HttpClientErrorHandler.translate("Embedding", url, e);
+            throw HttpClientErrorHandler.translate("Embedding",
+                baseUrl + (endpoint.startsWith("/") ? endpoint : "/" + endpoint), e);
         }
     }
 

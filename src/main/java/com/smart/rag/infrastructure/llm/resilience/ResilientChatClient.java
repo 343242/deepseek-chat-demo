@@ -53,28 +53,25 @@ public class ResilientChatClient extends AbstractResilientClient<ChatCapable>
 
     @Override
     public LlmResponse chat(ChatRequest request) {
-        long start = metrics != null ? metrics.startNanos() : 0;
-        try {
-            LlmResponse response = circuitBreaker.execute(() ->
-                retryPolicy.executeWithBackoff(() ->
-                    delegate.chat(request)
-                )
-            );
-            if (metrics != null) {
-                metrics.recordChatLatency(candidateId(), start, "success");
-                if (response.tokenUsage() != null) {
-                    metrics.recordTokens(candidateId(), "prompt", response.tokenUsage().promptTokens());
-                    metrics.recordTokens(candidateId(), "completion", response.tokenUsage().completionTokens());
-                }
-            }
-            return response;
-        } catch (Exception e) {
-            if (metrics != null) metrics.recordChatLatency(candidateId(), start, "error");
-            if (e instanceof RuntimeException re) throw re;
-            throw new RuntimeException(e);
-        }
+        LlmResponse response = executeResilient(
+            () -> delegate.chat(request),
+            (cid, start) -> metrics.recordChatLatency(cid, start, "success"),
+            (cid, start) -> metrics.recordChatLatency(cid, start, "error")
+        );
+        recordTokensIfPresent(response);
+        return response;
     }
 
+    /**
+     * Streaming chat with resilience.
+     * <p>
+     * Note: Circuit breaker state is checked when the returned Flux is
+     * <b>subscribed</b> (deferred evaluation), not when this method is called.
+     * This is correct reactive behavior — the check happens lazily as part of
+     * {@code circuitBreaker.executeStream()} — but may be surprising if callers
+     * expect an eager guard. Callers needing an upfront check should invoke
+     * {@link #isAvailable()} before subscribing.
+     */
     @Override
     public Flux<String> chatStream(ChatRequest request) {
         long start = metrics != null ? metrics.startNanos() : 0;
@@ -99,26 +96,19 @@ public class ResilientChatClient extends AbstractResilientClient<ChatCapable>
             throw new UnsupportedOperationException(
                 "Delegate '" + candidateId() + "' does not support tool calling");
         }
-        long start = metrics != null ? metrics.startNanos() : 0;
-        try {
-            LlmResponse response = circuitBreaker.execute(() ->
-                retryPolicy.executeWithBackoff(() ->
-                    tc.chatWithTools(request, tools)
-                )
-            );
-            if (metrics != null) {
-                metrics.recordChatLatency(candidateId(), start, "success");
-                if (response.tokenUsage() != null) {
-                    metrics.recordTokens(candidateId(), "prompt", response.tokenUsage().promptTokens());
-                    metrics.recordTokens(candidateId(), "completion", response.tokenUsage().completionTokens());
-                }
-            }
-            return response;
-        } catch (Exception e) {
-            if (metrics != null) metrics.recordChatLatency(candidateId(), start, "error");
-            if (e instanceof RuntimeException re) throw re;
-            throw new RuntimeException(e);
-        }
+        LlmResponse response = executeResilient(
+            () -> tc.chatWithTools(request, tools),
+            (cid, start) -> metrics.recordChatLatency(cid, start, "success"),
+            (cid, start) -> metrics.recordChatLatency(cid, start, "error")
+        );
+        recordTokensIfPresent(response);
+        return response;
+    }
+
+    private void recordTokensIfPresent(LlmResponse response) {
+        if (metrics == null || response.tokenUsage() == null) return;
+        metrics.recordTokens(candidateId(), "prompt", response.tokenUsage().promptTokens());
+        metrics.recordTokens(candidateId(), "completion", response.tokenUsage().completionTokens());
     }
 
     @Override

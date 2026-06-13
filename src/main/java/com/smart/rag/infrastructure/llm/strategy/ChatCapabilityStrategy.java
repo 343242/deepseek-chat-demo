@@ -39,8 +39,12 @@ public class ChatCapabilityStrategy implements CapabilityStrategy {
                                                 RetryPolicy retry,
                                                 @Nullable ProbeHandler probe,
                                                 @Nullable LlmMetrics metrics) {
+        if (!(raw instanceof ChatCapable chatCapable)) {
+            throw new IllegalStateException(
+                "CHAT client '" + raw.candidateId() + "' does not implement ChatCapable");
+        }
         ResilientChatClient resilient = new ResilientChatClient(
-            (ChatCapable) raw, cb, retry, probe, metrics);
+            chatCapable, cb, retry, probe, metrics);
         if (raw instanceof ToolCallingCapable) {
             return new ResilientToolCallingChatClient(resilient);
         }

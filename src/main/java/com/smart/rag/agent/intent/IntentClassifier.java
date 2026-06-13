@@ -3,6 +3,7 @@ package com.smart.rag.agent.intent;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smart.rag.infrastructure.llm.ChatCapable;
+import com.smart.rag.infrastructure.llm.adapter.ChatModelAdapter;
 import com.smart.rag.infrastructure.llm.LlmCapability;
 import com.smart.rag.infrastructure.llm.registry.LlmClientRegistry;
 import com.smart.rag.infrastructure.exception.ServiceException;
@@ -176,7 +177,7 @@ public class IntentClassifier {
                 if (client == null) {
                     ChatCapable chatCapable = llmRegistry.get(
                         intentCandidateId, ChatCapable.class);
-                    client = ChatClient.builder(chatCapable.asChatModel()).build();
+                    client = ChatClient.builder(new ChatModelAdapter(chatCapable)).build();
                     intentChatClient = client;
                 }
             }

@@ -1,6 +1,7 @@
 package com.smart.rag.rag.config;
 
 import com.smart.rag.infrastructure.llm.ChatCapable;
+import com.smart.rag.infrastructure.llm.adapter.ChatModelAdapter;
 import com.smart.rag.infrastructure.llm.LlmCapability;
 import com.smart.rag.infrastructure.llm.RerankCapable;
 import com.smart.rag.infrastructure.llm.registry.LlmClientRegistry;
@@ -72,7 +73,7 @@ public class RagConfig {
             return defaultBuilder;
         }
 
-        ChatClient rewriteClient = ChatClient.builder(chatCapable.asChatModel()).build();
+        ChatClient rewriteClient = ChatClient.builder(new ChatModelAdapter(chatCapable)).build();
         log.info("Query rewrite using candidate '{}'", rewriteCandidateId);
 
         return rewriteClient.mutate();

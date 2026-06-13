@@ -52,6 +52,9 @@ public class RetryPolicy {
     /**
      * 带指数退避的同步重试执行器
      * <p>
+     * 使用 {@link Thread#sleep(long)} 进行退避等待，会阻塞调用线程。
+     * 对于响应式/非阻塞场景，请使用 {@link #retryStream(Supplier)} 代替。
+     * <p>
      * 不可重试异常直接抛出；可重试异常重试耗尽后包装为 {@code RemoteException(LLM_TRANSIENT_ERROR)}。
      */
     public <T> T executeWithBackoff(CheckedSupplier<T> action) throws Exception {
@@ -118,7 +121,14 @@ public class RetryPolicy {
             return re.getErrorCode() == RemoteErrorCode.LLM_RATE_LIMITED
                 || re.getErrorCode() == RemoteErrorCode.LLM_TRANSIENT_ERROR;
         }
-        return e instanceof IOException
-            || e instanceof ProbeTimeoutException;
+        if (e instanceof IOException
+            || e instanceof ProbeTimeoutException
+            || e instanceof java.util.concurrent.TimeoutException) {
+            return true;
+        }
+        if (e.getCause() instanceof IOException) {
+            return true;
+        }
+        return false;
     }
 }

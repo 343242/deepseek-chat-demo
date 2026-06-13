@@ -1,14 +1,15 @@
 package com.smart.rag.infrastructure.llm.adapter;
 
-import com.smart.rag.infrastructure.llm.*;
+import com.smart.rag.infrastructure.llm.ChatCapable;
+import com.smart.rag.infrastructure.llm.ChatRequest;
+import com.smart.rag.infrastructure.llm.LlmResponse;
+import com.smart.rag.infrastructure.llm.MessageInformation;
 import reactor.core.publisher.Flux;
 import org.springframework.ai.chat.model.ChatModel;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.metadata.ChatGenerationMetadata;
 import org.springframework.ai.chat.metadata.ChatResponseMetadata;
 import org.springframework.ai.chat.metadata.DefaultUsage;
-import org.springframework.ai.chat.model.ChatModel;
-import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.model.Generation;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.SystemMessage;
@@ -76,42 +77,49 @@ public class ChatModelAdapter implements ChatModel {
     }
 
     private ChatRequest extractChatRequest(Prompt prompt) {
-        String systemPrompt = null;
-        List<MessageInformation> history = List.of();
-        String userContent = prompt.getContents();
-
-        if (prompt.getInstructions() != null && !prompt.getInstructions().isEmpty()) {
-            var instructions = prompt.getInstructions();
-            for (var msg : instructions) {
-                if (msg instanceof SystemMessage sm) {
-                    systemPrompt = sm.getText();
-                    break;
-                }
-            }
-            var nonSystemMessages = instructions.stream()
-                .filter(m -> !(m instanceof SystemMessage))
-                .toList();
-
-            if (!nonSystemMessages.isEmpty()) {
-                int lastUserIdx = -1;
-                for (int i = nonSystemMessages.size() - 1; i >= 0; i--) {
-                    if (nonSystemMessages.get(i) instanceof UserMessage) {
-                        lastUserIdx = i;
-                        break;
-                    }
-                }
-                var builder = new ArrayList<MessageInformation>(nonSystemMessages.size() - 1);
-                for (int i = 0; i < nonSystemMessages.size(); i++) {
-                    if (i == lastUserIdx) continue;
-                    var m = nonSystemMessages.get(i);
-                    builder.add(MessageInformation.of(
-                        m.getMessageType().name().toLowerCase(), m.getText()));
-                }
-                history = Collections.unmodifiableList(builder);
-            }
-        }
-
-        return new ChatRequest(userContent, systemPrompt, history,
+        String systemPrompt = extractSystemPrompt(prompt);
+        List<MessageInformation> history = extractHistory(prompt);
+        return new ChatRequest(prompt.getContents(), systemPrompt, history,
             null, null, null, Map.of());
+    }
+
+    /** 从 Prompt instructions 中提取第一条 SystemMessage 的文本 */
+    private String extractSystemPrompt(Prompt prompt) {
+        if (prompt.getInstructions() == null) return null;
+        for (var msg : prompt.getInstructions()) {
+            if (msg instanceof SystemMessage sm) return sm.getText();
+        }
+        return null;
+    }
+
+    /** 从 Prompt instructions 中提取非系统、非最后一条 UserMessage 的历史记录 */
+    private List<MessageInformation> extractHistory(Prompt prompt) {
+        if (prompt.getInstructions() == null || prompt.getInstructions().isEmpty()) {
+            return List.of();
+        }
+        var nonSystemMessages = prompt.getInstructions().stream()
+            .filter(m -> !(m instanceof SystemMessage))
+            .toList();
+        if (nonSystemMessages.isEmpty()) return List.of();
+
+        int lastUserIdx = findLastUserIndex(nonSystemMessages);
+        if (lastUserIdx < 0) return List.of();
+
+        var builder = new ArrayList<MessageInformation>(nonSystemMessages.size() - 1);
+        for (int i = 0; i < nonSystemMessages.size(); i++) {
+            if (i == lastUserIdx) continue;
+            var m = nonSystemMessages.get(i);
+            builder.add(MessageInformation.of(
+                m.getMessageType().name().toLowerCase(), m.getText()));
+        }
+        return Collections.unmodifiableList(builder);
+    }
+
+    /** 从消息列表中从后往前查找最后一条 UserMessage 的索引，未找到返回 -1 */
+    private int findLastUserIndex(List<org.springframework.ai.chat.messages.Message> messages) {
+        for (int i = messages.size() - 1; i >= 0; i--) {
+            if (messages.get(i) instanceof UserMessage) return i;
+        }
+        return -1;
     }
 }

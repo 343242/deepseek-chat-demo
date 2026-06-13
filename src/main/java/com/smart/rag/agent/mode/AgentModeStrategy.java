@@ -9,6 +9,7 @@ import com.smart.rag.chat.mode.ChatModeStrategy;
 import com.smart.rag.chat.mode.MultiTurnModeStrategy;
 import com.smart.rag.chat.mode.AbstractModeStrategy;
 import com.smart.rag.infrastructure.llm.ChatCapable;
+import com.smart.rag.infrastructure.llm.adapter.ChatModelAdapter;
 import com.smart.rag.infrastructure.llm.registry.LlmClientRegistry;
 import com.smart.rag.chat.service.AdvisorChainContext;
 import com.smart.rag.chat.service.AdvisorInfrastructure;
@@ -179,7 +180,7 @@ public class AgentModeStrategy implements ChatModeStrategy {
         ChatModel chatModel = null;
         ChatCapable chatCapable = llmRegistry.get(candidateId, ChatCapable.class);
         if (chatCapable != null) {
-            chatModel = chatCapable.asChatModel();
+            chatModel = new ChatModelAdapter(chatCapable);
         }
 
         TokenCountingChatModel tokenCountingModel;

@@ -39,9 +39,6 @@ public record EndpointConfig(
      */
     @Nullable
     public String get(LlmCapability capability) {
-        if (endpoints == null) {
-            return null;
-        }
         return endpoints.get(capability.name().toLowerCase());
     }
 }

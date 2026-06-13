@@ -1,6 +1,10 @@
 package com.smart.rag.infrastructure.llm;
 
+import com.smart.rag.infrastructure.exception.ClientException;
+import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;
+
 import java.util.List;
+import java.util.Objects;
 
 /**
  * 重排序请求
@@ -12,4 +16,10 @@ public record RerankRequest(
     String query,
     /** 候选文档列表 */
     List<String> documents
-) {}
+) {
+    public RerankRequest {
+        Objects.requireNonNull(query, "查询文本不能为空");
+        Objects.requireNonNull(documents, "文档列表不能为空");
+        if (documents.isEmpty()) throw new ClientException(ClientErrorCode.BAD_REQUEST, "文档列表不能为空");
+    }
+}

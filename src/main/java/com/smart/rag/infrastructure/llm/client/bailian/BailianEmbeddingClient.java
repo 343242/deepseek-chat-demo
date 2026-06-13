@@ -1,6 +1,5 @@
 package com.smart.rag.infrastructure.llm.client.bailian;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smart.rag.infrastructure.exception.RemoteException;
 import com.smart.rag.infrastructure.exception.errorcode.RemoteErrorCode;
@@ -35,31 +34,39 @@ public class BailianEmbeddingClient extends AbstractEmbeddingClient implements E
 
     private static final Logger log = LoggerFactory.getLogger(BailianEmbeddingClient.class);
     private static final int MAX_BATCH_SIZE = 10;
+    private static final int CONNECT_TIMEOUT_SECONDS = 10;
+    private static final int READ_TIMEOUT_SECONDS = 30;
     private static final String EMBEDDING_PATH =
         "/api/v1/services/embeddings/text-embedding/text-embedding";
 
     private final RestClient restClient;
     private final ObjectMapper objectMapper;
     private final HttpClient httpClient;
+    // DCL pattern: volatile guarantees the float[] reference is safely published.
+    // The array contents (all zeros) are read-only after construction, so no further synchronization is needed.
     private volatile float[] zeroVector;
 
-    public BailianEmbeddingClient(String apiKey, ModelCandidate candidate) {
-        super(candidate, candidate.provider());
+    private final String baseUrl;
+
+    public BailianEmbeddingClient(String baseUrl, String apiKey, ModelCandidate candidate) {
+        super(Objects.requireNonNull(candidate, "candidate must not be null"), candidate.provider());
+        Objects.requireNonNull(apiKey, "apiKey must not be null");
+        this.baseUrl = Objects.requireNonNull(baseUrl, "baseUrl must not be null");
         this.objectMapper = new ObjectMapper();
 
-        this.httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
+        this.httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(CONNECT_TIMEOUT_SECONDS)).build();
         JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(httpClient);
-        requestFactory.setReadTimeout(Duration.ofSeconds(30));
+        requestFactory.setReadTimeout(Duration.ofSeconds(READ_TIMEOUT_SECONDS));
 
         this.restClient = RestClient.builder()
-            .baseUrl("https://dashscope.aliyuncs.com")
+            .baseUrl(baseUrl)
             .defaultHeader("Authorization", "Bearer " + apiKey)
             .defaultHeader("Content-Type", "application/json")
             .requestFactory(requestFactory)
             .build();
 
-        log.info("BailianEmbeddingClient initialized: model={}, dimension={}, candidate={}",
-            candidate.model(), candidate.dimension(), candidate.id());
+        log.info("BailianEmbeddingClient initialized: model={}, dimension={}, candidate={}, baseUrl={}",
+            candidate.model(), candidate.dimension(), candidate.id(), baseUrl);
     }
 
     // ======================== EmbeddingCapable (SPI) ========================
@@ -166,12 +173,14 @@ public class BailianEmbeddingClient extends AbstractEmbeddingClient implements E
                 .retrieve()
                 .body(String.class);
 
+            // Safe: DashScope API returns unstructured metadata; a typed POJO would add maintenance
+            // overhead with no real type-safety benefit for this provider-specific response shape.
             return objectMapper.readValue(json, Map.class);
         } catch (RemoteException e) {
             throw e;
         } catch (Exception e) {
             throw HttpClientErrorHandler.translate("DashScope Embedding",
-                "https://dashscope.aliyuncs.com" + EMBEDDING_PATH, e);
+                baseUrl + EMBEDDING_PATH, e);
         }
     }
 

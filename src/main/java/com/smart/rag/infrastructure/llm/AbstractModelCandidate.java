@@ -1,7 +1,9 @@
 package com.smart.rag.infrastructure.llm;
 
+import com.smart.rag.infrastructure.exception.ClientException;
+import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;
+
 import java.util.Map;
-import java.util.Objects;
 
 /**
  * 模型候选抽象基类——实现 sealed interface，提供 YAML 绑定支持
@@ -31,7 +33,7 @@ public abstract sealed class AbstractModelCandidate implements ModelCandidate
     @Override public int priority() { return priority; }
     @Override public LlmCapability capability() { return capability; }
     @Override public boolean enabled() { return enabled; }
-    @Override public Map<String, Object> params() { return params; }
+    @Override public Map<String, Object> params() { return params != null ? params : Map.of(); }
 
     public String getId() { return id; }
     public void setId(String id) { this.id = id; }
@@ -44,18 +46,18 @@ public abstract sealed class AbstractModelCandidate implements ModelCandidate
     public LlmCapability getCapability() { return capability; }
     public void setCapability(LlmCapability capability) { this.capability = capability; }
     public Map<String, Object> getParams() { return params; }
-    public void setParams(Map<String, Object> params) { this.params = params; }
+    public void setParams(Map<String, Object> params) { this.params = params != null ? params : Map.of(); }
     public boolean isEnabled() { return enabled; }
     public void setEnabled(boolean enabled) { this.enabled = enabled; }
 
     /**
      * 校验必填字段是否已设置
      *
-     * @throws NullPointerException if id, provider, or model is null
+     * @throws ClientException if id, provider, or model is null or blank
      */
     public void validate() {
-        Objects.requireNonNull(id, "candidate id is required");
-        Objects.requireNonNull(provider, "candidate provider is required");
-        Objects.requireNonNull(model, "candidate model is required");
+        if (id == null || id.isBlank()) throw new ClientException(ClientErrorCode.BAD_REQUEST, "候选 ID 不能为空");
+        if (provider == null || provider.isBlank()) throw new ClientException(ClientErrorCode.BAD_REQUEST, "供应商不能为空");
+        if (model == null || model.isBlank()) throw new ClientException(ClientErrorCode.BAD_REQUEST, "模型名称不能为空");
     }
 }

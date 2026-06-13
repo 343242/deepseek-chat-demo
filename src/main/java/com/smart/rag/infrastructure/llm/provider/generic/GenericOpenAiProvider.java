@@ -7,6 +7,8 @@ import com.smart.rag.infrastructure.llm.config.ProviderConfig;
 import com.smart.rag.infrastructure.llm.strategy.CapabilityStrategy;
 import com.smart.rag.infrastructure.llm.strategy.CapabilityStrategyRegistry;
 
+import java.util.Objects;
+
 /**
  * 通用 OpenAI 兼容供应商
  * <p>
@@ -39,6 +41,7 @@ public class GenericOpenAiProvider implements LlmProvider {
 
     @Override
     public CapabilityClient createClient(ModelCandidate candidate) {
+        Objects.requireNonNull(candidate, "ModelCandidate must not be null");
         CapabilityStrategy strategy = strategyRegistry.get(candidate.capability());
         String baseUrl = providerConfig.url();
         String endpoint = strategy.resolveEndpoint(providerConfig);

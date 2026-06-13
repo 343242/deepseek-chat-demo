@@ -46,4 +46,11 @@ public class CandidateProperties {
 
     public Map<String, Object> getParams() { return params; }
     public void setParams(Map<String, Object> params) { this.params = params; }
+
+    @Override
+    public String toString() {
+        return "CandidateProperties{id='" + id + "', provider='" + provider
+            + "', model='" + model + "', priority=" + priority
+            + ", enabled=" + enabled + '}';
+    }
 }

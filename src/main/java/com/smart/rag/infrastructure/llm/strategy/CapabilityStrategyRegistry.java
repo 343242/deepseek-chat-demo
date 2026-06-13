@@ -24,7 +24,10 @@ public class CapabilityStrategyRegistry {
     public CapabilityStrategyRegistry(List<CapabilityStrategy> strategyList) {
         this.strategies = strategyList.stream()
             .collect(Collectors.toUnmodifiableMap(
-                CapabilityStrategy::capability, Function.identity()));
+                CapabilityStrategy::capability, Function.identity(),
+                (a, b) -> { throw new IllegalStateException(
+                    "Duplicate CapabilityStrategy for " + a.capability()
+                    + ": " + a.getClass().getName() + " vs " + b.getClass().getName()); }));
     }
 
     public CapabilityStrategy get(LlmCapability cap) {

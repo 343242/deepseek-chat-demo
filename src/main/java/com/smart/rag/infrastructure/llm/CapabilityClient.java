@@ -27,6 +27,12 @@ public interface CapabilityClient extends AutoCloseable {
     /** 该客户端是否可用 */
     boolean isAvailable();
 
+    /**
+     * 关闭客户端持有的资源。
+     * <p>
+     * 默认实现为空操作（no-op）。持有 HTTP 客户端、连接池等可关闭资源的子类
+     * （如 {@code AbstractChatClient}）必须覆写此方法以正确释放资源。
+     */
     @Override
     default void close() {}
 }

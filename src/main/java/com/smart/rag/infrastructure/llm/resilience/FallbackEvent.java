@@ -12,6 +12,10 @@ import com.smart.rag.infrastructure.llm.LlmCapability;
  *   <li>Metrics：采集 {@code llm.fallback.invocations} 计数器（标签：capability, from, to）</li>
  *   <li>日志：记录降级链路追踪</li>
  * </ul>
+ * <p>
+ * <b>注意</b>：{@code cause} 字段为 {@link Throwable}，不可序列化。
+ * 本 record 不应与 Java Serialization 或 JSON 序列化框架直接使用；
+ * 如需持久化，请仅提取 {@code fromCandidateId}/{@code toCandidateId} 及错误消息。
  */
 public record FallbackEvent(
     /** 发生降级的能力类型 */

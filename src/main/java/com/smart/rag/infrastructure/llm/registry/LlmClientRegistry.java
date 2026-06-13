@@ -11,6 +11,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -52,8 +53,9 @@ public class LlmClientRegistry {
         int size = snapshotRef.get().size();
         if (size == 0) {
             log.warn("LlmClientRegistry initialized with 0 clients — check app.llm configuration");
+        } else {
+            log.info("LlmClientRegistry initialized: {} clients registered", size);
         }
-        log.info("LlmClientRegistry initialized: {} clients registered", size);
     }
 
     @PreDestroy
@@ -69,7 +71,13 @@ public class LlmClientRegistry {
 
     /** 重新构建快照（配置变更时调用） */
     public void refresh() {
-        RegistrySnapshot newSnapshot = factory.buildSnapshot();
+        // Preserve runtime disabledSet across refresh
+        Set<String> preservedDisabled = snapshotRef.get().disabledSet();
+        RegistrySnapshot fresh = factory.buildSnapshot();
+        RegistrySnapshot newSnapshot = new RegistrySnapshot(
+            fresh.clientsById(), fresh.fallbackChains(),
+            fresh.defaultClients(), fresh.deepThinkingClients(),
+            fresh.filteredChains(), preservedDisabled);
         RegistrySnapshot old = snapshotRef.getAndSet(newSnapshot);
         // Close old clients that are no longer in the new snapshot
         if (old != null) {
@@ -81,7 +89,8 @@ public class LlmClientRegistry {
                 }
             });
         }
-        log.info("Registry refreshed: {} clients", newSnapshot.size());
+        log.info("Registry refreshed: {} clients ({} disabled preserved)",
+            newSnapshot.size(), preservedDisabled.size());
     }
 
     // ======================== Query API ========================
@@ -165,6 +174,7 @@ public class LlmClientRegistry {
             return new RegistrySnapshot(
                 current.clientsById(), current.fallbackChains(),
                 current.defaultClients(), current.deepThinkingClients(),
+                Map.of(),
                 Set.copyOf(newDisabled));
         });
     }
@@ -179,6 +189,7 @@ public class LlmClientRegistry {
             return new RegistrySnapshot(
                 current.clientsById(), current.fallbackChains(),
                 current.defaultClients(), current.deepThinkingClients(),
+                Map.of(),
                 Set.copyOf(newDisabled));
         });
     }

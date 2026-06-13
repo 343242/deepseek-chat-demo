@@ -29,37 +29,19 @@ public class ResilientRerankClient extends AbstractResilientClient<RerankCapable
 
     @Override
     public List<RerankResult> rerank(RerankRequest request) {
-        long start = metrics != null ? metrics.startNanos() : 0;
-        try {
-            List<RerankResult> result = circuitBreaker.execute(() ->
-                retryPolicy.executeWithBackoff(() ->
-                    delegate.rerank(request)
-                )
-            );
-            if (metrics != null) metrics.recordRerankLatency(candidateId(), start, "success");
-            return result;
-        } catch (Exception e) {
-            if (metrics != null) metrics.recordRerankLatency(candidateId(), start, "error");
-            if (e instanceof RuntimeException re) throw re;
-            throw new RuntimeException(e);
-        }
+        return executeResilient(
+            () -> delegate.rerank(request),
+            (cid, start) -> metrics.recordRerankLatency(cid, start, "success"),
+            (cid, start) -> metrics.recordRerankLatency(cid, start, "error")
+        );
     }
 
     @Override
     public List<RerankResult> rerank(RerankRequest request, int topN) {
-        long start = metrics != null ? metrics.startNanos() : 0;
-        try {
-            List<RerankResult> result = circuitBreaker.execute(() ->
-                retryPolicy.executeWithBackoff(() ->
-                    delegate.rerank(request, topN)
-                )
-            );
-            if (metrics != null) metrics.recordRerankLatency(candidateId(), start, "success");
-            return result;
-        } catch (Exception e) {
-            if (metrics != null) metrics.recordRerankLatency(candidateId(), start, "error");
-            if (e instanceof RuntimeException re) throw re;
-            throw new RuntimeException(e);
-        }
+        return executeResilient(
+            () -> delegate.rerank(request, topN),
+            (cid, start) -> metrics.recordRerankLatency(cid, start, "success"),
+            (cid, start) -> metrics.recordRerankLatency(cid, start, "error")
+        );
     }
 }

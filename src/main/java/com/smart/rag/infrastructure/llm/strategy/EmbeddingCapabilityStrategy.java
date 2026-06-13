@@ -36,7 +36,10 @@ public class EmbeddingCapabilityStrategy implements CapabilityStrategy {
             .filter(f -> f.capability() == LlmCapability.EMBEDDING)
             .collect(Collectors.toUnmodifiableMap(
                 f -> f.providerId() + ":" + f.capability(),
-                Function.identity()));
+                Function.identity(),
+                (a, b) -> { throw new IllegalStateException(
+                    "Duplicate ProviderClientFactory for EMBEDDING provider '" + a.providerId()
+                    + "': " + a.getClass().getName() + " vs " + b.getClass().getName()); }));
     }
 
     @Override public LlmCapability capability() { return LlmCapability.EMBEDDING; }
@@ -52,7 +55,7 @@ public class EmbeddingCapabilityStrategy implements CapabilityStrategy {
         ProviderClientFactory factory = providerFactories.get(
             candidate.provider() + ":" + capability());
         if (factory != null) {
-            return factory.create(apiKey, candidate);
+            return factory.create(baseUrl, apiKey, candidate);
         }
         return new GenericEmbeddingClient(baseUrl, endpoint, apiKey, candidate);
     }
@@ -63,6 +66,10 @@ public class EmbeddingCapabilityStrategy implements CapabilityStrategy {
                                                 RetryPolicy retry,
                                                 @Nullable ProbeHandler probe,
                                                 @Nullable LlmMetrics metrics) {
-        return new ResilientEmbeddingClient((EmbeddingCapable) raw, cb, retry, metrics);
+        if (!(raw instanceof EmbeddingCapable embeddingCapable)) {
+            throw new IllegalStateException(
+                "EMBEDDING client '" + raw.candidateId() + "' does not implement EmbeddingCapable");
+        }
+        return new ResilientEmbeddingClient(embeddingCapable, cb, retry, metrics);
     }
 }

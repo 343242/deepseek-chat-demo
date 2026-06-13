@@ -5,6 +5,8 @@ import com.smart.rag.infrastructure.llm.LlmCapability;
 import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.Nullable;
 
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 
@@ -19,6 +21,7 @@ import java.util.function.Supplier;
 public class LlmMetrics {
 
     private final MeterRegistry registry;
+    private final Set<String> registeredGauges = ConcurrentHashMap.newKeySet();
 
     public LlmMetrics(@Nullable MeterRegistry registry) {
         this.registry = registry;
@@ -36,9 +39,9 @@ public class LlmMetrics {
             .record(System.nanoTime() - startNanos, TimeUnit.NANOSECONDS);
     }
 
-    public void recordTokens(String candidateId, String type, int count) {
+    public void recordTokens(String candidateId, String operation, int count) {
         if (registry == null) return;
-        registry.counter("llm.chat.tokens", "candidateId", candidateId, "type", type)
+        registry.counter("llm.chat.tokens", "candidateId", candidateId, "operation", operation)
             .increment(count);
     }
 
@@ -68,6 +71,7 @@ public class LlmMetrics {
      */
     public void registerCircuitBreakerGauge(String candidateId, Supplier<CircuitBreakerState> stateSupplier) {
         if (registry == null) return;
+        if (!registeredGauges.add(candidateId)) return; // already registered
         registry.gauge("llm.circuit.state",
             io.micrometer.core.instrument.Tags.of("candidateId", candidateId),
             stateSupplier, s -> switch (s.get()) {

@@ -28,6 +28,7 @@ public record LlmResponse(
     Map<String, Object> responseMetadata
 ) {
     public LlmResponse {
+        if (content == null) content = "";
         if (toolCalls == null) toolCalls = List.of();
         if (responseMetadata == null) responseMetadata = Map.of();
     }

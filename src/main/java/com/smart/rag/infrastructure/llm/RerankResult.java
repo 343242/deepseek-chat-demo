@@ -1,5 +1,10 @@
 package com.smart.rag.infrastructure.llm;
 
+import com.smart.rag.infrastructure.exception.ClientException;
+import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;
+
+import java.util.Objects;
+
 /**
  * 重排序结果
  */
@@ -10,4 +15,9 @@ public record RerankResult(
     double score,
     /** 文档内容 */
     String document
-) {}
+) {
+    public RerankResult {
+        Objects.requireNonNull(document, "文档内容不能为空");
+        if (originalIndex < 0) throw new ClientException(ClientErrorCode.BAD_REQUEST, "文档索引不能为负数: " + originalIndex);
+    }
+}

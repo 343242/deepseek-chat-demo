@@ -1,9 +1,7 @@
 package com.smart.rag.infrastructure.llm.client.bailian;
 
-import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smart.rag.infrastructure.exception.RemoteException;
-import com.smart.rag.infrastructure.exception.errorcode.RemoteErrorCode;
 import com.smart.rag.infrastructure.llm.*;
 import com.smart.rag.infrastructure.llm.client.AbstractRerankClient;
 import com.smart.rag.infrastructure.llm.client.HttpClientErrorHandler;
@@ -25,18 +23,22 @@ import java.util.*;
 public class BailianRerankClient extends AbstractRerankClient {
 
     private static final Logger log = LoggerFactory.getLogger(BailianRerankClient.class);
+    private static final int CONNECT_TIMEOUT_SECONDS = 5;
+    private static final int READ_TIMEOUT_SECONDS = 15;
 
     private final RestClient restClient;
     private final ObjectMapper objectMapper;
     private final HttpClient httpClient;
 
     public BailianRerankClient(String baseUrl, String apiKey, ModelCandidate candidate) {
-        super(candidate, candidate.provider());
+        super(Objects.requireNonNull(candidate, "candidate must not be null"), candidate.provider());
+        Objects.requireNonNull(baseUrl, "baseUrl must not be null");
+        Objects.requireNonNull(apiKey, "apiKey must not be null");
         this.objectMapper = new ObjectMapper();
 
-        this.httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).build();
+        this.httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(CONNECT_TIMEOUT_SECONDS)).build();
         JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(httpClient);
-        requestFactory.setReadTimeout(Duration.ofSeconds(15));
+        requestFactory.setReadTimeout(Duration.ofSeconds(READ_TIMEOUT_SECONDS));
 
         this.restClient = RestClient.builder()
             .baseUrl(baseUrl)
@@ -68,33 +70,11 @@ public class BailianRerankClient extends AbstractRerankClient {
                 .retrieve()
                 .body(String.class);
 
-            return parseResponse(json, request.documents());
+            return parseRerankResponse(objectMapper, json, request.documents());
         } catch (RemoteException e) {
             throw e;
         } catch (Exception e) {
             throw HttpClientErrorHandler.translate("Bailian Rerank", "/reranks", e);
-        }
-    }
-
-    private List<RerankResult> parseResponse(String json, List<String> documents) {
-        try {
-            JsonNode root = objectMapper.readTree(json);
-            JsonNode results = root.path("results");
-            if (!results.isArray()) return List.of();
-
-            List<RerankResult> rerankResults = new ArrayList<>(results.size());
-            for (JsonNode item : results) {
-                int index = item.path("index").asInt(-1);
-                double score = item.path("relevance_score").asDouble(0.0);
-                if (index >= 0 && index < documents.size()) {
-                    rerankResults.add(new RerankResult(index, score, documents.get(index)));
-                }
-            }
-            return rerankResults;
-        } catch (Exception e) {
-            // LLM_STREAM_ERROR used as catch-all for parse failures (no dedicated parse error code)
-            throw new RemoteException(RemoteErrorCode.LLM_STREAM_ERROR,
-                "Failed to parse rerank response: " + e.getMessage(), e);
         }
     }
 

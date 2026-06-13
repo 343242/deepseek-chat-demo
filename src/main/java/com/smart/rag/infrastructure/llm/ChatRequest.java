@@ -1,6 +1,9 @@
 package com.smart.rag.infrastructure.llm;
 
 import java.util.List;
+import com.smart.rag.infrastructure.exception.ClientException;
+import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;
+
 import java.util.Map;
 
 /**
@@ -68,6 +71,7 @@ public record ChatRequest(
         public Builder extraParams(Map<String, Object> ep) { this.extraParams = ep != null ? Map.copyOf(ep) : Map.of(); return this; }
 
         public ChatRequest build() {
+            if (input == null || input.isBlank()) throw new ClientException(ClientErrorCode.BAD_REQUEST, "输入内容不能为空");
             return new ChatRequest(input, systemPrompt, history,
                 temperature, maxTokens, topP, extraParams);
         }

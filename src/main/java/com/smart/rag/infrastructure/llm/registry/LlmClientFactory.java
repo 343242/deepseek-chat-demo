@@ -47,6 +47,8 @@ public class LlmClientFactory {
 
     private static final Logger log = LoggerFactory.getLogger(LlmClientFactory.class);
 
+    private static final long DEFAULT_PROBE_TIMEOUT_MS = 3000L;
+
     private final LlmConfig llmConfig;
     private final Map<String, LlmProvider> providers;
     private final CapabilityStrategyRegistry strategyRegistry;
@@ -69,7 +71,11 @@ public class LlmClientFactory {
                             @Nullable LlmMetrics metrics) {
         this.llmConfig = llmConfig;
         this.providers = providers.values().stream()
-            .collect(Collectors.toMap(LlmProvider::id, p -> p));
+            .collect(Collectors.toMap(
+                LlmProvider::id, p -> p,
+                (a, b) -> { throw new IllegalStateException(
+                    "Duplicate provider id '" + a.id()
+                    + "': " + a.getClass().getName() + " vs " + b.getClass().getName()); }));
         this.strategyRegistry = strategyRegistry;
         this.circuitBreakerRegistry = circuitBreakerRegistry;
         this.fallbackEligibility = fallbackEligibility;
@@ -132,6 +138,11 @@ public class LlmClientFactory {
 
             // Deep-thinking 模型
             if (group.getDeepThinkingModel() != null) {
+                if (!clientsById.containsKey(group.getDeepThinkingModel())) {
+                    throw new IllegalStateException(
+                        cap + ".deep-thinking-model '" + group.getDeepThinkingModel()
+                        + "' references unknown candidate");
+                }
                 deepThinkingClients.put(cap, group.getDeepThinkingModel());
             }
         }
@@ -140,10 +151,11 @@ public class LlmClientFactory {
             clientsById.size(), fallbackChains.size());
 
         return new RegistrySnapshot(
-            Collections.unmodifiableMap(clientsById),
-            Collections.unmodifiableMap(fallbackChains),
-            Collections.unmodifiableMap(defaultClients),
-            Collections.unmodifiableMap(deepThinkingClients),
+            clientsById,
+            fallbackChains,
+            defaultClients,
+            deepThinkingClients,
+            Map.of(),
             Set.of()
         );
     }
@@ -165,7 +177,7 @@ public class LlmClientFactory {
         try {
             return provider.createClient(candidate);
         } catch (Exception e) {
-            log.error("Failed to create client for candidate '{}': {}", candidate.id(), e.getMessage());
+            log.error("Failed to create client for candidate '{}'", candidate.id(), e);
             return null;
         }
     }
@@ -180,12 +192,25 @@ public class LlmClientFactory {
         CircuitBreaker cb = circuitBreakerRegistry.getOrCreate(raw.candidateId());
         RetryPolicy retry = new RetryPolicy(retryConfig);
 
-        ProbeHandler probe = null;
-        if (probeStreamHandler != null && probeProps != null && probeProps.enabled() != null && probeProps.enabled()) {
-            long timeout = probeProps.probeTimeoutMs() != null ? probeProps.probeTimeoutMs() : 3000L;
-            probe = new ProbeHandler(probeStreamHandler, sharedProbeRegistry, timeout);
-        }
+        ProbeHandler probe = isProbeEnabled(probeProps)
+            ? new ProbeHandler(probeStreamHandler, sharedProbeRegistry,
+                resolveProbeTimeout(probeProps))
+            : null;
 
         return strategy.wrapWithResilience(raw, cb, retry, probe, metrics);
+    }
+
+    /** Check whether probe is enabled (null-safe) */
+    private boolean isProbeEnabled(@Nullable ProbeProperties probeProps) {
+        return probeStreamHandler != null
+            && probeProps != null
+            && Boolean.TRUE.equals(probeProps.enabled());
+    }
+
+    /** Resolve probe timeout, falling back to default */
+    private long resolveProbeTimeout(@Nullable ProbeProperties probeProps) {
+        return probeProps != null && probeProps.probeTimeoutMs() != null
+            ? probeProps.probeTimeoutMs()
+            : DEFAULT_PROBE_TIMEOUT_MS;
     }
 }

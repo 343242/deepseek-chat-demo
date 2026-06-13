@@ -1,6 +1,8 @@
 package com.smart.rag.infrastructure.llm.client;
 
 import com.smart.rag.infrastructure.llm.*;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import java.util.List;
 
 /**
@@ -12,6 +14,9 @@ import java.util.List;
  * <b>不包含重试/熔断逻辑</b>——由 {@code ResilientEmbeddingClient} 装饰器在外部施加。
  */
 public abstract class AbstractEmbeddingClient implements EmbeddingCapable {
+
+    private static final Logger log = LoggerFactory.getLogger(AbstractEmbeddingClient.class);
+    private static final int BATCH_WARN_THRESHOLD = 10;
 
     protected final ModelCandidate candidate;
     protected final String providerId;
@@ -41,6 +46,10 @@ public abstract class AbstractEmbeddingClient implements EmbeddingCapable {
 
     @Override
     public List<float[]> embedBatch(List<String> texts, EmbeddingType type) {
+        if (texts.size() > BATCH_WARN_THRESHOLD) {
+            log.warn("embedBatch called with {} texts using default sequential implementation (O(n)); "
+                + "providers with batch API support should override this method", texts.size());
+        }
         return texts.stream()
             .map(text -> embed(text, type))
             .toList();

@@ -56,8 +56,7 @@ public class ProbeHandler {
                         }
                         return Mono.empty();
                     })
-                    .thenMany(raw)
-                    .timeout(Duration.ofMillis(probeTimeoutMs));
+                    .thenMany(Flux.defer(() -> raw));
             }
         }
         Flux<String> probed = delegate.wrapWithProbe(candidateId, raw);

@@ -29,15 +29,25 @@ import java.util.*;
  * <p>
  * 基于 OpenAI 兼容的 /chat/completions 端点。
  * 阻塞调用使用 {@link RestClient}，流式调用使用 OkHttp SSE。
+ * <p>
+ * <b>Dual HTTP client libraries:</b> RestClient requires java.net.http.HttpClient as its underlying
+ * transport (via {@link JdkClientHttpRequestFactory}), while OkHttp is used for SSE streaming because
+ * it provides superior Server-Sent Events support (line-by-line reading with cancellation) compared
+ * to the JDK's HttpURLConnection. This is an accepted tradeoff — the blocking path stays on
+ * RestClient for consistency with the rest of the Spring ecosystem, and the streaming path uses
+ * OkHttp's battle-tested SSE handling.
  */
 public class GenericChatClient extends AbstractChatClient {
 
     private static final Logger log = LoggerFactory.getLogger(GenericChatClient.class);
     private static final MediaType JSON_MEDIA = MediaType.get("application/json; charset=utf-8");
+    private static final int CONNECT_TIMEOUT_SECONDS = 10;
+    private static final int READ_TIMEOUT_SECONDS = 60;
+    private static final int STREAM_READ_TIMEOUT_SECONDS = 120;
 
-    protected final String baseUrl;
-    protected final String endpoint;
-    protected final String apiKey;
+    private final String baseUrl;
+    private final String endpoint;
+    private final String apiKey;
 
     private final RestClient restClient;
     private final Call.Factory callFactory;
@@ -46,15 +56,15 @@ public class GenericChatClient extends AbstractChatClient {
 
     public GenericChatClient(String baseUrl, String endpoint,
                              String apiKey, ModelCandidate candidate) {
-        super(candidate, candidate.provider());
-        this.baseUrl = baseUrl;
-        this.endpoint = endpoint;
-        this.apiKey = apiKey;
+        super(Objects.requireNonNull(candidate, "candidate must not be null"), candidate.provider());
+        this.baseUrl = Objects.requireNonNull(baseUrl, "baseUrl must not be null");
+        this.endpoint = Objects.requireNonNull(endpoint, "endpoint must not be null");
+        this.apiKey = Objects.requireNonNull(apiKey, "apiKey must not be null");
         this.objectMapper = new ObjectMapper();
 
-        this.httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(10)).build();
+        this.httpClient = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(CONNECT_TIMEOUT_SECONDS)).build();
         JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(httpClient);
-        requestFactory.setReadTimeout(Duration.ofSeconds(60));
+        requestFactory.setReadTimeout(Duration.ofSeconds(READ_TIMEOUT_SECONDS));
 
         this.restClient = RestClient.builder()
             .baseUrl(baseUrl)
@@ -64,9 +74,11 @@ public class GenericChatClient extends AbstractChatClient {
             .build();
 
         this.callFactory = new OkHttpClient.Builder()
-            .connectTimeout(10, java.util.concurrent.TimeUnit.SECONDS)
-            .readTimeout(120, java.util.concurrent.TimeUnit.SECONDS)
+            .connectTimeout(CONNECT_TIMEOUT_SECONDS, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(STREAM_READ_TIMEOUT_SECONDS, java.util.concurrent.TimeUnit.SECONDS)
             .build();
+
+        log.info("GenericChatClient initialized: model={}, endpoint={}", candidate.model(), endpoint);
     }
 
     @Override
@@ -112,6 +124,7 @@ public class GenericChatClient extends AbstractChatClient {
 
             Call call = callFactory.newCall(httpRequest);
             sink.onCancel(call::cancel);
+            sink.onDispose(call::cancel);
 
             try (Response response = call.execute()) {
                 if (!response.isSuccessful()) {
@@ -164,6 +177,7 @@ public class GenericChatClient extends AbstractChatClient {
             JsonNode delta = choices.get(0).path("delta").path("content");
             return delta.isTextual() ? delta.asText() : null;
         } catch (IOException e) {
+            log.debug("Failed to parse SSE data chunk: {}", data, e);
             return null;
         }
     }

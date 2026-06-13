@@ -84,4 +84,11 @@ public class ModelGroup {
             return (ModelCandidate) c;
         }).toList();
     }
+
+    @Override
+    public String toString() {
+        return "ModelGroup{defaultModel='" + defaultModel
+            + "', deepThinkingModel='" + deepThinkingModel
+            + "', candidates=" + candidates + '}';
+    }
 }

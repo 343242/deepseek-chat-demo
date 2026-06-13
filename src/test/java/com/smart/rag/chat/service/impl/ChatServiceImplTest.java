@@ -88,9 +88,9 @@ class ChatServiceImplTest {
             if ("providerId".equals(invocation.getMethod().getName())) return "test-provider";
             if ("modelName".equals(invocation.getMethod().getName())) return candidateId;
             if ("isAvailable".equals(invocation.getMethod().getName())) return true;
+            if ("supportsStreaming".equals(invocation.getMethod().getName())) return false;
             return null;
         });
-        when(client.asChatModel()).thenReturn(chatModel);
         return client;
     }
 

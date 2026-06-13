@@ -1,0 +1,4 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "SOLID/Forbidden Patterns/Structured Concurrency 契约 — P1 命名/不变量/资源管理依据"}
+{"file": ".trellis/spec/backend/code-review-checklist.md", "reason": "10 维度 review 检查项 — P1 修复点对照"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "异常体系规范 — ScopeExecutionException 重命名后保持一致"}

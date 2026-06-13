@@ -6,6 +6,16 @@
 
 ---
 
+> **按实施 Phase 拆分的独立文档**（本文档为唯一事实源，各 Phase 文档为实施指南）：
+>
+> | Phase | 文档 | 对应章节 |
+> |-------|------|---------|
+> | Phase 1 | [核心接口与抽象类定义](llm-spi/phase1-core-interfaces.md) | §4, §5, §6, §11 |
+> | Phase 2 | [统一弹性层](llm-spi/phase2-resilience.md) | §7 |
+> | Phase 3 | [Provider + Registry + 配置](llm-spi/phase3-provider-registry.md) | §8, §9, §10 |
+> | Phase 4 | [调用方迁移与运维](llm-spi/phase4-migration.md) | §12, §13, §17–§20 |
+
+
 ## 1. 背景与动机
 
 ### 1.1 现状问题
@@ -410,7 +420,7 @@ public final class RerankCandidate extends AbstractModelCandidate {
 ```
 
 > **与已有 ModelCandidate 的关系**：
-> 当前代码库中 `com.smart.rag.infrastructure.fallback.ModelCandidate` 仅包含
+> 当前代码库中 `fallback.ModelCandidate` 仅包含
 > `id, provider, model, priority, enabled, supportsThinking` 字段。
 > 本方案将其重构为 sealed interface + 三个子类型，包路径迁移至 `infrastructure.llm`。
 > 旧 `fallback.ModelCandidate` 在迁移完成后删除。
@@ -791,7 +801,7 @@ import java.util.Map;
  * 命名为 {@code LlmResponse} 以避免与 Spring AI 的
  * {@code org.springframework.ai.chat.model.ChatResponse} 类型冲突。
  * {@code ChatCapable} 不继承 Spring AI {@code ChatModel}（ISP/LSP 合规），
- * 桥接由 {@link com.smart.rag.infrastructure.llm.adapter.ChatModelAdapter} 独立完成：
+ * 桥接由 {@link ChatModelAdapter} 独立完成：
  * Adapter 的 {@code call(Prompt)} 返回 Spring AI 的 {@code ChatResponse}，
  * 而本 SPI 的 {@code chat()} 方法返回 {@code LlmResponse}。
  */
@@ -861,6 +871,7 @@ public record RerankResult(
 ```java
 package com.smart.rag.infrastructure.llm;
 
+import org.springframework.ai.chat.model.ChatModel;
 import reactor.core.publisher.Flux;
 
 /**
@@ -896,7 +907,7 @@ public interface ChatCapable extends CapabilityClient {
      * <p>
      * 用途：{@code ChatClient.builder(chatCapable.asChatModel()).build()}
      */
-    default org.springframework.ai.chat.model.ChatModel asChatModel() {
+    default ChatModel asChatModel() {
         return new ChatModelAdapter(this);
     }
 }
@@ -989,9 +1000,14 @@ import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.model.ChatResponseMetadata;
 import org.springframework.ai.chat.metadata.Usage;
 import org.springframework.ai.chat.messages.AssistantMessage;
+import org.springframework.ai.chat.messages.Message;
+import org.springframework.ai.chat.messages.SystemMessage;
+import org.springframework.ai.chat.messages.UserMessage;
 import org.springframework.ai.chat.prompt.ChatGenerationMetadata;
 import org.springframework.ai.chat.model.Generation;
 import org.springframework.ai.chat.prompt.Prompt;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 /**
@@ -1079,7 +1095,7 @@ public class ChatModelAdapter implements ChatModel {
             var instructions = prompt.getInstructions();
             // 提取 SystemMessage
             for (var msg : instructions) {
-                if (msg instanceof org.springframework.ai.chat.messages.SystemMessage sm) {
+                if (msg instanceof SystemMessage sm) {
                     systemPrompt = sm.getText();
                     break;
                 }
@@ -1087,20 +1103,20 @@ public class ChatModelAdapter implements ChatModel {
             // 构建 history：排除 SystemMessage 和最后一条 UserMessage
             // history 保留 User/Assistant/Tool 的交叉排列，最后一条 UserMessage 作为 input 传递
             var nonSystemMessages = instructions.stream()
-                .filter(m -> !(m instanceof org.springframework.ai.chat.messages.SystemMessage))
+                .filter(m -> !(m instanceof SystemMessage))
                 .toList();
 
             if (!nonSystemMessages.isEmpty()) {
                 // 找到最后一条 UserMessage 的位置，排除它（它作为 input 传递）
                 int lastUserIdx = -1;
                 for (int i = nonSystemMessages.size() - 1; i >= 0; i--) {
-                    if (nonSystemMessages.get(i) instanceof org.springframework.ai.chat.messages.UserMessage) {
+                    if (nonSystemMessages.get(i) instanceof UserMessage) {
                         lastUserIdx = i;
                         break;
                     }
                 }
                 // O(n) 构建 history：跳过 lastUserIdx 处的 UserMessage（它作为 input 传递）
-                var builder = new java.util.ArrayList<MessageInformation>(nonSystemMessages.size() - 1);
+                var builder = new ArrayList<MessageInformation>(nonSystemMessages.size() - 1);
                 for (int i = 0; i < nonSystemMessages.size(); i++) {
                     if (i == excludeIdx) continue;
                     var m = nonSystemMessages.get(i);
@@ -1380,6 +1396,7 @@ import com.smart.rag.infrastructure.fallback.ModelCircuitOpenException;
 import reactor.core.publisher.Flux;
 import reactor.util.retry.Retry;
 
+import java.io.IOException;
 import java.time.Duration;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
@@ -1544,7 +1561,7 @@ public class RetryPolicy {
         // 仅 C 类瞬态错误可重试（网络超时、5xx、429 限流、探测超时等）
         // 注意：降级判定由 FallbackExecutor 独立负责，RetryPolicy 不感知降级语义
         return e instanceof LlmTransientException
-            || e instanceof java.io.IOException
+            || e instanceof IOException
             || e instanceof ProbeTimeoutException;
     }
 
@@ -1558,7 +1575,12 @@ package com.smart.rag.infrastructure.llm.resilience;
 
 import com.smart.rag.infrastructure.fallback.FallbackEligibility;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import java.io.IOException;
 import java.util.List;
+import java.util.function.Consumer;
+import java.util.function.Function;
 
 /**
  * 跨模型 Fallback 降级执行器
@@ -1593,9 +1615,9 @@ public class FallbackExecutor {
     /**
      * 受检异常兼容的函数式接口
      * <p>
-     * {@link java.util.function.Function} 不允许抛出 checked exception，
+     * {@link Function} 不允许抛出 checked exception，
      * 而 LLM 调用的 {@code chat()} / {@code chatStream()} 可能抛出
-     * {@link java.io.IOException} 等受检异常。
+     * {@link IOException} 等受检异常。
      * 此接口替代 {@code Function} 作为 {@code execute()} 的参数类型。
      */
     @FunctionalInterface
@@ -1606,14 +1628,14 @@ public class FallbackExecutor {
     private final FallbackEligibility fallbackEligibility;
     /** 降级事件发布器（Observer 模式），可选 */
     @Nullable
-    private final java.util.function.Consumer<FallbackEvent> eventPublisher;
+    private final Consumer<FallbackEvent> eventPublisher;
 
     public FallbackExecutor(FallbackEligibility fallbackEligibility) {
         this(fallbackEligibility, null);
     }
 
     public FallbackExecutor(FallbackEligibility fallbackEligibility,
-                            @Nullable java.util.function.Consumer<FallbackEvent> eventPublisher) {
+                            @Nullable Consumer<FallbackEvent> eventPublisher) {
         this.fallbackEligibility = fallbackEligibility;
         this.eventPublisher = eventPublisher;
     }

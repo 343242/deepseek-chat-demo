@@ -37,24 +37,6 @@
             </exclusions>
         </dependency>
 
-        <!-- Spring AI DeepSeek Starter -->
-        <dependency>
-            <groupId>org.springframework.ai</groupId>
-            <artifactId>spring-ai-starter-model-deepseek</artifactId>
-        </dependency>
-
-        <!-- Spring AI Zhipu (智谱) Starter -->
-        <dependency>
-            <groupId>org.springframework.ai</groupId>
-            <artifactId>spring-ai-starter-model-zhipuai</artifactId>
-        </dependency>
-
-        <!-- Spring AI MiniMax Starter -->
-        <dependency>
-            <groupId>org.springframework.ai</groupId>
-            <artifactId>spring-ai-starter-model-minimax</artifactId>
-        </dependency>
-
         <!-- MyBatis-Plus -->
         <dependency>
             <groupId>com.baomidou</groupId>
@@ -259,6 +241,12 @@
         <dependency>
             <groupId>org.springframework.ai</groupId>
             <artifactId>spring-ai-rag</artifactId>
+        </dependency>
+
+        <!-- Spring AI ZhiPu (evaluation module — judge model bypasses LlmClientRegistry) -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-starter-model-zhipuai</artifactId>
         </dependency>
 
         <!-- MinIO Object Storage -->

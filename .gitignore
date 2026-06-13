@@ -24,3 +24,6 @@ CLAUDE.md
 AGENTS.md
 .code-review-graphignore
 .factorypath
+
+# Sandbox / mirror directory (local platform experimentation, not source)
+bin/

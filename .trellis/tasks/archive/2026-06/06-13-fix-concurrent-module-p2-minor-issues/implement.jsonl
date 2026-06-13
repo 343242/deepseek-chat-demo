@@ -1,0 +1,3 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Quality/Forbidden Patterns — P2 字段优化依据"}
+{"file": ".trellis/spec/backend/code-review-checklist.md", "reason": "10 维度检查项 — 代码质量维度"}

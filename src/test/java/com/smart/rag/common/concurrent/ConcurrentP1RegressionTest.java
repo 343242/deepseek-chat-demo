@@ -1,11 +1,17 @@
 package com.smart.rag.common.concurrent;
 
+import com.smart.rag.config.ThreadPoolConstants;
 import com.smart.rag.infrastructure.concurrent.DefaultScopedTasks;
+import com.smart.rag.infrastructure.concurrent.DefaultSubtask;
+import com.smart.rag.infrastructure.concurrent.executor.DefaultScopeExecutorFactory;
+import com.smart.rag.infrastructure.concurrent.ExecutorMode;
 import com.smart.rag.infrastructure.concurrent.ScopeExecutionException;
 import com.smart.rag.infrastructure.concurrent.ScopeOptions;
 import com.smart.rag.infrastructure.concurrent.ScopePolicy;
+import com.smart.rag.infrastructure.concurrent.ScopeState;
 import com.smart.rag.infrastructure.concurrent.ScopeTimeoutException;
 import com.smart.rag.infrastructure.concurrent.ScopeViolationException;
+import com.smart.rag.infrastructure.concurrent.ScopedTaskProperties;
 import com.smart.rag.infrastructure.concurrent.ScopedTasks;
 import com.smart.rag.infrastructure.concurrent.Subtask;
 import com.smart.rag.infrastructure.concurrent.SubtaskCancelledException;
@@ -15,6 +21,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
+import java.lang.reflect.Field;
 import java.time.Duration;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
@@ -317,6 +324,259 @@ class ConcurrentP1RegressionTest {
                 // Positive timeout works and completes.
                 scope.joinUntil(Duration.ofSeconds(2));
             }
+        }
+    }
+
+    // ===== Commit B: Resource / Performance =====
+
+    @Nested
+    @DisplayName("P1-1: PoolConfig core/max use the same ThreadPoolConstants source")
+    class P1_1_PoolConfigConsistentSource {
+
+        @Test
+        @DisplayName("default corePoolSize and maxPoolSize are both io-bound (CPU<<1 / CPU<<2)")
+        void poolConfigUsesConsistentSource() {
+            ScopedTaskProperties.PoolConfig config = new ScopedTaskProperties.PoolConfig();
+            // P1-1: both must come from the io-bound family (was lightCore + ioMax mismatch).
+            assertThat(config.getCorePoolSize()).isEqualTo(ThreadPoolConstants.ioCore());
+            assertThat(config.getMaxPoolSize()).isEqualTo(ThreadPoolConstants.ioMax());
+            // Sanity: core <= max and both positive.
+            assertThat(config.getCorePoolSize()).isGreaterThan(0);
+            assertThat(config.getMaxPoolSize()).isGreaterThanOrEqualTo(config.getCorePoolSize());
+        }
+    }
+
+    @Nested
+    @DisplayName("P1-15: sharedExecutor is created lazily (not in factory constructor)")
+    class P1_15_SharedExecutorLazy {
+
+        @Test
+        @DisplayName("constructing the factory does not create the shared executor")
+        void sharedExecutorLazyCreated() throws Exception {
+            DefaultScopeExecutorFactory factory = new DefaultScopeExecutorFactory();
+            // P1-15: the sharedExecutor field must be null until SHARED_EXECUTOR is requested.
+            Field f = DefaultScopeExecutorFactory.class.getDeclaredField("sharedExecutor");
+            f.setAccessible(true);
+            assertThat(f.get(factory)).isNull();
+            // Creating a VIRTUAL_THREAD_PER_TASK executor must NOT touch the shared pool.
+            ScopeOptions opts = ScopeOptions.builder("p1-15-lazy")
+                    .executorMode(ExecutorMode.VIRTUAL_THREAD_PER_TASK)
+                    .build();
+            ExecutorService e1 = factory.create(opts);
+            assertThat(f.get(factory)).isNull();
+            e1.shutdownNow();
+            // Requesting SHARED_EXECUTOR creates it.
+            ScopeOptions shared = ScopeOptions.builder("p1-15-shared")
+                    .executorMode(ExecutorMode.SHARED_EXECUTOR)
+                    .executorOwnedByScope(false)
+                    .build();
+            ExecutorService e2 = factory.create(shared);
+            assertThat(f.get(factory)).isNotNull();
+            assertThat(e2).isSameAs(f.get(factory));
+            // A second SHARED request returns the same instance.
+            ExecutorService e3 = factory.create(shared);
+            assertThat(e3).isSameAs(e2);
+            factory.close();
+        }
+
+        @Test
+        @DisplayName("close() is a no-op when the shared executor was never created")
+        void closeNoopWhenNeverCreated() throws Exception {
+            DefaultScopeExecutorFactory factory = new DefaultScopeExecutorFactory();
+            // No SHARED_EXECUTOR created — close must not NPE.
+            factory.close();
+            Field f = DefaultScopeExecutorFactory.class.getDeclaredField("sharedExecutor");
+            f.setAccessible(true);
+            assertThat(f.get(factory)).isNull();
+        }
+    }
+
+    @Nested
+    @DisplayName("P1-16: factoryCloseTimeout is a distinct configuration field")
+    class P1_16_FactoryCloseTimeout {
+
+        @Test
+        @DisplayName("ScopedTaskProperties exposes factoryCloseTimeout distinct from closeTimeout")
+        void factoryCloseTimeoutDistinct() {
+            ScopedTaskProperties props = new ScopedTaskProperties();
+            // P1-16: factoryCloseTimeout defaults to 30s, wider than per-scope closeTimeout (5s).
+            assertThat(props.getFactoryCloseTimeout()).isEqualTo(Duration.ofSeconds(30));
+            assertThat(props.getCloseTimeout()).isEqualTo(Duration.ofSeconds(5));
+            assertThat(props.getFactoryCloseTimeout()).isGreaterThan(props.getCloseTimeout());
+            // Setter works and is independent.
+            props.setFactoryCloseTimeout(Duration.ofSeconds(60));
+            assertThat(props.getFactoryCloseTimeout()).isEqualTo(Duration.ofSeconds(60));
+            assertThat(props.getCloseTimeout()).isEqualTo(Duration.ofSeconds(5));
+            // Invalid values rejected.
+            assertThatThrownBy(() -> props.setFactoryCloseTimeout(null))
+                    .isInstanceOf(IllegalArgumentException.class);
+            assertThatThrownBy(() -> props.setFactoryCloseTimeout(Duration.ZERO))
+                    .isInstanceOf(IllegalArgumentException.class);
+            assertThatThrownBy(() -> props.setFactoryCloseTimeout(Duration.ofSeconds(-1)))
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
+    }
+
+    // ===== Commit C: Data Accuracy =====
+
+    @Nested
+    @DisplayName("P1-8: cancel() records real elapsed (fork -> cancel wall time)")
+    class P1_8_CancelRealElapsed {
+
+        @Test
+        @DisplayName("a cancelled subtask reports elapsed > 0")
+        void cancelRecordsRealElapsed() throws Exception {
+            try (TaskScope scope = scopedTasks.open("p1-8-elapsed",
+                    ScopeOptions.builder("p1-8-elapsed")
+                            .policy(ScopePolicy.COLLECT_ALL)
+                            .defaultTimeout(Duration.ofSeconds(2))
+                            .build())) {
+                Subtask<String> task = scope.fork("sleep", () -> {
+                    Thread.sleep(Duration.ofSeconds(10));
+                    return "never";
+                });
+                Thread.sleep(Duration.ofMillis(100)); // let it start
+                scope.cancel(task);
+                scope.join();
+                assertThat(task.state()).isEqualTo(TaskState.CANCELLED);
+                // P1-8: elapsed must be the real fork->cancel wall time (>0), not Duration.ZERO.
+                // Use reflection since Subtask interface doesn't expose elapsed(); the concrete
+                // DefaultSubtask stores it.
+                assertThat(task).isInstanceOf(DefaultSubtask.class);
+                Duration elapsed = ((DefaultSubtask<?>) task).elapsed();
+                assertThat(elapsed).isGreaterThan(Duration.ZERO);
+            }
+        }
+    }
+
+    @Nested
+    @DisplayName("P1-9: SecurityContextCarrier javadoc documents the immutability assumption")
+    class P1_9_SecurityContextImmutabilityJavadoc {
+
+        @Test
+        @DisplayName("SecurityContextCarrier source contains the immutability warning")
+        void securityContextJavadocDocumentsImmutability() throws Exception {
+            // P1-9: compiled classes drop javadoc, so verify the source file contains the
+            // immutability warning. This guards the documented contract: the captured
+            // SecurityContext shares its Authentication reference with the source thread.
+            java.nio.file.Path src = java.nio.file.Path.of(
+                    "src/main/java/com/smart/rag/infrastructure/concurrent/context/SecurityContextCarrier.java");
+            String content = java.nio.file.Files.readString(src);
+            assertThat(content).contains("Immutability assumption");
+            assertThat(content).contains("UsernamePasswordAuthenticationToken");
+            assertThat(content).contains("AnonymousAuthenticationToken");
+            assertThat(content).contains("thread-safety");
+        }
+    }
+
+    @Nested
+    @DisplayName("P1-11: waitForTerminationRemaining continues past a single subtask timeout")
+    class P1_11_WaitForTerminationContinues {
+
+        @Test
+        @DisplayName("one slow subtask does not prevent awaiting the others")
+        void waitForTerminationContinuesOnSingleTimeout() throws Exception {
+            // Two subtasks: one completes fast, one is cancelled. With the old code a single
+            // timeout returned early and could skip awaiting still-terminating siblings.
+            // After P1-11 the loop continues so all siblings get a termination wait.
+            CountDownLatch slowStarted = new CountDownLatch(1);
+            AtomicBoolean slowInterrupted = new AtomicBoolean();
+            try (TaskScope scope = scopedTasks.open("p1-11-continue",
+                    ScopeOptions.builder("p1-11-continue")
+                            .policy(ScopePolicy.COLLECT_ALL)
+                            .defaultTimeout(Duration.ofSeconds(2))
+                            .closeTimeout(Duration.ofSeconds(2))
+                            .build())) {
+                Subtask<String> fast = scope.fork("fast", () -> "fast");
+                Subtask<String> slow = scope.fork("slow", () -> {
+                    slowStarted.countDown();
+                    try {
+                        Thread.sleep(Duration.ofSeconds(30));
+                    } catch (InterruptedException ex) {
+                        slowInterrupted.set(true);
+                        throw ex;
+                    }
+                    return "slow";
+                });
+                assertThat(slowStarted.await(2, TimeUnit.SECONDS)).isTrue();
+                scope.cancel(slow);
+                scope.join();
+                // P1-11: the fast task must have been fully awaited (SUCCESS) regardless of
+                // whether the cancelled slow task hit the per-subtask timeout branch first.
+                assertThat(fast.state()).isEqualTo(TaskState.SUCCESS);
+                assertThat(fast.result()).isEqualTo("fast");
+                assertThat(slow.state()).isEqualTo(TaskState.CANCELLED);
+            }
+        }
+    }
+
+    // ===== Commit D: Code Quality =====
+
+    @Nested
+    @DisplayName("P1-2: ScopeState.stopRequested is a plain boolean, not AtomicBoolean")
+    class P1_2_StopRequestedNotAtomic {
+
+        @Test
+        @DisplayName("ScopeState.stopRequested field is a plain boolean")
+        void stopRequestedNotAtomic() throws Exception {
+            Field f = ScopeState.class.getDeclaredField("stopRequested");
+            // P1-2: must be a plain boolean, not java.util.concurrent.atomic.AtomicBoolean.
+            assertThat(f.getType()).isEqualTo(boolean.class);
+            // Behavioral check: requestStop flips the flag.
+            ScopeState state = new ScopeState();
+            assertThat(state.stopRequested()).isFalse();
+            state.requestStop();
+            assertThat(state.stopRequested()).isTrue();
+        }
+    }
+
+    @Nested
+    @DisplayName("P1-10: ScopeNestingGuard no longer uses InheritableThreadLocal")
+    class P1_10_InheritedThreadLocalRemoved {
+
+        @Test
+        @DisplayName("ScopeNestingGuard has no InheritableThreadLocal fields")
+        void inheritedThreadLocalRemoved() throws Exception {
+            // P1-10: the two ITL fields must be gone; only plain ThreadLocal remain.
+            // ScopeNestingGuard is package-private, so load it reflectively.
+            Class<?> guard = Class.forName(
+                    "com.smart.rag.infrastructure.concurrent.ScopeNestingGuard");
+            java.lang.reflect.Field[] fields = guard.getDeclaredFields();
+            long itlCount = java.util.Arrays.stream(fields)
+                    .filter(f -> java.lang.reflect.Modifier.isStatic(f.getModifiers()))
+                    .filter(f -> f.getType().equals(java.lang.InheritableThreadLocal.class))
+                    .count();
+            assertThat(itlCount).isZero();
+            // LOCAL_SCOPE_DEPTH / LOCAL_SCOPE_IDS / SCOPED_SUBTASK remain as ThreadLocal.
+            long tlCount = java.util.Arrays.stream(fields)
+                    .filter(f -> java.lang.reflect.Modifier.isStatic(f.getModifiers()))
+                    .filter(f -> f.getType().equals(java.lang.ThreadLocal.class))
+                    .count();
+            assertThat(tlCount).isEqualTo(3);
+        }
+    }
+
+    @Nested
+    @DisplayName("P1-14: markSuccess/markFailed have no dead NEW->SUCCESS/FAILED branch")
+    class P1_14_NoNewStateBranch {
+
+        @Test
+        @DisplayName("markSuccess only transitions RUNNING->SUCCESS (no NEW->SUCCESS)")
+        void markSuccessMarkFailedNoNewBranch() {
+            // P1-14: the dead NEW->SUCCESS/FAILED branches were removed. A subtask that is
+            // cancelled directly (never runs) must not be flipped to SUCCESS/FAILED.
+            DefaultSubtask<String> subtask = new DefaultSubtask<>("p1-14");
+            assertThat(subtask.state()).isEqualTo(TaskState.NEW);
+            // markSuccess on a NEW subtask is a no-op (markRunning was never called).
+            subtask.markSuccess("x", Duration.ZERO);
+            assertThat(subtask.state()).isEqualTo(TaskState.NEW);
+            // markFailed on a NEW subtask is a no-op.
+            subtask.markFailed(new RuntimeException("e"), Duration.ZERO);
+            assertThat(subtask.state()).isEqualTo(TaskState.NEW);
+            // The only valid path to SUCCESS is via markRunning first.
+            assertThat(subtask.markRunning()).isTrue();
+            subtask.markSuccess("done", Duration.ZERO);
+            assertThat(subtask.state()).isEqualTo(TaskState.SUCCESS);
         }
     }
 }

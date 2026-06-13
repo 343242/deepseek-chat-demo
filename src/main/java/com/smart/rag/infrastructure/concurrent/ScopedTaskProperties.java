@@ -19,6 +19,8 @@ public class ScopedTaskProperties {
     private boolean inheritRequestContext;
     private PoolConfig platformThreadPool = new PoolConfig("scoped-platform-");
     private PoolConfig sharedExecutor = new PoolConfig("scoped-shared-");
+    // P1-16: factory-level close timeout (longer than per-scope closeTimeout=5s)
+    private Duration factoryCloseTimeout = Duration.ofSeconds(30);
 
     public ScopeOptions toOptions(String name) {
         return ScopeOptions.builder(name)
@@ -125,6 +127,18 @@ public class ScopedTaskProperties {
         return sharedExecutor;
     }
 
+    // P1-16: factory-level close timeout, distinct from per-scope closeTimeout.
+    public Duration getFactoryCloseTimeout() {
+        return factoryCloseTimeout;
+    }
+
+    public void setFactoryCloseTimeout(Duration factoryCloseTimeout) {
+        if (factoryCloseTimeout == null || factoryCloseTimeout.isNegative() || factoryCloseTimeout.isZero()) {
+            throw new IllegalArgumentException("factoryCloseTimeout must be > 0");
+        }
+        this.factoryCloseTimeout = factoryCloseTimeout;
+    }
+
     public void setSharedExecutor(PoolConfig sharedExecutor) {
         if (sharedExecutor == null) {
             throw new IllegalArgumentException("sharedExecutor must not be null");
@@ -134,7 +148,9 @@ public class ScopedTaskProperties {
 
     public static class PoolConfig {
 
-        private int corePoolSize = ThreadPoolConstants.lightCore();
+        // P1-1: core/max now same source (io-bound: CPU<<1 / CPU<<2).
+        // Platform thread pools here back LLM/ETL IO work, not compute.
+        private int corePoolSize = ThreadPoolConstants.ioCore();
         private int maxPoolSize = ThreadPoolConstants.ioMax();
         private int queueCapacity = 100;
         private int keepAliveSeconds = 60;

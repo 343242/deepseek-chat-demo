@@ -3,12 +3,14 @@ package com.smart.rag.infrastructure.concurrent;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class ScopeState {
 
     private final ArrayList<DefaultSubtask<?>> subtasks = new ArrayList<>();
-    private final AtomicBoolean stopRequested = new AtomicBoolean();
+    // P1-2: plain boolean — ScopeState instances are only accessed by the owner thread
+    // (all call sites are on the scope-owner thread after the P0 split into collaborators).
+    // AtomicBoolean was unnecessary overhead.
+    private boolean stopRequested;
 
     public void add(DefaultSubtask<?> subtask) {
         subtasks.add(subtask);
@@ -40,10 +42,10 @@ public final class ScopeState {
     }
 
     public void requestStop() {
-        stopRequested.set(true);
+        stopRequested = true;
     }
 
     public boolean stopRequested() {
-        return stopRequested.get();
+        return stopRequested;
     }
 }

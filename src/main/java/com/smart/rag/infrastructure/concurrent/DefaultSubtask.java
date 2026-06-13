@@ -20,12 +20,16 @@ public final class DefaultSubtask<T> implements Subtask<T> {
     private final AtomicReference<Duration> elapsed = new AtomicReference<>(Duration.ZERO);
     private final AtomicBoolean failureObserved = new AtomicBoolean();
     private final CountDownLatch terminated = new CountDownLatch(1);
+    // P1-8: fork timestamp so cancel() can report real elapsed (fork→cancel wall time),
+    // distinct from the execution elapsed reported by markSuccess/markFailed (task run time).
+    private final long forkNanos;
 
     public DefaultSubtask(String name) {
         if (name == null || name.isBlank()) {
             throw new ScopeViolationException("subtask name must not be blank");
         }
         this.name = name;
+        this.forkNanos = System.nanoTime();
     }
 
     @Override
@@ -72,12 +76,19 @@ public final class DefaultSubtask<T> implements Subtask<T> {
      * Cancel this subtask (internal API, callable from package collaborators).
      * P1-3: the public entry point is now {@link TaskScope#cancel(Subtask)}
      * which enforces the owner-thread invariant before delegating here.
+     *
+     * <p>P1-8: the reported elapsed is the wall time from fork to cancel
+     * (subtask lifetime), not the task execution time. Execution elapsed is
+     * captured separately by {@link #markSuccess} / {@link #markFailed} via
+     * {@link com.smart.rag.infrastructure.concurrent.ObservedCallable}, which
+     * only fires after {@link #markRunning()} succeeds. A cancelled task that
+     * never ran still has a meaningful fork→cancel elapsed.
      */
     public boolean cancel() {
         Future<?> submitted = future.get();
         TaskState beforeCancel = state.get();
         boolean cancelled = submitted == null || submitted.cancel(true);
-        markCancelled(Duration.ZERO);
+        markCancelled(Duration.ofNanos(System.nanoTime() - forkNanos));
         if (beforeCancel == TaskState.NEW || submitted == null) {
             markTerminated();
         }
@@ -92,9 +103,13 @@ public final class DefaultSubtask<T> implements Subtask<T> {
         return state.compareAndSet(TaskState.NEW, TaskState.RUNNING);
     }
 
+    // P1-14: removed dead NEW→SUCCESS/FAILED branches. ObservedCallable always calls
+    // markRunning() first, and markRunning failing throws InterruptedException before
+    // markSuccess/markFailed can run. The RUNNING→SUCCESS/FAILED transition is the
+    // only reachable path. The CANCELLED branch in markFailed is preserved (P0-5:
+    // teardown-error preservation for cancelled tasks).
     public void markSuccess(T value, Duration elapsed) {
-        if (state.compareAndSet(TaskState.RUNNING, TaskState.SUCCESS)
-                || state.compareAndSet(TaskState.NEW, TaskState.SUCCESS)) {
+        if (state.compareAndSet(TaskState.RUNNING, TaskState.SUCCESS)) {
             result.set(value);
             this.elapsed.set(elapsed);
             completionSignal.complete(this);
@@ -102,8 +117,7 @@ public final class DefaultSubtask<T> implements Subtask<T> {
     }
 
     public void markFailed(Throwable error, Duration elapsed) {
-        if (state.compareAndSet(TaskState.RUNNING, TaskState.FAILED)
-                || state.compareAndSet(TaskState.NEW, TaskState.FAILED)) {
+        if (state.compareAndSet(TaskState.RUNNING, TaskState.FAILED)) {
             exception.set(error);
             this.elapsed.set(elapsed);
             completionSignal.complete(this);

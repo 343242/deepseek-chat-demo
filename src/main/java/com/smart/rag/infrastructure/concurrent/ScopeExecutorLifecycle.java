@@ -32,20 +32,23 @@ final class ScopeExecutorLifecycle {
         waitForTerminationRemaining(deadlineNanos, preserveInterrupt);
     }
 
+    // P1-11: do NOT return on a single subtask timeout — continue to give remaining
+    // subtasks a chance. The overall closeTimeout (deadlineNanos) still bounds total wait.
+    // Only InterruptedException is fatal (exits the loop).
     void waitForTerminationRemaining(long deadlineNanos, boolean preserveInterrupt) {
         for (DefaultSubtask<?> subtask : ctx.state.internalSubtasks()) {
             long remaining = deadlineNanos - System.nanoTime();
             if (remaining <= 0) {
                 log.warn("TaskScope '{}' close timed out before subtask '{}' terminated",
                         ctx.options.name(), subtask.name());
-                return;
+                continue;  // P1-11: was return — let other subtasks be checked
             }
             try {
                 boolean terminated = subtask.awaitTermination(remaining, TimeUnit.NANOSECONDS);
                 if (!terminated) {
                     log.warn("TaskScope '{}' subtask '{}' did not terminate within closeTimeout={}",
                             ctx.options.name(), subtask.name(), ctx.options.closeTimeout());
-                    return;
+                    // P1-11: was return — continue so other subtasks get a chance
                 }
             } catch (InterruptedException ex) {
                 if (preserveInterrupt) {

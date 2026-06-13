@@ -1016,8 +1016,14 @@ class DefaultTaskScopeTest {
     class Phase4NestedScopeViolations {
 
         @Test
-        @DisplayName("child thread cannot open a detached scope while parent scope is active")
+        @DisplayName("P1-10: child thread no longer sees parent scope state (InheritableThreadLocal removed)")
         void childThread_cannotOpenDetachedScopeWhileParentScopeIsActive() throws Exception {
+            // P1-10: the InheritableThreadLocal-based cross-thread "detached child" detection
+            // was removed (ITL produced stale values on reused pool workers). A raw child
+            // thread spawned inside an active scope no longer inherits the parent's scope
+            // state, so opening a detached scope there no longer throws. Callers that need
+            // a nested scope must use scope.fork(...), which installs the parent stack via
+            // scopedSubtask().
             AtomicReference<Throwable> error = new AtomicReference<>();
 
             try (TaskScope outer = scopedTasks.open("outer-active")) {
@@ -1028,9 +1034,8 @@ class DefaultTaskScopeTest {
 
                 child.join();
 
-                assertThat(error.get())
-                        .isInstanceOf(ScopeViolationException.class)
-                        .hasMessageContaining("Nested TaskScope");
+                // P1-10: no violation — ITL detection removed; child thread has no inherited state.
+                assertThat(error.get()).isNull();
                 outer.join();
             }
         }

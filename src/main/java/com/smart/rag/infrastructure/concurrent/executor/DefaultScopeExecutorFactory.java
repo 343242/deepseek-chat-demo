@@ -14,7 +14,9 @@ import java.util.concurrent.TimeUnit;
 public final class DefaultScopeExecutorFactory implements ScopeExecutorFactory {
 
     private final ScopedTaskProperties properties;
-    private final ExecutorService sharedExecutor;
+    // P1-15: lazy-create the shared executor only when SHARED_EXECUTOR is first used.
+    // Constructing the factory no longer eagerly spawns threads.
+    private volatile ExecutorService sharedExecutor;
 
     public DefaultScopeExecutorFactory() {
         this(new ScopedTaskProperties());
@@ -22,7 +24,6 @@ public final class DefaultScopeExecutorFactory implements ScopeExecutorFactory {
 
     public DefaultScopeExecutorFactory(ScopedTaskProperties properties) {
         this.properties = properties;
-        this.sharedExecutor = createPool(properties.getSharedExecutor());
     }
 
     @Override
@@ -34,20 +35,34 @@ public final class DefaultScopeExecutorFactory implements ScopeExecutorFactory {
                 if (options.executorOwnedByScope()) {
                     throw new ScopeViolationException("SHARED_EXECUTOR requires executorOwnedByScope=false");
                 }
-                yield sharedExecutor;
+                yield getOrCreateSharedExecutor();
             }
         };
     }
 
+    private synchronized ExecutorService getOrCreateSharedExecutor() {
+        if (sharedExecutor == null) {
+            sharedExecutor = createPool(properties.getSharedExecutor());
+        }
+        return sharedExecutor;
+    }
+
     @Override
     public void close() {
-        sharedExecutor.shutdown();
+        // P1-15: close is a no-op if the shared executor was never created.
+        ExecutorService snapshot = sharedExecutor;
+        if (snapshot == null) {
+            return;
+        }
+        snapshot.shutdown();
         try {
-            if (!sharedExecutor.awaitTermination(properties.getCloseTimeout().toNanos(), TimeUnit.NANOSECONDS)) {
-                sharedExecutor.shutdownNow();
+            // P1-16: factory-level close uses the wider factoryCloseTimeout (30s default),
+            // distinct from per-scope closeTimeout (5s default).
+            if (!snapshot.awaitTermination(properties.getFactoryCloseTimeout().toNanos(), TimeUnit.NANOSECONDS)) {
+                snapshot.shutdownNow();
             }
         } catch (InterruptedException ex) {
-            sharedExecutor.shutdownNow();
+            snapshot.shutdownNow();
             Thread.currentThread().interrupt();
         }
     }

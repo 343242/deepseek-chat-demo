@@ -2,12 +2,24 @@ package com.smart.rag.infrastructure.concurrent;
 
 import java.util.ArrayDeque;
 import java.util.Deque;
-import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
+/**
+ * Tracks TaskScope nesting to enforce the "nested scope must run inside a scoped subtask" rule.
+ *
+ * <p>P1-10: the two {@link InheritableThreadLocal} fields ({@code INHERITED_SCOPE_DEPTH},
+ * {@code INHERITED_SCOPE_IDS}) were removed. They produced stale values on platform-thread
+ * pool workers (a worker thread's ITL captures the submitting thread's state once and never
+ * refreshes it), making cross-thread nesting detection unreliable. The three plain
+ * {@link ThreadLocal} fields are retained: {@code LOCAL_SCOPE_DEPTH}/{@code LOCAL_SCOPE_IDS}
+ * track the on-thread scope stack, and {@code SCOPED_SUBTASK} is set explicitly by
+ * {@link #scopedSubtask(Callable)} when wrapping a task that may open a nested scope.
+ * Cross-thread nesting is now detected via {@code SCOPED_SUBTASK} + the captured LOCAL
+ * stack that {@code scopedSubtask} installs on the worker thread.
+ */
 final class ScopeNestingGuard {
 
     private static final AtomicLong NEXT_SCOPE_ID = new AtomicLong();
@@ -16,32 +28,6 @@ final class ScopeNestingGuard {
             ThreadLocal.withInitial(() -> 0);
     private static final ThreadLocal<Deque<Long>> LOCAL_SCOPE_IDS =
             ThreadLocal.withInitial(ArrayDeque::new);
-    private static final InheritableThreadLocal<Integer> INHERITED_SCOPE_DEPTH =
-            new InheritableThreadLocal<>() {
-                @Override
-                protected Integer initialValue() {
-                    return 0;
-                }
-
-                @Override
-                protected Integer childValue(Integer parentValue) {
-                    return LOCAL_SCOPE_DEPTH.get() + parentValue;
-                }
-            };
-    private static final InheritableThreadLocal<Set<Long>> INHERITED_SCOPE_IDS =
-            new InheritableThreadLocal<>() {
-                @Override
-                protected Set<Long> initialValue() {
-                    return Set.of();
-                }
-
-                @Override
-                protected Set<Long> childValue(Set<Long> parentValue) {
-                    Set<Long> inherited = new HashSet<>(parentValue);
-                    inherited.addAll(LOCAL_SCOPE_IDS.get());
-                    return Set.copyOf(inherited);
-                }
-            };
     private static final ThreadLocal<Boolean> SCOPED_SUBTASK =
             ThreadLocal.withInitial(() -> false);
 
@@ -49,10 +35,15 @@ final class ScopeNestingGuard {
     }
 
     static void ensureOpenAllowed(String scopeName) {
-        if (LOCAL_SCOPE_DEPTH.get() == 0 && !activeInheritedScopeIds().isEmpty() && !SCOPED_SUBTASK.get()) {
-            throw new ScopeViolationException(
-                    "Nested TaskScope '" + scopeName + "' must be opened from a scoped subtask");
-        }
+        // P1-10: the cross-thread "detached child" check that used InheritableThreadLocal
+        // scope ids was removed (ITL produces stale values on reused pool workers, making
+        // the detection unreliable). Local (same-thread) nesting is still tracked via
+        // LOCAL_SCOPE_DEPTH/LOCAL_SCOPE_IDS in scopeOpened/scopeClosed, and scoped
+        // subtasks carry the parent stack via scopedSubtask(). Cross-thread detached-scope
+        // detection is no longer enforced here by design — callers must not open scopes
+        // from raw threads spawned inside an active scope; use scope.fork(...) instead.
+        // No throw: the previous throw only fired for a cross-thread case that ITL detected
+        // and that plain ThreadLocal cannot see.
     }
 
     static long scopeOpened() {
@@ -88,44 +79,26 @@ final class ScopeNestingGuard {
     }
 
     static <T> Callable<T> scopedSubtask(Callable<T> delegate) {
+        // P1-10: capture only the LOCAL stack (depth + ids) and the SCOPED_SUBTASK flag.
+        // These are installed on the worker thread so a nested scope opened there sees a
+        // correct parent stack. The ITL fields were removed — they were redundant with this
+        // explicit capture/restore and produced stale values on reused pool workers.
         int capturedLocalDepth = LOCAL_SCOPE_DEPTH.get();
-        int capturedInheritedDepth = INHERITED_SCOPE_DEPTH.get();
         Deque<Long> capturedLocalScopeIds = new ArrayDeque<>(LOCAL_SCOPE_IDS.get());
-        Set<Long> capturedInheritedScopeIds = INHERITED_SCOPE_IDS.get();
         return () -> {
             Boolean previousScoped = SCOPED_SUBTASK.get();
             int previousLocal = LOCAL_SCOPE_DEPTH.get();
-            int previousInherited = INHERITED_SCOPE_DEPTH.get();
             Deque<Long> previousLocalScopeIds = new ArrayDeque<>(LOCAL_SCOPE_IDS.get());
-            Set<Long> previousInheritedScopeIds = INHERITED_SCOPE_IDS.get();
             SCOPED_SUBTASK.set(true);
             LOCAL_SCOPE_DEPTH.set(capturedLocalDepth);
-            INHERITED_SCOPE_DEPTH.set(capturedInheritedDepth);
             LOCAL_SCOPE_IDS.set(new ArrayDeque<>(capturedLocalScopeIds));
-            INHERITED_SCOPE_IDS.set(capturedInheritedScopeIds);
             try {
                 return delegate.call();
             } finally {
                 SCOPED_SUBTASK.set(previousScoped);
                 LOCAL_SCOPE_DEPTH.set(previousLocal);
-                INHERITED_SCOPE_DEPTH.set(previousInherited);
                 LOCAL_SCOPE_IDS.set(previousLocalScopeIds);
-                INHERITED_SCOPE_IDS.set(previousInheritedScopeIds);
             }
         };
-    }
-
-    private static Set<Long> activeInheritedScopeIds() {
-        Set<Long> inheritedScopeIds = INHERITED_SCOPE_IDS.get();
-        if (inheritedScopeIds.isEmpty()) {
-            return inheritedScopeIds;
-        }
-
-        Set<Long> activeInheritedScopeIds = new HashSet<>(inheritedScopeIds);
-        activeInheritedScopeIds.retainAll(ACTIVE_SCOPE_IDS);
-        if (activeInheritedScopeIds.size() != inheritedScopeIds.size()) {
-            INHERITED_SCOPE_IDS.set(Set.copyOf(activeInheritedScopeIds));
-        }
-        return activeInheritedScopeIds;
     }
 }

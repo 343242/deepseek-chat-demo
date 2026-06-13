@@ -237,3 +237,36 @@ Verified Mimo review's 7 findings against current code: 6 real (P1×2 + P2×4), 
 ### Next Steps
 
 - None - task complete
+
+
+## Session 8: LLM module self-review P1 fixes (3 issues)
+
+**Date**: 2026-06-14
+**Task**: LLM module self-review P1 fixes (3 issues)
+**Branch**: `agentic-rag-dev`
+
+### Summary
+
+Fixed 3 self-review P1 findings: HttpClientErrorHandler.translate() refactored from sneaky-throw to pure transformer (all branches return exceptions); CircuitBreaker.executeStream consolidated doOnComplete/doOnError/doOnCancel trio into doFinally(signal) using AtomicReference<Throwable> for error capture, eliminating probe slot leak on CANCEL path and DRY violation; LlmMetrics gauge idempotency confirmed via ConcurrentHashMap.newKeySet().add() with strengthened Javadoc. Added streamCancellationAfterEmissionReleasesProbe regression test. 96/96 LLM tests green, trellis-check sub-agent 0 issues.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `488413e` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

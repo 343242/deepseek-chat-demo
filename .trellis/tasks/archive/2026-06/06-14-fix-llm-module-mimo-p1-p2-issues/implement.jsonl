@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/code-review-checklist.md", "reason": "10 维度审查清单，修复需对齐 §1 SOLID/DRY、§7 异常处理、§9 可扩展性要求"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "异常分类规范：P2-1 CapabilityStrategyRegistry 缺失策略应归类为本地配置错误（IllegalStateException/ServiceException），非 RemoteException"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "SOLID/禁止模式：P1-2 双访问器违反一致性、P2-5 strategy DRY 违反需对照 DRY/ISP 原则"}
+{"file": "docs/reviews/2026-06-13-llm-infrastructure-layer-review.md", "reason": "Mimo 审查报告 — 6 项真实问题的原始描述与修复建议"}
+{"file": "docs/reviews/2026-06-14-infrastructure-llm-spec-review.md", "reason": "自身审查报告 — 用于核对重复发现（已确认互补无重复）"}
+{"file": "docs/design/llm-unified-spi-refactoring.md", "reason": "LLM SPI 设计文档 §10.3/10.4 — 验证 RetryConfig/ProviderConfig 设计契约"}

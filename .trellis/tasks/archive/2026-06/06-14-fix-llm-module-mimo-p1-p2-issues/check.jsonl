@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/code-review-checklist.md", "reason": "修复完成后逐项回归 10 维度，重点 §1 DRY、§4 边界、§7 异常"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "验证异常分类合规：RemoteException/ServiceException/IllegalStateException 选用正确"}
+{"file": "docs/reviews/2026-06-13-llm-infrastructure-layer-review.md", "reason": "对照 Mimo 报告逐项确认 6 项修复方案已落实"}
+{"file": "docs/reviews/2026-06-14-infrastructure-llm-spec-review.md", "reason": "确认未引入新 P1-N1/N2/N3 等遗留问题"}

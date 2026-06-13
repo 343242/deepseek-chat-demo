@@ -45,7 +45,7 @@ public abstract sealed class AbstractModelCandidate implements ModelCandidate
     public void setPriority(int priority) { this.priority = priority; }
     public LlmCapability getCapability() { return capability; }
     public void setCapability(LlmCapability capability) { this.capability = capability; }
-    public Map<String, Object> getParams() { return params; }
+    public Map<String, Object> getParams() { return params != null ? params : Map.of(); }
     public void setParams(Map<String, Object> params) { this.params = params != null ? params : Map.of(); }
     public boolean isEnabled() { return enabled; }
     public void setEnabled(boolean enabled) { this.enabled = enabled; }

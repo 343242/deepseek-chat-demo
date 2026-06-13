@@ -1,7 +1,5 @@
 package com.smart.rag.infrastructure.llm.strategy;
 
-import com.smart.rag.infrastructure.exception.RemoteException;
-import com.smart.rag.infrastructure.exception.errorcode.RemoteErrorCode;
 import com.smart.rag.infrastructure.llm.LlmCapability;
 import org.springframework.stereotype.Component;
 
@@ -30,11 +28,19 @@ public class CapabilityStrategyRegistry {
                     + ": " + a.getClass().getName() + " vs " + b.getClass().getName()); }));
     }
 
+    /**
+     * 获取指定能力的策略
+     *
+     * @throws IllegalStateException 当对应能力的策略未注册 ——
+     *                               启动期/开发期错误（缺少 {@code @Component} 策略类），
+     *                               与同模块的其它 Bean-wiring 错误保持一致
+     */
     public CapabilityStrategy get(LlmCapability cap) {
         CapabilityStrategy s = strategies.get(cap);
         if (s == null) {
-            throw new RemoteException(RemoteErrorCode.LLM_CONFIG_ERROR,
-                "No CapabilityStrategy registered for " + cap);
+            throw new IllegalStateException(
+                "No CapabilityStrategy registered for " + cap
+                + " — ensure corresponding @Component strategy is on classpath");
         }
         return s;
     }

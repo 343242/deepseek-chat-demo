@@ -82,9 +82,10 @@ public abstract class AbstractResilientClient<T extends CapabilityClient> implem
         } catch (Exception e) {
             if (metrics != null) errorRecorder.accept(candidateId(), start);
             if (e instanceof RuntimeException re) throw re;
-            // Checked exceptions from circuitBreaker.execute(...) are wrapped as RemoteException
-            // to stay within AbstractException hierarchy so GlobalExceptionHandler handles them.
-            throw new RemoteException(RemoteErrorCode.LLM_STREAM_ERROR,
+            // Checked exceptions (e.g., InterruptedException, TimeoutException) are wrapped as
+            // RemoteException(LLM_TRANSIENT_ERROR) — they represent transient operational failures
+            // rather than permanent stream errors, so retry/circuit-breaker semantics apply correctly.
+            throw new RemoteException(RemoteErrorCode.LLM_TRANSIENT_ERROR,
                 "Unexpected checked exception from LLM action: " + e.getMessage(), e);
         }
     }

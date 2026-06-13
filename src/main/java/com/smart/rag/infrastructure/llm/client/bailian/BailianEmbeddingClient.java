@@ -228,8 +228,14 @@ public class BailianEmbeddingClient extends AbstractEmbeddingClient implements E
         return result;
     }
 
+    /**
+     * 返回零向量的防御性拷贝。
+     * <p>
+     * 调用方可能修改返回的数组（如写入 PgVector 失败后清零），
+     * 若不拷贝会污染实例字段 {@link #zeroVector}，影响后续调用。
+     */
     private float[] getZeroVector() {
-        return zeroVector;
+        return zeroVector.clone();
     }
 
     private static float[] toFloatArray(JsonNode node) {

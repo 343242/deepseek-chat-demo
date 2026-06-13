@@ -200,6 +200,28 @@ class CircuitBreakerTest {
             verify(registry, never()).recordSuccess(any());
             verify(registry, never()).recordFailure(any());
         }
+
+        @Test
+        @DisplayName("stream cancellation after partial emission still releases probe, no counters")
+        void streamCancellationAfterEmissionReleasesProbe() {
+            // Validates doFinally fires on CANCEL even after items were emitted downstream.
+            // Uses Flux.create so the source does not auto-complete after emit, forcing
+            // explicit cancel via dispose().
+            when(registry.isCallAllowed(CANDIDATE_ID)).thenReturn(true);
+
+            breaker.executeStream(() -> Flux.<String>create(sink -> {
+                sink.next("first");
+                // do not complete — wait for downstream cancel
+            })).subscribe().dispose();
+
+            // Allow reactor to process dispose signal
+            try { Thread.sleep(50); } catch (InterruptedException ignored) {}
+
+            verify(registry, times(1)).releaseProbe(CANDIDATE_ID);
+            // Cancel path: no success/failure counter update
+            verify(registry, never()).recordSuccess(any());
+            verify(registry, never()).recordFailure(any());
+        }
     }
 
     // ==================== accessors ====================

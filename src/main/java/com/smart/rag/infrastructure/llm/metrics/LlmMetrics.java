@@ -68,10 +68,17 @@ public class LlmMetrics {
      * Call once per candidate at creation time.
      * <p>
      * Value: 0=CLOSED, 1=HALF_OPEN, 2=OPEN
+     * <p>
+     * <b>幂等保护</b>：通过 {@link #registeredGauges} 集合去重，
+     * 对同一 {@code candidateId} 的重复注册是 no-op（{@link Set#add} 返回 false 时跳过）。
+     * 这避免了 {@code LlmClientRegistry.refresh()} 在重建 snapshot 时重复注册
+     * gauge 导致 Micrometer {@link MeterRegistry} 内存增长（每个 Gauge 引用持有的 supplier）。
+     * {@code CircuitBreaker} 实例在 refresh 时由 {@code LlmClientRegistry} 复用（不重建），
+     * 但即使重建也不会重复注册。
      */
     public void registerCircuitBreakerGauge(String candidateId, Supplier<CircuitBreakerState> stateSupplier) {
         if (registry == null) return;
-        if (!registeredGauges.add(candidateId)) return; // already registered
+        if (!registeredGauges.add(candidateId)) return; // idempotent: already registered → no-op
         registry.gauge("llm.circuit.state",
             io.micrometer.core.instrument.Tags.of("candidateId", candidateId),
             stateSupplier, s -> switch (s.get()) {

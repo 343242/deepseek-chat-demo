@@ -10,7 +10,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.lang.Nullable;
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.SignalType;
 
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Supplier;
 
 /**
@@ -70,23 +72,34 @@ public class CircuitBreaker {
      * <p>
      * 订阅时检查状态，流结束时记录成功，异常时按可降级性记录失败。
      * 首包超时由 {@link ProbeHandler} 施加，本方法不做首包超时检测。
+     * <p>
+     * <b>probe 槽释放语义</b>：使用 {@code doFinally} 统一在所有终止信号
+     * （{@code ON_COMPLETE} / {@code ON_ERROR} / {@code CANCEL}）下释放 probe 槽，
+     * 避免订阅被取消时（客户端断开、上游超时）probe 槽泄漏导致 HALF_OPEN 卡死。
+     * {@code doFinally} 不能直接访问 error 对象，因此先用 {@code doOnError}
+     * 捕获到 {@link AtomicReference}，再在 {@code doFinally} 中根据信号类型
+     * 决定是 recordSuccess / recordFailure / 仅释放 probe。
      */
     public <T> Flux<T> executeStream(Supplier<Flux<T>> streamSupplier) {
         if (!registry.isCallAllowed(candidateId)) {
             return Flux.error(new ModelCircuitOpenException(candidateId));
         }
+        AtomicReference<Throwable> lastError = new AtomicReference<>();
         return Flux.defer(streamSupplier)
-            .doOnComplete(() -> {
-                registry.recordSuccess(candidateId);
+            .doOnError(lastError::set)
+            .doFinally(signal -> {
+                // 任何终止信号都释放 probe 槽（包括 CANCEL）
                 registry.releaseProbe(candidateId);
-            })
-            .doOnError(e -> {
-                if (!(e instanceof ProbeTimeoutException) && isInfraFailure(e)) {
-                    registry.recordFailure(candidateId);
+                if (signal == SignalType.ON_COMPLETE) {
+                    registry.recordSuccess(candidateId);
+                } else if (signal == SignalType.ON_ERROR) {
+                    Throwable e = lastError.get();
+                    if (!(e instanceof ProbeTimeoutException) && isInfraFailure(e)) {
+                        registry.recordFailure(candidateId);
+                    }
                 }
-                registry.releaseProbe(candidateId);
-            })
-            .doOnCancel(() -> registry.releaseProbe(candidateId));
+                // CANCEL 等其他信号：仅释放 probe，不修改 success/failure 计数
+            });
     }
 
     /**

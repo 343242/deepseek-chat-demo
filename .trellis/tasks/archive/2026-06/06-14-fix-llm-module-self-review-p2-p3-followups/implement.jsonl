@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/code-review-checklist.md", "reason": "10 维度审查清单，重点 §3 资源、§7 异常、§9 可扩展性、§10 代码质量（类 ≤300 行、方法 ≤40 行）"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "异常分类与日志级别规范；P2-2 5xx ERROR / 429 WARN 区分"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "日志占位符与级别规范，验证 P2-2 改动符合"}
+{"file": "docs/reviews/2026-06-14-infrastructure-llm-spec-review.md", "reason": "自身审查报告 — 11 项 P2/P3 的原始描述"}
+{"file": "docs/design/llm-unified-spi-refactoring.md", "reason": "LLM SPI 设计文档 — 验证 Spring AI EmbeddingModel 适配契约（P2-4）"}

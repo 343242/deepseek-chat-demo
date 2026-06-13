@@ -7,7 +7,10 @@ public final class PartialSuccessOrThrowPolicy implements ScopePolicyHandler {
 
     @Override
     public void onSuccess(DefaultSubtask<?> task, ScopeState state) {
-        // Success is enough to make failures a caller-managed degradation decision.
+        // P1-12: as soon as one branch succeeds the scope has its partial-success
+        // result — there is no reason to keep the remaining (slower) branches
+        // alive. Request a stop so the join loop cancels and drains them.
+        state.requestStop();
     }
 
     @Override
@@ -22,6 +25,9 @@ public final class PartialSuccessOrThrowPolicy implements ScopePolicyHandler {
 
     @Override
     public boolean shouldStop(ScopeState state) {
-        return false;
+        // P1-12: honor the requestStop set by onSuccess so the join loop breaks
+        // as soon as the first success is observed (previously this always
+        // returned false, defeating the partial-success fast-path).
+        return state.stopRequested();
     }
 }

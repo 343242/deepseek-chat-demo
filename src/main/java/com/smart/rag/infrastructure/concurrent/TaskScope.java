@@ -26,10 +26,30 @@ public interface TaskScope extends AutoCloseable {
 
     void joinUntil(Duration timeout);
 
+    /**
+     * Join then collect results via {@code joiner}. This default method does NOT
+     * call {@link #throwIfFailed()} — failures are silently skipped by typical
+     * joiners (e.g. {@link ScopeJoiner#successfulResults}). Callers that need
+     * fail-fast behavior must invoke {@code throwIfFailed()} explicitly after
+     * this method returns.
+     */
     default <R> R join(ScopeJoiner<R> joiner) {
         join();
         return joiner.collect(subtasks());
     }
+
+    /**
+     * Cancel a subtask (owner-only). Attempts to interrupt the underlying
+     * future and transition the subtask to {@link TaskState#CANCELLED}.
+     * Returns {@code true} if the cancel actually interrupted the running
+     * task; {@code false} if the task had already completed.
+     *
+     * <p>P1-3: previously {@code Subtask.cancel()} was public and callable
+     * from any thread, bypassing the owner-thread invariant. This method
+     * restores the invariant — calling it from a non-owner thread throws
+     * {@link ScopeViolationException}.
+     */
+    boolean cancel(Subtask<?> subtask);
 
     void throwIfFailed();
 

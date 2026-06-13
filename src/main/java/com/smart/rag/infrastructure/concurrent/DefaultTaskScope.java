@@ -104,6 +104,10 @@ public final class DefaultTaskScope implements TaskScope {
         return joinEngine.fork(name, task);
     }
 
+    /**
+     * Join all subtasks, waiting up to {@link ScopeOptions#defaultTimeout()}.
+     * If defaultTimeout is {@link ScopeOptions#NO_TIMEOUT}, waits indefinitely.
+     */
     @Override
     public void join() {
         Duration timeout = ctx.options.defaultTimeout();
@@ -115,12 +119,27 @@ public final class DefaultTaskScope implements TaskScope {
         }
     }
 
+    /**
+     * Join all subtasks with an explicit timeout. The timeout must be strictly
+     * positive — use {@link ScopeOptions#NO_TIMEOUT} as defaultTimeout for
+     * unbounded wait via {@link #join()}.
+     */
     @Override
     public void joinUntil(Duration timeout) {
         if (timeout == null || timeout.isNegative() || timeout.isZero()) {
             throw new ScopeViolationException("joinUntil timeout must be positive");
         }
         joinEngine.joinInternal(timeout);
+    }
+
+    @Override
+    public boolean cancel(Subtask<?> subtask) {
+        lifecycle.ensureOwner("cancel");
+        if (subtask instanceof DefaultSubtask<?> defaultSubtask) {
+            return defaultSubtask.cancel();
+        }
+        throw new ScopeViolationException(
+                "cancel requires a DefaultSubtask but got " + subtask.getClass().getName());
     }
 
     @Override

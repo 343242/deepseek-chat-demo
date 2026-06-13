@@ -49,6 +49,16 @@ final class ScopeLifecycle {
         return true;
     }
 
+    /**
+     * P1-7: roll back the joined flag after a join attempt failed (e.g. with
+     * {@link ScopeTimeoutException}). markJoined() is set early to prevent
+     * concurrent re-entry; if the join itself throws, callers must clear the
+     * flag so a subsequent join retry is allowed.
+     */
+    void rollbackJoined() {
+        ctx.joined.compareAndSet(true, false);
+    }
+
     void markFailuresHandled() {
         ctx.failuresHandled.set(true);
     }

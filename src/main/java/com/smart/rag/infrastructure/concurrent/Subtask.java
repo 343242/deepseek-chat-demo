@@ -9,6 +9,4 @@ public interface Subtask<T> {
     T result();
 
     Throwable exception();
-
-    boolean cancel();
 }

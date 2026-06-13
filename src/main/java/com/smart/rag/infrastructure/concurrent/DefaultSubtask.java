@@ -68,7 +68,11 @@ public final class DefaultSubtask<T> implements Subtask<T> {
         return exception.get();
     }
 
-    @Override
+    /**
+     * Cancel this subtask (internal API, callable from package collaborators).
+     * P1-3: the public entry point is now {@link TaskScope#cancel(Subtask)}
+     * which enforces the owner-thread invariant before delegating here.
+     */
     public boolean cancel() {
         Future<?> submitted = future.get();
         TaskState beforeCancel = state.get();

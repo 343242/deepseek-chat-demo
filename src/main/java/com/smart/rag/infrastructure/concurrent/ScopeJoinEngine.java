@@ -133,6 +133,12 @@ final class ScopeJoinEngine {
             log.warn("Unexpected ExecutionException in joinInternal for scope '{}'",
                     ctx.options.name(), ex);
             drainCompletedSignalsOnOwnerThread();
+        } catch (ScopeTimeoutException ex) {
+            // P1-7: onTimeout threw — the join did not complete successfully.
+            // Roll back the joined flag so a subsequent join() retry is allowed
+            // (markJoined was set early to prevent concurrent re-entry).
+            lifecycle.rollbackJoined();
+            throw ex;
         }
     }
 

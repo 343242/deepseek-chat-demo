@@ -183,7 +183,7 @@ public void process() {
 |-----------|------|
 | 非 owner 调用生命周期方法 | `ScopeViolationException` |
 | join/close 后继续 fork | `ScopeClosedException` |
-| 任务失败 + fail-fast 策略 | `ScopeExecutionException`（含 `allFailures()`） |
+| 任务失败 + fail-fast 策略 | `ScopeExecutionException`（含 `unacceptableFailures()`） |
 | `joinUntil` 超时 | `ScopeTimeoutException` |
 | `SHARED_EXECUTOR` + `executorOwnedByScope=true` | `ScopeViolationException` |
 

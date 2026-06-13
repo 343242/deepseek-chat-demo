@@ -150,7 +150,7 @@ public final class TestStructuredTask {
                 return "cancelled";
             });
 
-            cancelled.cancel();
+            scope.cancel(cancelled);
             scope.join();
 
             expectThrows(SubtaskFailedException.class, failed::result, "failed result");

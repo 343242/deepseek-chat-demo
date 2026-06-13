@@ -465,7 +465,7 @@ class DefaultTaskScopeTest {
                 assertThat(failure.exception()).isInstanceOf(IllegalStateException.class);
                 assertThatThrownBy(scope::throwIfFailed)
                         .isInstanceOf(ScopeExecutionException.class)
-                        .satisfies(ex -> assertThat(((ScopeExecutionException) ex).allFailures()).hasSize(1));
+                        .satisfies(ex -> assertThat(((ScopeExecutionException) ex).unacceptableFailures()).hasSize(1));
             }
         }
 
@@ -486,7 +486,7 @@ class DefaultTaskScopeTest {
                         .isInstanceOf(ScopeExecutionException.class)
                         .satisfies(ex -> {
                             ScopeExecutionException scopeError = (ScopeExecutionException) ex;
-                            assertThat(scopeError.allFailures()).hasSize(2);
+                            assertThat(scopeError.unacceptableFailures()).hasSize(2);
                             assertThat(scopeError.getSuppressed()).hasSize(1);
                         });
             }
@@ -639,7 +639,7 @@ class DefaultTaskScopeTest {
                 assertThat(slow.state()).isEqualTo(TaskState.CANCELLED);
                 assertThatThrownBy(scope::throwIfFailed)
                         .isInstanceOf(ScopeExecutionException.class)
-                        .satisfies(ex -> assertThat(((ScopeExecutionException) ex).allFailures()).hasSize(1));
+                        .satisfies(ex -> assertThat(((ScopeExecutionException) ex).unacceptableFailures()).hasSize(1));
             }
         }
     }
@@ -677,7 +677,7 @@ class DefaultTaskScopeTest {
                     Thread.sleep(Duration.ofSeconds(10));
                     return "cancelled";
                 });
-                cancelled.cancel();
+                scope.cancel(cancelled);
                 scope.join();
 
                 assertThatThrownBy(failed::result)
@@ -698,7 +698,7 @@ class DefaultTaskScopeTest {
                     Thread.sleep(Duration.ofSeconds(10));
                     return "cancelled";
                 });
-                cancelled.cancel();
+                scope.cancel(cancelled);
 
                 scope.join();
 
@@ -900,7 +900,7 @@ class DefaultTaskScopeTest {
 
                 assertThatThrownBy(scope::throwIfFailed)
                         .isInstanceOf(ScopeExecutionException.class)
-                        .satisfies(ex -> assertThat(((ScopeExecutionException) ex).allFailures()).hasSize(2));
+                        .satisfies(ex -> assertThat(((ScopeExecutionException) ex).unacceptableFailures()).hasSize(2));
             }
         }
 
@@ -917,7 +917,11 @@ class DefaultTaskScopeTest {
                 scope.throwIfFailed();
 
                 assertThat(success.result()).isEqualTo("ok");
-                assertThat(failure.exception()).isInstanceOf(IllegalStateException.class);
+                // P1-12: PARTIAL_SUCCESS_OR_THROW now stops on the first success, so the
+                // failing branch may have completed as FAILED (exception set) OR been
+                // cancelled before its exception was captured (exception null). Either
+                // outcome is acceptable — the contract is that one success is enough.
+                assertThat(failure.state()).isIn(TaskState.FAILED, TaskState.CANCELLED);
             }
 
             try (TaskScope scope = scopedTasks.open("partial-all-fail", ScopePolicy.PARTIAL_SUCCESS_OR_THROW)) {
@@ -932,7 +936,7 @@ class DefaultTaskScopeTest {
 
                 assertThatThrownBy(scope::throwIfFailed)
                         .isInstanceOf(ScopeExecutionException.class)
-                        .satisfies(ex -> assertThat(((ScopeExecutionException) ex).allFailures()).hasSize(2));
+                        .satisfies(ex -> assertThat(((ScopeExecutionException) ex).unacceptableFailures()).hasSize(2));
             }
         }
 

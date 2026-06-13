@@ -18,30 +18,26 @@ public final class DefaultScopedTasks implements ScopedTasks {
     private final ScopeObserver scopeObserver;
     private final List<ContextCarrier<?>> requestContextCarriers;
 
+    /**
+     * Default constructor — sensible defaults for tests and simple use cases.
+     * Production code should prefer {@link #builder()} for explicit dependency injection.
+     */
     public DefaultScopedTasks() {
-        this(new ScopedTaskProperties());
+        this(new DefaultScopeExecutorFactory(new ScopedTaskProperties()),
+                new ScopedTaskProperties(), ScopeObserver.NOOP, List.of());
     }
 
-    public DefaultScopedTasks(ScopeExecutorFactory executorFactory) {
-        this(executorFactory, new ScopedTaskProperties(), ScopeObserver.NOOP);
-    }
-
-    public DefaultScopedTasks(ScopedTaskProperties properties) {
-        this(new DefaultScopeExecutorFactory(properties), properties, ScopeObserver.NOOP);
-    }
-
+    /**
+     * Two-argument convenience constructor retained for callers that inject both
+     * a custom executor factory and properties.
+     */
     public DefaultScopedTasks(ScopeExecutorFactory executorFactory, ScopedTaskProperties properties) {
-        this(executorFactory, properties, ScopeObserver.NOOP);
+        this(executorFactory, properties, ScopeObserver.NOOP, List.of());
     }
 
-    public DefaultScopedTasks(
-            ScopeExecutorFactory executorFactory,
-            ScopedTaskProperties properties,
-            ScopeObserver scopeObserver
-    ) {
-        this(executorFactory, properties, scopeObserver, List.of());
-    }
-
+    /**
+     * Full constructor — preferred for production wiring (e.g. Spring auto-config).
+     */
     public DefaultScopedTasks(
             ScopeExecutorFactory executorFactory,
             ScopedTaskProperties properties,
@@ -53,6 +49,24 @@ public final class DefaultScopedTasks implements ScopedTasks {
         this.scopeObserver = Objects.requireNonNull(scopeObserver, "scopeObserver must not be null");
         this.requestContextCarriers = List.copyOf(
                 Objects.requireNonNull(requestContextCarriers, "requestContextCarriers must not be null"));
+    }
+
+    /**
+     * Fluent builder for {@link DefaultScopedTasks}. Prefer this over the multiple
+     * constructor overloads when wiring custom dependencies — it makes the intent
+     * explicit and avoids ambiguity between similarly-typed arguments.
+     *
+     * <pre>{@code
+     * ScopedTasks tasks = DefaultScopedTasks.builder()
+     *         .executorFactory(factory)
+     *         .properties(props)
+     *         .scopeObserver(observer)
+     *         .addContextCarrier(new MdcContextCarrier())
+     *         .build();
+     * }</pre>
+     */
+    public static Builder builder() {
+        return new Builder();
     }
 
     @Override
@@ -91,5 +105,46 @@ public final class DefaultScopedTasks implements ScopedTasks {
             carriers.addAll(requestContextCarriers);
         }
         return List.copyOf(carriers);
+    }
+
+    public static final class Builder {
+
+        private ScopeExecutorFactory executorFactory;
+        private ScopedTaskProperties properties;
+        private ScopeObserver scopeObserver = ScopeObserver.NOOP;
+        private final List<ContextCarrier<?>> contextCarriers = new ArrayList<>();
+
+        public Builder executorFactory(ScopeExecutorFactory executorFactory) {
+            this.executorFactory = executorFactory;
+            return this;
+        }
+
+        public Builder properties(ScopedTaskProperties properties) {
+            this.properties = properties;
+            return this;
+        }
+
+        public Builder scopeObserver(ScopeObserver scopeObserver) {
+            this.scopeObserver = scopeObserver;
+            return this;
+        }
+
+        public Builder addContextCarrier(ContextCarrier<?> carrier) {
+            this.contextCarriers.add(carrier);
+            return this;
+        }
+
+        public Builder contextCarriers(List<ContextCarrier<?>> carriers) {
+            this.contextCarriers.clear();
+            this.contextCarriers.addAll(carriers);
+            return this;
+        }
+
+        public DefaultScopedTasks build() {
+            ScopedTaskProperties props = Objects.requireNonNullElseGet(properties, ScopedTaskProperties::new);
+            ScopeExecutorFactory factory = Objects.requireNonNullElseGet(executorFactory,
+                    () -> new DefaultScopeExecutorFactory(props));
+            return new DefaultScopedTasks(factory, props, scopeObserver, List.copyOf(contextCarriers));
+        }
     }
 }

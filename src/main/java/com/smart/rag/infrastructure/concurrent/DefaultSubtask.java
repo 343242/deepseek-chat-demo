@@ -12,12 +12,16 @@ public final class DefaultSubtask<T> implements Subtask<T> {
 
     private final String name;
     private final CompletableFuture<DefaultSubtask<?>> completionSignal = new CompletableFuture<>();
+    // state stays AtomicReference — state machine transitions rely on CAS.
     private final AtomicReference<TaskState> state = new AtomicReference<>(TaskState.NEW);
-    private final AtomicReference<T> result = new AtomicReference<>();
-    private final AtomicReference<Throwable> exception = new AtomicReference<>();
-    private final AtomicReference<Future<?>> future = new AtomicReference<>();
+    // P2-1: result/exception/elapsed/future have a single writer each (markSuccess/markFailed/
+    // markCancelled/cancel/attachFuture). volatile is sufficient; AtomicReference overhead removed.
+    private volatile T result;
+    private volatile Throwable exception;
+    private volatile Future<?> future;
+    private volatile Duration elapsed = Duration.ZERO;
+    // processedByOwner and failureObserved stay AtomicBoolean — CAS is required for their semantics.
     private final AtomicBoolean processedByOwner = new AtomicBoolean();
-    private final AtomicReference<Duration> elapsed = new AtomicReference<>(Duration.ZERO);
     private final AtomicBoolean failureObserved = new AtomicBoolean();
     private final CountDownLatch terminated = new CountDownLatch(1);
     // P1-8: fork timestamp so cancel() can report real elapsed (fork→cancel wall time),
@@ -45,7 +49,7 @@ public final class DefaultSubtask<T> implements Subtask<T> {
     @Override
     public T result() {
         return switch (state()) {
-            case SUCCESS -> result.get();
+            case SUCCESS -> result;
             case FAILED -> throw new SubtaskFailedException(name, exception());
             case CANCELLED -> throw new SubtaskCancelledException(name);
             case NEW, RUNNING -> throw new SubtaskNotCompletedException(name);
@@ -54,7 +58,7 @@ public final class DefaultSubtask<T> implements Subtask<T> {
 
     @Override
     public Throwable exception() {
-        Throwable error = exception.get();
+        Throwable error = exception;
         if (error != null) {
             failureObserved.set(true);
         }
@@ -69,7 +73,7 @@ public final class DefaultSubtask<T> implements Subtask<T> {
      * where the observation flag should not be affected.
      */
     public Throwable failure() {
-        return exception.get();
+        return exception;
     }
 
     /**
@@ -85,7 +89,7 @@ public final class DefaultSubtask<T> implements Subtask<T> {
      * never ran still has a meaningful fork→cancel elapsed.
      */
     public boolean cancel() {
-        Future<?> submitted = future.get();
+        Future<?> submitted = future;
         TaskState beforeCancel = state.get();
         boolean cancelled = submitted == null || submitted.cancel(true);
         markCancelled(Duration.ofNanos(System.nanoTime() - forkNanos));
@@ -110,23 +114,23 @@ public final class DefaultSubtask<T> implements Subtask<T> {
     // teardown-error preservation for cancelled tasks).
     public void markSuccess(T value, Duration elapsed) {
         if (state.compareAndSet(TaskState.RUNNING, TaskState.SUCCESS)) {
-            result.set(value);
-            this.elapsed.set(elapsed);
+            this.result = value;
+            this.elapsed = elapsed;
             completionSignal.complete(this);
         }
     }
 
     public void markFailed(Throwable error, Duration elapsed) {
         if (state.compareAndSet(TaskState.RUNNING, TaskState.FAILED)) {
-            exception.set(error);
-            this.elapsed.set(elapsed);
+            this.exception = error;
+            this.elapsed = elapsed;
             completionSignal.complete(this);
         } else if (state.get() == TaskState.CANCELLED) {
             // Task was cancelled externally but worker still threw during teardown.
             // Preserve the teardown error so callers can observe it via exception();
             // state stays CANCELLED (cancellation takes priority over later failure).
-            if (error != null && exception.get() == null) {
-                exception.set(error);
+            if (error != null && exception == null) {
+                this.exception = error;
             }
             completionSignal.complete(this);
         }
@@ -141,7 +145,7 @@ public final class DefaultSubtask<T> implements Subtask<T> {
                 return;
             }
         } while (!state.compareAndSet(current, TaskState.CANCELLED));
-        this.elapsed.set(elapsed);
+        this.elapsed = elapsed;
         completionSignal.complete(this);
     }
 
@@ -155,7 +159,7 @@ public final class DefaultSubtask<T> implements Subtask<T> {
     }
 
     public void attachFuture(Future<?> future) {
-        this.future.set(future);
+        this.future = future;
         if (state.get() == TaskState.CANCELLED) {
             future.cancel(true);
             markTerminated();
@@ -163,7 +167,7 @@ public final class DefaultSubtask<T> implements Subtask<T> {
     }
 
     public Duration elapsed() {
-        return elapsed.get();
+        return elapsed;
     }
 
     public boolean failureObserved() {

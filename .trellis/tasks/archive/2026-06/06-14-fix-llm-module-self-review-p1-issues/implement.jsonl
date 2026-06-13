@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/code-review-checklist.md", "reason": "10 维度审查清单，重点 §3 资源管理、§5 并发、§7 异常处理"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "异常分类与 GlobalExceptionHandler 处理路径，确保 sneaky-throw 修复后异常可正确被框架捕获"}
+{"file": "docs/reviews/2026-06-14-infrastructure-llm-spec-review.md", "reason": "自身审查报告 — P1-N1/N2/N3 原始描述与修复建议"}
+{"file": "docs/design/llm-unified-spi-refactoring.md", "reason": "LLM SPI 设计文档 — 验证 CircuitBreaker/HttpClientErrorHandler 设计契约"}

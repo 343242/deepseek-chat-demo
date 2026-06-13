@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/backend/code-review-checklist.md", "reason": "修复完成后逐项回归 10 维度"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "验证异常分类合规，HttpClientErrorHandler 修复后异常链不断"}
+{"file": "docs/reviews/2026-06-14-infrastructure-llm-spec-review.md", "reason": "对照原报告确认 P1-N1/N2/N3 已落实"}

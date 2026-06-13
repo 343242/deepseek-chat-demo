@@ -67,7 +67,7 @@ public final class DefaultScopeExecutorFactory implements ScopeExecutorFactory {
     }
 
     private ThreadFactory threadFactory(String prefix) {
-        ThreadFactory delegate = Executors.defaultThreadFactory();
+        ThreadFactory delegate = Thread.ofPlatform().factory();
         return runnable -> {
             Thread thread = delegate.newThread(runnable);
             thread.setName(prefix + thread.threadId());

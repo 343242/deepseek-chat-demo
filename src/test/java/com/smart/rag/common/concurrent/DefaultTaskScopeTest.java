@@ -365,9 +365,6 @@ class DefaultTaskScopeTest {
             ScopeOptions platform = ScopeOptions.builder("platform")
                     .executorMode(ExecutorMode.PLATFORM_THREAD_POOL)
                     .build();
-            ScopeOptions shared = ScopeOptions.builder("shared")
-                    .executorMode(ExecutorMode.SHARED_EXECUTOR)
-                    .build();
 
             try (TaskScope scope = scopedTasks.open("platform", platform)) {
                 Subtask<Boolean> virtual = scope.fork("is-virtual", () -> Thread.currentThread().isVirtual());
@@ -375,7 +372,11 @@ class DefaultTaskScopeTest {
                 scope.throwIfFailed();
                 assertThat(virtual.result()).isFalse();
             }
-            assertThatThrownBy(() -> scopedTasks.open("shared", shared))
+            // P0-7: cross-field validation rejects SHARED_EXECUTOR + executorOwnedByScope=true
+            // at option construction time (earlier than the previous factory.create() check)
+            assertThatThrownBy(() -> ScopeOptions.builder("shared")
+                    .executorMode(ExecutorMode.SHARED_EXECUTOR)
+                    .build())
                     .isInstanceOf(ScopeViolationException.class)
                     .hasMessageContaining("SHARED_EXECUTOR requires executorOwnedByScope=false");
         }
@@ -1061,8 +1062,12 @@ class DefaultTaskScopeTest {
     }
 
     private static CapturingAppender attachTaskScopeAppender() {
+        // After P0-2 split, scope log lines come from DefaultTaskScope plus the
+        // five collaborators (ScopeReporter, ScopeJoinEngine, ScopeTimeoutHandler,
+        // ScopeExecutorLifecycle). They are sibling loggers under the same package,
+        // so we attach the appender to the package-level logger to capture them all.
         org.apache.logging.log4j.core.Logger logger =
-                (org.apache.logging.log4j.core.Logger) LogManager.getLogger(DefaultTaskScope.class);
+                (org.apache.logging.log4j.core.Logger) LogManager.getLogger("com.smart.rag.infrastructure.concurrent");
         CapturingAppender appender = new CapturingAppender("default-task-scope-capture-" + System.nanoTime());
         appender.start();
         logger.addAppender(appender);
@@ -1071,16 +1076,16 @@ class DefaultTaskScopeTest {
 
     private static void detachTaskScopeAppender(CapturingAppender appender) {
         org.apache.logging.log4j.core.Logger logger =
-                (org.apache.logging.log4j.core.Logger) LogManager.getLogger(DefaultTaskScope.class);
+                (org.apache.logging.log4j.core.Logger) LogManager.getLogger("com.smart.rag.infrastructure.concurrent");
         logger.removeAppender(appender);
         appender.stop();
     }
 
-    private static final class CapturingAppender extends AbstractAppender {
+    static final class CapturingAppender extends AbstractAppender {
 
         private final List<LogEvent> events = new CopyOnWriteArrayList<>();
 
-        private CapturingAppender(String name) {
+        CapturingAppender(String name) {
             super(name, null, PatternLayout.createDefaultLayout(), false, Property.EMPTY_ARRAY);
         }
 
@@ -1089,7 +1094,7 @@ class DefaultTaskScopeTest {
             events.add(event.toImmutable());
         }
 
-        private boolean containsWarn(String fragment) {
+            boolean containsWarn(String fragment) {
             return events.stream()
                     .anyMatch(event -> event.getLevel().isMoreSpecificThan(Level.WARN)
                             && event.getMessage().getFormattedMessage().contains(fragment));

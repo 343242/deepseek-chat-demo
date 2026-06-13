@@ -55,18 +55,29 @@ final class ScopeNestingGuard {
         }
     }
 
-    static void scopeOpened() {
+    static long scopeOpened() {
         long scopeId = NEXT_SCOPE_ID.incrementAndGet();
         LOCAL_SCOPE_IDS.get().push(scopeId);
         ACTIVE_SCOPE_IDS.add(scopeId);
         LOCAL_SCOPE_DEPTH.set(LOCAL_SCOPE_DEPTH.get() + 1);
+        return scopeId;
     }
 
-    static void scopeClosed() {
+    static void scopeClosed(long expectedScopeId) {
         int depth = LOCAL_SCOPE_DEPTH.get() - 1;
         Deque<Long> localScopeIds = LOCAL_SCOPE_IDS.get();
         if (!localScopeIds.isEmpty()) {
-            ACTIVE_SCOPE_IDS.remove(localScopeIds.pop());
+            Long popped = localScopeIds.pop();
+            if (popped != expectedScopeId) {
+                // LIFO violated: caller closed a scope out of order. Roll back the pop
+                // so the bookkeeping remains consistent with the actual stack state.
+                localScopeIds.push(popped);
+                throw new ScopeViolationException(
+                        "Scope closed out of order: expected scopeId=" + expectedScopeId
+                                + ", but stack top was scopeId=" + popped
+                                + ". Scopes must be closed in LIFO order (try-with-resources enforces this).");
+            }
+            ACTIVE_SCOPE_IDS.remove(popped);
         }
         if (depth <= 0) {
             LOCAL_SCOPE_DEPTH.remove();

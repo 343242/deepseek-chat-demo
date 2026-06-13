@@ -11,7 +11,7 @@ public class ScopedTaskProperties {
     private ScopePolicy policy = ScopePolicy.SHUTDOWN_ON_FAILURE;
     private ExecutorMode executorMode = ExecutorMode.VIRTUAL_THREAD_PER_TASK;
     private int maxConcurrency;
-    private Duration defaultTimeout = Duration.ZERO;
+    private Duration defaultTimeout = Duration.ofSeconds(30);
     private Duration closeTimeout = Duration.ofSeconds(5);
     private int quorumSuccessCount = 1;
     private boolean inheritMdc = true;

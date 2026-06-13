@@ -181,12 +181,11 @@ class DefaultScopedTasksPhase3Test {
         @DisplayName("SHARED_EXECUTOR rejects scope-owned lifecycle")
         void sharedExecutor_rejectsScopeOwnedLifecycle() {
             ScopedTaskProperties properties = new ScopedTaskProperties();
-            ScopedTasks scopedTasks = new DefaultScopedTasks(new DefaultScopeExecutorFactory(properties), properties);
-            ScopeOptions options = ScopeOptions.builder("bad-shared")
+            new DefaultScopedTasks(new DefaultScopeExecutorFactory(properties), properties);
+            // P0-7: cross-field validation rejects at option construction time
+            assertThatThrownBy(() -> ScopeOptions.builder("bad-shared")
                     .executorMode(ExecutorMode.SHARED_EXECUTOR)
-                    .build();
-
-            assertThatThrownBy(() -> scopedTasks.open("bad-shared", options))
+                    .build())
                     .isInstanceOf(ScopeViolationException.class)
                     .hasMessageContaining("SHARED_EXECUTOR requires executorOwnedByScope=false");
         }

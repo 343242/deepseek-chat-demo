@@ -42,7 +42,7 @@ public final class DefaultSubtask<T> implements Subtask<T> {
     public T result() {
         return switch (state()) {
             case SUCCESS -> result.get();
-            case FAILED -> throw new SubtaskFailedException(name, exception.get());
+            case FAILED -> throw new SubtaskFailedException(name, exception());
             case CANCELLED -> throw new SubtaskCancelledException(name);
             case NEW, RUNNING -> throw new SubtaskNotCompletedException(name);
         };
@@ -104,6 +104,12 @@ public final class DefaultSubtask<T> implements Subtask<T> {
             this.elapsed.set(elapsed);
             completionSignal.complete(this);
         } else if (state.get() == TaskState.CANCELLED) {
+            // Task was cancelled externally but worker still threw during teardown.
+            // Preserve the teardown error so callers can observe it via exception();
+            // state stays CANCELLED (cancellation takes priority over later failure).
+            if (error != null && exception.get() == null) {
+                exception.set(error);
+            }
             completionSignal.complete(this);
         }
     }

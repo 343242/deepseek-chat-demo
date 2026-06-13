@@ -66,7 +66,7 @@
 | 模式 | 替代方案 | 原因 |
 |------|---------|------|
 | `new Thread(...)` | 线程池（`ThreadPoolExecutor`） | 线程资源必须池化，禁止显式创建线程 |
-| `Executors.newXxx()` | `ThreadPoolExecutor` 显式构造 | 避免无界队列 OOM、线程数失控 |
+| `Executors.newXxx()`（池化类） | `ThreadPoolExecutor` 显式构造 | 避免无界队列 OOM、线程数失控 |
 | 类锁 / 锁整个方法体 | 最小区块锁 + 对象锁 | 高并发下减少锁竞争范围 |
 | `@Transactional` | `TransactionTemplate` | 精确控制事务边界 |
 | JPA / Hibernate | MyBatis-Plus | 项目已全量替换 |
@@ -79,6 +79,22 @@
 | Flyway | ~~已移除~~ → **已重新引入** | V4+ 迁移通过 Flyway 管理 |
 | `docker pull *:alpine` | `*:bookworm` | 项目规则 |
 | 不经允许拉 Docker 镜像 | 先问用户 | 项目规则 |
+
+### `Executors` 禁令的豁免（virtual thread per task）
+
+`Executors.newFixedThreadPool` / `newCachedThreadPool` / `newSingleThreadExecutor` / `newScheduledThreadPool` 等池化工厂方法**仍然禁用**（无界队列 OOM、线程数失控风险）。
+
+**允许使用**以下两类——它们不构成池化（每次 `execute` 创建新 virtual thread，无 worker 复用、无任务队列累积）：
+
+- `Executors.newVirtualThreadPerTaskExecutor()`
+- `Executors.newThreadPerTaskExecutor(Thread.ofVirtual().factory())`
+
+平台线程相关工厂方法**仍然禁用**：
+
+- `Executors.defaultThreadFactory()` → 改用 `Thread.ofPlatform().factory()` 或自定义 `ThreadFactory`
+- `Executors.privilegedThreadFactory()` → 同上
+
+依据：virtual thread 的创建/调度开销是纳秒级，由 JVM 内部 carrier thread 调度，"每任务一 thread"是 JDK 21+ 设计意图。详见 [Concurrency Rules](#concurrency-rules)。
 
 ---
 
@@ -157,6 +173,9 @@ public void process() {
 - `inheritSecurityContext` / `inheritRequestContext` 默认关闭，按需显式开启
 - `SHARED_EXECUTOR` 必须搭配 `executorOwnedByScope=false`，scope 不能关闭共享 executor
 - 不要在同一个可能饱和的 executor 中 fork + join — 会死锁；owner 线程来自调用栈或另一个 executor
+- **`defaultTimeout` 必须 > 0**（默认 `Duration.ofSeconds(30)`）— `ZERO` 不再表示"无限等待"，构造时拦截。需要"无限等待"时显式传 `ScopeOptions.NO_TIMEOUT`，并明确文档化理由（避免隐式死锁）
+- **`Cleaner` 必须真正清理**，不能只 log warning——`ScopeCleanupState` 在 scope 泄漏（未 close 即被 GC）时必须：owned executor → `shutdownNow()` + cancel 所有未终止 subtask；SHARED executor → 只 cancel subtask + 警告（保护共享资源）
+- **scope 关闭必须遵守 LIFO**——`scopeOpened()` 返回 `scopeId`，`scopeClosed(expectedScopeId)` 校验栈顶匹配，违例抛 `ScopeViolationException`
 
 ### 错误速查
 

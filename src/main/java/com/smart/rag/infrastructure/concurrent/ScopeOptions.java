@@ -17,6 +17,14 @@ public record ScopeOptions(
         boolean inheritRequestContext
 ) {
 
+    /**
+     * Sentinel duration expressing "wait indefinitely until all subtasks terminate".
+     * Prefer explicit {@link Builder#defaultTimeout(Duration)} with a bounded value.
+     * Use this only when the caller can prove subtask termination is guaranteed
+     * (e.g., all subtasks have their own internal timeouts).
+     */
+    public static final Duration NO_TIMEOUT = Duration.ofNanos(Long.MAX_VALUE);
+
     public ScopeOptions {
         Objects.requireNonNull(name, "name must not be null");
         Objects.requireNonNull(policy, "policy must not be null");
@@ -29,8 +37,9 @@ public record ScopeOptions(
         if (maxConcurrency < 0) {
             throw new ScopeViolationException("maxConcurrency must be greater than or equal to 0");
         }
-        if (defaultTimeout.isNegative()) {
-            throw new ScopeViolationException("defaultTimeout must not be negative");
+        if (defaultTimeout.isNegative() || defaultTimeout.isZero()) {
+            throw new ScopeViolationException(
+                    "defaultTimeout must be positive (use ScopeOptions.NO_TIMEOUT for unbounded wait)");
         }
         if (closeTimeout.isZero() || closeTimeout.isNegative()) {
             throw new ScopeViolationException("closeTimeout must be positive");
@@ -40,6 +49,10 @@ public record ScopeOptions(
         }
         if (policy == ScopePolicy.QUORUM_SUCCESS && quorumSuccessCount <= 0) {
             throw new ScopeViolationException("quorumSuccessCount must be positive for QUORUM_SUCCESS");
+        }
+        if (executorMode == ExecutorMode.SHARED_EXECUTOR && executorOwnedByScope) {
+            throw new ScopeViolationException(
+                    "SHARED_EXECUTOR requires executorOwnedByScope=false (scope cannot own a shared executor)");
         }
     }
 
@@ -63,7 +76,7 @@ public record ScopeOptions(
         private ScopePolicy policy = ScopePolicy.SHUTDOWN_ON_FAILURE;
         private ExecutorMode executorMode = ExecutorMode.VIRTUAL_THREAD_PER_TASK;
         private int maxConcurrency;
-        private Duration defaultTimeout = Duration.ZERO;
+        private Duration defaultTimeout = Duration.ofSeconds(30);
         private Duration closeTimeout = Duration.ofSeconds(5);
         private int quorumSuccessCount = 1;
         private boolean executorOwnedByScope = true;

@@ -44,6 +44,7 @@ Code Review 分为 10 个维度，每个维度列出具体检查项。Review 时
 - [ ] **临时文件** — 用 `Files.createTempFile` 创建的文件在 `finally` 或 try-with-resources 中删除
 - [ ] **RocketMQ Producer/Consumer** — Spring Bean 生命周期管理，不需要手动 shutdown（除非是非 Spring 管理的实例）
 - [ ] **线程池** — 必须有 shutdown 策略。`ExecutorService` 用 `@PreDestroy` 或 `DisposableBean` 关闭
+- [ ] **结构化并发 `Cleaner`** — `ScopeCleanupState` 在 scope 泄漏（未 close 即被 GC）时**必须真正清理资源**：owned executor → `shutdownNow()` + cancel subtasks；SHARED executor → 只 cancel subtask + 警告。**禁止只 log warning 不清理**（违反 try-with-resources 兜底语义）
 
 ---
 
@@ -65,6 +66,9 @@ Code Review 分为 10 个维度，每个维度列出具体检查项。Review 时
 - [ ] **锁顺序** — 多把锁必须按固定顺序获取，避免死锁
 - [ ] **CompletableFuture** — 异步任务不继承请求上下文（SecurityContext、RequestAttributes）。需要时用 `ScopedTasks` 或手动传播
 - [ ] **结构化并发** — 遵循 [Quality Guidelines — Structured Request-Scoped Concurrency](./quality-guidelines.md) 的 Scope 模式。子任务异常不吞掉，通过 `ScopeExecutionException` 传播
+- [ ] **结构化并发 timeout** — `defaultTimeout` 默认 `30s`，禁止用 `ZERO`（已拦截，构造抛异常）。需要"无限等待"必须显式传 `ScopeOptions.NO_TIMEOUT` 并文档化
+- [ ] **结构化并发 LIFO** — 嵌套 scope 必须按开域相反顺序关闭；`scopeClosed(expectedScopeId)` 校验栈顶，违例抛 `ScopeViolationException`
+- [ ] **结构化并发 cross-field 校验** — `SHARED_EXECUTOR + executorOwnedByScope=true` 组合禁止（构造抛异常）；外部 executor 注入时强制 `executorOwnedByScope=false`
 
 ---
 

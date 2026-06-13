@@ -1,0 +1,3 @@
+{"file":".trellis/spec/backend/error-handling.md","reason":"Error handling guidelines for fail-fast validation and startup checks"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Quality standards for null safety and type-safe conversions"}
+{"file":".trellis/spec/backend/index.md","reason":"Backend pre-development checklist"}

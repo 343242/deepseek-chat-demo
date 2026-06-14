@@ -8,7 +8,8 @@ import jakarta.validation.constraints.Size;
 /**
  * 聊天请求 DTO
  *
- * @param model          模型 ID（如 deepseek-chat, deepseek/deepseek-chat）
+ * @param model          模型候选 ID（registry candidate ID，如 deepseek-v4-flash）。
+ *                      不接受 provider/model 复合格式（如 deepseek/deepseek-v4-flash）。
  * @param message        用户消息内容
  * @param conversationId 对话 ID（可选，不传则后端自动生成 UUIDv7）
  * @param ragEnabled     是否启用 RAG 检索增强（可选，默认 false）

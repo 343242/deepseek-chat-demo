@@ -22,7 +22,7 @@ public record RagRetrievalProperties(
         double mmrLambda,
         int mmrTopK,
         double similarityThreshold,
-        /** 查询改写使用的模型（复合格式 provider/model，如 deepseek/deepseek-chat），null 使用全局默认 */
+        /** 查询改写使用的模型 ID（registry 候选 ID，如 deepseek-v4-flash，与 LlmClientRegistry 注册一致），null 使用全局默认 */
         String queryRewriteModel,
         /** 查询改写 temperature，null 使用模型默认 */
         Double queryRewriteTemperature

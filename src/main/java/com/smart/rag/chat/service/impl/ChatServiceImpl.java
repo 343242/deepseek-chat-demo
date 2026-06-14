@@ -161,9 +161,15 @@ public class ChatServiceImpl implements ChatService {
             rawConversationId, modeStrategy, cagCtx, request);
     }
 
-    private String resolveCandidateId(ChatRequest request) {
+    String resolveCandidateId(ChatRequest request) {
         String model = request.model();
         if (model != null && !model.isBlank()) {
+            if (model.contains("/")) {
+                throw new IllegalArgumentException(
+                    "Invalid model format: '" + model + "'. Expected registry candidate ID "
+                    + "(e.g. 'deepseek-v4-flash'), not provider/model compound format. "
+                    + "See docs/API-DOCS.md for valid candidate IDs.");
+            }
             return model;
         }
         return llmRegistry.getDefault(LlmCapability.CHAT).candidateId();

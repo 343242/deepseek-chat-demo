@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/code-review-checklist.md", "reason": "Review 清单：验证改动范围局限于 4 文件 + 1 测试 + 1 yml + 1 文档，无 scope creep"}
+{"file": ".trellis/spec/backend/llm-spi.md", "reason": "验证实施后 spec 是否同步补充 '模型 ID 必须为 registry 候选 ID' 一节"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "验证 IllegalArgumentException 路径符合项目异常体系"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "ChatServiceImplResolveCandidateIdTest 应符合质量基线"}
+{"file": ".trellis/tasks/06-15-unify-model-id-format-to-registry-candidate-id/prd.md", "reason": "对照 §3 非目标 + §6 验证策略 + §8 决策记录逐项核对"}

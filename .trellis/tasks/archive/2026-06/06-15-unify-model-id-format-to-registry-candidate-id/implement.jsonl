@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend 层入口：确认 chat/rag/agent 三层在本任务中的边界与约束"}
+{"file": ".trellis/spec/backend/llm-spi.md", "reason": "LLM SPI 契约：本任务直接相关，实施后需补充 '模型 ID 必须为 registry 候选 ID' 一节（步骤 13）"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "fail-fast IllegalArgumentException 走 GlobalExceptionHandler.handleIllegalArgument，需符合项目异常体系"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "新增 ChatServiceImplResolveCandidateIdTest 需符合质量基线：JUnit5 + AssertJ + 不依赖 Spring 容器"}
+{"file": ".trellis/tasks/06-15-unify-model-id-format-to-registry-candidate-id/prd.md", "reason": "任务 PRD：6 处改动清单 + §5 调查步骤 + §6 验证策略 + §8 决策记录 + §10 breaking change 通告"}

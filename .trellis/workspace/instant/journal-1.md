@@ -404,3 +404,37 @@ Fixed 'Intent classification LLM call failed' repeated 3x then fallback to DEEP_
 ### Next Steps
 
 - None - task complete
+
+
+## Session 13: Unify model ID format to registry candidate ID (BREAKING)
+
+**Date**: 2026-06-15
+**Task**: Unify model ID format to registry candidate ID (BREAKING)
+**Branch**: `agentic-rag-dev`
+
+### Summary
+
+BREAKING: all model IDs must be registry candidate ID format (deepseek-v4-flash, no provider/ prefix). Compound format (deepseek/deepseek-v4-flash) no longer accepted. Added fail-fast IllegalArgumentException in ChatServiceImpl.resolveCandidateId. Corrected misleading javadoc on RagRetrievalProperties.queryRewriteModel (was claiming 'compound format' but actually consumed via llmRegistry.get with no parser). Deleted dead config app.chat.fallback.default-chain/chains (no Java reader). Updated 5 docs + README + llm-spi.md spec. 850/850 tests pass (4 new in ChatServiceImplResolveCandidateIdTest). Front-end callers must drop provider/ prefix from model field; old format returns 400 with clear message.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `a98fa9b` | (see git log) |
+| `3e537d7` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

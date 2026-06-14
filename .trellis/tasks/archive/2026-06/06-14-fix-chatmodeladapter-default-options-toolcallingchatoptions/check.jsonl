@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/code-review-checklist.md", "reason": "Review 清单：验证改动局限于 ChatModelAdapter 一个方法 + 一个测试文件，无 scope creep"}
+{"file": ".trellis/spec/backend/llm-spi.md", "reason": "验证实施后 spec 是否同步补充 'getDefaultOptions 必须 ToolCallingChatOptions' 一节"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "验证修复后 IllegalArgumentException 不再被 ToolCallAdvisor 抛出（异常路径消失）"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "ChatModelAdapterTest 应符合质量基线：单测不依赖 Spring 容器，断言精确"}
+{"file": ".trellis/tasks/06-14-fix-chatmodeladapter-default-options-toolcallingchatoptions/prd.md", "reason": "对照 §3.2 非目标 + §5 验证策略 + §6 测试点逐项核对"}

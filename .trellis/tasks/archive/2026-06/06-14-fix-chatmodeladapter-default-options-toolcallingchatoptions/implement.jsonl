@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend 层入口：确认 chat/rag/agent 三层模块在本任务中的边界与约束"}
+{"file": ".trellis/spec/backend/llm-spi.md", "reason": "本任务直接相关：ChatModelAdapter 桥接规范，实施后需补充 'getDefaultOptions 必须 ToolCallingChatOptions' 一节"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "ToolCallAdvisor 抛 IllegalArgumentException 走 GlobalExceptionHandler.handleIllegalArgument 路径，需确认异常体系一致"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "新增 ChatModelAdapterTest 需符合质量基线：Junit5 + AssertJ + 单测不依赖 Spring 容器"}
+{"file": ".trellis/tasks/06-14-fix-chatmodeladapter-default-options-toolcallingchatoptions/prd.md", "reason": "任务 PRD：根因 + 方案 A + 5 处自建点影响面 + §6 测试点 + §7 风险"}

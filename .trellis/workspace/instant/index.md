@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 9
+- **Total Sessions**: 10
 - **Last Active**: 2026-06-14
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~305 | Active |
+| `journal-1.md` | ~339 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 10 | 2026-06-14 | Decouple Spring AI ChatClient.Builder injection | `65c5fcf`, `93b743b` | `agentic-rag-dev` |
 | 9 | 2026-06-14 | LLM module self-review P2/P3 follow-ups (11 issues) | `c35b2fe` | `agentic-rag-dev` |
 | 8 | 2026-06-14 | LLM module self-review P1 fixes (3 issues) | `488413e` | `agentic-rag-dev` |
 | 7 | 2026-06-14 | LLM module Mimo P1/P2 fixes (6 issues) | `49c150c` | `agentic-rag-dev` |

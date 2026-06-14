@@ -303,3 +303,37 @@ Completed 11 P2/P3 self-review fixes: HttpClientErrorHandler 5xx→ERROR log + R
 ### Next Steps
 
 - None - task complete
+
+
+## Session 10: Decouple Spring AI ChatClient.Builder injection
+
+**Date**: 2026-06-14
+**Task**: Decouple Spring AI ChatClient.Builder injection
+**Branch**: `agentic-rag-dev`
+
+### Summary
+
+Fixed 'No qualifying bean of type ChatModel' startup failure by introducing RewriteClientResolver in infrastructure/llm/adapter. Removed ChatClient.Builder autoconfig dependency from RagConfig, RagAdvisorFactory (dead field), QueryRewriteTool. Codified LLM SPI contract in new .trellis/spec/backend/llm-spi.md with 7-section code-spec. 843/843 tests pass.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `65c5fcf` | (see git log) |
+| `93b743b` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

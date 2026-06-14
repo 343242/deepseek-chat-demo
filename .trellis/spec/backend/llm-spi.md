@@ -20,6 +20,35 @@
 
 ## 2. Signatures
 
+### `ChatModelAdapter` 桥接契约
+
+`ChatModelAdapter` 必须实现 `ChatModel.getDefaultOptions()` 并返回 `ToolCallingChatOptions` 实例：
+
+```java
+@Override
+public ChatOptions getDefaultOptions() {
+    return ToolCallingChatOptions.builder().build();
+}
+```
+
+**为什么必须返回 `ToolCallingChatOptions`**：
+- Spring AI 的 `ToolCallAdvisor.before()` 强校验 `request.options() instanceof ToolCallingChatOptions`
+- `ChatClient.builder(chatModel).build()` 会从 `chatModel.getDefaultOptions()` 拿默认 options
+- 若返回 `DefaultChatOptions` 或 null → 挂载 `ToolCallAdvisor` 的请求会抛 `IllegalArgumentException: ToolCall Advisor requires ToolCallingChatOptions`
+- 这是 P0 阻塞性缺陷，会破坏所有挂 tool 的 chat 路径（mode=SIMPLE/MULTI_TURN/AGENT + `hasTools()=true`）
+
+**为什么返回通用 `ToolCallingChatOptions` 而非厂商子类**（如 `OpenAiChatOptions`）：
+- `ChatModelAdapter` 是厂商无关的桥接层，不应耦合具体厂商 options
+- 实际 LLM 调用由 `delegate.chat(ChatRequest)` 处理，options 仅用于 advisor 链流转
+- `ToolCallingChatOptions.builder().build()` 是 Spring AI 提供的通用实现，满足 advisor 校验
+
+**每次调用必须返回新实例**：使用 `ToolCallingChatOptions.builder().build()` 内联构造，**禁止缓存为 static 字段**——多个 ChatClient 共享同一 options 实例会有可变状态串扰风险（`toolCallbacks` 字段会被 advisor 修改）。
+
+**包路径细节**（Spring AI 1.1.6）：
+- 接口：`org.springframework.ai.chat.model.ChatModel`
+- 返回类型：`org.springframework.ai.chat.prompt.ChatOptions`（**不是** `chat.model.ChatOptions`）
+- 实现：`org.springframework.ai.model.tool.ToolCallingChatOptions`
+
 ### 上层允许的入口
 
 ```java
@@ -250,6 +279,8 @@ ChatClient client = ChatClient.builder(new ChatModelAdapter(chatCapable)).build(
 
 ## Related
 
-- 任务记录：`.trellis/tasks/06-14-decouple-spring-ai-chatclient-builder-injection/prd.md`
+- 任务记录：
+  - `.trellis/tasks/archive/2026-06/06-14-decouple-spring-ai-chatclient-builder-injection/prd.md`（基础解耦）
+  - `.trellis/tasks/06-14-fix-chatmodeladapter-default-options-toolcallingchatoptions/prd.md`（getDefaultOptions 修复）
 - 异常体系：[Error Handling](./error-handling.md)
 - 设计原则：[Quality Guidelines](./quality-guidelines.md)

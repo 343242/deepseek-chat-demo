@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend 层入口：确认 chat/rag/agent 三层模块在本任务中的边界与约束"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "决定 fail-fast 抛 ModelNotFoundException，需遵循项目异常体系（ServiceException 子类 + ServiceErrorCode.MODEL_NOT_FOUND）"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "新增 RewriteClientResolver 组件需符合质量基线：构造注入、@Component 单例、无静态状态"}
+{"file": ".trellis/tasks/06-14-decouple-spring-ai-chatclient-builder-injection/prd.md", "reason": "任务 PRD：耦合面盘点、RewriteClientResolver API 契约、4 处类修改清单（RagAdvisorFactory/RagConfig/QueryRewriteTool/EvaluationConfig 不动）、验证策略"}

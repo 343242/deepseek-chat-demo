@@ -337,3 +337,37 @@ Fixed 'No qualifying bean of type ChatModel' startup failure by introducing Rewr
 ### Next Steps
 
 - None - task complete
+
+
+## Session 11: Fix ChatModelAdapter.getDefaultOptions returns ToolCallingChatOptions
+
+**Date**: 2026-06-15
+**Task**: Fix ChatModelAdapter.getDefaultOptions returns ToolCallingChatOptions
+**Branch**: `agentic-rag-dev`
+
+### Summary
+
+Fixed 'ToolCall Advisor requires ToolCallingChatOptions' IllegalArgumentException that blocked all chat paths (mode=SIMPLE/MULTI_TURN/AGENT) when CalculatorTools/DateTimeTools/CodeExecutionTool auto-registered. ChatModelAdapter now overrides getDefaultOptions() to return ToolCallingChatOptions.builder().build() (vendor-neutral, fresh per call). Centralized fix in adapter layer; all 5 self-build sites benefit automatically. Added 3 nested tests. Codified contract in llm-spi.md.
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `5b9bb96` | (see git log) |
+| `e0533a6` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

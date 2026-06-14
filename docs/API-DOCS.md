@@ -4,6 +4,15 @@
 >
 > 认证方式：Token 写入 HttpOnly Cookie (`access_token`)，也可通过 `Authorization: Bearer <token>` 传递
 
+## 模型 ID 约定（全局）
+
+**所有 API 中出现的 `model` / `modelId` 字段必须使用 registry 候选 ID 格式**（如 `deepseek-v4-flash`、`qwen-plus`、`qwen3-max`），**不接受 `provider/modelId` 复合格式**（如 `deepseek/deepseek-v4-flash`）。
+
+- 检测点：`ChatServiceImpl.resolveCandidateId` 在请求入口对 `model` 字段做格式校验，检测到 `/` 立即 fail-fast 抛 `IllegalArgumentException`，被映射为业务码 **100001（BAD_REQUEST）**
+- 响应字段 `compositeId` / `modelId` 的**字段名是历史遗留**，**值就是单段 registry 候选 ID**（不再是"复合"语义）
+- 候选与厂商映射在 `application.yml` 的 `app.llm.capabilities.{chat,embedding,reranking}.candidates[]` 中声明，启动期绑定至 `LlmClientRegistry`
+- 完整契约见 [`.trellis/spec/backend/llm-spi.md`](../.trellis/spec/backend/llm-spi.md)
+
 ## 统一响应格式
 
 所有非流式接口统一返回 `GlobalResponse` 格式：
@@ -437,7 +446,7 @@ SSE 流式聊天（JSON body）。
 | 字段 | 必填 | 规则 |
 |------|------|------|
 | title | | 最多 200 字符。不传则系统从首条消息自动截取前 20 字 |
-| modelId | | 最多 100 字符，字母/数字/点/划线/斜杠 |
+| modelId | | 最多 100 字符。**registry 候选 ID**（如 `deepseek-v4-flash`），不接受 `provider/modelId` 复合格式 |
 
 **Response：**
 
@@ -662,7 +671,7 @@ SSE 流式聊天（JSON body）。
 **Response（成功）：**
 
 ```json
-{ "modelId": "deepseek-chat", "message": "已删除" }
+{ "modelId": "deepseek-v4-flash", "message": "已删除" }
 ```
 
 ---

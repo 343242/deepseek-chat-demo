@@ -1,19 +1,29 @@
 # Smart RAG
 
-基于 **Spring Boot 3.5 + Spring AI 1.1 + MyBatis-Plus 3.5** 的生产级 RAG 系统。核心能力包括：**多厂商模型路由**（DeepSeek / 智谱 / MiniMax，统一 Provider 抽象 + 自动降级）、**六阶段 RAG Pipeline**（查询改写 → 混合检索 → MMR 去冗余 → Rerank 精排 → 父文档回查 → LLM 生成）、**Tool Calling 代码沙箱执行**、RBAC 权限、团队协作与文档增量更新。
+基于 **Spring Boot 3.5 + Spring AI 1.1 + MyBatis-Plus 3.5** 的生产级 Agentic RAG 系统。核心能力包括：**统一 LLM SPI**（`infrastructure/llm/` 中 `LlmClientRegistry` + `CapabilityClient` 抽象 Chat / Embedding / Rerank 三类能力，覆盖阿里百炼 / DeepSeek / 智谱 / MiniMax，Retry + Circuit Breaker 内建，与 Spring AI `ChatClient.Builder` 自动配置解耦）、**Agentic RAG**（意图识别驱动 Agent 主循环 + RAG 工具族 + Guardrail + Trace）、**六阶段 RAG Pipeline**（查询改写 → 混合检索 → MMR 去冗余 → Rerank 精排 → 父文档回查 → LLM 生成）、**Tool Calling 代码沙箱执行**、RBAC 权限、团队协作与文档增量更新。
 
 ## 功能概览
 
 ### 多厂商 AI 聊天
 
-- **Provider 抽象层**：DeepSeek、智谱 AI (Zhipu)、MiniMax 三家厂商统一封装，通过 `ModelRouter` + `ProviderRegistry` 实现路由与降级
-- **registry 候选 ID 指定模型**：`deepseek-v4-flash`、`qwen-plus`，一键切换（不带 provider/ 前缀）
-- **Advisor 链**：限流（令牌桶）→ 内容安全过滤 → 会话上下文注入 → RAG 增强
+- **统一 LLM SPI**：所有厂商经由 `infrastructure/llm/` 中的 `LlmClientRegistry` + `CapabilityClient`（Chat / Embedding / Rerank 三类能力）+ `ChatModelAdapter`（桥接 Spring AI `ChatModel`）+ `RewriteClientResolver`（chat / rag / agent 上层入口）装配，与 Spring AI `ChatClient.Builder` 自动配置完全解耦
+- **多厂商 Provider**：阿里百炼 (DashScope，承载 Qwen / Embedding / Rerank)、DeepSeek、智谱 AI (Zhipu)、MiniMax —— 厂商差异通过 `ProviderClientFactory` 策略族封装，新增厂商零改主链路
+- **registry 候选 ID 指定模型**：`deepseek-v4-flash`、`qwen-plus`、`qwen3-max`，**不接受 `provider/modelId` 复合格式**（service 入口 fail-fast 校验）
+- **韧性内建**：Retry + Circuit Breaker（`app.llm.resilience.*`），降级链通过 `LlmClientRegistry.getChain(capability)` 暴露
+- **Advisor 链**：限流（令牌桶）→ 内容安全过滤 → 会话上下文注入 → RAG 增强 → Tool Calling 循环 → 对话记忆写入
 - **SSE 流式响应**：原生 Server-Sent Events，支持 Fallback 重试链
 - **JDBC + Redis 对话记忆**：Spring AI Chat Memory 双层持久化
 - **Tool Calling**：沙箱隔离执行 Python / Node.js / Java 代码，安全数学表达式求值，日期时间工具
 - **聊天模式策略**：Simple（单轮） / MultiTurn（多轮上下文），`ModeRouter` 自动路由
 - **CAG 上下文注入**：基于用户画像 / 会话策略 / 策略约束的 Prompt 动态组装
+
+### Agentic RAG（智能体检索）
+
+- **意图识别**：`app.agent.intent-model`（registry 候选 ID）路由请求，命中 RAG 意图进入 Agent 主循环
+- **Agent 主循环**：`max-tool-iterations` / `max-consecutive-same-tool` 双限位，工具调用循环可观测（`AgentTrace` / `ToolCallRecord`）
+- **工具族**（`agent/tool/`）：`VectorSearchTool` / `Bm25SearchTool` / `HybridSearchTool` / `RerankTool` / `QueryRewriteTool` / `ParentDocLookupTool` / `DocDetailTool` / `KnowledgeBaseInfoTool` / `AgentEventLookupTool`，统一通过 `AgentToolCallbackFactory` 注入
+- **Guardrail 与降级**：`agent/guardrail/` 守门，`agent.intent-timeout-ms` 与 `degrade-on-failure` 控制 backoff 到普通 RAG
+- **Workspace**：`ToolWorkspace` + `ToolWorkspaceFactory` 隔离每次会话的检索上下文（`RetrievedDocument`）
 
 ### RAG 检索增强生成
 
@@ -67,7 +77,7 @@
 |------|------|------|
 | Java | 21 | 运行时 |
 | Spring Boot | 3.5.14 | 应用框架 |
-| Spring AI | 1.1.6 | AI 模型集成（DeepSeek / 智谱 / MiniMax） |
+| Spring AI | 1.1.6 | AI 模型集成（百炼 / DeepSeek / 智谱 / MiniMax，统一 LLM SPI 适配） |
 | MyBatis-Plus | 3.5.16 | ORM 框架 |
 | PostgreSQL | 18 | 主数据库 |
 | PGvector | 0.8.2 | 向量数据库（HNSW 索引） |
@@ -79,7 +89,8 @@
 | JJWT | 0.13.0 | JWT 生成与解析 |
 | Apache Tika | 随 Spring AI | 多格式文档解析（PDF/DOCX/PPTX/HTML 等） |
 | juniversalchardet | 2.5.0 | 文本编码自动检测（GBK/GB2312/GB18030） |
-| DashScope text-embedding-v4 | — | 阿里千问 Embedding 模型（1024 维） |
+| DashScope text-embedding-v4 | — | 阿里千问 Embedding 模型（1024 维，经百炼 Provider） |
+| DashScope qwen3-rerank | — | 阿里千问 Rerank 模型（经百炼 Provider，BailianRerankPostProcessor 调用） |
 | Caffeine | 3.x | 本地缓存（SystemPrompt / ModelParams / 验证码） |
 | sensitive-word | 0.29.5 | DFA 敏感词过滤 |
 | Log4j 2 + Disruptor | 4.0.0 | 全异步日志，按级别分目录 |
@@ -129,8 +140,8 @@ export DEEPSEEK_API_KEY=sk-***
 export ZHIPU_API_KEY=***         # 可选
 export MINIMAX_API_KEY=***       # 可选
 
-# RAG（可选）
-export DASHSCOPE_API_KEY=sk-***       # 阿里千问 Embedding + Rerank
+# RAG / 阿里百炼（可选但强烈推荐：Qwen 系 Chat + Embedding + Rerank 都走此 key）
+export DASHSCOPE_API_KEY=sk-***       # 百炼 Provider（qwen-plus / qwen3-max / text-embedding-v4 / qwen3-rerank）
 
 # 安全
 export JWT_SECRET=your-jwt-secret-at-least-32-characters-long!!
@@ -164,7 +175,7 @@ curl -X POST http://localhost:8080/api/auth/login \
 # 3. 查看可用模型（按厂商分组）
 curl http://localhost:8080/api/models -b cookies.txt
 
-# 4. 聊天 — 复合格式指定厂商
+# 4. 聊天 — model 字段传 registry 候选 ID（不带 provider/ 前缀）
 curl -X POST http://localhost:8080/api/chat \
   -H "Content-Type: application/json" -b cookies.txt \
   -d '{"model":"deepseek-v4-flash","message":"你好","conversationId":"test"}'
@@ -200,43 +211,76 @@ curl -X POST http://localhost:8080/api/teams/1/documents/multipart \
 src/main/java/com/smart/rag/
 ├── SmartRagApplication.java
 ├── common/              # 公共模块（错误码、分页、雪花ID、UUIDv7、工具类）
-├── config/              # 基础配置（多厂商、Advisor、MyBatis-Plus、Redis）
-├── security/            # 安全模块（JWT 双Token、验证码、Spring Security）
+├── config/              # 基础配置（MyBatis-Plus、Redis、CORS、Caffeine、Advisor 装配）
 ├── user/                # RBAC 用户模块（用户/角色/权限 CRUD、BCrypt）
 ├── conversation/        # 会话管理（独立于 chat，双写架构）
-├── chat/                # 聊天核心
-│   ├── advisor/         #   Advisor 链（限流、内容过滤、会话上下文）
-│   ├── client/          #   ChatClientRegistry（ChatClient 统一管理）
-│   ├── content/         #   内容安全（敏感词过滤服务）
+├── chat/                # 聊天业务编排（HTTP 入口）
 │   ├── context/         #   CAG 上下文注入（用户画像/会话策略/策略约束）
-│   ├── controller/      #   REST 接口
-│   ├── dto/             #   数据传输对象
+│   ├── controller/      #   REST 接口（/api/chat、/api/models、/api/usage）
+│   ├── dto/             #   请求/响应 record
 │   ├── entity/          #   实体（SystemPrompt、ModelParams、TokenUsage）
-│   ├── fallback/        #   Fallback 自动降级（重试链 + 资格判定）
-│   ├── mapper/          #   MyBatis-Plus Mapper
-│   ├── memory/          #   Redis 会话记忆
+│   ├── mapper/          #   MyBatis-Plus Mapper（XML SQL）
 │   ├── mode/            #   聊天模式策略（Simple / MultiTurn）
-│   ├── provider/        #   多厂商 Provider（DeepSeek / Zhipu / MiniMax + ModelRouter）
-│   ├── service/         #   业务服务（ChatService、ModelService、UsageService 等）
-│   └── tool/            #   Tool Calling（Calculator / DateTime / CodeExecution + 沙箱）
-├── rag/                 # RAG 模块
-│   ├── config/          #   RAG 配置（RagRetrievalProperties record、RagAdvisorFactory）
-│   ├── retrieval/       #   检索（HybridDocumentRetriever、Rerank、MMR、QueryNormalizer）
-│   ├── chunk/           #   分块（Parent-Child 策略、ParentDocumentPostProcessor 含 Rescoring）
+│   ├── service/         #   业务编排（ChatServiceImpl 在此 fail-fast 校验 candidate ID）
+│   └── tool/            #   通用 Tool Calling（Calculator / DateTime / CodeExecution + 沙箱）
+├── agent/               # Agentic RAG 模块（意图驱动）
+│   ├── advisor/         #   AgentSystemPromptAdvisor
+│   ├── intent/          #   意图识别（intent-model 路由）
+│   ├── guardrail/       #   Agent 守门（输入/输出兜底）
+│   ├── mode/            #   AgentModeStrategy
+│   ├── workspace/       #   ToolWorkspace / RetrievedDocument（单轮隔离）
+│   ├── service/         #   HybridSearchService 等编排服务
+│   ├── tool/            #   RAG 工具族（Vector/BM25/Hybrid/Rerank/Rewrite/DocDetail/...）
+│   │   ├── callback/    #     AgentToolCallbackFactory（统一回调装配）
+│   │   └── dto/         #     工具入参 record
+│   ├── trace/           #   AgentTrace / ToolCallRecord（可观测）
+│   ├── event/           #   事件 + payload（Agent 流程埋点）
+│   └── config/          #   AgentRagProperties（app.agent.*）
+├── rag/                 # RAG 模块（Pipeline 与 ETL）
+│   ├── config/          #   RagRetrievalProperties record、RagAdvisorFactory
+│   ├── retrieval/       #   HybridDocumentRetriever、Rerank、MMR、QueryNormalizer
+│   ├── chunk/           #   Parent-Child 策略、ParentDocumentPostProcessor（含 Rescoring）
 │   ├── embedding/       #   向量化（DashScopeEmbeddingModel、批量分片、场景识别）
 │   ├── etl/             #   ETL Pipeline（双线程池、Standard/FastTrack 策略路由）
 │   ├── mapper/          #   数据访问（VectorStoreMapper: BM25/ParentChild/Cosine距离）
-│   ├── evaluation/      #   评估系统（@Profile("evaluation"), Judge/LlmScorer/指标计算）
+│   ├── evaluation/      #   评估系统（@Profile("evaluation"), Judge/LlmScorer/指标）
 │   ├── event/           #   文档事件（增量更新、版本替换）
 │   ├── parser/          #   文档解析（Apache Tika + 编码自动检测）
 │   ├── service/         #   RAG 业务服务（文档管理、增量更新）
 │   ├── upload/          #   上传策略（个人上传）
 │   └── entity/          #   RAG 实体
 ├── team/                # 团队协作（团队/成员/审批/额度/权限隔离/团队上传）
-└── exception/           # 统一异常处理
+├── evaluation/          # RAG 评估框架（@Profile("evaluation")，dev 零侵入）
+└── infrastructure/      # 基础设施层（跨业务复用）
+    ├── llm/             #   ⭐ 统一 LLM SPI（核心）
+    │   ├── CapabilityClient.java       # 能力客户端根接口（candidateId/providerId/modelName）
+    │   ├── ChatCapable.java            #   Chat 能力契约
+    │   ├── EmbeddingCapable.java       #   Embedding 能力契约
+    │   ├── RerankResult.java           #   Rerank 结果
+    │   ├── ToolCallingCapable.java     #   工具调用能力
+    │   ├── ChatRequest.java            #   统一请求载体
+    │   ├── registry/                   #   LlmClientRegistry（无锁读写分离）+ LlmClientFactory + RegistrySnapshot
+    │   ├── adapter/                    #   ChatModelAdapter（桥接 Spring AI ChatModel）+ RewriteClientResolver（上层入口）
+    │   ├── client/                     #   AbstractChatClient + bailian/ + generic/（厂商实现）
+    │   ├── provider/                   #   ModelCandidate + ProviderClientFactory + generic/
+    │   ├── strategy/                   #   EmbeddingCapabilityStrategy / RerankCapabilityStrategy + provider/（Bailian 工厂）
+    │   ├── resilience/                 #   Retry + CircuitBreaker（app.llm.resilience.*）
+    │   ├── metrics/                    #   LLM 调用埋点
+    │   └── config/                     #   ResilienceConfig 等
+    ├── advisor/         #   Advisor 链公共组件（RateLimit / ContentFilter / ConversationContext）
+    ├── content/         #   内容安全（敏感词 DFA）
+    ├── memory/          #   Redis 会话记忆（Spring AI ChatMemory 适配）
+    ├── fallback/        #   Fallback 自动降级（重试链 + 资格判定）
+    ├── concurrent/      #   ScopedTasks / TaskScope / ScopePolicy（并发与超时）
+    ├── messaging/       #   RocketMQ 适配
+    ├── exception/       #   RemoteException / GlobalExceptionHandler / ErrorCode 枚举
+    ├── request|response|stream|web/  # HTTP 载体与 Web 层公共组件
+    └── model/           #   跨业务领域模型（与 entity 区分）
 ```
 
 > 完整的文件级目录结构见 [项目结构文档](docs/PROJECT-STRUCTURE.md)。
+>
+> LLM SPI 详细契约（注入规则、模型 ID 格式、错误矩阵）见 [`.trellis/spec/backend/llm-spi.md`](.trellis/spec/backend/llm-spi.md)。
 
 ## 文档
 

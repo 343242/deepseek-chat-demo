@@ -1,42 +1,145 @@
 # 架构设计
 
-> 核心架构概览，包含多厂商 Provider、模型路由、用户隔离、Advisor 链、Tool Calling 等设计。
-> 详细的安全设计见 [SECURITY.md](SECURITY.md)，会话模块见 [CONVERSATION-DESIGN.md](CONVERSATION-DESIGN.md)，RAG 见 [RAG-DESIGN.md](RAG-DESIGN.md)。
+> 核心架构概览，包含统一 LLM SPI、Agentic RAG、模型路由、用户隔离、Advisor 链、Tool Calling 等设计。
+> 详细的安全设计见 [SECURITY.md](SECURITY.md)，会话模块见 [CONVERSATION-DESIGN.md](CONVERSATION-DESIGN.md)，RAG 见 [RAG-DESIGN.md](RAG-DESIGN.md)，Agentic RAG 见 [AGENTIC-RAG-DESIGN.md](AGENTIC-RAG-DESIGN.md)，LLM SPI 契约见 [`.trellis/spec/backend/llm-spi.md`](../.trellis/spec/backend/llm-spi.md)。
 
-## 多厂商 Provider 抽象（核心架构）
+## 整体分层
 
 ```
-ChatController
+HTTP Controller 层（chat / agent / rag / team / user）
+        ↓
+业务编排层（chat / agent / rag / team 模块的 service）
+        ↓
+统一 LLM SPI 入口：RewriteClientResolver（chat / rag / agent 共用）
+        ↓
+LlmClientRegistry（无锁读写分离，AtomicReference<RegistrySnapshot>）
+        ↓
+CapabilityClient（ChatCapable / EmbeddingCapable / RerankCapable / ToolCallingCapable）
+        ↓
+厂商实现（infrastructure/llm/client/{bailian,generic}/）
+        ↓
+HTTP / SDK（DashScope、DeepSeek、智谱、MiniMax）
+```
+
+- **业务层不感知厂商**：`chat` / `rag` / `agent` 三个上层模块统一通过 `RewriteClientResolver` 拿 `ChatClient`（已 build），不再直接注入 Spring AI `ChatClient.Builder` / `ChatModel`
+- **基础设施层 `infrastructure/`**：跨业务复用的能力（LLM、Advisor、Memory、Fallback、并发、消息、异常）集中在此，业务模块只编排
+
+## 统一 LLM SPI（核心架构）
+
+```
+ChatController / AgentController / RagController
      │
      ▼
-ChatService ─── LlmClientRegistry.get("deepseek-v4-flash") → CapabilityClient (DeepSeek 候选)
-     │                                                              │
-     │                    ProviderRegistry.get("deepseek")           │
-     │                              │                               │
-     │                              ▼                               │
-     │              ┌──────── ModelProvider (interface) ────────┐   │
-     │              │                  │                        │   │
-     │     DeepSeekProvider   ZhipuProvider          MiniMaxProvider
-     │              │                │                       │      │
-     │              ▼                ▼                       ▼      │
-     │         DeepSeekApi     ZhiPuAiApi             MiniMaxApi   │
-     │              │                │                       │      │
-     │              ▼                ▼                       ▼      │
-     │         ChatClient      ChatClient             ChatClient   │
-     │              │                │                       │      │
-     │              └───────┬────────┴──────────┬───────────┘      │
-     │                      ▼                   ▼                   │
-     │             ChatClientRegistry ← ModelRegistryRefresher     │
-     │                                                              │
-     ▼                                                              │
-  ChatClient.call(prompt) ──→ 流式/阻塞响应                         │
+业务 Service ──── RewriteClientResolver.resolve(candidateId) ────┐
+                                                                  │
+                                                                  ▼
+                                              LlmClientRegistry.get(candidateId, LlmCapability.CHAT)
+                                                                  │
+                                                                  ▼
+                                              CapabilityClient（候选 ID + provider ID + model name）
+                                                  │                       │
+                                                  │ 一对一能力契约         │
+                                                  ▼                       ▼
+                                          ChatCapable            EmbeddingCapable / RerankCapable
+                                                  │
+                                                  ▼ 桥接
+                                          ChatModelAdapter（implements Spring AI ChatModel）
+                                                  │
+                                                  ▼
+                                          ChatClient.Builder → ChatClient（业务侧拿到的是已 build 实例）
+                                                  │
+                                                  ▼
+                                  Resilience（Retry + Circuit Breaker，app.llm.resilience.*）
+                                                  │
+                                                  ▼
+                                  厂商实现：infrastructure/llm/client/{bailian,generic}/
+                                                  │
+                                                  ▼
+                                  ProviderClientFactory + strategy/provider 工厂族
+                                                  │
+                                                  ▼
+                                  DashScope / DeepSeek / Zhipu / MiniMax HTTP API
 ```
 
-**关键设计：**
-- **策略模式**：`ModelProvider` 接口封装所有厂商差异（API 调用、ChatOptions 类型、模型列表获取）
-- **服务定位模式**：`ProviderRegistry` 通过 Spring 构造器注入自动发现所有 Provider 实现
-- **开闭原则 (OCP)**：新增厂商只需新增 Provider 实现类 + Properties record + RestClient Bean，零修改现有代码
-- **容错启动**：未配置 API Key 的 Provider 静默跳过，不影响其他 Provider 和服务启动
+**核心抽象（`infrastructure/llm/`）：**
+
+| 类型 | 角色 |
+|------|------|
+| `CapabilityClient`（根接口） | 所有能力客户端的公共契约，仅暴露 `candidateId()` / `providerId()` / `modelName()` / `capability()` / `isAvailable()`，**不暴露 `ModelCandidate` 引用**（避免循环耦合） |
+| `ChatCapable` / `EmbeddingCapable` / `RerankCapable` / `ToolCallingCapable` | 一对一的能力契约（ISP），客户端实现一个能力接口即被识别为该能力 |
+| `LlmClientRegistry` | 注册表，**无锁读写分离**（`AtomicReference<RegistrySnapshot>`）。读路径直读快照，写路径（refresh / disable / enable）CAS 替换。提供 `get(id, type)` / `getDefault(type)` / `getChain(capability)`（Fallback 链） |
+| `LlmClientFactory` | 根据 `ModelCandidate` 构造 `CapabilityClient` 实例，封装策略选择 |
+| `ChatModelAdapter` | 把任意 `ChatCapable` 桥接为 Spring AI `ChatModel`，**默认 options 暴露为 `ToolCallingChatOptions`**（让自建 `ChatClient` 能挂载 `ToolCallAdvisor`，规避 Spring AI 强校验）。桥接逻辑（Prompt→ChatRequest、LlmResponse→ChatResponse）集中于此（SRP） |
+| `RewriteClientResolver` | chat / rag / agent 的统一入口，**返回 `ChatClient`（已 build）而非 `Builder`**。需要 Builder 时由调用方 `.mutate()` |
+| `ProviderClientFactory` + `strategy/provider/*` | 厂商差异封装：`BailianEmbeddingClientFactory`、`BailianRerankClientFactory`、generic 厂商适配 |
+| `ResilienceConfig` | Retry + Circuit Breaker（`app.llm.resilience.retry.*` / `circuit-breaker.*`） |
+
+**关键设计原则：**
+
+- **策略模式 + 服务定位**：`LlmClientRegistry` 自动装配所有候选，运行期按 `candidateId` + `LlmCapability` 查询；新增厂商 = 新增 `ProviderClientFactory` 实现，零改主链路（OCP）
+- **接口隔离（ISP）**：`CapabilityClient` 不被迫继承 Spring AI `ChatModel` 全部方法，桥接代码唯一存在于 `ChatModelAdapter`
+- **配置驱动**：候选与厂商在 `app.llm.providers.{provider}.*` + `app.llm.capabilities.{chat,embedding,reranking}.candidates[]` 声明，启动期绑定，运行期无前缀解析
+- **容错启动**：未配置 API Key 的 Provider 静默跳过，不影响其他 Provider 与服务启动
+- **韧性内建**：所有调用经 `ResilienceConfig` 包装，单候选失败自动沿 `getChain(capability)` 降级
+- **与 Spring AI 解耦**：业务模块禁止直接注入 `ChatClient.Builder` / `ChatModel`，必须走 `RewriteClientResolver` 或 `LlmClientRegistry`（详见 LLM SPI spec 的 Good/Base/Bad Cases）
+
+**配置示例（节选自 `application.yml`）：**
+
+```yaml
+app:
+  llm:
+    providers:
+      bailian:
+        url: https://dashscope.aliyuncs.com
+        api-key: ${DASHSCOPE_API_KEY:sk-***}
+        endpoints:
+          chat: /api/v1/services/aigc/text-generation/generation
+          embedding: /api/v1/services/embeddings/text-embedding/text-embedding
+      deepseek:
+        api-key: ${DEEPSEEK_API_KEY:sk-***}
+    capabilities:
+      chat:
+        default-model: qwen3-max
+        candidates:
+          - id: qwen-plus
+            provider: bailian
+            model: qwen-plus-latest
+            priority: 1
+          - id: deepseek-v4-flash
+            provider: deepseek
+            model: deepseek-v4-flash
+            supports-streaming: true
+            priority: 2
+          - id: qwen3-max
+            provider: bailian
+            model: qwen3-max
+            supports-thinking: true
+            priority: 4
+      embedding:
+        default-model: text-embedding-v4
+        candidates:
+          - id: text-embedding-v4
+            provider: bailian
+            model: text-embedding-v4
+            dimension: 1024
+            priority: 1
+      reranking:
+        default-model: qwen3-rerank
+        candidates:
+          - id: qwen3-rerank
+            provider: bailian
+            model: qwen3-rerank
+            priority: 1
+    resilience:
+      retry:
+        max-attempts: 3
+        base-delay-ms: 500
+        max-delay-ms: 5000
+        multiplier: 2.0
+      circuit-breaker:
+        failure-threshold: 5
+        open-duration-ms: 30000
+```
 
 ## 模型 ID 路由
 
@@ -46,20 +149,10 @@ ChatService ─── LlmClientRegistry.get("deepseek-v4-flash") → CapabilityC
 请求 model=""（或 null）         → llmRegistry.getDefault(LlmCapability.CHAT).candidateId()
 ```
 
-- API 请求 `model` 字段必须为 **registry 候选 ID**（candidate ID，与 `app.llm.providers.{provider}.chat.candidates[].id` 一致）
-- 不再支持 `providerId/modelId` 复合格式——`ChatServiceImpl.resolveCandidateId` 检测到 `/` 立即 fail-fast 抛 `IllegalArgumentException`
+- API 请求 `model` 字段必须为 **registry 候选 ID**（candidate ID，与 `app.llm.capabilities.chat.candidates[].id` 一致）
+- 不再支持 `providerId/modelId` 复合格式——`ChatServiceImpl.resolveCandidateId` 检测到 `/` 立即 fail-fast 抛 `IllegalArgumentException`（被 `GlobalExceptionHandler.handleIllegalArgument` 映射为 `ClientErrorCode.BAD_REQUEST`，业务码 100001）
 - 候选与厂商的映射在 `LlmClientRegistry` 启动期绑定，运行期无需解析前缀
-
-
-所有对话和用量数据通过 `ConversationIdUtil` 自动附加用户前缀：
-
-```
-用户 42 请求 conversationId="test" → 存储 "u_42_test"
-```
-
-- Controller/Service 通过 `ConversationIdUtil.buildIsolatedId()` 统一构建
-- 对外 API 透明：请求/响应始终使用原始 ID，内部自动隔离
-- 用量统计查询通过 LIKE 前缀过滤当前用户数据
+- 详细契约见 [`.trellis/spec/backend/llm-spi.md`](../.trellis/spec/backend/llm-spi.md)
 
 ## 用户隔离
 
@@ -73,19 +166,57 @@ ChatService ─── LlmClientRegistry.get("deepseek-v4-flash") → CapabilityC
 - 对外 API 透明：请求/响应始终使用原始 ID，内部自动隔离
 - 用量统计查询通过 LIKE 前缀过滤当前用户数据
 
+## Agentic RAG 架构
+
+```
+HTTP /api/chat（agent 模式） 或 意图识别命中
+     │
+     ▼
+IntentResolver（agent.intent-model，registry 候选 ID）
+     │
+     ▼ 命中 RAG 意图
+Agent 主循环（agent/service/）
+     │  ├── 单轮 workspace：ToolWorkspaceFactory.newWorkspace()
+     │  ├── 双限位：max-tool-iterations / max-consecutive-same-tool
+     │  ├── 工具调用 → AgentToolCallbackFactory 装配的工具族
+     │  ├── 实时埋点：AgentTrace + ToolCallRecord（agent/trace/）
+     │  └── Guardrail 守门（agent/guardrail/）
+     │
+     ▼ 工具族（agent/tool/）
+     ├── 检索：VectorSearchTool / Bm25SearchTool / HybridSearchTool
+     ├── 精排：RerankTool（→ BailianRerankPostProcessor）
+     ├── 改写：QueryRewriteTool
+     ├── 回查：ParentDocLookupTool / DocDetailTool
+     ├── 元数据：KnowledgeBaseInfoTool / AgentEventLookupTool
+     └── 通用 RAG：RagTool（封装完整 Pipeline）
+     │
+     ▼ 失败 / 超时
+degrade-on-failure=true → 回退到普通 RAG Pipeline
+```
+
+- **意图驱动**：`app.agent.intent-model`（registry 候选 ID，默认 `deepseek-v4-flash`）+ `intent-temperature=0.1` + `intent-retries=2` + `intent-timeout-ms=5000`
+- **可观测**：`AgentTrace` 记录每次迭代的工具调用、中间答案（`IntermediateAnswer`）、自我反思（`SelfReflection`）
+- **降级安全**：意图识别失败 / 工具循环超时 / Guardrail 拦截 → 自动降级到六阶段 RAG Pipeline（`degrade-on-failure`）
+- **Workspace 隔离**：`ToolWorkspace` 持有 `RetrievedDocument` 集合，单次会话内累积上下文，请求结束自动清理
+- **配置全外部化**：`app.agent.*`（`AgentRagProperties`）
+
+> 详细设计见 [AGENTIC-RAG-DESIGN.md](AGENTIC-RAG-DESIGN.md) 与 [AGENTIC-RAG-IMPLEMENTATION-NOTES.md](AGENTIC-RAG-IMPLEMENTATION-NOTES.md)。
+
 ## Advisor 链
 
 ```
 请求 → ConversationContextAdvisor (order=-1, 注入 conversationId)
-     → RateLimitAdvisor (order=0, 限流)
-     → ContentFilterAdvisor (order=1, 输入检测)
+     → RateLimitAdvisor (order=0, 限流，令牌桶)
+     → ContentFilterAdvisor (order=1, 输入检测，DFA 敏感词)
      → RetrievalAugmentationAdvisor (ragEnabled=true 时由 RagAdvisorFactory 动态创建，携带 userId 隔离)
      → ToolCallAdvisor (order=2, 工具调用循环)
-     → MessageChatMemoryAdvisor (对话记忆写入)
-     → 模型调用
+     → MessageChatMemoryAdvisor (对话记忆写入，Redis + JDBC 双层)
+     → ChatModelAdapter → CapabilityClient（统一 SPI 出口）
      → ContentFilterAdvisor (after, 输出过滤)
      → 响应
 ```
+
+> Agent 模式下额外挂载 `AgentSystemPromptAdvisor`，工具回调经 `AgentToolCallbackFactory` 注入 `ToolCallingChatOptions`。
 
 ## Tool Calling（工具调用）
 
@@ -107,7 +238,43 @@ ToolCallAdvisor → ToolCallingManager
 - **OCP**：新增工具 = 新增类，零改现有代码
 - **ToolCallAdvisor** 显式在 advisor 链中处理，限流/内容过滤可拦截工具调用过程
 - **disableMemory()**：已有 MessageChatMemoryAdvisor 管理对话历史，避免重复
-- 内置工具：`DateTimeTools`（日期时间查询）、`CalculatorTools`（数学计算，基于 exp4j）、`CodeExecutionTool`（沙箱代码执行）
+- **两类工具族**：
+  - **通用工具**（`chat/tool/`）：`DateTimeTools`、`CalculatorTools`（exp4j）、`CodeExecutionTool`（沙箱）
+  - **RAG 工具**（`agent/tool/`）：见上方 Agentic RAG 架构
+
+### 沙箱代码执行
+
+```
+模型返回 tool_call: { code: "print(sum(range(1, 101)))", language: "python" }
+     │
+     ▼ CodeExecutionTool.executeCode()
+     │
+     ▼ SandboxService
+     │  docker create --rm --network=none --read-only --user nobody
+     │           --memory=128m --cpus=1 --pids-limit=64
+     │           sandbox-python:bookworm timeout 10 python3 /tmp/code.py
+     │
+     ▼ 执行完毕，容器自动删除
+     │
+     ▼ 返回结果 "退出码: 0
+输出:
+5050"
+     │
+     ▼ 模型生成最终回复："1 到 100 的和是 5050"
+```
+
+| 安全层级 | 措施 |
+|---------|------|
+| 网络 | `--network=none` |
+| 文件系统 | `--read-only` + `tmpfs /tmp` |
+| 用户 | `--user nobody` |
+| 内存 | `--memory=128m` |
+| CPU | `--cpus=1` |
+| 进程 | `--pids-limit=64` |
+| 超时 | `timeout 10` + Java Future 双重保障 |
+| 清理 | `--rm` 用完即弃 |
+
+> 沙箱资源限额也可通过 `app.sandbox.*`（`max-concurrency` / `timeout` / `max-memory-mb` / `max-cpus` / `max-output-bytes`）调整。
 
 #### 沙箱代码执行
 
@@ -211,6 +378,9 @@ Database
 | **审批状态机** | PENDING → APPROVED/REJECTED + 超时自动拒绝，定时任务 fixedDelay 1h 扫描 |
 | **角色枚举设计** | CREATOR(30) > ADMIN(20) > MEMBER(10) 数值比较，@EnumValue 存 int、@JsonValue 返回 name()，DB 与 API 分离 |
 | **统一权限门面** | DocumentOwnershipChecker 跨 team/rag 模块，个人文档 owner 检查、团队文档成员资格 + 角色检查 |
+| **统一 LLM SPI** | `infrastructure/llm/` 通过 `CapabilityClient`（ISP 一能力一接口）+ `LlmClientRegistry`（无锁读写分离）+ `ChatModelAdapter`（桥接唯一存放点）+ `RewriteClientResolver`（统一入口）解耦业务与厂商；业务层禁止直接注入 `ChatClient.Builder`/`ChatModel` |
+| **模型 ID 强约束** | 全项目模型 ID 统一为 registry 候选 ID（`deepseek-v4-flash`），`/` 复合格式在 service 入口 fail-fast；`compositeId` / `modelId` 字段名历史遗留，值是单段候选 ID |
+| **Agentic RAG 可观测 + 可降级** | `AgentTrace` + `ToolCallRecord` 全链路埋点，`max-tool-iterations` / `max-consecutive-same-tool` 双限位，`degrade-on-failure` 自动回退六阶段 Pipeline |
 
 ## 团队协作架构
 

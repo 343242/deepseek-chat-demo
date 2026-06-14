@@ -20,6 +20,7 @@ Spring Boot 3.5 + MyBatis-Plus + PostgreSQL + Redis 的 DeepSeek 聊天助手后
 - [ ] [Quality Guidelines](./quality-guidelines.md) — 设计原则、安全检查清单、禁止模式
 - [ ] [Code Review Checklist](./code-review-checklist.md) — Review 维度、检查项、常见陷阱
 - [ ] [Logging Guidelines](./logging-guidelines.md) — 日志级别和规范
+- [ ] [LLM SPI](./llm-spi.md) — 基础设施层 LLM 客户端契约（禁止注入 `ChatClient.Builder`）
 
 ---
 
@@ -33,6 +34,7 @@ Spring Boot 3.5 + MyBatis-Plus + PostgreSQL + Redis 的 DeepSeek 聊天助手后
 | [Quality Guidelines](./quality-guidelines.md) | 安全检查、禁止模式、DTO 规则 | ✅ Filled |
 | [Code Review Checklist](./code-review-checklist.md) | Review 维度、检查项、常见陷阱 | ✅ Filled |
 | [Logging Guidelines](./logging-guidelines.md) | 日志级别、Profile 差异 | ✅ Filled |
+| [LLM SPI](./llm-spi.md) | LLM 客户端契约、Resolver 模式、fail-fast | ✅ Filled |
 
 ---
 

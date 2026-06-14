@@ -700,7 +700,7 @@ app:
   agent:
     enabled: true
     # 意图识别
-    intent-model: deepseek/deepseek-chat
+    intent-model: deepseek-v4-flash
     intent-temperature: 0.1
     intent-retries: 2
     intent-timeout-ms: 5000

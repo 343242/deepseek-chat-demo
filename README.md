@@ -7,7 +7,7 @@
 ### 多厂商 AI 聊天
 
 - **Provider 抽象层**：DeepSeek、智谱 AI (Zhipu)、MiniMax 三家厂商统一封装，通过 `ModelRouter` + `ProviderRegistry` 实现路由与降级
-- **复合格式指定模型**：`deepseek/deepseek-chat`、`zhipu/glm-4.7`，一键切换
+- **registry 候选 ID 指定模型**：`deepseek-v4-flash`、`qwen-plus`，一键切换（不带 provider/ 前缀）
 - **Advisor 链**：限流（令牌桶）→ 内容安全过滤 → 会话上下文注入 → RAG 增强
 - **SSE 流式响应**：原生 Server-Sent Events，支持 Fallback 重试链
 - **JDBC + Redis 对话记忆**：Spring AI Chat Memory 双层持久化
@@ -167,10 +167,10 @@ curl http://localhost:8080/api/models -b cookies.txt
 # 4. 聊天 — 复合格式指定厂商
 curl -X POST http://localhost:8080/api/chat \
   -H "Content-Type: application/json" -b cookies.txt \
-  -d '{"model":"deepseek/deepseek-chat","message":"你好","conversationId":"test"}'
+  -d '{"model":"deepseek-v4-flash","message":"你好","conversationId":"test"}'
 
 # 5. SSE 流式聊天
-curl "http://localhost:8080/api/chat/stream?model=zhipu/glm-4.7&message=你好&conversationId=test" \
+curl "http://localhost:8080/api/chat/stream?model=qwen-plus&message=你好&conversationId=test" \
   -b cookies.txt
 
 # 6. 上传文档（RAG，支持 GBK/GB2312/GB18030 自动转码）
@@ -180,7 +180,7 @@ curl -X POST http://localhost:8080/api/documents/upload \
 # 7. RAG 增强聊天
 curl -X POST http://localhost:8080/api/chat \
   -H "Content-Type: application/json" -b cookies.txt \
-  -d '{"model":"deepseek/deepseek-chat","message":"文档里讲了什么？","ragEnabled":true}'
+  -d '{"model":"deepseek-v4-flash","message":"文档里讲了什么？","ragEnabled":true}'
 
 # 8. 查看文档列表（仅当前用户的文档）
 curl http://localhost:8080/api/documents -b cookies.txt

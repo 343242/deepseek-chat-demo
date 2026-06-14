@@ -9,7 +9,7 @@
 ChatController
      │
      ▼
-ChatService ─── ModelRouter.resolve("deepseek/deepseek-chat") → Route("deepseek", "deepseek-chat")
+ChatService ─── LlmClientRegistry.get("deepseek-v4-flash") → CapabilityClient (DeepSeek 候选)
      │                                                              │
      │                    ProviderRegistry.get("deepseek")           │
      │                              │                               │
@@ -41,14 +41,14 @@ ChatService ─── ModelRouter.resolve("deepseek/deepseek-chat") → Route("d
 ## 模型 ID 路由
 
 ```
-请求 model="deepseek/deepseek-chat"  → Route(providerId="deepseek", modelId="deepseek-chat")
-请求 model="zhipu/glm-4.7"          → Route(providerId="zhipu", modelId="glm-4.7")
-请求 model="minimax/MiniMax-M2.1"    → Route(providerId="minimax", modelId="MiniMax-M2.1")
-请求 model="deepseek-chat"           → Route(providerId="deepseek", modelId="deepseek-chat")  // 向后兼容
+请求 model="deepseek-v4-flash"  → ChatRequest.model 直传 LlmClientRegistry.get(candidateId)
+请求 model="qwen-plus"          → 同上，registry 内解析候选与厂商的映射
+请求 model=""（或 null）         → llmRegistry.getDefault(LlmCapability.CHAT).candidateId()
 ```
 
-- `providerId/modelId` 复合格式精确路由到指定厂商
-- 无前缀时回退到默认厂商（`model.router.default-provider`，默认 `deepseek`）
+- API 请求 `model` 字段必须为 **registry 候选 ID**（candidate ID，与 `app.llm.providers.{provider}.chat.candidates[].id` 一致）
+- 不再支持 `providerId/modelId` 复合格式——`ChatServiceImpl.resolveCandidateId` 检测到 `/` 立即 fail-fast 抛 `IllegalArgumentException`
+- 候选与厂商的映射在 `LlmClientRegistry` 启动期绑定，运行期无需解析前缀
 
 
 所有对话和用量数据通过 `ConversationIdUtil` 自动附加用户前缀：

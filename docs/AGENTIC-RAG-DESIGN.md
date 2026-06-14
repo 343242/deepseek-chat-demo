@@ -255,7 +255,7 @@ public record IntentResult(
 ```yaml
 app:
   agent:
-    intent-model: deepseek/deepseek-chat   # 意图识别用轻量模型
+    intent-model: deepseek-v4-flash   # 意图识别用轻量模型（registry 候选 ID）
     intent-temperature: 0.1                 # 低温度，分类任务追求确定性
 ```
 
@@ -949,7 +949,7 @@ app:
   agent:
     enabled: true
     # 意图识别
-    intent-model: deepseek/deepseek-chat    # 独立轻量模型
+    intent-model: deepseek-v4-flash    # 独立轻量模型（registry 候选 ID）
     intent-temperature: 0.1                  # 低温度，分类任务
     # ReAct 循环
     max-tool-iterations: 10                  # 防止无限循环

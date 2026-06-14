@@ -86,6 +86,29 @@ ChatClient chatClient = ChatClient.builder(new ChatModelAdapter(chatCapable)).bu
 
 ## 3. Contracts
 
+### 模型 ID 格式契约
+
+**所有模型 ID 必须使用 registry 候选 ID 格式**（如 `deepseek-v4-flash`），**不接受 `provider/model` 复合格式**（如 `deepseek/deepseek-v4-flash`）。
+
+**契约校验点**：`ChatServiceImpl.resolveCandidateId(ChatRequest)` 在请求入口对 `request.model()` 做格式校验。检测到 `/` 字符立即抛 `IllegalArgumentException`，被 `GlobalExceptionHandler.handleIllegalArgument` 映射为 `ClientErrorCode.BAD_REQUEST`（业务码 100001）。
+
+**统一性要求**：项目内所有引用模型 ID 的位置必须使用同一格式：
+- API 请求体 `model` 字段：registry 候选 ID（`deepseek-v4-flash`）
+- API 响应字段 `compositeId` / `modelId`：值同上（字段名保留以维持 API 兼容，但值不再是"复合"语义）
+- 配置项 `app.agent.intent-model`：registry 候选 ID
+- 配置项 `app.rag.query-rewrite-model`：registry 候选 ID（null 表示走默认候选）
+- 文档示例（`docs/API-DOCS.md`、`docs/ARCHITECTURE.md`、`README.md`）：registry 候选 ID
+
+**反模式**（禁止）：
+- ❌ 在 yml 配置或 API 文档里写 `deepseek/deepseek-v4-flash` 这种带前缀的格式
+- ❌ 在 Java 代码里加 `provider/model` 解析层（已明确选择"强制 registry ID"，不留兼容层）
+- ❌ 假设 `compositeId` / `modelId` 字段值是"复合"的（值是单段 registry 候选 ID，字段名只是历史遗留）
+
+**为何用 `IllegalArgumentException` 而非 `ClientException`**（spec 偏差说明）：
+- `quality-guidelines.md` 禁止 `IllegalArgumentException`，但 `GlobalExceptionHandler.handleIllegalArgument` 把它映射为 `ClientErrorCode.BAD_REQUEST`，运行时行为等价 `ClientException(BAD_REQUEST)`
+- 此处的 service-layer guard clause 选用 `IllegalArgumentException` 是为了让"格式校验失败"的语义清晰可辨（与 `ChatMode.valueOf` 抛 `IllegalArgumentException` 的既有模式一致）
+- 如未来 spec 修订，可改为 `ClientException(BAD_REQUEST, msg)`，行为不变
+
 ### 注入契约
 
 | 依赖项 | 是否允许直接注入 | 替代方案 |

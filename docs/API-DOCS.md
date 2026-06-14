@@ -278,7 +278,7 @@
     "id": "deepseek-v4-flash",
     "providerId": "deepseek",
     "providerName": "DeepSeek",
-    "compositeId": "deepseek/deepseek-v4-flash",
+    "compositeId": "deepseek-v4-flash",
     "ownedBy": "deepseek",
     "created": 1773799200
   },
@@ -286,7 +286,7 @@
     "id": "glm-5.1",
     "providerId": "zhipu",
     "providerName": "智谱 AI",
-    "compositeId": "zhipu/glm-5.1",
+    "compositeId": "glm-5.1",
     "ownedBy": "zhipuai",
     "created": 0
   },
@@ -294,7 +294,7 @@
     "id": "MiniMax-M2.1",
     "providerId": "minimax",
     "providerName": "MiniMax",
-    "compositeId": "minimax/MiniMax-M2.1",
+    "compositeId": "MiniMax-M2.1",
     "ownedBy": "minimax",
     "created": 0
   }
@@ -306,7 +306,7 @@
 | id | 模型 ID（厂商返回的原始 ID） |
 | providerId | 厂商标识（`deepseek` / `zhipu` / `minimax`） |
 | providerName | 厂商显示名称 |
-| compositeId | 复合 ID，用于 API 请求时精确路由到指定厂商 |
+| compositeId | 候选 ID（registry candidate ID），与 LlmClientRegistry 注册一致，用于 API 请求时精确路由 |
 
 ---
 
@@ -320,7 +320,7 @@
 
 ```json
 {
-  "model": "deepseek/deepseek-v4-flash",
+  "model": "deepseek-v4-flash",
   "message": "你好",
   "conversationId": "my-chat-001"
 }
@@ -328,7 +328,7 @@
 
 | 字段 | 必填 | 规则 |
 |------|------|------|
-| model | ✅ | 最多 100 字符。支持复合格式 `providerId/modelId`（如 `zhipu/glm-5.1`）或简单格式（如 `deepseek-chat`，默认路由） |
+| model | ✅ | 最多 100 字符。**registry 候选 ID**（如 `deepseek-v4-flash`），与 `LlmClientRegistry` 注册一致；不接受 `providerId/modelId` 复合格式（fail-fast 返回 400） |
 | message | ✅ | 最多 10000 字符 |
 | conversationId | | 字母/数字/下划线/连字符，默认 `"default"` |
 | ragEnabled | | Boolean，默认 false。启用后通过 RAG 检索增强回答 |
@@ -345,11 +345,9 @@
 }
 ```
 
-> **模型路由规则：** `model` 字段支持两种格式：
-> - **复合格式** `{providerId}/{modelId}`：精确路由，如 `zhipu/glm-5.1`、`minimax/MiniMax-M2.1`
-> - **简单格式** `{modelId}`：路由到默认 Provider（`deepseek`），如 `deepseek-v4-flash`
->
-> 推荐使用复合格式，避免同名模型冲突。
+> **模型路由规则：** `model` 字段必须为 **registry 候选 ID**（candidate ID，如 `deepseek-v4-flash`），
+> 即 `LlmClientRegistry` 中 `app.llm.providers.{provider}.chat.candidates[].id` 注册的值。
+> 不接受 `providerId/modelId` 复合格式——若传入带 `/` 的值，服务端 fail-fast 返回 400 + 明确错误信息。
 
 ---
 
@@ -432,7 +430,7 @@ SSE 流式聊天（JSON body）。
 ```json
 {
   "title": "我的新会话",
-  "modelId": "deepseek/deepseek-v4-flash"
+  "modelId": "deepseek-v4-flash"
 }
 ```
 
@@ -449,7 +447,7 @@ SSE 流式聊天（JSON body）。
   "conversationId": "01913a5c8b3a4f2ea1b0c3d4e5f60789",
   "title": "我的新会话",
   "titleSource": "USER",
-  "modelId": "deepseek/deepseek-v4-flash",
+  "modelId": "deepseek-v4-flash",
   "pinned": false,
   "status": "ACTIVE",
   "messageCount": 0,
@@ -489,7 +487,7 @@ SSE 流式聊天（JSON body）。
         "conversationId": "01913a5c8b3a4f2ea1b0c3d4e5f60789",
         "title": "你好…",
         "titleSource": "SYSTEM",
-        "modelId": "deepseek/deepseek-v4-flash",
+        "modelId": "deepseek-v4-flash",
         "pinned": true,
         "status": "ACTIVE",
         "messageCount": 12,
@@ -521,7 +519,7 @@ SSE 流式聊天（JSON body）。
   "conversationId": "01913a5c8b3a4f2ea1b0c3d4e5f60789",
   "title": "你好…",
   "titleSource": "SYSTEM",
-  "modelId": "deepseek/deepseek-v4-flash",
+  "modelId": "deepseek-v4-flash",
   "pinned": false,
   "status": "ACTIVE",
   "messageCount": 4,

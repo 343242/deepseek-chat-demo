@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 11
+- **Total Sessions**: 12
 - **Last Active**: 2026-06-15
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~373 | Active |
+| `journal-1.md` | ~406 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 12 | 2026-06-15 | Fix intent-model ID format in application.yml | `817d924` | `agentic-rag-dev` |
 | 11 | 2026-06-15 | Fix ChatModelAdapter.getDefaultOptions returns ToolCallingChatOptions | `5b9bb96`, `e0533a6` | `agentic-rag-dev` |
 | 10 | 2026-06-14 | Decouple Spring AI ChatClient.Builder injection | `65c5fcf`, `93b743b` | `agentic-rag-dev` |
 | 9 | 2026-06-14 | LLM module self-review P2/P3 follow-ups (11 issues) | `c35b2fe` | `agentic-rag-dev` |

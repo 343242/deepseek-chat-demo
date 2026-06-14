@@ -371,3 +371,36 @@ Fixed 'ToolCall Advisor requires ToolCallingChatOptions' IllegalArgumentExceptio
 ### Next Steps
 
 - None - task complete
+
+
+## Session 12: Fix intent-model ID format in application.yml
+
+**Date**: 2026-06-15
+**Task**: Fix intent-model ID format in application.yml
+**Branch**: `agentic-rag-dev`
+
+### Summary
+
+Fixed 'Intent classification LLM call failed' repeated 3x then fallback to DEEP_RETRIEVAL confidence=0.0 in AGENT mode. Root cause: application.yml intent-model default was deepseek/deepseek-v4-flash (compound provider/model format) but IntentClassifier calls llmRegistry.get directly without compound-format parser; registry candidate ID is deepseek-v4-flash (no prefix). Single-line yml default value change. 846/846 tests pass. fallback chain / RagRetrievalProperties untouched (they go through separate compound-format parser layer).
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `817d924` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

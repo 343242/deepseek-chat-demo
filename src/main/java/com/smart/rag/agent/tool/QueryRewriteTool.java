@@ -3,6 +3,7 @@ package com.smart.rag.agent.tool;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smart.rag.agent.dto.ToolResult;
 import com.smart.rag.agent.workspace.ToolWorkspace;
+import com.smart.rag.infrastructure.llm.adapter.RewriteClientResolver;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
@@ -37,8 +38,8 @@ public class QueryRewriteTool implements RagTool {
     private final ChatClient chatClient;
     private final ObjectMapper objectMapper;
 
-    public QueryRewriteTool(ChatClient.Builder chatClientBuilder, ObjectMapper objectMapper) {
-        this.chatClient = chatClientBuilder.build();
+    public QueryRewriteTool(RewriteClientResolver resolver, ObjectMapper objectMapper) {
+        this.chatClient = resolver.resolveDefault();
         this.objectMapper = objectMapper;
     }
 

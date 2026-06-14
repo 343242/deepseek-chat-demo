@@ -1,9 +1,8 @@
 package com.smart.rag.rag.config;
 
-import com.smart.rag.infrastructure.llm.ChatCapable;
-import com.smart.rag.infrastructure.llm.adapter.ChatModelAdapter;
 import com.smart.rag.infrastructure.llm.LlmCapability;
 import com.smart.rag.infrastructure.llm.RerankCapable;
+import com.smart.rag.infrastructure.llm.adapter.RewriteClientResolver;
 import com.smart.rag.infrastructure.llm.registry.LlmClientRegistry;
 import com.smart.rag.rag.chunk.ParentDocumentPostProcessor;
 import com.smart.rag.rag.mapper.VectorStoreMapper;
@@ -31,9 +30,8 @@ public class RagConfig {
 
     @Bean
     public RewriteQueryTransformer rewriteQueryTransformer(
-            ChatClient.Builder chatClientBuilder,
             RagRetrievalProperties properties,
-            LlmClientRegistry llmRegistry) {
+            RewriteClientResolver resolver) {
 
         String template = """
                 Given the following user query, rewrite it into a clear and specific search query \
@@ -47,8 +45,7 @@ public class RagConfig {
 
                 Rewritten search query:""";
 
-        ChatClient.Builder builder = resolveRewriteBuilder(
-                chatClientBuilder, properties, llmRegistry);
+        ChatClient.Builder builder = resolveRewriteBuilder(properties, resolver);
 
         return RewriteQueryTransformer.builder()
                 .chatClientBuilder(builder)
@@ -57,26 +54,17 @@ public class RagConfig {
     }
 
     private ChatClient.Builder resolveRewriteBuilder(
-            ChatClient.Builder defaultBuilder,
             RagRetrievalProperties properties,
-            LlmClientRegistry llmRegistry) {
+            RewriteClientResolver resolver) {
 
         String rewriteCandidateId = properties.queryRewriteModel();
         if (rewriteCandidateId == null || rewriteCandidateId.isBlank()) {
-            log.info("Query rewrite using default ChatClient");
-            return defaultBuilder;
+            log.info("Query rewrite using default chat candidate");
+            return resolver.resolveDefault().mutate();
         }
-
-        ChatCapable chatCapable = llmRegistry.get(rewriteCandidateId, ChatCapable.class);
-        if (chatCapable == null) {
-            log.warn("Query rewrite candidate '{}' not found, falling back to default", rewriteCandidateId);
-            return defaultBuilder;
-        }
-
-        ChatClient rewriteClient = ChatClient.builder(new ChatModelAdapter(chatCapable)).build();
+        // 命中则用指定候选；未命中则 RemoteException 向上抛（fail-fast）
         log.info("Query rewrite using candidate '{}'", rewriteCandidateId);
-
-        return rewriteClient.mutate();
+        return resolver.resolve(rewriteCandidateId).mutate();
     }
 
     // ======================== 后处理器 ========================

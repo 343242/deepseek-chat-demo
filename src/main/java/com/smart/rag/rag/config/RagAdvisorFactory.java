@@ -10,7 +10,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.rag.advisor.RetrievalAugmentationAdvisor;
 import org.springframework.ai.rag.preretrieval.query.transformation.QueryTransformer;
 import org.springframework.ai.rag.retrieval.search.DocumentRetriever;
@@ -39,7 +38,6 @@ public class RagAdvisorFactory {
 
     private static final Logger log = LoggerFactory.getLogger(RagAdvisorFactory.class);
 
-    private final ChatClient.Builder chatClientBuilder;
     private final VectorStore vectorStore;
     private final VectorStoreMapper vectorStoreMapper;
     private final JdbcTemplate jdbcTemplate;
@@ -55,8 +53,7 @@ public class RagAdvisorFactory {
     /** 缓存的 PostProcessor 列表，避免每次请求重建 */
     private volatile List<org.springframework.ai.rag.postretrieval.document.DocumentPostProcessor> cachedPostProcessors;
 
-    public RagAdvisorFactory(ChatClient.Builder chatClientBuilder,
-                             VectorStore vectorStore,
+    public RagAdvisorFactory(VectorStore vectorStore,
                              VectorStoreMapper vectorStoreMapper,
                              JdbcTemplate jdbcTemplate,
                              RagRetrievalProperties properties,
@@ -65,7 +62,6 @@ public class RagAdvisorFactory {
                              QueryTransformer rewriteQueryTransformer,
                              ObjectMapper objectMapper,
                              @Nullable RerankDocumentPostProcessor rerankPostProcessor) {
-        this.chatClientBuilder = chatClientBuilder;
         this.vectorStore = vectorStore;
         this.vectorStoreMapper = vectorStoreMapper;
         this.jdbcTemplate = jdbcTemplate;

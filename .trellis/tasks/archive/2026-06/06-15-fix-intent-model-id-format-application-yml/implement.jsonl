@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend 层入口：确认本任务在配置层的边界"}
+{"file": ".trellis/spec/backend/llm-spi.md", "reason": "LLM SPI 契约：候选 ID 格式由 registry 加载的 candidates 决定，IntentClassifier 直接消费"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "IntentClassifier 失败 fallback 到 DEEP_RETRIEVAL，需理解异常路径"}
+{"file": ".trellis/tasks/06-15-fix-intent-model-id-format-application-yml/prd.md", "reason": "任务 PRD：根因（provider/model 格式 vs registry 候选 ID）+ 单点修复方案 + §6 验证策略"}

@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/code-review-checklist.md", "reason": "Review 清单：验证改动局限于 application.yml:58 一行，无 scope creep"}
+{"file": ".trellis/spec/backend/llm-spi.md", "reason": "确认未引入 ID 格式统一相关的设计变更（仅配置修改）"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "确认 IntentClassifier 异常路径未受影响（仅配置默认值变更）"}
+{"file": ".trellis/tasks/06-15-fix-intent-model-id-format-application-yml/prd.md", "reason": "对照 §4.2 非目标 + §6 验证策略逐项核对"}

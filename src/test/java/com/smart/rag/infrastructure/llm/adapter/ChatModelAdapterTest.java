@@ -20,6 +20,7 @@ import org.springframework.ai.chat.metadata.ChatGenerationMetadata;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.model.Generation;
 import org.springframework.ai.chat.prompt.Prompt;
+import org.springframework.ai.model.tool.ToolCallingChatOptions;
 
 import java.util.List;
 import java.util.Map;
@@ -281,6 +282,37 @@ class ChatModelAdapterTest {
     @DisplayName("delegate() returns the wrapped ChatCapable")
     void delegateAccessor() {
         assertThat(adapter.delegate()).isSameAs(delegate);
+    }
+
+    // ==================== getDefaultOptions ====================
+
+    @Nested
+    @DisplayName("getDefaultOptions() — ToolCallingChatOptions contract")
+    class GetDefaultOptionsTests {
+
+        @Test
+        @DisplayName("getDefaultOptions() is not null")
+        void getDefaultOptions_notNull() {
+            assertThat(adapter.getDefaultOptions()).isNotNull();
+        }
+
+        @Test
+        @DisplayName("getDefaultOptions() returns a ToolCallingChatOptions instance")
+        void getDefaultOptions_returnsToolCallingChatOptions() {
+            assertThat(adapter.getDefaultOptions())
+                .isInstanceOf(ToolCallingChatOptions.class);
+        }
+
+        @Test
+        @DisplayName("getDefaultOptions() returns a fresh instance per call (no shared state)")
+        void getDefaultOptions_freshInstancePerCall() {
+            org.springframework.ai.chat.prompt.ChatOptions first = adapter.getDefaultOptions();
+            org.springframework.ai.chat.prompt.ChatOptions second = adapter.getDefaultOptions();
+
+            // Each builder().build() must produce a new instance so callers can
+            // mutate (e.g., set toolCallbacks) without leaking state to siblings.
+            assertThat(first).isNotSameAs(second);
+        }
     }
 
     // ==================== helpers ====================

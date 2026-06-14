@@ -5,16 +5,18 @@ import com.smart.rag.infrastructure.llm.ChatRequest;
 import com.smart.rag.infrastructure.llm.LlmResponse;
 import com.smart.rag.infrastructure.llm.MessageInformation;
 import reactor.core.publisher.Flux;
-import org.springframework.ai.chat.model.ChatModel;
-import org.springframework.ai.chat.model.ChatResponse;
-import org.springframework.ai.chat.metadata.ChatGenerationMetadata;
-import org.springframework.ai.chat.metadata.ChatResponseMetadata;
-import org.springframework.ai.chat.metadata.DefaultUsage;
-import org.springframework.ai.chat.model.Generation;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.SystemMessage;
 import org.springframework.ai.chat.messages.UserMessage;
+import org.springframework.ai.chat.metadata.ChatGenerationMetadata;
+import org.springframework.ai.chat.metadata.ChatResponseMetadata;
+import org.springframework.ai.chat.metadata.DefaultUsage;
+import org.springframework.ai.chat.model.ChatModel;
+import org.springframework.ai.chat.model.ChatResponse;
+import org.springframework.ai.chat.model.Generation;
+import org.springframework.ai.chat.prompt.ChatOptions;
 import org.springframework.ai.chat.prompt.Prompt;
+import org.springframework.ai.model.tool.ToolCallingChatOptions;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -27,11 +29,16 @@ import java.util.Map;
  * 将任何 {@code ChatCapable} 实例适配为 Spring AI {@code ChatModel}。
  * 这是 ChatCapable 与 ChatModel 之间桥接代码的唯一存放位置。
  * <p>
+ * 默认 options 暴露为 {@link ToolCallingChatOptions}，使得自建 ChatClient 可以挂载
+ * {@code ToolCallAdvisor}（Spring AI 在 {@code spec.tools(Object)} 写入工具回调时
+ * 强制要求 options 为 {@code ToolCallingChatOptions} 实例）。
+ * <p>
  * <b>设计原则</b>：
  * <ul>
  *   <li>ISP — ChatCapable 不被迫继承 ChatModel 的所有方法</li>
  *   <li>LSP — 适配器是独立的 ChatModel 实现，不影响 ChatCapable 的契约</li>
  *   <li>SRP — 桥接逻辑（Prompt→ChatRequest、LlmResponse→ChatResponse）集中在此</li>
+ *   <li>厂商无关 — 默认 options 不耦合具体厂商子类，实际 LLM 调用由 {@code delegate} 处理</li>
  * </ul>
  */
 public class ChatModelAdapter implements ChatModel {
@@ -43,6 +50,18 @@ public class ChatModelAdapter implements ChatModel {
     }
 
     public ChatCapable delegate() { return delegate; }
+
+    /**
+     * 暴露 {@link ToolCallingChatOptions} 作为默认 options，使自建 ChatClient
+     * 可以挂载 {@code ToolCallAdvisor}（Spring AI 在 {@code spec.tools(Object)}
+     * 写入工具回调时强校验 options 类型）。
+     * <p>
+     * 返回厂商无关的通用实现，实际 LLM 调用由 {@code delegate} 处理。
+     */
+    @Override
+    public ChatOptions getDefaultOptions() {
+        return ToolCallingChatOptions.builder().build();
+    }
 
     @Override
     public ChatResponse call(Prompt prompt) {

@@ -1,0 +1,4 @@
+{"file": "docs/reviews/2026-06-15-rag-module-review.md", "reason": "Canonical findings source for W1 (R2-H1, R2-H2, R2-Dep, R2-M3) — exact locations, problems, and decided fixes"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Exception/throw conventions for the ServiceException-vs-null and typed-exception changes (R2-H1 routing, R2-L3 tie-in)"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Quality bar for the hardening changes (caps, ZipSecureFile pinning, BoundedInputStream)"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "R2-H1 changes parser routing from declared to detected MIME across the upload->parser boundary"}

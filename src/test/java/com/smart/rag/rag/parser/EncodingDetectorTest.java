@@ -189,7 +189,7 @@ class EncodingDetectorTest {
     @DisplayName("PlainTextDocumentParser with encoding detection")
     class PlainTextParserWithEncoding {
 
-        private final PlainTextDocumentParser parser = new PlainTextDocumentParser();
+        private final PlainTextDocumentParser parser = new PlainTextDocumentParser(new com.smart.rag.rag.config.DocumentProperties());
 
         @Test
         @DisplayName("GBK 编码的中文文本正确解析")

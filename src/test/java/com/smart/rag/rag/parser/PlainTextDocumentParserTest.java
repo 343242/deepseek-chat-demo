@@ -1,5 +1,6 @@
 package com.smart.rag.rag.parser;
 
+import com.smart.rag.rag.config.DocumentProperties;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -15,7 +16,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @DisplayName("PlainTextDocumentParser")
 class PlainTextDocumentParserTest {
 
-    private final PlainTextDocumentParser parser = new PlainTextDocumentParser();
+    private final PlainTextDocumentParser parser = new PlainTextDocumentParser(new DocumentProperties());
 
     private Resource toResource(String text) {
         return new ByteArrayResource(text.getBytes());
@@ -154,6 +155,45 @@ class PlainTextDocumentParserTest {
             assertThat(docs).hasSize(2);
             assertThat(docs.get(0).getText()).isEqualTo("你好世界");
             assertThat(docs.get(1).getText()).isEqualTo("这是第二段");
+        }
+    }
+
+    @Nested
+    @DisplayName("R2-M3: 有界读取")
+    class BoundedRead {
+
+        @Test
+        @DisplayName("超过 maxFileSize 的流抛 DocumentParseException 而非 OOM")
+        void oversized_stream_throws_not_oom() {
+            // 用极小的 maxFileSize 构造解析器，喂入超限流；只分配 2KB，验证不会无界读取
+            DocumentProperties props = new DocumentProperties();
+            props.setMaxFileSize("1KB");
+            PlainTextDocumentParser boundedParser = new PlainTextDocumentParser(props);
+
+            // 2KB 内容，超过 1KB 上限
+            byte[] oversized = new byte[2 * 1024];
+            java.util.Arrays.fill(oversized, (byte) 'A');
+            Resource resource = new ByteArrayResource(oversized);
+
+            assertThatThrownBy(() -> boundedParser.parse(resource, "text/plain"))
+                    .isInstanceOf(DocumentParseException.class)
+                    .hasMessageContaining("超过上限");
+        }
+
+        @Test
+        @DisplayName("正好等于上限的流可正常解析")
+        void exactly_at_limit_parses_ok() {
+            DocumentProperties props = new DocumentProperties();
+            props.setMaxFileSize("1KB");
+            PlainTextDocumentParser boundedParser = new PlainTextDocumentParser(props);
+
+            // 512 字节，在 1KB 上限内
+            byte[] within = new byte[512];
+            java.util.Arrays.fill(within, (byte) 'A');
+            Resource resource = new ByteArrayResource(within);
+
+            List<Document> docs = boundedParser.parse(resource, "text/plain");
+            assertThat(docs).hasSize(1);
         }
     }
 }

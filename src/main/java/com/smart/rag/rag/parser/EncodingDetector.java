@@ -1,5 +1,6 @@
 package com.smart.rag.rag.parser;
 
+import org.apache.commons.io.input.BoundedInputStream;
 import org.mozilla.universalchardet.UniversalDetector;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -41,6 +42,13 @@ public final class EncodingDetector {
      */
     static final int DETECT_SAMPLE_SIZE = 32 * 1024;
 
+    /**
+     * 默认读取上限：50MB（R2-M3）。
+     * {@link #detectAndTranscode(Resource)} 单参重载使用此值兜底，
+     * 防止 {@code resource.contentLength()} 返回 -1（MinIO 流）导致 {@code readAllBytes()} 无界 OOM。
+     */
+    static final long DEFAULT_MAX_BYTES = 50L * 1024 * 1024;
+
     private EncodingDetector() {
     }
 
@@ -75,17 +83,41 @@ public final class EncodingDetector {
     /**
      * 检测 Resource 的编码并转码为 UTF-8 Resource。
      * <p>
-     * 对超过 {@link #MAX_DETECT_SIZE} 的大文件，仅取前 {@link #DETECT_SAMPLE_SIZE} 字节做编码检测，
-     * 然后对全量内容按检测到的编码解码，避免内存峰值过高。
+     * 使用 {@link #DEFAULT_MAX_BYTES}（50MB）作为读取上限兜底。
+     * 调用方已有更精确的上限时（如从 {@code DocumentProperties.maxFileSize} 读取）应改调
+     * {@link #detectAndTranscode(Resource, long)}。
      *
      * @param resource 原始文件资源
      * @return 保证 UTF-8 编码的 Resource
      */
     public static Resource detectAndTranscode(Resource resource) {
+        return detectAndTranscode(resource, DEFAULT_MAX_BYTES);
+    }
+
+    /**
+     * 检测 Resource 的编码并转码为 UTF-8 Resource，读取上限为 {@code maxBytes}（R2-M3）。
+     * <p>
+     * 用 {@link BoundedInputStream} 在流级别兜底，不依赖 {@code resource.contentLength()}
+     * （MinIO 流返回 -1）。对超过 {@link #MAX_DETECT_SIZE} 的大文件，仅取前
+     * {@link #DETECT_SAMPLE_SIZE} 字节做编码检测，然后对全量内容按检测到的编码解码。
+     *
+     * @param resource 原始文件资源
+     * @param maxBytes 读取上限（字节），超出抛 {@link DocumentParseException}
+     * @return 保证 UTF-8 编码的 Resource
+     */
+    public static Resource detectAndTranscode(Resource resource, long maxBytes) {
         try {
             byte[] bytes;
-            try (InputStream is = resource.getInputStream()) {
-                bytes = is.readAllBytes();
+            // R2-M3: bound the read; allow 1 extra byte to detect overflow without OOM
+            try (InputStream raw = resource.getInputStream();
+                 BoundedInputStream bounded = BoundedInputStream.builder()
+                         .setInputStream(raw).setMaxCount(maxBytes + 1).get()) {
+                bytes = bounded.readAllBytes();
+            }
+            if (bytes.length > maxBytes) {
+                throw new DocumentParseException(
+                        resource.getFilename(), "EncodingDetector",
+                        String.format("文件超过读取上限 %d 字节", maxBytes), null);
             }
 
             if (bytes.length == 0) {
@@ -108,6 +140,8 @@ public final class EncodingDetector {
             byte[] utf8Bytes = text.getBytes(StandardCharsets.UTF_8);
             return new NamedByteArrayResource(utf8Bytes, resource.getFilename());
 
+        } catch (DocumentParseException e) {
+            throw e;
         } catch (Exception e) {
             throw new DocumentParseException(
                     resource.getFilename(), "EncodingDetector",

@@ -80,10 +80,32 @@ public class DocumentValidator {
     }
 
     /**
-     * 通过文件头部魔数探测真实 MIME 类型
+     * 通过文件头部魔数探测真实 MIME 类型（MultipartFile 入口，保留向后兼容）。
+     * <p>
+     * 委托给 {@link #detectMimeType(InputStream, String)}，使魔数校验逻辑可被
+     * 非分片上传路径（如分片合并后的 MinIO 对象）复用。
      */
     String detectMimeType(MultipartFile file) {
         try (InputStream is = file.getInputStream()) {
+            return detectMimeType(is, file.getOriginalFilename());
+        } catch (IOException e) {
+            log.warn("Failed to open stream for MIME detection: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * 通过流头部魔数探测真实 MIME 类型。
+     * <p>
+     * 仅消费流的前 8 字节用于嗅探，调用方负责流的生命周期与重读。
+     * 用于分片上传合并后对 MinIO 对象的真实类型校验（R2-H1）。
+     *
+     * @param is          已打开的输入流，方法不关闭它
+     * @param fileName    原始文件名（可为 null），用于 OOXML 子类型（docx/pptx）的扩展名判定
+     * @return 探测到的 MIME 类型，无法识别时返回 null
+     */
+    public String detectMimeType(InputStream is, String fileName) {
+        try {
             byte[] header = new byte[8];
             int read = is.readNBytes(header, 0, 8);
             if (read < 4) return null;
@@ -95,9 +117,8 @@ public class DocumentValidator {
             }
 
             if (header[0] == 0x50 && header[1] == 0x4B && header[2] == 0x03 && header[3] == 0x04) {
-                String originalName = file.getOriginalFilename();
-                if (originalName != null) {
-                    String lower = originalName.toLowerCase();
+                if (fileName != null) {
+                    String lower = fileName.toLowerCase();
                     for (Map.Entry<String, String> entry : EXTENSION_MIME_MAP.entrySet()) {
                         if (lower.endsWith(entry.getKey())) {
                             return entry.getValue();
@@ -124,6 +145,31 @@ public class DocumentValidator {
             log.warn("Failed to detect MIME type: {}", e.getMessage());
             return null;
         }
+    }
+
+    /**
+     * 校验「检测到的 MIME」是否落在允许白名单内，用于分片上传合并后的安全校验（R2-H1）。
+     * <p>
+     * 与 {@link #validate(MultipartFile)} 的差异：
+     * <ul>
+     *   <li>仅做检测类型 vs 白名单校验，不重复声明类型校验（声明类型已在 init 时校验）</li>
+     *   <li>对 OOXML 子类型（声明 openxmlformats 但检测为 application/zip）放行</li>
+     * </ul>
+     *
+     * @param detectedMimeType 检测到的真实类型（null 视为无法识别，返回 false）
+     * @param declaredMimeType 客户端声明类型（用于 OOXML zip 兼容判定）
+     * @return true 表示检测类型可信/可放行；false 表示需拒绝
+     */
+    public boolean isDetectedMimeTypeAcceptable(String detectedMimeType, String declaredMimeType) {
+        if (detectedMimeType == null) {
+            return false;
+        }
+        Set<String> allowed = getAllowedMimeTypes();
+        if (allowed.contains(detectedMimeType)) {
+            return true;
+        }
+        // OOXML 容器：真实魔数是 zip，声明为 office 子类型 → 放行（子类型由扩展名路由决定）
+        return isZipBasedOfficeDocument(declaredMimeType, detectedMimeType);
     }
 
     private boolean isZipBasedOfficeDocument(String declared, String detected) {

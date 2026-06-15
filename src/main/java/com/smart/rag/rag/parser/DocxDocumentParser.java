@@ -36,6 +36,12 @@ public class DocxDocumentParser implements DocumentParser {
 
     private static final Logger log = LoggerFactory.getLogger(DocxDocumentParser.class);
 
+    /**
+     * 段落总数上限（R2-H2）：防止恶意 docx 用海量空段落撑爆内存绕过压缩比检查。
+     * 计数覆盖所有段落（含空段落），超出即抛 {@link DocumentParseException}。
+     */
+    private static final int MAX_PARAGRAPHS = 50_000;
+
     @Override
     public List<String> supportedMimeTypes() {
         return List.of(
@@ -54,8 +60,17 @@ public class DocxDocumentParser implements DocumentParser {
 
             List<XWPFParagraph> paragraphs = doc.getParagraphs();
             int paragraphIndex = 0;
+            int processedCount = 0;
 
             for (XWPFParagraph para : paragraphs) {
+                // R2-H2: 计数所有段落（含空段落），超限即中止，避免恶意构造拖垮内存
+                if (++processedCount > MAX_PARAGRAPHS) {
+                    throw new DocumentParseException(
+                            resource.getFilename(), "docx",
+                            String.format("段落数超过上限 %d（疑似解压炸弹）", MAX_PARAGRAPHS),
+                            null);
+                }
+
                 String text = para.getText();
                 if (text == null || text.isBlank()) {
                     continue;
@@ -79,9 +94,11 @@ public class DocxDocumentParser implements DocumentParser {
                 paragraphIndex++;
             }
 
+        } catch (DocumentParseException e) {
+            throw e;
         } catch (Exception e) {
-            throw new RuntimeException(
-                    "Failed to parse DOCX: " + resource.getFilename(), e);
+            throw new DocumentParseException(
+                    resource.getFilename(), "docx", "Unexpected error", e);
         }
 
         log.debug("DOCX parsed: {} paragraphs from {}", documents.size(), resource.getFilename());

@@ -43,6 +43,12 @@ public class PptDocumentParser implements DocumentParser {
     /** GroupShape 递归深度上限，防止恶意嵌套 */
     private static final int MAX_GROUP_DEPTH = 5;
 
+    /**
+     * 幻灯片总数上限（R2-H2）：防止恶意 pptx 用海量空 slide 撑爆内存绕过压缩比检查。
+     * 超出即抛 {@link DocumentParseException}。
+     */
+    private static final int MAX_SLIDES = 5_000;
+
     @Override
     public List<String> supportedMimeTypes() {
         return List.of(
@@ -62,6 +68,14 @@ public class PptDocumentParser implements DocumentParser {
 
             List<XSLFSlide> slides = slideShow.getSlides();
             int slideCount = slides.size();
+
+            // R2-H2: 幻灯片总数上限，超限即中止，避免恶意构造拖垮内存
+            if (slideCount > MAX_SLIDES) {
+                throw new DocumentParseException(
+                        fileName, "ppt",
+                        String.format("幻灯片数 %d 超过上限 %d（疑似解压炸弹）", slideCount, MAX_SLIDES),
+                        null);
+            }
 
             for (int slideIndex = 0; slideIndex < slideCount; slideIndex++) {
                 XSLFSlide slide = slides.get(slideIndex);

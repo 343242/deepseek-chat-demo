@@ -1,5 +1,6 @@
 package com.smart.rag.rag.parser;
 
+import com.smart.rag.rag.config.DocumentProperties;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -14,6 +15,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 @DisplayName("DocumentParserFactory")
 class DocumentParserFactoryTest {
 
+    private static PlainTextDocumentParser newPlainTextParser() {
+        DocumentProperties props = new DocumentProperties();
+        return new PlainTextDocumentParser(props);
+    }
+
     private DocumentParserFactory createFactory(DocumentParser... parsers) {
         TikaDocumentParser tika = new TikaDocumentParser();
         return new DocumentParserFactory(List.of(parsers), tika);
@@ -26,7 +32,7 @@ class DocumentParserFactoryTest {
         @Test
         @DisplayName("text/plain → PlainTextDocumentParser")
         void text_plain_routes_to_plain_text_parser() {
-            PlainTextDocumentParser plainText = new PlainTextDocumentParser();
+            PlainTextDocumentParser plainText = newPlainTextParser();
             DocumentParserFactory factory = createFactory(plainText, new MarkdownDocumentParser());
 
             assertThat(factory.getParser("text/plain")).isSameAs(plainText);
@@ -36,7 +42,7 @@ class DocumentParserFactoryTest {
         @DisplayName("text/markdown → MarkdownDocumentParser")
         void text_markdown_routes_to_markdown_parser() {
             MarkdownDocumentParser markdown = new MarkdownDocumentParser();
-            DocumentParserFactory factory = createFactory(new PlainTextDocumentParser(), markdown);
+            DocumentParserFactory factory = createFactory(newPlainTextParser(), markdown);
 
             assertThat(factory.getParser("text/markdown")).isSameAs(markdown);
         }
@@ -45,7 +51,7 @@ class DocumentParserFactoryTest {
         @DisplayName("text/x-markdown → MarkdownDocumentParser")
         void text_x_markdown_routes_to_markdown_parser() {
             MarkdownDocumentParser markdown = new MarkdownDocumentParser();
-            DocumentParserFactory factory = createFactory(new PlainTextDocumentParser(), markdown);
+            DocumentParserFactory factory = createFactory(newPlainTextParser(), markdown);
 
             assertThat(factory.getParser("text/x-markdown")).isSameAs(markdown);
         }
@@ -62,7 +68,7 @@ class DocumentParserFactoryTest {
         @Test
         @DisplayName("未知 MIME → TikaDocumentParser 兜底")
         void unknown_mime_falls_back_to_tika() {
-            DocumentParserFactory factory = createFactory(new PlainTextDocumentParser());
+            DocumentParserFactory factory = createFactory(newPlainTextParser());
 
             DocumentParser parser = factory.getParser("application/vnd.unknown");
             assertThat(parser).isInstanceOf(TikaDocumentParser.class);
@@ -71,7 +77,7 @@ class DocumentParserFactoryTest {
         @Test
         @DisplayName("null MIME → TikaDocumentParser 兜底")
         void null_mime_falls_back_to_tika() {
-            DocumentParserFactory factory = createFactory(new PlainTextDocumentParser());
+            DocumentParserFactory factory = createFactory(newPlainTextParser());
 
             DocumentParser parser = factory.getParser(null);
             assertThat(parser).isInstanceOf(TikaDocumentParser.class);
@@ -105,7 +111,7 @@ class DocumentParserFactoryTest {
         void tika_not_registered_in_route_map() {
             TikaDocumentParser tika = new TikaDocumentParser();
             // Tika 返回空 supportedMimeTypes，不会覆盖其他解析器
-            DocumentParserFactory factory = createFactory(new PlainTextDocumentParser());
+            DocumentParserFactory factory = createFactory(newPlainTextParser());
 
             // text/plain 仍然路由到 PlainTextDocumentParser，不会因 Tika 被覆盖
             assertThat(factory.getParser("text/plain")).isInstanceOf(PlainTextDocumentParser.class);

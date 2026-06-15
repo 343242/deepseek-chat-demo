@@ -382,10 +382,25 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
             throw new ClientException(ClientErrorCode.UPLOAD_FILE_MD5_MISMATCH, "文件校验失败");
         }
 
-        // 5. 持久化 rag_document
+        // 4.1 R2-H1: 对合并后的对象做服务端魔数校验，用检测到的真实 MIME 路由解析器与落库，
+        // 而非 session 中客户端声明的 MIME（防止声明与实际内容不符的 confused-deputy）。
+        String detectedMimeType = detectMergedObjectMimeType(bucket, targetObjectKey, originalName);
+        String effectiveMimeType = resolveEffectiveMimeType(detectedMimeType, mimeType);
+        if (!documentValidator.isDetectedMimeTypeAcceptable(detectedMimeType, mimeType)) {
+            log.warn("MIME bypass rejected: uploadId={}, declared={}, detected={}, effective={}",
+                    uploadId, mimeType, detectedMimeType, effectiveMimeType);
+            deleteFromMinio(bucket, targetObjectKey);
+            cleanupTempChunks(bucket, basePath, totalChunks);
+            redisTemplate.opsForHash().delete(UploadRedisConstants.partsKey(uploadId), UploadRedisConstants.MERGING_FIELD);
+            throw new ClientException(ClientErrorCode.UPLOAD_MIME_UNSUPPORTED,
+                    String.format("文件实际类型(%s)与声明类型(%s)不匹配", detectedMimeType, mimeType));
+        }
+
+        // 5. 持久化 rag_document（使用检测到的真实 MIME）
         Long userId = Long.parseLong(session.get("userId"));
-        Long docId = persistDocument(session, targetObjectKey, actualMd5, userId, teamId);
-        log.info("Chunk upload merged: uploadId={}, docId={}, md5={}", uploadId, docId, actualMd5);
+        Long docId = persistDocument(session, targetObjectKey, actualMd5, userId, teamId, effectiveMimeType);
+        log.info("Chunk upload merged: uploadId={}, docId={}, md5={}, mime={} (declared={})",
+                uploadId, docId, actualMd5, effectiveMimeType, mimeType);
 
         // 5.1 将文件 MD5 加入 BloomFilter 去重
         if (documentDedupService != null && actualMd5 != null) {
@@ -398,10 +413,10 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         // 7. 清理 Redis
         cleanupRedis(uploadId, session.get("userId"), declaredMd5);
 
-        // 8. 触发 ETL
+        // 8. 触发 ETL（使用检测到的真实 MIME 路由解析器）
         etlDispatchService.dispatchAsync(
                 docId, bucket, targetObjectKey, session.get("fileName"),
-                session.get("mimeType"), Long.parseLong(session.get("fileSize")), userId,
+                effectiveMimeType, Long.parseLong(session.get("fileSize")), userId,
                 teamId
         );
 
@@ -637,6 +652,43 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         }
     }
 
+    /**
+     * R2-H1: 下载合并后对象头部并对真实 MIME 做魔数探测。
+     * <p>
+     * 仅消费流头部（detectMimeType 内部读 8 字节），用于纠正/验证客户端声明的类型。
+     * detectMimeType 不关闭流，由 try-with-resources 负责。
+     *
+     * @param bucket      MinIO bucket
+     * @param objectName  合并后的目标对象 key
+     * @param fileName    原始文件名（用于 OOXML 子类型扩展名判定）
+     * @return 探测到的真实 MIME；探测失败或 IO 异常时返回 null（由调用方决定拒绝策略）
+     */
+    private String detectMergedObjectMimeType(String bucket, String objectName, String fileName) {
+        try (InputStream is = minioClient.getObject(
+                GetObjectArgs.builder().bucket(bucket).object(objectName).build())) {
+            return documentValidator.detectMimeType(is, fileName);
+        } catch (Exception e) {
+            log.warn("Failed to detect MIME on merged object: bucket={}, object={}, err={}",
+                    bucket, objectName, e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * R2-H1: 解析最终生效的 MIME。
+     * <p>
+     * 优先使用检测到的具体类型（PDF/text/office 子类型）；
+     * 若检测仅得出容器类型 application/zip 而声明为 OOXML 子类型，则信任声明类型
+     * （魔数无法区分 docx/pptx/xlsx，子类型由扩展名路由决定）；
+     * 检测为 null 时回退声明类型（白名单校验在 isDetectedMimeTypeAcceptable 中已拦截）。
+     */
+    private String resolveEffectiveMimeType(String detectedMimeType, String declaredMimeType) {
+        if (detectedMimeType != null && !"application/zip".equals(detectedMimeType)) {
+            return detectedMimeType;
+        }
+        return declaredMimeType;
+    }
+
     private void deleteFromMinio(String bucket, String objectName) {
         try {
             minioClient.removeObject(
@@ -661,11 +713,12 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
 
     // ==================== DB 持久化 ====================
 
-    private Long persistDocument(Map<String, String> session, String targetObjectKey, String actualMd5, Long userId, @Nullable Long teamId) {
+    private Long persistDocument(Map<String, String> session, String targetObjectKey, String actualMd5,
+                                 Long userId, @Nullable Long teamId, String effectiveMimeType) {
         RagDocument doc = new RagDocument();
         doc.setFileName(session.get("fileName"));
         doc.setFileSize(Long.parseLong(session.get("fileSize")));
-        doc.setMimeType(session.get("mimeType"));
+        doc.setMimeType(effectiveMimeType);
         doc.setStorageKey(targetObjectKey);
         doc.setBucket(session.get("bucket"));
         doc.setUserId(userId);

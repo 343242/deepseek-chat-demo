@@ -56,6 +56,12 @@ public class ChunkUploadController {
      * 上传单个分片。
      * <p>
      * 请求头 X-Chunk-MD5 携带前端计算的分片 MD5，后端独立校验。
+     * <p>
+     * R2-L1: chunkData 以 byte[] 接收（Spring 全量缓冲单分片请求体）。此处是单个分片
+     * （大小受 ChunkSizeStrategy 限制，非整个文件），且需整体读取以校验 X-Chunk-MD5。
+     * 完整流式改造（@RequestBody InputStream + 边读边算 MD5 + tee 写 MinIO）涉及
+     * Controller/Service/putObject 签名与 MD5 计算重构，与单分片 bounded 的低 OOM 风险
+     * 不匹配，故当前保留 byte[]；若未来放宽单分片上限再行流式化。
      */
     @PostMapping("/{uploadId}/chunks/{chunkIndex}")
     public GlobalResponse<ChunkUploadResponse> uploadChunk(

@@ -1,6 +1,5 @@
 package com.smart.rag.rag;
 
-import com.baomidou.mybatisplus.core.conditions.Wrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.smart.rag.infrastructure.response.PagedResult;
 import com.smart.rag.rag.dto.DocumentDTO;
@@ -86,16 +85,13 @@ class W3UnboundedReadsTest {
                     new UsernamePasswordAuthenticationToken(userId, "n/a", List.of()));
         }
 
-        @SuppressWarnings({"unchecked", "rawtypes"})
         private void stubSelectPage(int pageSize, long total, List<RagDocument> records) {
             // 用 ArgumentCaptor 不可行（泛型擦除），改用 thenAnswer 把入参 Page 回填
-            when(ragDocumentMapper.selectPage(any(Page.class), any(Wrapper.class)))
+            when(ragDocumentMapper.selectPage(any(), any()))
                     .thenAnswer(inv -> {
                         Page<RagDocument> p = inv.getArgument(0);
                         p.setRecords(records);
-                        p.setTotal(total);
-                        // MyBatis-Plus 通过 size×current 计算 pages
-                        p.setPages((total + pageSize - 1) / Math.max(pageSize, 1));
+                        p.setTotal(total);  // setTotal 自动触发 calcPageCount → pages = ceil(total/size)
                         return p;
                     });
         }
@@ -124,7 +120,7 @@ class W3UnboundedReadsTest {
             assertThat(result.size()).isEqualTo(2);
             assertThat(result.total()).isEqualTo(5L);
             assertThat(result.totalPages()).isEqualTo(3);
-            verify(ragDocumentMapper, times(1)).selectPage(any(Page.class), any(Wrapper.class));
+            verify(ragDocumentMapper, times(1)).selectPage(any(), any());
         }
 
         @Test
@@ -133,7 +129,7 @@ class W3UnboundedReadsTest {
             loginAs(1L);
             // 用 AtomicReference 捕获传入的 Page 以断言 size
             AtomicReference<Page<?>> captured = new AtomicReference<>();
-            when(ragDocumentMapper.selectPage(any(Page.class), any(Wrapper.class)))
+            when(ragDocumentMapper.selectPage(any(), any()))
                     .thenAnswer(inv -> {
                         Page<RagDocument> p = inv.getArgument(0);
                         captured.set(p);
@@ -153,7 +149,7 @@ class W3UnboundedReadsTest {
         void listAll_negative_page_normalized() {
             loginAs(1L);
             AtomicReference<Page<?>> captured = new AtomicReference<>();
-            when(ragDocumentMapper.selectPage(any(Page.class), any(Wrapper.class)))
+            when(ragDocumentMapper.selectPage(any(), any()))
                     .thenAnswer(inv -> {
                         Page<RagDocument> p = inv.getArgument(0);
                         captured.set(p);
@@ -204,7 +200,7 @@ class W3UnboundedReadsTest {
 
             // 构造器只 tryInit，绝不触发 selectList/ selectPage
             verify(documentMapper, never()).selectList(any());
-            verify(documentMapper, never()).selectPage(any(Page.class), any());
+            verify(documentMapper, never()).selectPage(any(), any());
             // 冷启动：warmedUp=false
             assertThat(svc.isWarmedUp()).isFalse();
             // mayExist 仍返回 true，确保调用方走 confirmExisting 的 DB 路径
@@ -249,7 +245,7 @@ class W3UnboundedReadsTest {
             when(redissonClient.<String>getBloomFilter(any(String.class))).thenReturn(bloomFilter);
             when(bloomFilter.tryInit(anyLong(), anyDouble())).thenReturn(true);
             // selectPage 抛异常模拟 DB 故障
-            when(documentMapper.selectPage(any(Page.class), any()))
+            when(documentMapper.selectPage(any(), any()))
                     .thenThrow(new RuntimeException("db down"));
 
             DocumentDedupService svc = new DocumentDedupService(redissonClient, documentMapper);

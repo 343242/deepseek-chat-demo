@@ -146,7 +146,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         Long userId = SecurityUtils.getCurrentUserId();
         Map<String, String> session = validateSession(uploadId, userId);
 
-        int totalChunks = Integer.parseInt(session.get("totalChunks"));
+        int totalChunks = parseSessionInt(session, "totalChunks");
 
         if (chunkIndex < 0 || chunkIndex >= totalChunks) {
             throw new ClientException(ClientErrorCode.BAD_REQUEST, "分片序号超出范围: " + chunkIndex);
@@ -230,7 +230,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
                 .sorted()
                 .collect(Collectors.toList());
 
-        int totalChunks = Integer.parseInt(session.get("totalChunks"));
+        int totalChunks = parseSessionInt(session, "totalChunks");
         boolean completed = uploadedChunks.size() == totalChunks;
         Boolean merging = redisTemplate.opsForHash().hasKey(partsKey, UploadRedisConstants.MERGING_FIELD);
 
@@ -264,7 +264,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         validateOwner(session, userId);
 
         // Extract teamId from session for team-scoped quick-upload lookup
-        Long teamId = session.get("teamId") != null ? Long.parseLong(session.get("teamId")) : null;
+        Long teamId = parseNullableLong(session.get("teamId"), "teamId");
 
         if (!fileMd5.equalsIgnoreCase(session.get("fileMd5"))) {
             throw new ClientException(ClientErrorCode.UPLOAD_FILE_MD5_MISMATCH, "声明的文件MD5与会话不匹配");
@@ -312,7 +312,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
 
         // 删除所有已上传的临时分片
         try {
-            int totalChunks = Integer.parseInt(session.get("totalChunks"));
+            int totalChunks = parseSessionInt(session, "totalChunks");
             for (int i = 0; i < totalChunks; i++) {
                 try {
                     String chunkKey = basePath + "/part-" + i;
@@ -357,11 +357,11 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         String teamIdStr = session.get("teamId");
         Long teamId = null;
         if (teamIdStr != null) {
-            teamId = Long.parseLong(teamIdStr);
+            teamId = parseNullableLong(teamIdStr, "teamId");
             if (!teamStatusService.isTeamActive(teamId)) {
                 log.warn("Merge rejected: team dissolved, teamId={}, uploadId={}", teamId, uploadId);
                 String bucket = session.get("bucket");
-                cleanupTempChunks(bucket, session.get("objectName"), Integer.parseInt(session.get("totalChunks")));
+                cleanupTempChunks(bucket, session.get("objectName"), parseSessionInt(session, "totalChunks"));
                 cleanupRedis(uploadId, session.get("userId"), session.get("fileMd5"));
                 throw new ServiceException(ServiceErrorCode.TEAM_NOT_FOUND, "团队已解散，上传已取消");
             }
@@ -369,7 +369,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
 
         String bucket = session.get("bucket");
         String basePath = session.get("objectName");
-        int totalChunks = Integer.parseInt(session.get("totalChunks"));
+        int totalChunks = parseSessionInt(session, "totalChunks");
 
         // 1. 构建 Source 列表用于 composeObject
         List<SourceObject> sources = new ArrayList<>();
@@ -416,7 +416,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         }
 
         // 5. 持久化 rag_document（使用检测到的真实 MIME）
-        Long userId = Long.parseLong(session.get("userId"));
+        Long userId = parseSessionLong(session, "userId");
         Long docId = persistDocument(session, targetObjectKey, actualMd5, userId, teamId, effectiveMimeType);
         log.info("Chunk upload merged: uploadId={}, docId={}, md5={}, mime={} (declared={})",
                 uploadId, docId, actualMd5, effectiveMimeType, mimeType);
@@ -435,13 +435,13 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         // 8. 触发 ETL（使用检测到的真实 MIME 路由解析器）
         etlDispatchService.dispatchAsync(
                 docId, bucket, targetObjectKey, session.get("fileName"),
-                effectiveMimeType, Long.parseLong(session.get("fileSize")), userId,
+                effectiveMimeType, parseSessionLong(session, "fileSize"), userId,
                 teamId
         );
 
         // 9. 发布 DocumentCreatedEvent（用于增量更新版本链接）
         String replaceDocIdStr = session.get("replaceDocumentId");
-        Long replaceDocumentId = replaceDocIdStr != null ? Long.parseLong(replaceDocIdStr) : null;
+        Long replaceDocumentId = parseNullableLong(replaceDocIdStr, "replaceDocumentId");
         eventPublisher.publishEvent(new DocumentCreatedEvent(docId, replaceDocumentId, userId, teamId));
 
         return docId;
@@ -514,8 +514,8 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         Map<String, String> session = toStringMap(rawSession);
         validateOwner(session, userId);
 
-        int chunkSize = Integer.parseInt(session.get("chunkSize"));
-        int totalChunks = Integer.parseInt(session.get("totalChunks"));
+        int chunkSize = parseSessionInt(session, "chunkSize");
+        int totalChunks = parseSessionInt(session, "totalChunks");
 
         Set<Object> keys = redisTemplate.opsForHash().keys(UploadRedisConstants.partsKey(uploadId));
         List<Integer> uploadedChunks = keys.stream()
@@ -595,7 +595,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
     }
 
     private void validateOwner(Map<String, String> session, Long userId) {
-        Long owner = Long.parseLong(session.get("userId"));
+        Long owner = parseSessionLong(session, "userId");
         if (!owner.equals(userId)) {
             log.warn("Upload owner mismatch: expected={}, actual={}", owner, userId);
             throw new ClientException(ClientErrorCode.FORBIDDEN);
@@ -661,6 +661,36 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
             return "unnamed";
         }
         return fileName.replace("/", "_").replace("\\", "_").replace("\0", "_");
+    }
+
+    // ==================== R1-M2: session 字段安全解析 ====================
+
+    /** 解析 session 中必填 Long 字段；缺失/非法 → ServiceException(UPLOAD_SESSION_NOT_FOUND) */
+    static long parseSessionLong(Map<String, String> session, String key) {
+        try {
+            return Long.parseLong(session.get(key));
+        } catch (NumberFormatException e) {
+            throw new ServiceException(ServiceErrorCode.UPLOAD_SESSION_NOT_FOUND, "上传会话字段非法: " + key);
+        }
+    }
+
+    /** 解析 session 中必填 int 字段；缺失/非法 → ServiceException */
+    static int parseSessionInt(Map<String, String> session, String key) {
+        try {
+            return Integer.parseInt(session.get(key));
+        } catch (NumberFormatException e) {
+            throw new ServiceException(ServiceErrorCode.UPLOAD_SESSION_NOT_FOUND, "上传会话字段非法: " + key);
+        }
+    }
+
+    /** 解析可选 Long（null → null；非 null 但非法 → ServiceException） */
+    static Long parseNullableLong(String v, String label) {
+        if (v == null) return null;
+        try {
+            return Long.parseLong(v);
+        } catch (NumberFormatException e) {
+            throw new ServiceException(ServiceErrorCode.UPLOAD_SESSION_NOT_FOUND, "上传会话字段非法: " + label);
+        }
     }
 
     private String computeFileMd5FromMinio(String bucket, String objectName) {
@@ -738,7 +768,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
                                  Long userId, @Nullable Long teamId, String effectiveMimeType) {
         RagDocument doc = new RagDocument();
         doc.setFileName(session.get("fileName"));
-        doc.setFileSize(Long.parseLong(session.get("fileSize")));
+        doc.setFileSize(parseSessionLong(session, "fileSize"));
         doc.setMimeType(effectiveMimeType);
         doc.setStorageKey(targetObjectKey);
         doc.setBucket(session.get("bucket"));

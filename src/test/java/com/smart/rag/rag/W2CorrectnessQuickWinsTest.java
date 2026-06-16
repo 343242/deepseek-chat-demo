@@ -5,7 +5,6 @@ import com.smart.rag.infrastructure.exception.ClientException;
 import com.smart.rag.infrastructure.exception.ServiceException;
 import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;
 import com.smart.rag.infrastructure.exception.errorcode.ServiceErrorCode;
-import com.smart.rag.infrastructure.web.util.SecurityUtils;
 import com.smart.rag.rag.chunk.ParentChildChunkStrategy;
 import com.smart.rag.rag.chunk.TokenChunkStrategy;
 import com.smart.rag.rag.config.DocumentProperties;
@@ -49,7 +48,6 @@ import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.Executor;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;

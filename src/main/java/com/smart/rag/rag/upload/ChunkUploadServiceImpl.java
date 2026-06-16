@@ -650,6 +650,12 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         return sb.toString();
     }
 
+    /**
+     * 净化文件名为安全的 MinIO object key 片段。R1-L3: 仅替换路径分隔符（/ \）与 NUL，
+     * 刻意保留 {@code ..} —— object key 是扁平字符串而非文件系统路径，{@code ..} 不会触发
+     * 目录穿越；实际存储路径为 {@code documents/{userId}/{shortId}_{name}}，userId/shortId
+     * 由服务端生成，用户无法借此逃逸到他人目录。
+     */
     private String sanitizeFilename(String fileName) {
         if (fileName == null || fileName.isBlank()) {
             return "unnamed";

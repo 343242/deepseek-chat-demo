@@ -73,6 +73,8 @@ public class MmrDocumentPostProcessor implements DocumentPostProcessor {
 
         // 数据库层计算文档间 cosine distance 矩阵
         // TODO: 热门文档可考虑短时缓存距离矩阵，避免重复 DB 查询（当前文档量小，暂不缓存）
+        // R1-L5: pairwiseCosineDistance 内部将 docIds 截断到 MAX_PAIRWISE_DOCS=50（O(n²) SQL 防御，
+        // 见 VectorStoreMapper，截断时 log.warn）——故 MMR 多样性计算基于最多 50 个文档的子集。
         List<String> docIds = documents.stream().map(Document::getId).toList();
         Map<String, Double> distanceMatrix;
         try {

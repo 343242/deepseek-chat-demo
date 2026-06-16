@@ -260,6 +260,10 @@ public class PptDocumentParser implements DocumentParser {
      * @param table PPT 表格
      * @return Markdown 格式表格
      */
+    /** R2-L2: 病态大表格（rows*cols）OOM 防御上限 */
+    private static final int MAX_TABLE_ROWS = 500;
+    private static final int MAX_TABLE_COLS = 50;
+
     private String tableToMarkdown(XSLFTable table) {
         int rows = table.getNumberOfRows();
         int cols = table.getNumberOfColumns();
@@ -267,11 +271,17 @@ public class PptDocumentParser implements DocumentParser {
             return null;
         }
 
+        int effRows = Math.min(rows, MAX_TABLE_ROWS);
+        int effCols = Math.min(cols, MAX_TABLE_COLS);
+        if (effRows < rows || effCols < cols) {
+            log.warn("PPT table truncated: rows {}→{}, cols {}→{}", rows, effRows, cols, effCols);
+        }
+
         StringBuilder sb = new StringBuilder();
 
         // 表头行
         sb.append("| ");
-        for (int c = 0; c < cols; c++) {
+        for (int c = 0; c < effCols; c++) {
             if (c > 0) sb.append(" | ");
             sb.append(getCellText(table.getCell(0, c)));
         }
@@ -279,13 +289,13 @@ public class PptDocumentParser implements DocumentParser {
 
         // 分隔行
         sb.append("|");
-        sb.repeat("---|", cols);
+        sb.repeat("---|", effCols);
         sb.append("\n");
 
         // 数据行
-        for (int r = 1; r < rows; r++) {
+        for (int r = 1; r < effRows; r++) {
             sb.append("| ");
-            for (int c = 0; c < cols; c++) {
+            for (int c = 0; c < effCols; c++) {
                 if (c > 0) sb.append(" | ");
                 sb.append(getCellText(table.getCell(r, c)));
             }

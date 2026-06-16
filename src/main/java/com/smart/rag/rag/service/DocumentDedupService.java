@@ -88,6 +88,10 @@ public class DocumentDedupService {
     @Async("etlIoExecutor")
     public void warmUp() {
         if (bloomFilter == null) {
+            // LOW-4: BloomFilter 不可用是稳定状态（非"正在 warm"）。标记 warmedUp=true，
+            // 避免运维看到 false 误以为 warm 进行中；mayExist() 已对 bloomFilter==null 单独 return true。
+            warmedUp = true;
+            log.info("BloomFilter disabled (RedissonClient unavailable); dedup falls back to DB-only. warmedUp={}", warmedUp);
             return;
         }
         long started = System.currentTimeMillis();
@@ -175,6 +179,7 @@ public class DocumentDedupService {
         long lastId = 0L;
         while (true) {
             final long lowerBound = lastId;
+            // LOW-3: searchCount=false —— warm-up 只需遍历全部页数据，跳过 COUNT 查询（全表 COUNT 昂贵且此处无用）
             Page<RagDocument> pageReq = new Page<>(1, WARMUP_BATCH_SIZE, false);
             LambdaQueryWrapper<RagDocument> wrapper = new LambdaQueryWrapper<RagDocument>()
                     .select(RagDocument::getId, RagDocument::getFileMd5)

@@ -12,6 +12,8 @@ import com.smart.rag.rag.service.DocumentDedupService;
 import com.smart.rag.rag.service.EtlDispatchService;
 import com.smart.rag.rag.service.impl.DocumentApplicationServiceImpl;
 import com.smart.rag.rag.service.impl.DocumentLifecycleService;
+import com.smart.rag.team.entity.TeamMember;
+import com.smart.rag.team.enums.TeamMemberRole;
 import com.smart.rag.team.service.TeamMembershipVerifier;
 import com.smart.rag.team.upload.UploadStrategyFactory;
 import org.jspecify.annotations.Nullable;
@@ -171,7 +173,9 @@ class W3UnboundedReadsTest {
         @DisplayName("listByTeam: 返回分页结果且校验团队成员身份")
         void listByTeam_returns_paged_result_and_verifies_membership() {
             loginAs(1L);
-            when(teamMembershipVerifier.verifyMember(7L, 1L)).thenReturn(null);
+            TeamMember member = new TeamMember();
+            member.setRole(TeamMemberRole.MEMBER);
+            when(teamMembershipVerifier.verifyMember(7L, 1L)).thenReturn(member);
             stubSelectPage(2, 4L, List.of(doc(1), doc(2)));
 
             PagedResult<DocumentDTO> result = service.listByTeam(7L, 1, 2);

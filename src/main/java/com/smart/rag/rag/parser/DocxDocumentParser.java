@@ -63,7 +63,9 @@ public class DocxDocumentParser implements DocumentParser {
             int processedCount = 0;
 
             for (XWPFParagraph para : paragraphs) {
-                // R2-H2: 计数所有段落（含空段落），超限即中止，避免恶意构造拖垮内存
+                // R2-H2: 计数所有段落（含空段落），超限即中止，避免恶意构造拖垮内存。
+                // L-C1: 此 cap 只限段落数；单个段落的 run/文本量由 POI getText() 内部处理，
+                // 理论上一个病态超大段落仍可能 OOM（实际罕见）。如需更严防御可加单段落字符预算。
                 if (++processedCount > MAX_PARAGRAPHS) {
                     throw new DocumentParseException(
                             resource.getFilename(), "docx",

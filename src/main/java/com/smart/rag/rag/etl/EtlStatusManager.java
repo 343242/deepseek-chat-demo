@@ -110,6 +110,11 @@ public class EtlStatusManager {
         }
     }
 
+    /**
+     * 截断错误信息。R1-M9: {@code error_message} 列为 PostgreSQL TEXT
+     * （{@code V1__init_schema.sql}，无长度上限），故 {@code maxLen=2000} 并非列宽约束，
+     * 而是有意的 UI / 日志上限——避免异常堆栈膨胀撑爆响应体与日志，同时保留足够诊断信息。
+     */
     private static String truncate(String str, int maxLen) {
         if (str == null) return null;
         return str.length() <= maxLen ? str : str.substring(0, maxLen);

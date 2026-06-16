@@ -1,1 +1,2 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": "docs/reviews/2026-06-15-rag-module-review.md", "reason": "原始 review findings R1-H3/M5/M4 的完整描述、定位与建议方案"}
+{"file": ".trellis/tasks/06-15-remediate-all-rag-module-review-findings/prd.md", "reason": "umbrella PRD，5-wave 总体范围、跨 wave 依赖与积累的 LOW 清单"}

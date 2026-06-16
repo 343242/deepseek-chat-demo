@@ -14,12 +14,21 @@
 
 ### 1.1 当前异步能力
 
+> **现状说明（2026-06 更新）**：chat 模块当前**没有**使用 `ApplicationEventPublisher`。
+> 经全仓 grep 验证（`@EventListener` / `@Async` / `ApplicationEventPublisher` / `publishEvent` 在
+> `com.smart.rag.chat` 包下 0 命中），chat 落库与用量记录当前全部走**同步方法调用**：
+> `ChatConversationHelper.saveMessagesAndNotify` 与 `ChatUsageTracker.recordUsage` 在
+> `ChatServiceImpl.processResult()`（同步路径）与 `MultiTurnModeStrategy.executeStream()`
+> 的 `Flux.doFinally`（流式路径）里直接调用。Phase C 的迁移起点是"同步方法调用"，不是事件总线。
+
 | 能力 | 实现 | 局限 |
 |------|------|------|
-| 进程内事件 | `ApplicationEventPublisher`（同步调用） | 不跨进程，不持久化，重启丢失 |
+| 同步落库 | `ChatConversationHelper.saveMessagesAndNotify`（`processResult` / `executeStream.doFinally`） | 占用请求线程；LLM 流式响应结束后才落库；进程崩溃窗口内未落库的消息需 legacy DLQ 兜底 |
+| 同步用量记录 | `ChatUsageTracker.recordUsage`（内部 try/catch 吞咽异常） | 失败仅记日志无补偿；高并发下可能与落库争抢 DB 连接 |
 | 简单队列 | Redisson `RQueue` | 无 ACK，无消费组，无重试 |
-| 死信队列 | `MessageDeadLetterQueue`（`RQueue`） | 手工重试调度，无消费组语义 |
+| 死信队列 | `MessageDeadLetterQueue`（`RQueue`，仅 chat save 使用） | 手工重试调度，无消费组语义，Phase C 后退役 |
 | 线程池异步 | `EtlTaskExecutorBridge`（`CompletableFuture`） | 不持久化，进程崩溃即丢失 |
+| 流式响应 | `MultiTurnModeStrategy.executeStream`（`Flux<String>` + `SseStreamBridge`） | 客户端 SSE 流关闭 → `doFinally` 内同步落库；落库时长计入响应尾延迟 |
 
 ### 1.2 为什么选择 RocketMQ 5.x
 
@@ -58,8 +67,29 @@ gRPC 协议客户端和 POP 消费模式，与本项目需求高度匹配：
 - 项目使用 `app.*` 前缀的 `@ConfigurationProperties`，多数用 Java `record`。
 - Auto-configuration 通过 `@ConditionalOnBean` 条件创建。
 - `MessageDeadLetterQueue` + `DeadLetterRetryScheduler` 已有 DLQ 重试模式可参考，
-  新消息总线上线后需按迁移计划逐步替换（见 §9 Phase D）。
+  新消息总线上线后需按迁移计划逐步替换（见 §9 Phase C → Phase D）。
 - Redisson 3.52.0 继续用于分布式锁、限流、缓存，与消息总线职责分离。
+
+> **LLM SPI 已统一（commit `a98fa9b` / `65c5fcf` / `e0533a6`）**：
+> chat / rag / agent 三个模块已解耦 Spring AI `ChatClient.Builder` 自动装配，
+> 通过 `infrastructure/llm/adapter/ChatModelAdapter` SPI 接入。
+> 模型标识符统一为 **`candidateId`**（registry candidate ID 格式），
+> 取代旧的 `modelId` 概念。本文档 §7.2 用量记录 payload 字段、deduplicationKey
+> 均使用 `candidateId`，与 LLM SPI 链路对齐。
+
+> **Mode Strategy 已落地（参见 `docs/design/chat-mode-strategy-step2-execute-sinking.md`）**：
+> `AbstractModeStrategy` / `SimpleModeStrategy` / `MultiTurnModeStrategy` / `ModeRouter`
+> 取代了原本扁平的 `ChatServiceImpl` 执行路径。
+> - 同步执行：`execute(StrategyExecutionContext)` 返回 `StrategyExecuteResult`
+>   （携带 Spring AI `ChatResponse` 含 usage metadata）
+> - 流式执行：`executeStream(StrategyExecutionContext)` 返回 `Flux<String>`，
+>   在 `doFinally` 里做收尾（落库 + usage 记录）
+> - Phase C 的 publisher 必须同时覆盖这两个执行路径，详见 §7.1。
+
+> **`ChatUsageTracker` 已成为用量记录的中心化入口**：
+> Phase C §7.2 的 publisher 接入点直接位于 `ChatUsageTracker.recordUsage()` 方法内部，
+> 替换 `usageService.recordUsage(...)` 一行即可。`ChatUsageTracker` 内部已 try/catch
+> 吞咽异常（"非关键路径"语义），与 §7.2 设计的 bus 失败仅记日志行为天然吻合。
 
 ## 2. 设计目标
 
@@ -124,7 +154,7 @@ gRPC 协议客户端和 POP 消费模式，与本项目需求高度匹配：
 > - `messaging.dead.count{topic=*}` > 100 条/小时 → P2 告警（死信积压异常）
 > - `messaging.send.count{result=fail}` 增长率 > 10/min → P1 告警（Broker 可能不可达）
 
-追踪传播：生产端从当前 MDC/Span 提取 traceId 写入 `Message.headers`，
+追踪传播：生产端从当前 MDC/Span 提取 traceId 写入 `MessageEnvelope.headers`，
 消费端在调用 listener 前自动恢复到 MDC。通过 `TracePropagator` 封装注入和提取逻辑，
 与 Spring Micrometer Tracing 集成。
 
@@ -136,7 +166,7 @@ gRPC 协议客户端和 POP 消费模式，与本项目需求高度匹配：
 /**
  * 消息信封 — 与传输层解耦的通用消息包装。
  */
-public record Message<T>(
+public record MessageEnvelope<T>(
     @Nullable String id,                // 传输层分配，发送前为 null
     String topic,                       // 目标 Topic
     @Nullable String tag,               // 消息标签（用于 Broker 端过滤，null 表示无 Tag）
@@ -149,14 +179,14 @@ public record Message<T>(
     // S-03: headers 安全约束 — 禁止写入敏感信息（密码、token、完整身份证号等）。
     // headers 会被持久化到 Broker 磁盘并可能在日志中打印。
     // 如需传递用户标识，使用脱敏后的 ID（如 userId），不传递凭证类信息。
-    public static <T> Message<T> of(String topic, T payload) {
-        return new Message<>(null, topic, null, payload, null, null, Map.of(),
+    public static <T> MessageEnvelope<T> of(String topic, T payload) {
+        return new MessageEnvelope<>(null, topic, null, payload, null, null, Map.of(),
             System.currentTimeMillis());
     }
 
     /** 创建带 Tag 的消息，支持 Broker 端过滤 */
-    public static <T> Message<T> of(String topic, String tag, T payload) {
-        return new Message<>(null, topic, tag, payload, null, null, Map.of(),
+    public static <T> MessageEnvelope<T> of(String topic, String tag, T payload) {
+        return new MessageEnvelope<>(null, topic, tag, payload, null, null, Map.of(),
             System.currentTimeMillis());
     }
 
@@ -169,8 +199,8 @@ public record Message<T>(
      * 注意不要与 (topic, tag, payload) 混淆——如有歧义风险，
      * 使用 Builder 模式或显式类型声明消除歧义。
      */
-    public static <T> Message<T> ordered(String topic, T payload, String hashKey) {
-        return new Message<>(null, topic, null, payload, hashKey, null, Map.of(),
+    public static <T> MessageEnvelope<T> ordered(String topic, T payload, String hashKey) {
+        return new MessageEnvelope<>(null, topic, null, payload, hashKey, null, Map.of(),
             System.currentTimeMillis());
     }
 
@@ -183,8 +213,8 @@ public record Message<T>(
      * 注意：使用独立方法名 deduplicated() 而非重载 of()，
      * 因为 of(String, String, String) 在 T=String 时与 of(topic, tag, payload) 签名冲突。
      */
-    public static <T> Message<T> deduplicated(String topic, T payload, String deduplicationKey) {
-        return new Message<>(null, topic, null, payload, null, deduplicationKey, Map.of(),
+    public static <T> MessageEnvelope<T> deduplicated(String topic, T payload, String deduplicationKey) {
+        return new MessageEnvelope<>(null, topic, null, payload, null, deduplicationKey, Map.of(),
             System.currentTimeMillis());
     }
 }
@@ -208,10 +238,10 @@ public interface MessageBus {
     // ==================== 生产者 ====================
 
     /** 同步发送消息，返回传输层消息 ID */
-    String send(Message<?> message);
+    String send(MessageEnvelope<?> message);
 
     /** 异步发送消息 */
-    CompletableFuture<String> sendAsync(Message<?> message);
+    CompletableFuture<String> sendAsync(MessageEnvelope<?> message);
 
     // ==================== 消费者 ====================
 
@@ -248,7 +278,7 @@ public interface MessageBus {
      * <p>
      * 注意：事务回滚时消息不会被发送。非事务上下文中调用时立即发送（fallback）。
      */
-    default void sendAfterCommit(Message<?> message) {
+    default void sendAfterCommit(MessageEnvelope<?> message) {
         // 默认实现：立即发送（非事务上下文的 fallback）
         send(message);
     }
@@ -292,7 +322,7 @@ public interface MessageBusManagement {
  */
 public interface DeadLetterOperations {
     /** 扫描指定 topic 的死信消息 */
-    List<Message<?>> scanDeadLetters(String topic, int count);
+    List<MessageEnvelope<?>> scanDeadLetters(String topic, int count);
 
     /** 将指定死信消息重新投递到主 topic */
     void replayDeadLetter(String topic, String messageId);
@@ -317,7 +347,7 @@ public interface DeadLetterOperations {
  */
 @FunctionalInterface
 public interface MessageHandler<T> {
-    void onMessage(Message<T> message);
+    void onMessage(MessageEnvelope<T> message);
 }
 ```
 
@@ -453,23 +483,23 @@ public record RetryPolicy(
 
 ### 4.7 追踪传播
 
-> 生产端从当前上下文提取追踪信息写入 `Message.headers`，消费端在调用 listener 前自动恢复。
+> 生产端从当前上下文提取追踪信息写入 `MessageEnvelope.headers`，消费端在调用 listener 前自动恢复。
 > 与 Spring Micrometer Tracing 集成，默认使用 W3C TraceContext 格式。
 
 ```java
 /**
  * 追踪传播 — 在消息发送和消费之间传播 traceId / spanId。
  * <p>
- * 生产端：buildRocketMQMessage() 中调用 inject()，将当前追踪上下文写入 Message.headers。
- * 消费端：listener 调用前调用 restore()，从 Message.headers 恢复到当前线程 MDC。
+ * 生产端：buildRocketMQMessage() 中调用 inject()，将当前追踪上下文写入 MessageEnvelope.headers。
+ * 消费端：listener 调用前调用 restore()，从 MessageEnvelope.headers 恢复到当前线程 MDC。
  * <p>
  * 实现：MicrometerTracePropagator（默认），基于 Spring Micrometer Tracing + W3C TraceContext。
  */
 public interface TracePropagator {
-    /** 从当前上下文提取追踪信息，返回需注入 Message.headers 的键值对 */
+    /** 从当前上下文提取追踪信息，返回需注入 MessageEnvelope.headers 的键值对 */
     Map<String, String> inject();
 
-    /** 从 Message.headers 恢复追踪信息到当前线程上下文（MDC + Span） */
+    /** 从 MessageEnvelope.headers 恢复追踪信息到当前线程上下文（MDC + Span） */
     void restore(Map<String, String> headers);
 
     /** 清除当前线程的追踪上下文（消费端处理完成后调用） */
@@ -489,11 +519,11 @@ public interface TracePropagator {
 | SPI 概念 | RocketMQ 5.x 概念 | 说明 |
 |----------|------------------|------|
 | `MessageBus` | `Producer` + `PushConsumer` / `SimpleConsumer` 管理 | 统一入口 |
-| `Message.topic` | Topic | Topic 名称 |
-| `Message.tag` | Tag | Broker 端过滤标签 |
-| `Message.hashKey` | `messageGroup`（FIFO Topic） | 分区路由（替代 4.x 的 `MessageQueueSelector`） |
-| `Message.deduplicationKey` | `keys` 字段 | Broker 端去重查询 |
-| `Message.headers` | `properties` | 用户自定义属性 |
+| `MessageEnvelope.topic` | Topic | Topic 名称 |
+| `MessageEnvelope.tag` | Tag | Broker 端过滤标签 |
+| `MessageEnvelope.hashKey` | `messageGroup`（FIFO Topic） | 分区路由（替代 4.x 的 `MessageQueueSelector`） |
+| `MessageEnvelope.deduplicationKey` | `keys` 字段 | Broker 端去重查询 |
+| `MessageEnvelope.headers` | `properties` | 用户自定义属性 |
 | `MessageHandler` | `MessageListener`（返回 `ConsumeResult`） | SPI 层回调（避免与 5.x MessageListener 命名冲突） |
 | `Subscription` | `PushConsumer` 或 `SimpleConsumer` 实例 | 消费者生命周期 |
 | `ConsumerMode.PUSH` | `PushConsumer` | 自动投递，自动重试 |
@@ -509,7 +539,7 @@ public interface TracePropagator {
 ```
 infrastructure/messaging/
 ├── MessageBus.java                    (SPI 接口)
-├── Message.java                       (消息信封)
+├── MessageEnvelope.java                       (消息信封)
 ├── MessageHandler.java                 (消息处理器接口)
 ├── Subscription.java                  (订阅句柄)
 ├── ConsumerConfig.java                (消费者配置)
@@ -561,11 +591,13 @@ infrastructure/messaging/
 ### 5.2.1 异常层次
 
 > 消息总线异常融入项目已有的 `AbstractException` + `IErrorCode` 体系。
-> 新增 D 类错误码（400001–499999），专用于消息总线。
+> `MessagingErrorCode` 使用 D 类基础设施错误码段 **400001–400011**
+> （与 `.trellis/spec/backend/error-handling.md` 段位定义一致）。
+> 4xxxxx 段为基础设施层预留，非消息总线独占。
 
 ```java
 /**
- * 消息总线错误码 (D类, 400001–499999)
+ * 消息总线错误码 (D类, 400001–400011)
  */
 public enum MessagingErrorCode implements IErrorCode {
     PUBLISH_FAILED(400001, "消息发送失败"),
@@ -573,6 +605,12 @@ public enum MessagingErrorCode implements IErrorCode {
     PERMANENT_CONSUME_ERROR(400003, "永久性消费错误"),
     SUBSCRIPTION_ERROR(400004, "订阅异常"),
     CIRCUIT_BREAKER_OPEN(400005, "熔断器开启，拒绝发送"),
+    INVALID_TOPIC(400006, "非法Topic名称"),
+    INVALID_TAG(400007, "非法标签名称"),
+    INVALID_GROUP(400008, "非法消费者组名称"),
+    MESSAGE_TOO_LARGE(400009, "消息体超限"),
+    INVALID_CONFIG(400010, "消费配置无效"),
+    UNSUPPORTED_OPERATION(400011, "不支持的操作"),
     ;
 
     private final int code;
@@ -730,7 +768,7 @@ public class RocketMQMessageBus implements MessageBus {
     }
 
     @Override
-    public String send(Message<?> message) {
+    public String send(MessageEnvelope<?> message) {
         checkCircuitBreaker();
         try {
             byte[] encoded = validateAndEncode(message);
@@ -755,7 +793,7 @@ public class RocketMQMessageBus implements MessageBus {
      * 返回 CompletableFuture<SendReceipt>，无需额外线程池。
      */
     @Override
-    public CompletableFuture<String> sendAsync(Message<?> message) {
+    public CompletableFuture<String> sendAsync(MessageEnvelope<?> message) {
         // 同步验证失败直接抛 IllegalArgumentException（非 transient 错误，不应以 CF 返回）
         byte[] encoded = validateAndEncode(message);
         org.apache.rocketmq.client.apis.message.Message rmqMsg =
@@ -784,7 +822,7 @@ public class RocketMQMessageBus implements MessageBus {
     }
 
     private org.apache.rocketmq.client.apis.message.Message buildRocketMQMessage(
-            Message<?> message, byte[] encodedPayload) {
+            MessageEnvelope<?> message, byte[] encodedPayload) {
         var builder = provider.newMessageBuilder()
             .setTopic(properties.topicPrefix() + message.topic())
             .setBody(encodedPayload);
@@ -831,7 +869,7 @@ public class RocketMQMessageBus implements MessageBus {
      *
      * @return 编码后的 payload bytes
      */
-    private byte[] validateAndEncode(Message<?> message) {
+    private byte[] validateAndEncode(MessageEnvelope<?> message) {
         String fullTopic = properties.topicPrefix() + message.topic();
         if (fullTopic.length() > 128) {
             throw new IllegalArgumentException(
@@ -956,7 +994,7 @@ public class RocketMQMessageBus implements MessageBus {
     }
 
     @Override
-    public String send(Message<?> message) {
+    public String send(MessageEnvelope<?> message) {
         SendCircuitBreaker cb = circuitBreakerFor(message.topic());
         if (!cb.isCallAllowed()) {
             throw new MessagePublishException(
@@ -1078,7 +1116,7 @@ private <T> Subscription createPushSubscription(
         try {
             T payload = codec.decode(
                 toByteArray(messageView.getBody()), payloadType);
-            Message<T> message = new Message<>(
+            MessageEnvelope<T> message = new MessageEnvelope<>(
                 messageView.getMessageId().toString(),
                 topic,
                 messageView.getTag().orElse(null),
@@ -1283,7 +1321,7 @@ private <T> void processMessage(
     try {
         T payload = codec.decode(
             toByteArray(messageView.getBody()), payloadType);
-        Message<T> message = new Message<>(
+        MessageEnvelope<T> message = new MessageEnvelope<>(
             msgId, topic,
             messageView.getTag().orElse(null),
             payload, null,
@@ -1559,7 +1597,7 @@ public DeadLetterOperations deadLetterOperations() {
             if (deadLetterOps == null) {
                 deadLetterOps = new DeadLetterOperations() {
                     @Override
-                    public List<Message<?>> scanDeadLetters(String topic, int count) {
+                    public List<MessageEnvelope<?>> scanDeadLetters(String topic, int count) {
                         // 订阅 %DLQ%ConsumerGroup Topic 拉取死信消息
                         // 使用 SimpleConsumer 或 Admin API
                     }
@@ -1602,7 +1640,7 @@ mqadmin updateTopic -c DefaultCluster -t SMART_RAG_rag_index_document \
 
 ```java
 // 在 buildRocketMQMessage() 中自动设置（仅配置为 ordered 的 Topic 生效）
-// Message.ordered(topic, payload, hashKey) → 仅当 topic 在 orderedTopics 中时设置 messageGroup
+// MessageEnvelope.ordered(topic, payload, hashKey) → 仅当 topic 在 orderedTopics 中时设置 messageGroup
 if (message.hashKey() != null && isOrderedTopic(message.topic())) {
     builder.setMessageGroup(message.hashKey());
 }
@@ -1615,7 +1653,7 @@ if (message.hashKey() != null && isOrderedTopic(message.topic())) {
 无需选择 `MessageListenerOrderly`（5.x 已取消此区分）。
 
 **有序消费约束**：
-- 发送端通过 `Message.ordered(topic, payload, hashKey)` 指定分区键。
+- 发送端通过 `MessageEnvelope.ordered(topic, payload, hashKey)` 指定分区键。
 - FIFO Topic 下，同一 `messageGroup` 的消息严格按序投递。
 - 消费端同一 `messageGroup` 的消息串行处理（Broker 端保证）。
 - **并发约束**：FIFO Topic 的吞吐受 `messageGroup` 基数影响，
@@ -1670,7 +1708,7 @@ SimpleConsumer 从 FIFO Topic 拉取消息时，Broker 保证同一 `messageGrou
 
 ```java
 // 发送端 — 指定 Tag
-messageBus.send(Message.of("chat_message", "save", payload));
+messageBus.send(MessageEnvelope.of("chat_message", "save", payload));
 
 // 消费端 — FilterExpression 按 Tag 过滤（构造时传入 ConsumerConfig）
 messageBus.subscribe("chat_message", "save-group",
@@ -1770,8 +1808,8 @@ void shutdown() {
 
 | 场景 | 幂等 Key 来源 | 说明 |
 |------|------------|------|
-| `Message.deduplicationKey != null` | 生产端显式指定 | 跨重试稳定，推荐 |
-| `Message.deduplicationKey == null` | 无稳定 key | 跳过总线级幂等，完全依赖业务层 |
+| `MessageEnvelope.deduplicationKey != null` | 生产端显式指定 | 跨重试稳定，推荐 |
+| `MessageEnvelope.deduplicationKey == null` | 无稳定 key | 跳过总线级幂等，完全依赖业务层 |
 
 **实现方式**：
 
@@ -1953,6 +1991,14 @@ Broker 按消息粒度分配（同一消息仅分配给一个实例）。
 
 > 以下为一次性运维操作，必须在应用启动前完成。建议纳入 CI/CD 部署流程或运维 SOP。
 
+> **Topic 命名约定（重要）**：
+> - **业务代码层**：`MessageEnvelope.topic()` 与 `EtlDocumentConsumer.TOPIC` 等常量使用**裸名**（如 `rag_index_document`、`chat_message_save`）
+> - **应用配置层**：`app.messaging.ordered-topics` 配置项同样使用裸名（与 `MessageEnvelope.topic()` 字段一致）
+> - **RocketMQ 物理层**：`RocketMQMessageBus.send()/subscribe()` 在内部自动拼接 `topicPrefix + topic`（默认前缀 `SMART_RAG_`，由 `app.messaging.topic-prefix` 配置）
+> - **运维脚本层**：`mqadmin` 命令必须使用**带前缀的全名**（如 `SMART_RAG_rag_index_document`），与 Broker 上的物理 Topic 名匹配
+>
+> 这套分层命名是为了：业务代码不感知前缀，运维侧通过前缀做环境隔离（如 `DEV_SMART_RAG_`、`PROD_SMART_RAG_`）。
+
 **Topic 创建命令**：
 
 ```bash
@@ -1996,6 +2042,15 @@ mqadmin updateSubGroup -c DefaultCluster -g index-group \
 > **注意**：FIFO Topic 的 Queue 数影响有序消费的并行度。Queue 过少会导致 messageGroup 热点；
 > Queue 过多会增加 Broker 内存开销。建议初始 16，根据 `mqadmin topicStats` 监控调整。
 
+> **Phase C 启动前检查项**（必须全部满足才能开始 §9 Phase C 实现）：
+> - [ ] Topic `SMART_RAG_chat_message_save` 已创建（标准 Topic）
+> - [ ] Topic `SMART_RAG_chat_usage_record` 已创建（标准 Topic）
+> - [ ] 消费组 `save-group` 已创建，`maxDeliveryAttempts=16`
+> - [ ] 消费组 `usage-group` 已创建，`maxDeliveryAttempts=16`
+> - [ ] §5.10 幂等检查依赖的 Redis 与 Caffeine 已就绪（Phase A 已落地）
+> - [ ] `app.messaging.enabled=true` 已写入 `application.yml`（Phase A 已落地）
+> - [ ] LLM SPI candidate ID 链路打通（commit `a98fa9b` 已落地）
+
 **初始化脚本模板**（`scripts/init-rocketmq-topics.sh`）：
 
 ```bash
@@ -2027,7 +2082,6 @@ echo "=== RocketMQ init complete ==="
 ```java
 @ConfigurationProperties(prefix = "app.messaging")
 public record MessagingProperties(
-    boolean enabled,
     String topicPrefix,
     Duration shutdownTimeout,
     Set<String> orderedTopics,
@@ -2038,24 +2092,26 @@ public record MessagingProperties(
     public MessagingProperties {
         if (topicPrefix == null || topicPrefix.isEmpty()) topicPrefix = "SMART_RAG_";
         if (shutdownTimeout == null) shutdownTimeout = Duration.ofSeconds(30);
-        if (idempotent == null) idempotent = new IdempotentConfig(true, 90000);
+        if (orderedTopics == null) orderedTopics = Collections.emptySet();
+        if (idempotent == null) idempotent = new IdempotentConfig(true, 900);
         if (circuitBreaker == null) circuitBreaker = new CircuitBreakerConfig(5, 30000);
-        if (rocketmq == null) rocketmq = new RocketMQConfig(null, "smart-rag-producer",
-            Duration.ofSeconds(3), 16, 4194304, null, null);
+        if (rocketmq == null) rocketmq = new RocketMQConfig(null, null,
+            null, 0, 0, null, null, null);
     }
 
     /** 幂等检查配置 */
     public record IdempotentConfig(
         boolean enabled,
-        long ttlSeconds     // 25h
+        /** Redis key TTL in seconds — covers broker retry window (default 15 min) */
+        long ttlSeconds
     ) {
         public IdempotentConfig {
-            if (ttlSeconds <= 0) ttlSeconds = 90000;
+            if (ttlSeconds <= 0) ttlSeconds = 900;
         }
         // TTL 校验：幂等 key 的 TTL 必须大于最大重试窗口，否则 TTL 过期后重试消息无法被幂等拦截。
         // 最小 TTL = invisibleDuration * maxRetries * 2（SimpleConsumer 默认：10min * 5 * 2 = 100min）。
-        // 默认 25h（90000s）远超此阈值，适用于 PushConsumer（Broker 端 maxDeliveryAttempts * 重试间隔）
-        // 和 SimpleConsumer 场景。
+        // 默认 900s（15min）适用于 PushConsumer（Broker 端 maxDeliveryAttempts * 重试间隔）
+        // 和 SimpleConsumer 场景；如重试窗口较长需调大。
     }
 
     /** 熔断配置 */
@@ -2074,22 +2130,43 @@ public record MessagingProperties(
         String endpoints,                           // 必填，无默认值
         String producerGroup,
         Duration requestTimeout,
-        int maxDeliveryAttempts,
+        int maxDeliveryAttempts,                    // 仅作文档参考，实际由 Broker 端消费组元数据决定（见下方说明）
         int maxMessageSize,                         // 4MB（含 payload + headers + properties，
                                                    // 实际 payload 应预留 ~1KB 给 headers 开销，
                                                    // 以避免接近 gRPC maxInboundMessageSize 限制）
+        @Nullable Boolean enableSsl,                // 启用 TLS（gRPC over TLS）
         @Nullable String accessKey,                 // ACL 配置：可选，内网部署可不启用
         @Nullable String secretKey
     ) {
         public RocketMQConfig {
-            if (producerGroup == null || producerGroup.isEmpty()) producerGroup = "smart-rag-producer";
+            if (producerGroup == null || producerGroup.isEmpty()) producerGroup = DEFAULT_PRODUCER_GROUP;
             if (requestTimeout == null) requestTimeout = Duration.ofSeconds(3);
             if (maxDeliveryAttempts <= 0) maxDeliveryAttempts = 16;
             if (maxMessageSize <= 0) maxMessageSize = 4194304;
         }
+        public static final String DEFAULT_PRODUCER_GROUP = "smart-rag-producer";
     }
 }
 ```
+
+> **`app.messaging.enabled` 不是 record 字段（重要）**：
+> `enabled` 不在 `MessagingProperties` record 中——它是 `@ConditionalOnProperty` 直接读取的属性键，
+> 仅用于 `MessagingAutoConfiguration` 与 `NoOpMessagingConfiguration` 之间的二选一装配：
+>
+> - `app.messaging.enabled=true` → 装配真实 `RocketMQMessageBus`
+> - `app.messaging.enabled=false` 或**未设置**（`matchIfMissing=true`）→ 装配 `NoOpMessageBus`
+>
+> 业务代码注入 `MessageBus` 时无需判空，NoOp 实现的 `send/subscribe` 都是安全的 no-op。
+> 生产环境通过 `application-{profile}.yml` 或环境变量 `MESSAGING_ENABLED=true` 开启。
+
+> **`app.messaging.rocketmq.max-delivery-attempts` 仅作文档参考**：
+> PushConsumer 的实际最大投递次数由 **Broker 端消费组元数据** `maxDeliveryAttempts` 决定，
+> 通过 `mqadmin updateSubGroup -a maxDeliveryAttempts=N` 配置（见 §5.12）。
+> 客户端代码无法直接 set。本字段保留在 record 中用于：
+> - 与 Broker 端配置对齐的文档参考
+> - §5.10 启动时 I-02 校验（幂等 TTL ≥ `invisibleDuration * maxRetries * 2`）读取
+>
+> SimpleConsumer 模式下，本字段无效——重试次数由应用层 `RetryPolicy.maxRetries` 控制（见 §4.6）。
 
 > **Spring Boot record 绑定注意事项**：Spring Boot 3.x 对 record 使用构造器绑定，
 > 不走 setter。本项目惯例使用 compact constructor 赋默认值（`if (x == null) x = default`），
@@ -2102,19 +2179,24 @@ public record MessagingProperties(
 ```yaml
 app:
   messaging:
-    enabled: true             # X-02: 默认 false，显式开启
+    # enabled 不在 record 中——仅 @ConditionalOnProperty 读取，控制装配 RocketMQMessageBus 或 NoOpMessageBus
+    # 生产环境通过 application-{profile}.yml 或环境变量 MESSAGING_ENABLED=true 开启
     topic-prefix: "SMART_RAG_"
     shutdown-timeout: 30s
     ordered-topics:
       - rag_index_document
     idempotent:
-      enabled: true           # 默认 false
-      ttl-seconds: 90000   # 25h
+      enabled: true
+      ttl-seconds: 900       # 15min
+    circuit-breaker:
+      failure-threshold: 5
+      cooldown-millis: 30000
     rocketmq:
       endpoints: ${ROCKETMQ_ENDPOINTS:localhost:9876}
       producer-group: smart-rag-producer
       request-timeout: 3s
-      max-delivery-attempts: 16
+      max-delivery-attempts: 16    # 仅作文档参考，实际由 Broker 端消费组元数据决定
+      max-message-size: 4194304    # 4MB
       # S-01: ACL 凭证必须通过环境变量注入，禁止硬编码。
       # JVM heap dump 会暴露明文配置值，生产环境务必使用 secrets 管理工具。
       # access-key: ${ROCKETMQ_ACCESS_KEY:}
@@ -2222,12 +2304,12 @@ public class JacksonMessageCodec implements MessagePayloadCodec {
    旧消费者遇到未知字段时，`FAIL_ON_UNKNOWN_PROPERTIES=false` 会静默忽略。
 2. **禁止破坏性变更**：不重命名字段、不删除字段、不更改字段类型。
    如需废弃字段，保留为 `@Deprecated` 并保留默认值。
-3. **Content-Type 协商**：`Message.headers` 默认包含 `"Content-Type": "application/json"`，
+3. **Content-Type 协商**：`MessageEnvelope.headers` 默认包含 `"Content-Type": "application/json"`，
    预留未来格式协商（如 `application/protobuf`）。
    生产端在 `buildRocketMQMessage()` 中自动设置：
 
    ```java
-   // 在 Message.of() 和 Message.deduplicated() 的默认 headers 中
+   // 在 MessageEnvelope.of() 和 MessageEnvelope.deduplicated() 的默认 headers 中
    // 已包含 "Content-Type": "application/json"
    ```
 
@@ -2240,7 +2322,7 @@ public class JacksonMessageCodec implements MessagePayloadCodec {
 3. **旧 Topic 设置 TTL 过期**：通过 Broker 管理接口设置旧 Topic 的 `fileReservedTime`，
    或在确认所有消费者迁移后关闭旧 Topic。
 4. **迁移期双版本兼容**：消费者在迁移期间需同时处理新旧两种 payload 格式。
-   可通过 `Message.headers` 中的 `Content-Type` 或自定义 `schema-version` 头区分版本：
+   可通过 `MessageEnvelope.headers` 中的 `Content-Type` 或自定义 `schema-version` 头区分版本：
 
    ```java
    // 消费端根据 schema-version 头选择解析路径
@@ -2350,8 +2432,16 @@ HealthIndicator messagingHealthIndicator(MessageBusManagement busManagement) {
 
 ### 7.1 聊天消息异步保存
 
+> **接入点（2026-06 更新）**：当前 chat 模块走 **Mode Strategy** 双路径。
+> publisher 必须同时挂载在两处，否则流式响应（多轮对话主路径）会持续走同步落库。
+> - 同步路径：`ChatServiceImpl.processResult()` L190（替换 `conversationHelper.saveMessagesAndNotify(...)` 一行）
+> - 流式路径：`MultiTurnModeStrategy.executeStream()` L96 的 `Flux.doFinally`（替换其中 saveMessagesAndNotify 调用）
+
+> **payload 模型**：使用 `ChatMessagePayload(String conversationId, String userMessage, String assistantContent, String candidateId)`。
+> 字段名 `candidateId` 取代旧设计的模型标识符字段名，对齐 LLM SPI 统一（见 §1.3）。
+
 ```java
-// 发送端 — ChatServiceImpl.processResult()
+// 发送端 — 共用 publisher（同步与流式两路径共用）
 @Component
 public class ChatMessagePublisher {
     private final MessageBus messageBus;
@@ -2363,38 +2453,79 @@ public class ChatMessagePublisher {
      * send() 失败时回退到同步路径即可。
      */
     public void publishMessageSave(String conversationId, String userMessage,
-                                    String assistantContent, String modelId,
-                                    @Nullable ChatResponse aiResponse, long elapsedMs) {
+                                    String assistantContent, String candidateId,
+                                    @Nullable org.springframework.ai.chat.model.ChatResponse aiResponse,
+                                    long elapsedMs) {
+        // deduplicationKey = conversationId + ":" + md5(userMessage)
+        // 保证同一会话不同消息不互斥；同一条消息重试时被总线级 SETNX 拦截
+        String deduplicationKey = conversationId + ":"
+            + DigestUtils.md5Hex(userMessage);
+        ChatMessagePayload payload = new ChatMessagePayload(
+            conversationId, userMessage, assistantContent, candidateId);
+        MessageEnvelope<ChatMessagePayload> message = MessageEnvelope.deduplicated(
+            "chat_message_save", payload, deduplicationKey);
+
         try {
-            // deduplicationKey = conversationId + userMessage 摘要，保证同一会话不同消息不互斥
-            String deduplicationKey = conversationId + ":"
-                + DigestUtils.md5Hex(userMessage);
-            messageBus.send(Message.deduplicated("chat_message_save",
-                new ChatMessagePayload(conversationId, userMessage,
-                                       assistantContent, modelId),
-                deduplicationKey));
+            messageBus.send(message);
         } catch (MessagingException e) {
+            // Bus 失败同步降级：直接走原 saveMessagesAndNotify，保留事务、双消息写入、onNewMessages 全部语义
             log.warn("Message bus unavailable, falling back to synchronous save", e);
             conversationHelper.saveMessagesAndNotify(
                 conversationId, userMessage, assistantContent,
-                modelId, aiResponse, elapsedMs);
+                candidateId, aiResponse, elapsedMs);
         }
     }
 }
 ```
 
-> **事务边界注意（DC-01）**：`publishMessageSave()` 在事务内调用 `messageBus.send()` 时存在风险——
-> 消息可能在事务回滚前已被 Broker 确认接收，导致消费者处理了一条从未提交的数据。
-> 事务上下文中应使用 `messageBus.sendAfterCommit(message)`（见 §4.2 SPI 定义），
-> 底层自动通过 `TransactionSynchronizationManager` 在事务提交后发送，非事务上下文中立即发送。
+**接入示例 1：同步路径 `ChatServiceImpl.processResult()`**
+
+```java
+// ChatServiceImpl.java L190 原调用：
+// conversationHelper.saveMessagesAndNotify(pctx.conversationId(), userContent, ...);
+// 替换为：
+chatMessagePublisher.publishMessageSave(
+    pctx.conversationId(), userContent, assistantContent,
+    candidateId, result.springAiResponse(), elapsedMs);
+```
+
+**接入示例 2：流式路径 `MultiTurnModeStrategy.executeStream()`**
+
+```java
+// MultiTurnModeStrategy.java L96 原调用（Flux.doFinally 内）：
+// conversationHelper.saveMessagesAndNotify(ctx.conversationId(), ...);
+// 替换为：
+chatMessagePublisher.publishMessageSave(
+    ctx.conversationId(), userContent, accumulatedContent,
+    candidateId, lastChatResponse, ctx.elapsed());
+```
+
+> **`saveMessagesAndNotify` 整体下沉到 consumer**：
+> 经核实，"notify" 是 `conversationService.onNewMessages(conversationId, userContent, 2)` —— 
+> 更新会话计数 + 触发标题生成，**不是 SSE 推送**。延迟几十毫秒对客户端 UI 可接受
+> （UI 通过 SSE 流拿到的 assistant 内容已直接展示，不依赖落库）。
+> 因此整个方法（事务 + 双消息写入 + onNewMessages）整体迁到 consumer，无需在 publisher 端拆分。
+
+> **事务边界（DC-01）**：两个 publisher 接入点**当前都不在事务上下文**——
+> `processResult` 是 LLM 响应完成后的纯落库收尾；`executeStream.doFinally` 是流式结束后的回调。
+> 因此直接使用 `messageBus.send(message)` 是安全的。
+>
+> 若未来引入"DB 写入 + 消息发送需要原子性"的事务场景（如保存 chat record 后立即通知外部系统），
+> 必须改用 `messageBus.sendAfterCommit(message)`（见 §4.2 SPI 定义），底层通过
+> `TransactionSynchronizationManager` 在事务提交后发送：
 >
 > ```java
-> // DC-01: 使用 sendAfterCommit() 替代手动 TransactionSynchronization
+> // DC-01: 事务上下文中调用必须使用 sendAfterCommit()
 > messageBus.sendAfterCommit(message);  // 事务内：提交后发送；非事务：立即发送
 > ```
->
-> 本项目当前 `publishMessageSave()` 不在事务上下文中调用（LLM 响应完成后直接发送），
-> 但未来接入事务场景时需使用 `sendAfterCommit()`。
+
+> **Bus 失败同步降级路径明确化**：
+> - 触发条件：`messageBus.send` 抛 `MessagingException`（Producer 不可达、Broker 拒绝、序列化失败等）
+> - 降级行为：catch 块内同步调 `ChatConversationHelper.saveMessagesAndNotify`，行为与 Phase C 前完全一致
+> - 双写风险消除：deduplicationKey = `conversationId + ":" + md5(userMessage)`，由 §5.10 总线级 Redis SETNX 拦截
+>   - 场景：bus send 网络超时，Broker 实际已入队但客户端抛 TimeoutException → 同步降级写入 → 
+>     consumer 后续拉到同消息 → Redis SETNX 命中 deduplicationKey → 跳过 → DB 不产生重复行
+> - 业务层兜底：DB 唯一约束 `(conversation_id, message_index)`（已有，不变）作为最后防线
 
 ```java
 @Component
@@ -2410,15 +2541,25 @@ public class ChatMessageSaveConsumer implements SmartLifecycle {
             "save-group",
             ConsumerConfig.DEFAULT,  // ConsumerMode.PUSH
             ChatMessagePayload.class,
-            (Message<ChatMessagePayload> msg) -> {
+            (MessageEnvelope<ChatMessagePayload> msg) -> {
                 var p = msg.payload();
                 // 两层幂等：(1) 总线级 Redis SETNX 基于 deduplicationKey 拦截重复
                 // (2) 业务级 DB 唯一约束 (conversation_id, message_index) 兜底
-                // conversationHelper.saveMessagesAndNotify 内部依赖 DB 唯一约束
-                // 处理极端情况（Redis 故障、幂等 key 未设置、TTL 过期后重试）。
+                // saveMessagesAndNotify 内部依赖 DB 唯一约束处理极端情况
+                // （Redis 故障、幂等 key 未设置、TTL 过期后重试）。
+                //
+                // 注意：consumer 端调用时 aiResponse 传 null（usage 已走 §7.2 独立链路），
+                // durationMs 传 0（流式响应耗时已在用量链路记录）。
+                // 这与原同步路径的语义略有差异——原路径从 aiResponse 提取 totalTokens 写入 ASSISTANT 消息，
+                // consumer 端无法重建 aiResponse。两种缓解方案：
+                //   方案 A：payload 增加 totalTokens 字段（推荐，简单透明）
+                //   方案 B：consumer 端通过 usageService 查询最近一条 usage 反查
+                // 实现任务选 A：ChatMessagePayload 增加 long totalTokens 字段，
+                //   publisher 从 aiResponse.getMetadata().getUsage().getTotalTokens() 提取后传入。
                 conversationHelper.saveMessagesAndNotify(
                     p.conversationId(), p.userMessage(),
-                    p.assistantContent(), p.modelId(), null, 0);
+                    p.assistantContent(), p.candidateId(),
+                    /* aiResponse */ null, /* durationMs */ 0);
             });
     }
 
@@ -2441,45 +2582,174 @@ public class ChatMessageSaveConsumer implements SmartLifecycle {
 
 ### 7.2 Token 用量异步记录
 
-```java
-// 发送端 — 非关键路径，失败仅记日志
-try {
-    messageBus.send(Message.deduplicated("chat_usage_record",
-        new UsagePayload(conversationId, modelId, tokens, elapsedMs),
-        conversationId + ":" + modelId));  // deduplicationKey
-} catch (MessagingException e) {
-    log.warn("Failed to publish usage record: {}", e.getMessage());
-    // 非关键路径，不降级
-}
+> **接入点（2026-06 更新）**：publisher **直接挂在 `ChatUsageTracker.recordUsage()` 内部**。
+> 当前 `ChatUsageTracker` 已经是用量记录的中心化入口（替换散落各处的 `usageService.recordUsage` 调用），
+> 内部已 try/catch 吞咽异常，与 §7.2"非关键路径，失败仅记日志"的设计语义天然吻合。
+> 改造点比原设计假设的少：只改 `ChatUsageTracker` 一个文件，不动 `AbstractModeStrategy` / 
+> `MultiTurnModeStrategy` / `SimpleModeStrategy` 任何调用点。
 
-// 消费端（PushConsumer，批量聚合后写 DB）
-messageBus.subscribe("chat_usage_record", "usage-group",
-    ConsumerConfig.builder()
-        .consumerMode(ConsumerMode.PUSH)
-        .build(),
-    UsagePayload.class,
-    (Message<UsagePayload> msg) -> usageService.recordUsage(msg.payload()));
+> **字段重命名说明**：LLM SPI 统一后（commit `a98fa9b`），模型标识符全部使用
+> registry candidate ID 命名 `candidateId`。`UsagePayload` / deduplicationKey / 
+> `TokenUsage` 实体的语义同步。DB schema 列名 `model_id` 保留（兼容历史数据），
+> 写入的值是 candidate ID 字符串。
+
+```java
+// 发送端 — ChatUsageTracker.recordUsage 内部改造
+@Component
+public class ChatUsageTracker {
+    private final MessageBus messageBus;
+    // 不再直接持有 UsageService 引用——由 consumer 端调用
+
+    public void recordUsage(String conversationId, String candidateId,
+                            org.springframework.ai.chat.model.ChatResponse aiResponse,
+                            long durationMs) {
+        try {
+            Usage usage = aiResponse != null ? aiResponse.getMetadata().getUsage() : null;
+            long promptTokens = extractOrNeg(usage, Usage::getPromptTokens);
+            long completionTokens = extractOrNeg(usage, Usage::getCompletionTokens);
+            long totalTokens = extractOrNeg(usage, Usage::getTotalTokens);
+
+            // deduplicationKey = conversationId + ":" + candidateId
+            // 同一会话同一模型的多次调用不被去重（每次都是独立 usage 记录），
+            // 但 Broker 重试 / consumer 端 ACK 失败时同一记录被去重。
+            // 注：若同一会话连续多次调用同一模型需要分别计费，应加入时间戳或调用序号
+            // 到 deduplicationKey 中（具体策略由实现任务决定）。
+            String deduplicationKey = conversationId + ":" + candidateId + ":"
+                + System.currentTimeMillis();
+            UsagePayload payload = new UsagePayload(
+                conversationId, candidateId,
+                promptTokens, completionTokens, totalTokens, durationMs);
+            messageBus.send(MessageEnvelope.deduplicated("chat_usage_record", payload, deduplicationKey));
+            log.debug("Usage published: candidate={}, prompt={}, completion={}, total={}, duration={}ms",
+                candidateId, promptTokens, completionTokens, totalTokens, durationMs);
+        } catch (Exception e) {
+            // 非关键路径，不降级（与 ChatUsageTracker 现有 try/catch 吞咽语义一致）
+            log.error("Failed to publish usage: conversationId={}, candidate={}",
+                ConversationIdUtil.mask(conversationId), candidateId, e);
+        }
+    }
+
+    // 无 AI 响应的降级版本（保留原 ChatUsageTracker 第二个 recordUsage 重载）
+    public void recordUsage(String conversationId, String candidateId, long durationMs) {
+        // 同样改为 messageBus.send，payload 中 token 三字段填 -1
+    }
+}
 ```
+
+```java
+// 消费端 — UsageRecordConsumer（PushConsumer）
+@Component
+public class UsageRecordConsumer implements SmartLifecycle {
+    private final MessageBus messageBus;
+    private final UsageService usageService;
+    private Subscription subscription;
+
+    @Override
+    public void start() {
+        subscription = messageBus.subscribe(
+            "chat_usage_record",
+            "usage-group",
+            ConsumerConfig.DEFAULT,  // ConsumerMode.PUSH
+            UsagePayload.class,
+            (MessageEnvelope<UsagePayload> msg) -> {
+                var p = msg.payload();
+                // 两层幂等：(1) 总线级 Redis SETNX 基于 deduplicationKey 拦截重复
+                // (2) UsageService 内部业务层幂等（如 token_usage 表的唯一约束或自然键）
+                usageService.recordUsage(
+                    p.conversationId(), p.candidateId(),
+                    p.promptTokens(), p.completionTokens(),
+                    p.totalTokens(), p.durationMs());
+            });
+    }
+
+    @Override
+    public void stop() {
+        if (subscription != null) subscription.close();
+    }
+
+    @Override
+    public boolean isRunning() {
+        return subscription != null && subscription.isActive();
+    }
+}
+```
+
+> **`UsagePayload` 字段定义**：
+> ```java
+> public record UsagePayload(
+>     String conversationId,
+>     String candidateId,         // 对齐 LLM SPI 统一命名
+>     long promptTokens,
+>     long completionTokens,
+>     long totalTokens,
+>     long durationMs
+> ) {}
+> ```
+>
+> **DB schema 列名兼容性**：`token_usage` 表 `model_id` 列名不改（避免数据迁移），
+> 但写入的值是 candidate ID 字符串。`UsageServiceImpl.recordUsage` 参数名 `candidateId`
+> 与 `UsagePayload.candidateId()` 一致；mybatis 映射保留 `model_id` 列名。
 
 ### 7.3 RAG 索引任务削峰
 
-```java
-// 发送端 — 文档上传后投递索引任务
-// hashKey = documentId（FIFO 有序），deduplicationKey = documentId（幂等）
-messageBus.send(new Message<>("rag_index_document", null,
-    new IndexTask(documentId, teamId), documentId, documentId,
-    Map.of(), System.currentTimeMillis()));
+> **接入点（已落地）**：Phase B 已完成。
+> 发送端 `EtlDispatchServiceImpl.dispatchAsync()`（L136），消费端 `EtlDocumentConsumer`
+> （`TOPIC="rag_index_document"`，`GROUP="index-group"`，`ConsumerMode.SIMPLE`）。
 
-// 消费端 — SimpleConsumer：按 LLM 调用速率消费，无消费超时风险
-messageBus.subscribe("rag_index_document", "index-group",
-    ConsumerConfig.builder()
+> **payload 类型说明**：实际使用 `EtlCandidate`（携带文件元数据：bucket、objectKey、fileName、
+> mimeType、fileSize、userId、teamId），不是早期设计假设的 `IndexTask(documentId, teamId)`。
+> ETL 处理需要这些元数据下载文件、解析、分块、embed。
+
+```java
+// 发送端 — EtlDispatchServiceImpl.dispatchAsync()
+// hashKey = documentId（FIFO 有序，由 app.messaging.ordered-topics 配置启用）
+// deduplicationKey = documentId（幂等，防止同一文档重复投递）
+String dedupKey = String.valueOf(documentId);
+EtlCandidate candidate = new EtlCandidate(
+    documentId, bucket, objectKey, fileName, mimeType, fileSize, userId, teamId);
+messageBus.send(new MessageEnvelope<>(
+    null,                              // id (transport-assigned)
+    EtlDocumentConsumer.TOPIC,         // topic = "rag_index_document"（裸名，Bus 内部拼前缀）
+    null,                              // tag
+    candidate,                         // payload
+    dedupKey,                          // hashKey (= documentId) → messageGroup
+    dedupKey,                          // deduplicationKey (= documentId)
+    Map.of(),                          // headers
+    System.currentTimeMillis()));
+```
+
+```java
+// 消费端 — EtlDocumentConsumer（已落地）
+@Component
+@ConditionalOnProperty(name = "app.messaging.enabled", havingValue = "true")
+public class EtlDocumentConsumer implements SmartLifecycle {
+    public static final String TOPIC = "rag_index_document";
+    static final String GROUP = "index-group";
+
+    private static final ConsumerConfig CONSUMER_CONFIG = ConsumerConfig.builder()
         .consumerMode(ConsumerMode.SIMPLE)
         .batchSize(5)
         .invisibleDuration(Duration.ofMinutes(30))
-        .retryPolicy(RetryPolicy.SIMPLE_DEFAULT)  // maxRetries=5
-        .build(),
-    IndexTask.class,
-    (Message<IndexTask> msg) -> etlService.processDocument(msg.payload()));
+        .retryPolicy(RetryPolicy.SIMPLE_DEFAULT)  // maxRetries=5（应用层控制）
+        .build();
+
+    @Override
+    public void start() {
+        MessageHandler<EtlCandidate> handler = candidate -> {
+            // 调 EtlDispatchService.dispatch（不是早期假设的 processDocument）
+            List<EtlResult> results = etlDispatchService.dispatch(List.of(candidate));
+            if (!results.isEmpty()
+                && EtlStatus.COMPLETED.equals(results.getFirst().status())) {
+                // 触发领域事件（与 Phase B 前线程池路径行为一致）
+                eventPublisher.publishEvent(new EtlCompletedEvent(
+                    candidate.documentId(), candidate.userId(), candidate.teamId()));
+            }
+        };
+        subscription = messageBus.subscribe(
+            TOPIC, GROUP, CONSUMER_CONFIG, EtlCandidate.class, handler);
+    }
+    // stop() / isRunning() 略
+}
 ```
 
 > **为什么 RAG 索引使用 SimpleConsumer**：
@@ -2494,12 +2764,17 @@ messageBus.subscribe("rag_index_document", "index-group",
 > 如需严格有序，应使用 PushConsumer（Broker 端保证 messageGroup 内串行投递）。
 > 对于 RAG 索引场景（同一文档的不同 chunk 可乱序处理），SimpleConsumer 已足够。
 
+> **实际配置位置**：
+> - Topic `rag_index_document` 在 `app.messaging.ordered-topics` 中标记为 FIFO（`application.yml:68-69`）
+> - 消费组 `index-group` 由 §5.12 运维脚本创建（SimpleConsumer 仍需注册消费组）
+> - `hashKey` 与 `deduplicationKey` 都用 `documentId`，前者触发 FIFO 分区，后者触发幂等检查
+
 ## 8. 改动文件清单
 
 | 文件 | 动作 | 说明 |
 |------|------|------|
 | `infrastructure/messaging/MessageBus.java` | 新增 | SPI 接口 |
-| `infrastructure/messaging/Message.java` | 新增 | 消息信封 record |
+| `infrastructure/messaging/MessageEnvelope.java` | 新增 | 消息信封 record |
 | `infrastructure/messaging/MessageHandler.java` | 新增 | 消息处理器接口 |
 | `infrastructure/messaging/Subscription.java` | 新增 | 订阅句柄 |
 | `infrastructure/messaging/ConsumerConfig.java` | 新增 | 消费者配置 |
@@ -2558,25 +2833,66 @@ messageBus.subscribe("rag_index_document", "index-group",
 
 ### Phase C — 聊天消息保存 + 用量记录迁移（使用 PushConsumer）
 
-**目标**：将聊天相关异步场景迁移到消息总线。
+**目标**：将聊天相关异步场景迁移到消息总线。覆盖 **同步路径**（`processResult`）与
+**流式路径**（`MultiTurnModeStrategy.executeStream`）两个 publisher 接入点。
 
-1. 接入 `chat_message_save`（消息持久化，`ConsumerMode.PUSH`）。
-2. 接入 `chat_usage_record`（用量记录，`ConsumerMode.PUSH`）。
-3. 将现有 Redis DLQ 中的残留条目排空后停止消费。
+> **前置条件**：§5.12 Phase C 启动前检查项全部满足；Phase A/B 已落地。
 
-**退出条件**：两个业务场景通过消息总线完成异步处理，重启后消息不丢失。
+**迁移顺序（先低风险后高风险）**：
+
+1. **Step 1 — usage 记录迁移**（影响面小，先做）：
+   - 改造 `ChatUsageTracker.recordUsage`：将原 `usageService.recordUsage(...)` 调用替换为
+     `messageBus.send(MessageEnvelope.deduplicated("chat_usage_record", payload, dedupKey))`
+   - 新增 `UsageRecordConsumer` 订阅 `chat_usage_record`（`ConsumerMode.PUSH`，group=`usage-group`）
+   - consumer 内部调 `UsageServiceImpl.recordUsage`，签名参数同步改为 `candidateId`
+   - 改造 `ChatUsageTracker` 不持有 `UsageService` 直接引用（解耦发送端与 DB 写入端）
+   - 验证：流式 + 同步两路径的 `AbstractModeStrategy.recordUsage` 调用链路都通过 bus 走通
+
+2. **Step 2 — chat 消息保存迁移**（影响面大，后做）：
+   - 新增 `ChatMessagePublisher.publishMessageSave(...)`（见 §7.1）
+   - 新增 `ChatMessagePayload` record（字段 `conversationId`、`userMessage`、`assistantContent`、`candidateId`、`totalTokens`）
+   - `ChatServiceImpl.processResult()` L190 原同步调用替换为 `chatMessagePublisher.publishMessageSave(...)`
+   - `MultiTurnModeStrategy.executeStream()` L96 的 `doFinally` 内同步调用替换为 `chatMessagePublisher.publishMessageSave(...)`
+   - 新增 `ChatMessageSaveConsumer` 订阅 `chat_message_save`（`ConsumerMode.PUSH`，group=`save-group`）
+   - consumer 内部调 `ChatConversationHelper.saveMessagesAndNotify`（事务、双消息写入、`onNewMessages` 全保留）
+   - `ChatConversationHelper.saveMessagesAndNotify` 失败入 legacy `MessageDeadLetterQueue` 的逻辑保持不变（Phase D 才退役）
+
+3. **Step 3 — legacy Redis DLQ 排空**：
+   - 持续监控 `MessageDeadLetterQueue.size()`，确保新增条目趋近 0
+   - 残留条目通过 `DeadLetterRetryScheduler` 排空
+   - 这一步不阻塞 Phase D 启动，但 legacy DLQ 在 7 天滚动窗口内仍有新条目时**禁止**删除（见 Phase D 前置条件）
+
+**退出条件**（必须全部满足）：
+- [ ] **流式路径端到端验证**：`MultiTurnModeStrategy.executeStream` SSE 流关闭 →
+      `doFinally` 内 `chatMessagePublisher.publishMessageSave` 触发 → broker 入队 →
+      consumer 拉取 → `saveMessagesAndNotify` 落库 → `onNewMessages` 更新会话元数据 →
+      客户端 UI 不依赖落库即可展示对话（这条是流式异步化的核心保证）
+- [ ] **同步路径端到端验证**：`processResult` 路径 publish → consume → 落库完整跑通
+- [ ] **bus 失败降级验证**：模拟 `MessagingException`（如 stop broker）→ catch 块同步调
+      `saveMessagesAndNotify` → 数据正确落库 → deduplicationKey 防双写验证通过
+- [ ] **usage 链路验证**：流式 + 同步两路径的 `AbstractModeStrategy.recordUsage` →
+      `ChatUsageTracker` → bus → `UsageRecordConsumer` → `UsageServiceImpl.recordUsage` 完整跑通
+- [ ] **legacy `MessageDeadLetterQueue` 在 7 天滚动窗口内 0 新条目**（Phase D 删除前置条件）
+- [ ] 重启后未落库的消息（broker 持久化）能被 consumer 重新拉取并落库（at-least-once 验证）
 
 ### Phase D — 文档替代 + 旧 DLQ 清理
 
 **目标**：完成所有迁移，清理遗留代码。
 
+> **前置条件**：§9 Phase C 退出条件全部满足（特别是 legacy `MessageDeadLetterQueue` 7 天 0 新条目）。
+> 在 Phase C 未完成前，本阶段 Step 2 / Step 3 不可执行。
+
 1. 将 `DocumentSupersedeService` 的 `@EventListener` + `@Async` 迁移到消息总线。
-2. 确认旧 `MessageDeadLetterQueue` 为空且 7 天无新条目后移除。
-3. 移除 `DeadLetterRetryScheduler`。
-4. 实现剩余 Micrometer 指标：`messaging.consumer.lag`、`messaging.consumer.receive.last.success`
+2. **确认 Phase C 退出条件全部满足后**，移除 `chat/service/MessageDeadLetterQueue.java`。
+3. **同步移除** `chat/service/DeadLetterRetryScheduler.java`（其职责由 RocketMQ
+   `%DLQ%{group}` + 应用层 `%APP_DLQ%{group}` 接管，见 §5.6）。
+4. 移除 `ChatConversationHelper` 对 `MessageDeadLetterQueue` 的依赖
+   （`saveMessagesAndNotify` 失败路径改为日志告警 + 依赖 broker 重试）。
+5. 实现剩余 Micrometer 指标：`messaging.consumer.lag`、`messaging.consumer.receive.last.success`
    （`messaging.send.latency`、`messaging.consume.latency`、`messaging.retry.count`、
    `messaging.dead.count` 已在 Phase A 实现，见 O-01）。
-5. 实现 `TracePropagator`（MDC traceId 传播）。
+6. 实现 `TracePropagator`（MDC traceId 传播）—— Phase A 已落地 `TracePropagator` 接口接入三处，
+   本步补上真正的 MDC / Spring Micrometer Tracing 实现（替换当前 NO_OP）。
 
 **退出条件**：所有 `@Async` / `@EventListener` 异步模式替换完毕；旧 DLQ 代码已移除；
 §3.1 定义的 Micrometer 指标全部可查询；traceId 跨消息传播验证通过。
@@ -2601,9 +2917,11 @@ messageBus.subscribe("rag_index_document", "index-group",
 | Broker 磁盘满导致写入失败 | 中 | 监控磁盘使用率，配置 `diskMaxUsedSpaceRatio` |
 | 5.x gRPC 客户端成熟度 | 中 | `rocketmq-client-java` 已发布多版，社区活跃；集成测试充分覆盖 |
 | 消费者积压 | 低 | 监控 `messaging.consumer.lag`，配置告警 |
-| 现有 DLQ 迁移期间消息丢失 | 低 | 新旧 DLQ 并行运行，确认旧 DLQ 清空后再移除 |
+| 现有 DLQ 迁移期间消息丢失 | 低 | Phase C 完成前 legacy `MessageDeadLetterQueue` 与新总线 `%DLQ%` / `%APP_DLQ%` 并行运行；Phase D 前置条件强制 7 天滚动窗口 0 新条目才能删除（见 §9 Phase C/D 依赖） |
 | DLQ 积压无告警 | 中 | 配置 `messaging.dead.count` > 100 条/小时告警；人工介入 SOP：查看死信 → 修复根因 → replay |
 | gRPC 客户端重连失败 | 低 | 5.x gRPC 客户端内置自动重连机制，NameServer/Broker 暂时不可达时客户端自动重试连接。关键路径（chat_message_save）已有 send() 降级兜底；非关键路径（chat_usage_record）连续失败仅记日志，不影响主流程。监控 `messaging.send.count{result=fail}` 告警 |
+| 流式 SSE 异步化导致 UI 与落库时机错位 | 低 | client SSE 拿到 assistant 内容后直接渲染（不依赖落库）；落库后通过 `onNewMessages` 更新会话列表元数据（计数+标题），延迟几十毫秒可接受。验证条目见 §9 Phase C 退出条件。回滚方案：publisher 内 `messageBus.send` 失败时同步降级调 `saveMessagesAndNotify`，行为与 Phase C 前完全一致 |
+| Phase C/D 强依赖未识别导致过早删除 legacy DLQ | 中 | §9 Phase D 前置条件强制 "Phase C 退出条件全部满足"；Phase D Step 2/3 删除前必须 grep 确认 0 引用 + 监控 7 天 0 新条目。CI 加 grep lint 防止 `MessageDeadLetterQueue` 被误回引 |
 
 ## 11. 参考资料
 

@@ -1,7 +1,10 @@
 package com.smart.rag.rag.service.impl;
 
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.smart.rag.infrastructure.exception.ServiceException;
+import com.smart.rag.infrastructure.response.PagedResult;
 import com.smart.rag.infrastructure.web.util.SecurityUtils;
+import com.smart.rag.rag.dto.DocumentDTO;
 import com.smart.rag.rag.entity.RagDocument;
 import com.smart.rag.rag.etl.EtlStatus;
 import com.smart.rag.rag.mapper.RagDocumentMapper;
@@ -29,12 +32,16 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * W5 R1-M1: 团队文档删除权限——仅 owner / ADMIN / CREATOR 可删（PRD 选项 3）。
- * retry / getById 保持团队共享，不受影响。
+ * W5 R1-M1（方案 B）：团队文档权限分层。
+ * <ul>
+ *   <li>读可见性：非 owner/ADMIN/CREATOR 仅可见 COMPLETED；其余状态 → NOT_FOUND（不泄露存在性）</li>
+ *   <li>变更（delete/retry）：仅 owner/ADMIN/CREATOR</li>
+ *   <li>listByTeam：非管理员只看（自己的任意状态）OR（全队 COMPLETED）</li>
+ * </ul>
  */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
-@DisplayName("W5 R1-M1: 团队文档删除权限（owner / ADMIN / CREATOR）")
+@DisplayName("W5 R1-M1: 团队文档权限分层（方案 B）")
 class DocumentApplicationServiceImplAuthTest {
 
     @Mock private EtlDispatchService etlDispatchService;
@@ -48,12 +55,12 @@ class DocumentApplicationServiceImplAuthTest {
                 documentLifecycleService, uploadStrategyFactory, teamMembershipVerifier);
     }
 
-    private static RagDocument teamDoc(Long teamId, Long ownerId) {
+    private static RagDocument doc(Long teamId, Long ownerId, EtlStatus status) {
         RagDocument d = new RagDocument();
         d.setId(10L);
         d.setTeamId(teamId);
         d.setUserId(ownerId);
-        d.setStatus(EtlStatus.FAILED);
+        d.setStatus(status);
         d.setFileSize(100L);
         return d;
     }
@@ -64,12 +71,14 @@ class DocumentApplicationServiceImplAuthTest {
         return m;
     }
 
+    // ==================== delete 授权 ====================
+
     @Test
-    @DisplayName("owner 可删除自己的团队文档")
+    @DisplayName("owner 可删除自己的团队文档（任意状态）")
     void ownerCanDeleteOwnTeamDoc() {
         try (MockedStatic<SecurityUtils> sec = mockStatic(SecurityUtils.class)) {
             sec.when(SecurityUtils::getCurrentUserId).thenReturn(1L);
-            when(ragDocumentMapper.selectById(anyLong())).thenReturn(teamDoc(5L, 1L));
+            when(ragDocumentMapper.selectById(anyLong())).thenReturn(doc(5L, 1L, EtlStatus.FAILED));
             when(teamMembershipVerifier.verifyMember(5L, 1L)).thenReturn(member(TeamMemberRole.MEMBER));
             when(documentLifecycleService.cascadeDelete(any())).thenReturn(true);
 
@@ -83,7 +92,7 @@ class DocumentApplicationServiceImplAuthTest {
     void adminCanDeleteOthersTeamDoc() {
         try (MockedStatic<SecurityUtils> sec = mockStatic(SecurityUtils.class)) {
             sec.when(SecurityUtils::getCurrentUserId).thenReturn(1L);
-            when(ragDocumentMapper.selectById(anyLong())).thenReturn(teamDoc(5L, 2L)); // owned by user 2
+            when(ragDocumentMapper.selectById(anyLong())).thenReturn(doc(5L, 2L, EtlStatus.FAILED));
             when(teamMembershipVerifier.verifyMember(5L, 1L)).thenReturn(member(TeamMemberRole.ADMIN));
             when(documentLifecycleService.cascadeDelete(any())).thenReturn(true);
 
@@ -92,15 +101,14 @@ class DocumentApplicationServiceImplAuthTest {
     }
 
     @Test
-    @DisplayName("非所有者的普通 MEMBER 删除团队文档 → DOCUMENT_OWNERSHIP_DENIED")
-    void nonOwnerMemberForbidden() {
+    @DisplayName("非所有者 MEMBER 删除别人的 COMPLETED 团队文档 → OWNERSHIP_DENIED（可见但不可删）")
+    void nonOwnerMemberCannotDeleteCompleted() {
         try (MockedStatic<SecurityUtils> sec = mockStatic(SecurityUtils.class)) {
             sec.when(SecurityUtils::getCurrentUserId).thenReturn(1L);
-            when(ragDocumentMapper.selectById(anyLong())).thenReturn(teamDoc(5L, 2L));
+            when(ragDocumentMapper.selectById(anyLong())).thenReturn(doc(5L, 2L, EtlStatus.COMPLETED));
             when(teamMembershipVerifier.verifyMember(5L, 1L)).thenReturn(member(TeamMemberRole.MEMBER));
 
-            assertThatThrownBy(() -> service().delete(10L))
-                    .isInstanceOf(ServiceException.class);
+            assertThatThrownBy(() -> service().delete(10L)).isInstanceOf(ServiceException.class);
             verify(documentLifecycleService, never()).cascadeDelete(any());
         }
     }
@@ -110,7 +118,7 @@ class DocumentApplicationServiceImplAuthTest {
     void personalOwnerCanDelete() {
         try (MockedStatic<SecurityUtils> sec = mockStatic(SecurityUtils.class)) {
             sec.when(SecurityUtils::getCurrentUserId).thenReturn(1L);
-            when(ragDocumentMapper.selectById(anyLong())).thenReturn(teamDoc(null, 1L));
+            when(ragDocumentMapper.selectById(anyLong())).thenReturn(doc(null, 1L, EtlStatus.COMPLETED));
             when(documentLifecycleService.cascadeDelete(any())).thenReturn(true);
 
             assertThat(service().delete(10L)).isTrue();
@@ -118,16 +126,85 @@ class DocumentApplicationServiceImplAuthTest {
         }
     }
 
+    // ==================== 读可见性分层 ====================
+
     @Test
-    @DisplayName("retry 保持团队共享：普通成员可重试他人团队文档（不受 R1-M1 影响）")
-    void retryRemainsTeamShared() {
+    @DisplayName("非 owner MEMBER 访问别人的 FAILED 团队文档 → NOT_FOUND（中间态不暴露）")
+    void nonOwnerCannotSeeOthersFailed() {
         try (MockedStatic<SecurityUtils> sec = mockStatic(SecurityUtils.class)) {
             sec.when(SecurityUtils::getCurrentUserId).thenReturn(1L);
-            when(ragDocumentMapper.selectById(anyLong())).thenReturn(teamDoc(5L, 2L));
+            when(ragDocumentMapper.selectById(anyLong())).thenReturn(doc(5L, 2L, EtlStatus.FAILED));
             when(teamMembershipVerifier.verifyMember(5L, 1L)).thenReturn(member(TeamMemberRole.MEMBER));
 
-            // retry 不抛 ownership 异常即证明未受 R1-M1 收紧影响（delete 专用，retry 保持共享）
-            service().retry(10L);
+            assertThatThrownBy(() -> service().getById(10L)).isInstanceOf(ServiceException.class);
+        }
+    }
+
+    @Test
+    @DisplayName("非 owner MEMBER 访问别人的 COMPLETED 团队文档 → 可读")
+    void nonOwnerCanSeeOthersCompleted() {
+        try (MockedStatic<SecurityUtils> sec = mockStatic(SecurityUtils.class)) {
+            sec.when(SecurityUtils::getCurrentUserId).thenReturn(1L);
+            when(ragDocumentMapper.selectById(anyLong())).thenReturn(doc(5L, 2L, EtlStatus.COMPLETED));
+            when(teamMembershipVerifier.verifyMember(5L, 1L)).thenReturn(member(TeamMemberRole.MEMBER));
+
+            DocumentDTO dto = service().getById(10L);
+            assertThat(dto).isNotNull();
+            assertThat(dto.status()).isEqualTo(EtlStatus.COMPLETED);
+        }
+    }
+
+    @Test
+    @DisplayName("owner 访问自己的 FAILED 团队文档 → 可见")
+    void ownerCanSeeOwnFailed() {
+        try (MockedStatic<SecurityUtils> sec = mockStatic(SecurityUtils.class)) {
+            sec.when(SecurityUtils::getCurrentUserId).thenReturn(1L);
+            when(ragDocumentMapper.selectById(anyLong())).thenReturn(doc(5L, 1L, EtlStatus.FAILED));
+            when(teamMembershipVerifier.verifyMember(5L, 1L)).thenReturn(member(TeamMemberRole.MEMBER));
+
+            assertThat(service().getById(10L)).isNotNull();
+        }
+    }
+
+    // ==================== retry 授权 ====================
+
+    @Test
+    @DisplayName("owner 可重试自己的 FAILED 团队文档")
+    void ownerCanRetryOwnFailed() {
+        try (MockedStatic<SecurityUtils> sec = mockStatic(SecurityUtils.class)) {
+            sec.when(SecurityUtils::getCurrentUserId).thenReturn(1L);
+            when(ragDocumentMapper.selectById(anyLong())).thenReturn(doc(5L, 1L, EtlStatus.FAILED));
+            when(teamMembershipVerifier.verifyMember(5L, 1L)).thenReturn(member(TeamMemberRole.MEMBER));
+
+            assertThat(service().retry(10L).status()).isEqualTo(EtlStatus.PROCESSING);
+        }
+    }
+
+    @Test
+    @DisplayName("非 owner MEMBER 重试别人的 FAILED 团队文档 → NOT_FOUND（中间态不可见，retry 不再共享）")
+    void nonOwnerCannotRetryOthersFailed() {
+        try (MockedStatic<SecurityUtils> sec = mockStatic(SecurityUtils.class)) {
+            sec.when(SecurityUtils::getCurrentUserId).thenReturn(1L);
+            when(ragDocumentMapper.selectById(anyLong())).thenReturn(doc(5L, 2L, EtlStatus.FAILED));
+            when(teamMembershipVerifier.verifyMember(5L, 1L)).thenReturn(member(TeamMemberRole.MEMBER));
+
+            assertThatThrownBy(() -> service().retry(10L)).isInstanceOf(ServiceException.class);
+        }
+    }
+
+    // ==================== listByTeam 可见性过滤 ====================
+
+    @Test
+    @DisplayName("listByTeam：普通成员查询应用可见性过滤（wrapper 构造不抛异常）")
+    void listByTeamMemberAppliesVisibilityFilter() {
+        try (MockedStatic<SecurityUtils> sec = mockStatic(SecurityUtils.class)) {
+            sec.when(SecurityUtils::getCurrentUserId).thenReturn(1L);
+            when(teamMembershipVerifier.verifyMember(5L, 1L)).thenReturn(member(TeamMemberRole.MEMBER));
+            when(ragDocumentMapper.selectPage(any(), any())).thenReturn(new Page<RagDocument>(1, 10));
+
+            PagedResult<DocumentDTO> result = service().listByTeam(5L, 1, 10);
+            assertThat(result).isNotNull();
+            verify(ragDocumentMapper).selectPage(any(), any());
         }
     }
 }

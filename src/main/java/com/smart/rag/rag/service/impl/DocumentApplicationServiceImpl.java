@@ -112,8 +112,7 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
     @Override
     public PagedResult<DocumentDTO> listByTeam(Long teamId, int page, int size) {
         Long currentUserId = SecurityUtils.getCurrentUserId();
-        // 校验团队成员身份
-        teamMembershipVerifier.verifyMember(teamId, currentUserId);
+        TeamMember member = teamMembershipVerifier.verifyMember(teamId, currentUserId);
 
         int[] normalized = normalizePaging(page, size);
         Page<RagDocument> mpPage = new Page<>(normalized[0], normalized[1]);
@@ -121,6 +120,15 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
                 .eq(RagDocument::getTeamId, teamId)
                 .ne(RagDocument::getStatus, EtlStatus.SUPERSEDED)
                 .orderByDesc(RagDocument::getCreateTime);
+
+        // R1-M1 可见性分层（方案 B）：非 ADMIN/CREATOR 成员只看到
+        // （自己上传的任意状态）OR（全队 COMPLETED）；管理员/创建者看全队全部
+        TeamMemberRole role = member.getRole();
+        if (role != TeamMemberRole.ADMIN && role != TeamMemberRole.CREATOR) {
+            wrapper.and(w -> w.eq(RagDocument::getUserId, currentUserId)
+                    .or().eq(RagDocument::getStatus, EtlStatus.COMPLETED));
+        }
+
         Page<RagDocument> result = ragDocumentMapper.selectPage(mpPage, wrapper);
         return PagedResult.of(result, this::toDTO);
     }
@@ -134,13 +142,14 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
     @Override
     public boolean delete(Long id) {
         RagDocument doc = verifyAccess(id);
-        assertCanDelete(doc);
+        assertCanMutate(doc);
         return documentLifecycleService.cascadeDelete(doc);
     }
 
     @Override
     public DocumentUploadResponse retry(Long id) {
         RagDocument doc = verifyAccess(id);
+        assertCanMutate(doc);
         if (doc.getSupersededBy() != null) {
             throw new ClientException(ClientErrorCode.BAD_REQUEST, "文档已被新版本替代，无法重试");
         }
@@ -241,36 +250,48 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
                 throw new ClientException(ClientErrorCode.FORBIDDEN, "无权操作该文档");
             }
         } else {
-            // 团队文档 — 必须是成员（读 / 重试保持共享；删除的 owner/ADMIN 收紧见 assertCanDelete）
-            teamMembershipVerifier.verifyMember(doc.getTeamId(), currentUserId);
+            // 团队文档 — 必须是成员
+            TeamMember member = teamMembershipVerifier.verifyMember(doc.getTeamId(), currentUserId);
+            // R1-M1 可见性分层（方案 B）：非 owner/ADMIN/CREATOR 只能访问 COMPLETED 文档；
+            // 中间态/失败/被替代等对其他成员不可见，返回 NOT_FOUND（不泄露存在性）。
+            if (!isOwnerOrManager(doc.getUserId(), currentUserId, member)
+                    && doc.getStatus() != EtlStatus.COMPLETED) {
+                log.warn("Visibility denied (R1-M1): userId={} accessed non-completed team doc id={} status={}",
+                        currentUserId, id, doc.getStatus());
+                throw new ServiceException(ServiceErrorCode.DOCUMENT_NOT_FOUND, "文档不存在: " + id);
+            }
         }
 
         return doc;
     }
 
     /**
-     * R1-M1: 团队文档删除权限——仅文档所有者或团队管理员/创建者可删除。
+     * R1-M1: 团队文档变更权限（delete / retry）——仅文档所有者或团队管理员/创建者。
      * <p>
-     * 个人文档已由 {@link #verifyAccess} 保证 owner；retry / getById / getHistory
-     * 保持团队共享（任何成员可读、可重试），仅破坏性的 delete 收紧。采用 PRD 选项 3。
+     * 个人文档已由 {@link #verifyAccess} 保证 owner。读（getById/getHistory）由
+     * verifyAccess 的可见性分层管控：COMPLETED 全队可读，其余仅 owner/管理员可见。
      */
-    private void assertCanDelete(RagDocument doc) {
+    private void assertCanMutate(RagDocument doc) {
         if (doc.getTeamId() == null) {
             return; // 个人文档：verifyAccess 已校验 owner
         }
         Long currentUserId = SecurityUtils.getCurrentUserId();
-        if (currentUserId.equals(doc.getUserId())) {
-            return; // 文档所有者
-        }
-        // 非所有者 → 需 ADMIN / CREATOR
         TeamMember member = teamMembershipVerifier.verifyMember(doc.getTeamId(), currentUserId);
-        TeamMemberRole role = member.getRole();
-        if (role != TeamMemberRole.ADMIN && role != TeamMemberRole.CREATOR) {
-            log.warn("Delete denied (R1-M1): userId={} attempted to delete team doc id={} owned by {}",
+        if (!isOwnerOrManager(doc.getUserId(), currentUserId, member)) {
+            log.warn("Mutation denied (R1-M1): userId={} attempted to mutate team doc id={} owned by {}",
                     currentUserId, doc.getId(), doc.getUserId());
             throw new ServiceException(ServiceErrorCode.DOCUMENT_OWNERSHIP_DENIED,
-                    "仅文档所有者或团队管理员可删除该文档");
+                    "仅文档所有者或团队管理员可操作该文档");
         }
+    }
+
+    /** 文档所有者本人 或 团队 ADMIN / CREATOR */
+    private static boolean isOwnerOrManager(Long ownerId, Long currentUserId, TeamMember member) {
+        if (currentUserId.equals(ownerId)) {
+            return true;
+        }
+        TeamMemberRole role = member.getRole();
+        return role == TeamMemberRole.ADMIN || role == TeamMemberRole.CREATOR;
     }
 
     private DocumentDTO toDTO(RagDocument doc) {

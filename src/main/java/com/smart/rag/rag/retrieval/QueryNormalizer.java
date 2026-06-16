@@ -48,8 +48,10 @@ public class QueryNormalizer {
         normalized = nfcNormalize(normalized);
         normalized = compressWhitespace(normalized);
 
+        // R1-L4: 不记录原始 query（可能含 PII），仅记录长度变化与归一化后文本
         if (log.isDebugEnabled() && !normalized.equals(query.trim())) {
-            log.debug("Query normalized: '{}' → '{}'", query, normalized);
+            log.debug("Query normalized: len {} → {}, normalized='{}'",
+                    query.trim().length(), normalized.length(), normalized);
         }
 
         return normalized;

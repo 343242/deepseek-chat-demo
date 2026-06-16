@@ -91,6 +91,9 @@ public class EtlDispatchServiceImpl implements EtlDispatchService {
             // Try to acquire all locks sequentially.
             // leaseTime=-1 triggers Redisson watchdog auto-renewal (default 30s interval),
             // preventing lock expiry during long-running ETL jobs.
+            // R1-M3: 该锁为 best-effort 互斥——watchdog 续期受 GC/网络抖动影响，极端情况下仍
+            // 可能提前释放导致并发 ETL；真正的正确性边界是向量库写入的幂等性（按 documentId
+            // 去重/覆盖），锁仅用于减少重复计算，不作为唯一正确性保证。
             for (RLock lock : locks) {
                 if (!lock.tryLock(LOCK_WAIT_SECONDS, -1, TimeUnit.SECONDS)) {
                     log.warn("ETL lock acquisition failed for document, skipping: {}", lock.getName());

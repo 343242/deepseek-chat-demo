@@ -38,6 +38,8 @@ public class RerankDocumentPostProcessor implements DocumentPostProcessor {
 
     @Override
     public List<Document> process(Query query, List<Document> documents) {
+        // R1-M8 降级契约：空文档 → 空；空/blank 查询 → 原样透传（无语义无法精排）；
+        // rerank 返回空结果 → 原样透传 + warn（见下）。任一降级均不抛异常，保证检索链路不中断。
         if (documents == null || documents.isEmpty()) return List.of();
         if (query == null || query.text() == null || query.text().isBlank()) return documents;
 

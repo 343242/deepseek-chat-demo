@@ -35,8 +35,20 @@ public class DocumentExtractor implements Extractor {
     public List<Document> extract(String bucket, String objectKey, String mimeType) {
         Resource fileResource = fileStorageService.download(bucket, objectKey);
         DocumentParser parser = parserFactory.getParser(mimeType);
-        List<Document> documents = parser.parse(fileResource, mimeType);
-        log.info("Extracted {} segments (mime={})", documents.size(), mimeType);
-        return documents;
+        try {
+            List<Document> documents = parser.parse(fileResource, mimeType);
+            log.info("Extracted {} segments (mime={})", documents.size(), mimeType);
+            return documents;
+        } finally {
+            // R1-M5: MinioStreamResource 实现 Closeable；确保 parser 抛异常时也关闭
+            // 底层 MinIO GetObjectResponse，防止 HTTP 连接泄漏。
+            if (fileResource instanceof java.io.Closeable closeable) {
+                try {
+                    closeable.close();
+                } catch (java.io.IOException e) {
+                    log.warn("Failed to close MinIO resource: {}/{}", bucket, objectKey);
+                }
+            }
+        }
     }
 }

@@ -111,28 +111,58 @@ public class PersonalUploadStrategy implements UploadStrategy {
         List<DocumentUploadResponse> responses = new ArrayList<>();
 
         for (MultipartFile file : files) {
-            String mimeType = file.getContentType();
             String originalFilename = file.getOriginalFilename();
             String storageKey = buildStorageKey(userId, originalFilename);
+            boolean uploaded = false;
+            RagDocument ragDoc = null;
+            try {
+                String mimeType = file.getContentType();
+                fileStorageService.upload(bucket, storageKey, file.getResource(), mimeType);
+                uploaded = true;
 
-            fileStorageService.upload(bucket, storageKey, file.getResource(), mimeType);
-
-            String fileMd5 = computeMd5(file);
-            RagDocument ragDoc = persistDocument(originalFilename, file.getSize(), mimeType, storageKey, bucket, userId, fileMd5);
-            if (documentDedupService != null && ragDoc.getFileMd5() != null) {
-                documentDedupService.add(ragDoc.getFileMd5());
+                String fileMd5 = computeMd5(file);
+                ragDoc = persistDocument(originalFilename, file.getSize(), mimeType, storageKey, bucket, userId, fileMd5);
+                // persist 成功后立即登记 dispatch 候选 —— 即使后续 dedup/event 抛异常，
+                // 该文档仍会被 dispatch，避免落入 UPLOADED 死状态。
+                candidates.add(new EtlCandidate(ragDoc.getId(), bucket, storageKey, originalFilename, mimeType, file.getSize(), userId, ragDoc.getTeamId()));
+                if (documentDedupService != null && ragDoc.getFileMd5() != null) {
+                    documentDedupService.add(ragDoc.getFileMd5());
+                }
+                eventPublisher.publishEvent(new DocumentCreatedEvent(ragDoc.getId(), null, userId, ragDoc.getTeamId()));
+                log.debug("Document uploaded (batch): id={}, file={}, size={}, userId={}", ragDoc.getId(), originalFilename, file.getSize(), userId);
+                responses.add(new DocumentUploadResponse(ragDoc.getId(), originalFilename, EtlStatus.PROCESSING));
+            } catch (Exception e) {
+                // R1-H3: 单文件失败不中断整批。仅在"已上传但未成功 persist"时回滚 MinIO 对象，
+                // 避免无 DB 记录的孤儿对象；已 persist 的（ragDoc != null）保留并照常 dispatch。
+                log.error("Batch upload failed for file (continuing batch): file={}, userId={}", originalFilename, userId, e);
+                if (uploaded && ragDoc == null) {
+                    rollbackMinioObject(bucket, storageKey, originalFilename);
+                }
+                responses.add(new DocumentUploadResponse(ragDoc != null ? ragDoc.getId() : null, originalFilename, EtlStatus.FAILED));
             }
-            eventPublisher.publishEvent(new DocumentCreatedEvent(ragDoc.getId(), null, userId, ragDoc.getTeamId()));
-            log.debug("Document uploaded (batch): id={}, file={}, size={}, userId={}", ragDoc.getId(), originalFilename, file.getSize(), userId);
-
-            candidates.add(new EtlCandidate(ragDoc.getId(), bucket, storageKey, originalFilename, mimeType, file.getSize(), userId, ragDoc.getTeamId()));
-            responses.add(new DocumentUploadResponse(ragDoc.getId(), originalFilename, EtlStatus.PROCESSING));
         }
 
-        etlDispatchService.dispatch(candidates);
+        // 所有成功 persist 的候选统一 dispatch，即使批次中后续文件失败也已覆盖，避免 UPLOADED 死状态
+        if (!candidates.isEmpty()) {
+            etlDispatchService.dispatch(candidates);
+        }
 
-        log.info("Batch upload completed: count={}, userId={}", responses.size(), userId);
+        log.info("Batch upload completed: succeeded={}, total={}, userId={}", candidates.size(), responses.size(), userId);
         return responses;
+    }
+
+    /**
+     * 尽力删除已上传但未能 persist 的 MinIO 对象（R1-H3 回滚）。
+     * 删除失败仅记录日志，不影响主流程。
+     */
+    private void rollbackMinioObject(String bucket, String storageKey, String originalFilename) {
+        try {
+            fileStorageService.delete(bucket, storageKey);
+            log.debug("Rolled back MinIO object after batch failure: file={}", originalFilename);
+        } catch (Exception ex) {
+            log.warn("Failed to roll back MinIO object after batch failure: bucket={}, key={}, file={}",
+                    bucket, storageKey, originalFilename);
+        }
     }
 
     // === 私有方法 ===

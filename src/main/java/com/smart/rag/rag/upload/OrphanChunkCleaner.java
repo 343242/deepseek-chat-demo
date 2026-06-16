@@ -157,18 +157,35 @@ public class OrphanChunkCleaner {
     }
 
     /**
+     * 分片对象路径格式: chunks/{userId}/{uploadId}/part-{chunkIndex}；
+     * uploadId 为 36 位 UUID（hex + 连字符）。R1-M4: 用正则稳健提取，避免依赖固定路径层数。
+     */
+    private static final java.util.regex.Pattern CHUNK_PATH_PATTERN =
+            java.util.regex.Pattern.compile("^chunks/[^/]+/([0-9a-f-]{36})/part-\\d+$");
+
+    /**
+     * 从分片对象名提取 uploadId；不匹配预期格式时返回 empty（R1-M4）。
+     * package-private 以便单测，纯函数不依赖 Redis。
+     */
+    static java.util.Optional<String> extractUploadId(String objectName) {
+        java.util.regex.Matcher matcher = CHUNK_PATH_PATTERN.matcher(objectName);
+        return matcher.matches() ? java.util.Optional.of(matcher.group(1)) : java.util.Optional.empty();
+    }
+
+    /**
      * 检查分片对象是否仍有活跃的 Redis session。
      * <p>
-     * 路径格式: chunks/{userId}/{uploadId}/part-{chunkIndex}
+     * R1-M4: 路径不匹配预期格式时返回 {@code true}（视为活跃），
+     * 绝不因解析失败而删除存活分片。
      */
     private boolean hasActiveSession(String objectName) {
-        String[] parts = objectName.split("/");
-        if (parts.length >= 3) {
-            String uploadId = parts[2];
-            String sessionKey = UploadRedisConstants.sessionKey(uploadId);
-            Long ttl = redisTemplate.getExpire(sessionKey, TimeUnit.SECONDS);
-            return ttl != null && ttl > 0;
+        java.util.Optional<String> uploadIdOpt = extractUploadId(objectName);
+        if (uploadIdOpt.isEmpty()) {
+            // 路径结构与预期不符 —— 保守跳过，不删除
+            return true;
         }
-        return false;
+        String sessionKey = UploadRedisConstants.sessionKey(uploadIdOpt.get());
+        Long ttl = redisTemplate.getExpire(sessionKey, TimeUnit.SECONDS);
+        return ttl != null && ttl > 0;
     }
 }

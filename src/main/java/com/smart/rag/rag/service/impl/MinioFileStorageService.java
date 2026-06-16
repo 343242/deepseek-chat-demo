@@ -106,12 +106,14 @@ public class MinioFileStorageService implements FileStorageService {
      * InputStream 在被消费后（如 parser 解析完毕）自动关闭，释放 MinIO 连接。
      * </p>
      */
-    static class MinioStreamResource extends InputStreamResource {
+    static class MinioStreamResource extends InputStreamResource implements java.io.Closeable {
 
         private final String filename;
+        private final GetObjectResponse response;
 
         MinioStreamResource(GetObjectResponse response, String bucket, String objectKey) {
             super(response);
+            this.response = response;
             this.filename = objectKey.substring(objectKey.lastIndexOf('/') + 1);
         }
 
@@ -123,6 +125,15 @@ public class MinioFileStorageService implements FileStorageService {
         @Override
         public long contentLength() {
             return -1L; // 未知长度，避免提前读取
+        }
+
+        /**
+         * R1-M5: 关闭底层 MinIO {@link GetObjectResponse}，释放 HTTP 连接。
+         * 供 {@code DocumentExtractor} 在 try-finally 中调用，确保 parser 抛异常时不泄漏连接。
+         */
+        @Override
+        public void close() throws java.io.IOException {
+            response.close();
         }
     }
 

@@ -13,10 +13,13 @@ public record PageRequest(
     int page,
     int size
 ) {
+    /** 列表分页 size 上限（W3 LOW-2: 统一 100，防大查询拖垮 DB；list 接口与此对齐） */
+    public static final int MAX_PAGE_SIZE = 100;
+
     public static PageRequest of(int page, int size) {
         return new PageRequest(
                 Math.max(page, 1),
-                Math.clamp(size, 1, 500)
+                Math.clamp(size, 1, MAX_PAGE_SIZE)
         );
     }
 

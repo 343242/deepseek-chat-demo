@@ -6,6 +6,7 @@ import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;
 import com.smart.rag.infrastructure.exception.errorcode.ServiceErrorCode;
 import com.smart.rag.infrastructure.exception.ClientException;
 import com.smart.rag.infrastructure.exception.ServiceException;
+import com.smart.rag.infrastructure.request.PageRequest;
 import com.smart.rag.infrastructure.response.PagedResult;
 import com.smart.rag.rag.dto.DocumentDTO;
 import com.smart.rag.rag.dto.DocumentUploadResponse;
@@ -43,8 +44,7 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
 
     private static final Logger log = LoggerFactory.getLogger(DocumentApplicationServiceImpl.class);
 
-    /** R1-H2: 列表接口 size 上限，超过静默钳制到 100 */
-    private static final int MAX_PAGE_SIZE = 100;
+    // R1-H2: list size 上限复用 PageRequest.MAX_PAGE_SIZE（W3 LOW-2 统一，避免 drift）
 
     private final EtlDispatchService etlDispatchService;
     private final RagDocumentMapper ragDocumentMapper;
@@ -206,7 +206,7 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
     }
 
     /**
-     * R1-H2: 归一化分页参数：page &lt; 1 → 1；size 钳制到 [1, {@value #MAX_PAGE_SIZE}]。
+     * R1-H2: 归一化分页参数：page &lt; 1 → 1；size 钳制到 [1, {@value PageRequest#MAX_PAGE_SIZE}]。
      * 超过上限时静默钳制并记录 debug 日志（按 PRD 决策偏好 clamp）。
      *
      * @return [page, size]
@@ -218,9 +218,9 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
         if (size < 1) {
             size = 1;
         }
-        if (size > MAX_PAGE_SIZE) {
-            log.debug("list page size {} clamped to {}", size, MAX_PAGE_SIZE);
-            size = MAX_PAGE_SIZE;
+        if (size > PageRequest.MAX_PAGE_SIZE) {
+            log.debug("list page size {} clamped to {}", size, PageRequest.MAX_PAGE_SIZE);
+            size = PageRequest.MAX_PAGE_SIZE;
         }
         return new int[]{page, size};
     }

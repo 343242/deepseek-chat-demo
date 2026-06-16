@@ -49,8 +49,18 @@ public class ParentChildChunkStrategy implements ChunkStrategy {
 
     private final DocumentProperties properties;
 
+    // R1-L1: 构造一次复用，避免每次 chunk() 重建 splitter（config-driven 且不可变）
+    private final TokenTextSplitter parentSplitter;
+    private final TokenTextSplitter childSplitter;
+
     public ParentChildChunkStrategy(DocumentProperties properties) {
         this.properties = properties;
+        this.parentSplitter = TokenTextSplitter.builder()
+                .withChunkSize(properties.getParentChunkSize())
+                .build();
+        this.childSplitter = TokenTextSplitter.builder()
+                .withChunkSize(properties.getChildChunkSize())
+                .build();
     }
 
     @Override
@@ -66,14 +76,6 @@ public class ParentChildChunkStrategy implements ChunkStrategy {
 
         int parentSize = properties.getParentChunkSize();
         int childSize = properties.getChildChunkSize();
-
-        TokenTextSplitter parentSplitter = TokenTextSplitter.builder()
-                .withChunkSize(parentSize)
-                .build();
-
-        TokenTextSplitter childSplitter = TokenTextSplitter.builder()
-                .withChunkSize(childSize)
-                .build();
 
         List<Document> allChunks = new ArrayList<>();
         int globalChildIndex = 0;

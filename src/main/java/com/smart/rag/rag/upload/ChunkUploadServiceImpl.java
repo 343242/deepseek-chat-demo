@@ -19,6 +19,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.smart.rag.common.team.TeamStatusService;
 import io.minio.*;
 import io.minio.SourceObject;
+import org.apache.commons.codec.digest.DigestUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.util.unit.DataSize;
@@ -32,7 +33,6 @@ import org.springframework.stereotype.Service;
 
 import java.io.ByteArrayInputStream;
 import java.io.InputStream;
-import java.security.MessageDigest;
 import java.time.OffsetDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -164,7 +164,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         }
 
         // 分片 MD5 校验
-        String actualChunkMd5 = md5Hex(chunkData);
+        String actualChunkMd5 = DigestUtils.md5Hex(chunkData);
         if (!actualChunkMd5.equalsIgnoreCase(chunkMd5)) {
             log.warn("Chunk MD5 mismatch: uploadId={}, index={}, expected={}, actual={}",
                     uploadId, chunkIndex, chunkMd5, actualChunkMd5);
@@ -197,7 +197,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
             log.info("All chunks uploaded, triggering async merge: uploadId={}", uploadId);
             mergeExecutor.execute(() -> {
                 try {
-                    performMerge(uploadId);
+                    performMerge(uploadId); // docId ignored for async path
                 } catch (AbstractException e) {
                     // 业务异常（如团队解散）：清理 __merging 标记，前端可感知
                     log.warn("Auto-merge rejected: uploadId={}, reason={}", uploadId, e.getMessage());
@@ -283,10 +283,21 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
             throw new ClientException(ClientErrorCode.BAD_REQUEST, "文件合并正在进行中，请稍后重试");
         }
 
-        performMerge(uploadId);
+        Long docId = performMerge(uploadId);
 
+        // R1-H1: performMerge 现在直接返回新持久化的 docId，
+        // 不再依赖可能因竞态/延迟查不到的 findExistingForQuickUpload。
+        // 防御性兜底：docId 为 null（如会话已被并发清理）则回退查询，
+        // 仍查不到时抛 ServiceException，绝不返回 null 包成 200。
+        if (docId != null) {
+            return docId;
+        }
         RagDocument doc = findExistingForQuickUpload(fileMd5, userId, teamId);
-        return doc != null ? doc.getId() : null;
+        if (doc == null) {
+            log.error("Post-merge document lookup failed: uploadId={}, fileMd5={}, userId={}", uploadId, fileMd5, userId);
+            throw new ServiceException(ServiceErrorCode.ETL_FAILED, "合并后文档未找到");
+        }
+        return doc.getId();
     }
 
     // ==================== abort ====================
@@ -325,13 +336,21 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
 
     // ==================== 合并流程 ====================
 
-    void performMerge(String uploadId) {
+    /**
+     * 执行分片合并流程。
+     * <p>
+     * R1-H1: 返回新持久化的 docId，避免 {@code complete()} 依赖重新查询；
+     * 会话已被清理（幂等重复触发）时返回 {@code null}。
+     *
+     * @return 新文档的 docId；会话已不存在则返回 null
+     */
+    Long performMerge(String uploadId) {
         String sessionKey = UploadRedisConstants.sessionKey(uploadId);
         Map<String, String> session = toStringMap(redisTemplate.opsForHash().entries(sessionKey));
 
         if (session.isEmpty()) {
             log.warn("Merge skipped: session already cleaned, uploadId={}", uploadId);
-            return;
+            return null;
         }
 
         // 团队状态校验：团队已解散则拒绝合并
@@ -424,13 +443,15 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         String replaceDocIdStr = session.get("replaceDocumentId");
         Long replaceDocumentId = replaceDocIdStr != null ? Long.parseLong(replaceDocIdStr) : null;
         eventPublisher.publishEvent(new DocumentCreatedEvent(docId, replaceDocumentId, userId, teamId));
+
+        return docId;
     }
 
     // ==================== 私有方法 ====================
 
     private void validateMimeType(String mimeType) {
-        Set<String> allowed = Set.of(documentProperties.getAllowedMimeTypes().split(","));
-        if (!allowed.contains(mimeType)) {
+        // R1-M7: 委托 DocumentValidator 的单一解析入口，容忍配置中的空格
+        if (!documentValidator.isAllowedMimeType(mimeType)) {
             throw new ClientException(ClientErrorCode.UPLOAD_MIME_UNSUPPORTED, "不支持的文件类型: " + mimeType);
         }
     }
@@ -639,13 +660,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
     private String computeFileMd5FromMinio(String bucket, String objectName) {
         try (InputStream is = minioClient.getObject(
                 GetObjectArgs.builder().bucket(bucket).object(objectName).build())) {
-            MessageDigest md = MessageDigest.getInstance("MD5");
-            byte[] buffer = new byte[8192];
-            int read;
-            while ((read = is.read(buffer)) != -1) {
-                md.update(buffer, 0, read);
-            }
-            return hexFormat(md.digest());
+            return DigestUtils.md5Hex(is);
         } catch (Exception e) {
             log.error("Failed to compute file MD5 from MinIO: bucket={}, object={}", bucket, objectName, e);
             throw new ClientException(ClientErrorCode.UPLOAD_FAILED, "文件校验失败");
@@ -743,26 +758,6 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
     }
 
     // ==================== 工具方法 ====================
-
-    private static String md5Hex(byte[] data) {
-        try {
-            MessageDigest md = MessageDigest.getInstance("MD5");
-            return hexFormat(md.digest(data));
-        } catch (Exception e) {
-            throw new RuntimeException("MD5 computation failed", e);
-        }
-    }
-
-    private static final char[] HEX_CHARS = "0123456789abcdef".toCharArray();
-
-    private static String hexFormat(byte[] bytes) {
-        char[] chars = new char[bytes.length * 2];
-        for (int i = 0; i < bytes.length; i++) {
-            chars[i * 2] = HEX_CHARS[(bytes[i] >> 4) & 0x0f];
-            chars[i * 2 + 1] = HEX_CHARS[bytes[i] & 0x0f];
-        }
-        return new String(chars);
-    }
 
     private static Map<String, String> toStringMap(Map<Object, Object> raw) {
         Map<String, String> result = new HashMap<>(raw.size());

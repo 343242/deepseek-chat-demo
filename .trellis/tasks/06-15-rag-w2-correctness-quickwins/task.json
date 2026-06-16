@@ -3,7 +3,7 @@
   "name": "rag-w2-correctness-quickwins",
   "title": "RAG review W2: correctness quick wins",
   "description": "R1-H1/R1-H4 null-as-success, R1-M7 MIME trim, R2-L3 exception type, R1-L1 splitter reuse, U1 MD5 -> DigestUtils (BOM-managed commons-codec)",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

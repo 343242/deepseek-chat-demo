@@ -18,6 +18,7 @@ import com.smart.rag.team.enums.ApprovalStatus;
 import com.smart.rag.team.enums.TeamMemberRole;
 import com.smart.rag.team.mapper.TeamMemberMapper;
 import com.smart.rag.team.mapper.TeamUploadApprovalMapper;
+import org.apache.commons.codec.digest.DigestUtils;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -26,7 +27,6 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.InputStream;
-import java.security.MessageDigest;
 import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -228,21 +228,13 @@ public class TeamUploadStrategy implements UploadStrategy {
 
     /**
      * 计算 MultipartFile 的 MD5（hex 32 位）
+     * <p>
+     * U1: 内部使用 commons-codec {@link DigestUtils#md5Hex(InputStream)}。
+     * R1-L2: 失败时返回空串（保持现有行为，W5 将改为失败上传）。
      */
     private String computeMd5(MultipartFile file) {
         try (InputStream is = file.getInputStream()) {
-            MessageDigest md = MessageDigest.getInstance("MD5");
-            byte[] buffer = new byte[8192];
-            int read;
-            while ((read = is.read(buffer)) != -1) {
-                md.update(buffer, 0, read);
-            }
-            byte[] digest = md.digest();
-            StringBuilder sb = new StringBuilder(32);
-            for (byte b : digest) {
-                sb.append(String.format("%02x", b));
-            }
-            return sb.toString();
+            return DigestUtils.md5Hex(is);
         } catch (Exception e) {
             log.warn("Failed to compute file MD5: {}", e.getMessage());
             return "";

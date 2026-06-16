@@ -1,1 +1,4 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": "docs/reviews/2026-06-15-rag-module-review.md", "reason": "Canonical findings source for W2 (R1-H1, R1-H4, R1-M7, R1-L1, U1) — exact locations, problems, fixes"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Core of W2: throw-vs-null conventions, ServiceException/ClientException/DOCUMENT_NOT_FOUND/FORBIDDEN taxonomy (R1-H1, R1-H4)"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Quality bar for the quick-win cleanups (U1 DigestUtils, R1-L1 reuse, R1-M7 trim)"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "R1-H4 changes verifyAccess (service) exception flow seen by the controller (HTTP 404 vs 403)"}

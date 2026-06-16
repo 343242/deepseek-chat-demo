@@ -117,24 +117,18 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
     @Override
     public DocumentDTO getById(Long id) {
         RagDocument doc = verifyAccess(id);
-        return doc != null ? toDTO(doc) : null;
+        return toDTO(doc);
     }
 
     @Override
     public boolean delete(Long id) {
         RagDocument doc = verifyAccess(id);
-        if (doc == null) {
-            return false;
-        }
         return documentLifecycleService.cascadeDelete(doc);
     }
 
     @Override
     public DocumentUploadResponse retry(Long id) {
         RagDocument doc = verifyAccess(id);
-        if (doc == null) {
-            throw new ServiceException(ServiceErrorCode.DOCUMENT_NOT_FOUND, "文档不存在: " + id);
-        }
         if (doc.getSupersededBy() != null) {
             throw new ClientException(ClientErrorCode.BAD_REQUEST, "文档已被新版本替代，无法重试");
         }
@@ -160,9 +154,6 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
     @Override
     public List<DocumentDTO> getHistory(Long id) {
         RagDocument doc = verifyAccess(id);
-        if (doc == null) {
-            throw new ServiceException(ServiceErrorCode.DOCUMENT_NOT_FOUND, "文档不存在: " + id);
-        }
         String groupId = doc.getDocumentGroupId();
         if (groupId == null) {
             return List.of(toDTO(doc));
@@ -190,11 +181,15 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
      * <p>
      * 个人文档：userId 匹配
      * 团队文档：团队成员 + (管理员/创建者 或 上传者)
+     * <p>
+     * R1-H4: 不存在时抛 {@link ServiceErrorCode#DOCUMENT_NOT_FOUND}（→ 204001），
+     * 无权访问时抛 {@link ClientErrorCode#FORBIDDEN}（→ 100004）。
+     * 调用方无需再做 null 判断。
      */
     private RagDocument verifyAccess(Long id) {
         RagDocument doc = ragDocumentMapper.selectById(id);
         if (doc == null) {
-            return null;
+            throw new ServiceException(ServiceErrorCode.DOCUMENT_NOT_FOUND, "文档不存在: " + id);
         }
 
         Long currentUserId = SecurityUtils.getCurrentUserId();
@@ -203,7 +198,7 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
             // 个人文档
             if (!currentUserId.equals(doc.getUserId())) {
                 log.warn("Access denied: userId={} attempted to access personal document id={}", currentUserId, id);
-                return null;
+                throw new ClientException(ClientErrorCode.FORBIDDEN, "无权操作该文档");
             }
         } else {
             // 团队文档 — 必须是成员

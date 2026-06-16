@@ -1,1 +1,4 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": "docs/reviews/2026-06-15-rag-module-review.md", "reason": "Verify each W2 acceptance criterion against the finding's definition"}
+{"file": ".trellis/spec/backend/code-review-checklist.md", "reason": "Review checklist for the pre-merge quality gate"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Verify exception taxonomy is correct (404 vs 403, ServiceException vs ClientException)"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Quality bar for verification"}

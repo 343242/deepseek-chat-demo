@@ -114,4 +114,27 @@ class DocumentValidatorTest {
             assertThat(validator.isDetectedMimeTypeAcceptable(PDF_MIME, PDF_MIME)).isTrue();
         }
     }
+
+    @Nested
+    @DisplayName("R1-M7: getAllowedMimeTypes — 配置带空格的容错")
+    class AllowedMimeTypesTrim {
+
+        @Test
+        @DisplayName("白名单含空格（如 \"application/pdf, text/plain\"）→ trim 后正确匹配")
+        void whitelist_with_spaces_accepted() {
+            // 默认白名单无空格；这里构造一个带空格的配置验证 R1-M7 trim 逻辑
+            DocumentProperties props = new DocumentProperties();
+            props.setAllowedMimeTypes("application/pdf, text/plain");
+            DocumentValidator spaced = new DocumentValidator(props);
+
+            // isDetectedMimeTypeAcceptable 内部调用 getAllowedMimeTypes()
+            // 若未 trim，白名单会包含 " text/plain"（前导空格），text/plain 会被拒绝
+            assertThat(spaced.isDetectedMimeTypeAcceptable("text/plain", "text/plain"))
+                    .as("带空格的白名单配置经 trim 后应放行 text/plain")
+                    .isTrue();
+            assertThat(spaced.isDetectedMimeTypeAcceptable("application/pdf", "application/pdf"))
+                    .as("带空格的白名单配置经 trim 后应放行 application/pdf")
+                    .isTrue();
+        }
+    }
 }

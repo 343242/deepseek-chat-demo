@@ -11,8 +11,10 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.Arrays;
 import java.util.Map;
 import java.util.Set;
+import java.util.stream.Collectors;
 
 /**
  * 文档校验器（单一职责）
@@ -176,12 +178,29 @@ public class DocumentValidator {
         return "application/zip".equals(detected) && declared.contains("openxmlformats-officedocument");
     }
 
+    /**
+     * 校验给定 MIME 类型是否在配置白名单内（容忍配置中的空格，如 "application/pdf, text/plain"）。
+     * <p>
+     * 单一解析入口（R1-M7）：供 {@code ChunkUploadServiceImpl.validateMimeType} 和本类的
+     * {@link #validate(MultipartFile)} 复用，避免重复的 split 逻辑遗漏 trim。
+     *
+     * @param mimeType 待校验的 MIME 类型（精确匹配，不 trim 输入）
+     * @return true 表示该类型在允许列表中
+     */
+    public boolean isAllowedMimeType(String mimeType) {
+        return mimeType != null && getAllowedMimeTypes().contains(mimeType);
+    }
+
     private Set<String> getAllowedMimeTypes() {
         if (cachedAllowedMimeTypes == null) {
             synchronized (this) {
                 if (cachedAllowedMimeTypes == null) {
-                    cachedAllowedMimeTypes = Set.of(
-                            documentProperties.getAllowedMimeTypes().split(","));
+                    // R1-M7: trim 每段并过滤空值，容忍配置中的空格（如 "application/pdf, text/plain"）
+                    cachedAllowedMimeTypes = Arrays.stream(
+                                    documentProperties.getAllowedMimeTypes().split(","))
+                            .map(String::trim)
+                            .filter(s -> !s.isEmpty())
+                            .collect(Collectors.toUnmodifiableSet());
                 }
             }
         }

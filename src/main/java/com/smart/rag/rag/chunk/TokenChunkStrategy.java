@@ -24,8 +24,14 @@ public class TokenChunkStrategy implements ChunkStrategy {
 
     private final DocumentProperties properties;
 
+    // R1-L1: 构造一次复用，避免每次 chunk() 重建 splitter（config-driven 且不可变）
+    private final TokenTextSplitter splitter;
+
     public TokenChunkStrategy(DocumentProperties properties) {
         this.properties = properties;
+        this.splitter = TokenTextSplitter.builder()
+                .withChunkSize(properties.getChunkSize())
+                .build();
     }
 
     @Override
@@ -38,10 +44,6 @@ public class TokenChunkStrategy implements ChunkStrategy {
         if (documents == null || documents.isEmpty()) {
             return List.of();
         }
-
-        TokenTextSplitter splitter = TokenTextSplitter.builder()
-                .withChunkSize(properties.getChunkSize())
-                .build();
 
         List<Document> allChunks = new ArrayList<>();
         int globalIndex = 0;

@@ -1,6 +1,7 @@
 package com.smart.rag.rag.controller;
 
 import com.smart.rag.infrastructure.response.GlobalResponse;
+import com.smart.rag.infrastructure.response.PagedResult;
 import com.smart.rag.rag.dto.DocumentDTO;
 import com.smart.rag.rag.dto.DocumentUploadResponse;
 import com.smart.rag.rag.service.DocumentApplicationService;
@@ -44,13 +45,18 @@ public class DocumentController {
     }
 
     @GetMapping
-    public GlobalResponse<List<DocumentDTO>> list() {
-        return GlobalResponse.ok(documentService.listAll());
+    public GlobalResponse<PagedResult<DocumentDTO>> list(
+            @RequestParam(value = "page", defaultValue = "1") int page,
+            @RequestParam(value = "size", defaultValue = "20") int size) {
+        return GlobalResponse.ok(documentService.listAll(page, size));
     }
 
     @GetMapping(params = "teamId")
-    public GlobalResponse<List<DocumentDTO>> listByTeam(@RequestParam Long teamId) {
-        return GlobalResponse.ok(documentService.listByTeam(teamId));
+    public GlobalResponse<PagedResult<DocumentDTO>> listByTeam(
+            @RequestParam Long teamId,
+            @RequestParam(value = "page", defaultValue = "1") int page,
+            @RequestParam(value = "size", defaultValue = "20") int size) {
+        return GlobalResponse.ok(documentService.listByTeam(teamId, page, size));
     }
 
     @GetMapping("/{id}")

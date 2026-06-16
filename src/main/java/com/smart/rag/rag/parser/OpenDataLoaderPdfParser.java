@@ -1,5 +1,7 @@
 package com.smart.rag.rag.parser;
 
+import com.smart.rag.rag.config.DocumentProperties;
+import org.apache.commons.io.input.BoundedInputStream;
 import org.jspecify.annotations.NonNull;
 import org.opendataloader.pdf.api.Config;
 import org.opendataloader.pdf.api.OpenDataLoaderPDF;
@@ -8,8 +10,10 @@ import org.slf4j.LoggerFactory;
 import org.springframework.ai.document.Document;
 import org.springframework.core.io.Resource;
 import org.springframework.stereotype.Component;
+import org.springframework.util.unit.DataSize;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.List;
@@ -28,11 +32,22 @@ import java.util.List;
  *   <li>清理临时文件和输出目录</li>
  *   <li>后续由 Parent-Child 分块策略按 Markdown 标题层级切分</li>
  * </ol>
+ * <p>
+ * R2-M1: 写临时文件前用 {@link BoundedInputStream} 在流级别约束读取上限，
+ * 上限直接从 {@link DocumentProperties#getMaxFileSize()} 读取（默认 50MB）。
+ * 不依赖 {@code resource.contentLength()}（MinIO 流返回 -1 导致 size 检查失效）。
+ * 超限抛 {@link DocumentParseException}，避免磁盘填充与下游 OOM。
  */
 @Component
 public class OpenDataLoaderPdfParser implements DocumentParser {
 
     private static final Logger log = LoggerFactory.getLogger(OpenDataLoaderPdfParser.class);
+
+    private final DocumentProperties documentProperties;
+
+    public OpenDataLoaderPdfParser(DocumentProperties documentProperties) {
+        this.documentProperties = documentProperties;
+    }
 
     @Override
     public List<String> supportedMimeTypes() {
@@ -45,13 +60,29 @@ public class OpenDataLoaderPdfParser implements DocumentParser {
         Path outputDir = null;
 
         try {
-            // 1. 将 Resource 写入临时文件
+            // R2-M1: 读取上限直接来自 DocumentProperties（与上游校验一致），
+            // 并用 BoundedInputStream 在流级别兜底 —— MinIO 流 contentLength()=-1 时
+            // 不再依赖 Resource 元信息，避免超大 PDF 填满磁盘。
+            long maxBytes = DataSize.parse(documentProperties.getMaxFileSize()).toBytes();
+
+            // 1. 将 Resource 写入临时文件（有界读取：maxBytes+1 以检测溢出）
             tempPdf = Files.createTempFile("rag-pdf-", ".pdf");
-            try (var in = resource.getInputStream();
+            long written;
+            try (InputStream raw = resource.getInputStream();
+                 // 允许比上限多读 1 字节以判定是否真的超限
+                 BoundedInputStream bounded = BoundedInputStream.builder()
+                         .setInputStream(raw).setMaxCount(maxBytes + 1).get();
                  var out = Files.newOutputStream(tempPdf)) {
-                in.transferTo(out);
+                written = bounded.transferTo(out);
             }
-            log.debug("PDF written to temp file: {} ({} bytes)", tempPdf, Files.size(tempPdf));
+            if (written > maxBytes) {
+                throw new DocumentParseException(
+                        resource.getFilename(), "opendataloader",
+                        String.format("PDF 超过最大允许大小 %s（拒绝写入以避免磁盘填充）",
+                                documentProperties.getMaxFileSize()),
+                        null);
+            }
+            log.debug("PDF written to temp file: {} ({} bytes)", tempPdf, written);
 
             // 2. 创建输出目录
             outputDir = Files.createTempDirectory("rag-odl-");
@@ -88,6 +119,9 @@ public class OpenDataLoaderPdfParser implements DocumentParser {
             log.info("OpenDataLoader parsed: {} → {} chars markdown", resource.getFilename(), markdown.length());
             return List.of(doc);
 
+        } catch (DocumentParseException e) {
+            // R2-M1: 超限异常已有具体消息，原样上抛避免被通用消息覆盖
+            throw e;
         } catch (Exception e) {
             throw new DocumentParseException(
                     resource.getFilename(), "opendataloader",

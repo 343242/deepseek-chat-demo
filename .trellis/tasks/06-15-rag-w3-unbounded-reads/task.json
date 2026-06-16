@@ -3,7 +3,7 @@
   "name": "rag-w3-unbounded-reads",
   "title": "RAG review W3: unbounded reads / pagination",
   "description": "R1-H2 list pagination, R1-M6 dedup async init, R2-M1 OpenDataLoader size precheck",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

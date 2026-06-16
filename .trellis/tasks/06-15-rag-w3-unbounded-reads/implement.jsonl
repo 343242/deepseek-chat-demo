@@ -1,1 +1,4 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": "docs/reviews/2026-06-15-rag-module-review.md", "reason": "Canonical findings source for W3 (R1-H2, R1-M6, R2-M1) — exact locations, problems, fixes"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Pagination + query patterns (R1-H2 listAll/listByTeam selectPage, R1-M6 batch/stream MD5 load)"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Quality bar for pagination + startup-async changes"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Typed exceptions for the R2-M1 size-overflow rejection (DocumentParseException)"}

@@ -1,10 +1,12 @@
 package com.smart.rag.rag.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;
 import com.smart.rag.infrastructure.exception.errorcode.ServiceErrorCode;
 import com.smart.rag.infrastructure.exception.ClientException;
 import com.smart.rag.infrastructure.exception.ServiceException;
+import com.smart.rag.infrastructure.response.PagedResult;
 import com.smart.rag.rag.dto.DocumentDTO;
 import com.smart.rag.rag.dto.DocumentUploadResponse;
 import com.smart.rag.rag.etl.EtlStatus;
@@ -38,6 +40,9 @@ import java.util.List;
 public class DocumentApplicationServiceImpl implements DocumentApplicationService {
 
     private static final Logger log = LoggerFactory.getLogger(DocumentApplicationServiceImpl.class);
+
+    /** R1-H2: 列表接口 size 上限，超过静默钳制到 100 */
+    private static final int MAX_PAGE_SIZE = 100;
 
     private final EtlDispatchService etlDispatchService;
     private final RagDocumentMapper ragDocumentMapper;
@@ -89,29 +94,33 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
     }
 
     @Override
-    public List<DocumentDTO> listAll() {
+    public PagedResult<DocumentDTO> listAll(int page, int size) {
         Long currentUserId = SecurityUtils.getCurrentUserId();
-        List<RagDocument> docs = ragDocumentMapper.selectList(
-                new LambdaQueryWrapper<RagDocument>()
-                        .eq(RagDocument::getUserId, currentUserId)
-                        .isNull(RagDocument::getTeamId)
-                        .ne(RagDocument::getStatus, EtlStatus.SUPERSEDED)
-                        .orderByDesc(RagDocument::getCreateTime));
-        return docs.stream().map(this::toDTO).toList();
+        int[] normalized = normalizePaging(page, size);
+        Page<RagDocument> mpPage = new Page<>(normalized[0], normalized[1]);
+        LambdaQueryWrapper<RagDocument> wrapper = new LambdaQueryWrapper<RagDocument>()
+                .eq(RagDocument::getUserId, currentUserId)
+                .isNull(RagDocument::getTeamId)
+                .ne(RagDocument::getStatus, EtlStatus.SUPERSEDED)
+                .orderByDesc(RagDocument::getCreateTime);
+        Page<RagDocument> result = ragDocumentMapper.selectPage(mpPage, wrapper);
+        return PagedResult.of(result, this::toDTO);
     }
 
     @Override
-    public List<DocumentDTO> listByTeam(Long teamId) {
+    public PagedResult<DocumentDTO> listByTeam(Long teamId, int page, int size) {
         Long currentUserId = SecurityUtils.getCurrentUserId();
         // 校验团队成员身份
         teamMembershipVerifier.verifyMember(teamId, currentUserId);
 
-        List<RagDocument> docs = ragDocumentMapper.selectList(
-                new LambdaQueryWrapper<RagDocument>()
-                        .eq(RagDocument::getTeamId, teamId)
-                        .ne(RagDocument::getStatus, EtlStatus.SUPERSEDED)
-                        .orderByDesc(RagDocument::getCreateTime));
-        return docs.stream().map(this::toDTO).toList();
+        int[] normalized = normalizePaging(page, size);
+        Page<RagDocument> mpPage = new Page<>(normalized[0], normalized[1]);
+        LambdaQueryWrapper<RagDocument> wrapper = new LambdaQueryWrapper<RagDocument>()
+                .eq(RagDocument::getTeamId, teamId)
+                .ne(RagDocument::getStatus, EtlStatus.SUPERSEDED)
+                .orderByDesc(RagDocument::getCreateTime);
+        Page<RagDocument> result = ragDocumentMapper.selectPage(mpPage, wrapper);
+        return PagedResult.of(result, this::toDTO);
     }
 
     @Override
@@ -151,6 +160,14 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
         return new DocumentUploadResponse(id, doc.getFileName(), EtlStatus.PROCESSING);
     }
 
+    /**
+     * 获取文档版本历史
+     * <p>
+     * R1-H2 评估：不加分页。结果集天然有界——按 documentGroupId 聚合的版本链，
+     * 单组版本数受 {@code DocumentSupersedeService.MAX_VERSION_RETRY} (3) + 业务替换频率约束，
+     * 实际 rarely 超过个位数。加分会无谓改动 chat-history API 契约。
+     * 若未来出现「文档组爆炸」（如自动版本化），再行分页。
+     */
     @Override
     public List<DocumentDTO> getHistory(Long id) {
         RagDocument doc = verifyAccess(id);
@@ -174,6 +191,26 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
         if (teamId != null) {
             teamMembershipVerifier.verifyMember(teamId, userId);
         }
+    }
+
+    /**
+     * R1-H2: 归一化分页参数：page &lt; 1 → 1；size 钳制到 [1, {@value #MAX_PAGE_SIZE}]。
+     * 超过上限时静默钳制并记录 debug 日志（按 PRD 决策偏好 clamp）。
+     *
+     * @return [page, size]
+     */
+    private int[] normalizePaging(int page, int size) {
+        if (page < 1) {
+            page = 1;
+        }
+        if (size < 1) {
+            size = 1;
+        }
+        if (size > MAX_PAGE_SIZE) {
+            log.debug("list page size {} clamped to {}", size, MAX_PAGE_SIZE);
+            size = MAX_PAGE_SIZE;
+        }
+        return new int[]{page, size};
     }
 
     /**

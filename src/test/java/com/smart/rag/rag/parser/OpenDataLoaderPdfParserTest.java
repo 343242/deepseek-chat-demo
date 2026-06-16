@@ -1,5 +1,6 @@
 package com.smart.rag.rag.parser;
 
+import com.smart.rag.rag.config.DocumentProperties;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -17,7 +18,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @DisplayName("OpenDataLoaderPdfParser")
 class OpenDataLoaderPdfParserTest {
 
-    private final OpenDataLoaderPdfParser parser = new OpenDataLoaderPdfParser();
+    private final OpenDataLoaderPdfParser parser = new OpenDataLoaderPdfParser(new DocumentProperties());
 
     @TempDir
     Path tempDir;
@@ -126,6 +127,34 @@ class OpenDataLoaderPdfParserTest {
 
             assertThat(ex.getFileName()).isEqualTo("test.pdf");
             assertThat(ex.getParserName()).isEqualTo("tika");
+        }
+    }
+
+    @Nested
+    @DisplayName("R2-M1: 超大 PDF 在写临时文件前即拒绝")
+    class OversizeRejection {
+
+        @Test
+        @DisplayName("超过 maxFileSize 的流抛 DocumentParseException 而非写满磁盘")
+        void oversized_stream_throws_not_disk_fill() {
+            // 用 1KB 上限构造解析器，喂入 2KB 内容
+            DocumentProperties props = new DocumentProperties();
+            props.setMaxFileSize("1KB");
+            OpenDataLoaderPdfParser boundedParser = new OpenDataLoaderPdfParser(props);
+
+            byte[] oversized = new byte[2 * 1024];
+            java.util.Arrays.fill(oversized, (byte) 'A');
+            Resource resource = new ByteArrayResource(oversized) {
+                @Override
+                public String getFilename() {
+                    return "big.pdf";
+                }
+            };
+
+            assertThatThrownBy(() -> boundedParser.parse(resource, "application/pdf"))
+                    .isInstanceOf(DocumentParseException.class)
+                    .hasMessageContaining("opendataloader")
+                    .hasMessageContaining("超过最大允许大小");
         }
     }
 }

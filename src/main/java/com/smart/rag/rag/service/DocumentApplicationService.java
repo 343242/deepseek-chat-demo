@@ -1,5 +1,6 @@
 package com.smart.rag.rag.service;
 
+import com.smart.rag.infrastructure.response.PagedResult;
 import com.smart.rag.rag.dto.DocumentDTO;
 import com.smart.rag.rag.dto.DocumentUploadResponse;
 import org.jspecify.annotations.Nullable;
@@ -30,11 +31,21 @@ public interface DocumentApplicationService {
     /** 批量上传文档（指定团队） */
     List<DocumentUploadResponse> uploadBatch(MultipartFile[] files, @Nullable Long teamId);
 
-    /** 获取当前用户全部个人文档列表 */
-    List<DocumentDTO> listAll();
+    /**
+     * 获取当前用户全部个人文档列表（分页）
+     *
+     * @param page 页码（从 1 开始，&lt; 1 归一化为 1）
+     * @param size 每页大小（钳制到 [1, 100]）
+     */
+    PagedResult<DocumentDTO> listAll(int page, int size);
 
-    /** 获取指定团队的文档列表 */
-    List<DocumentDTO> listByTeam(Long teamId);
+    /**
+     * 获取指定团队的文档列表（分页）
+     *
+     * @param page 页码（从 1 开始，&lt; 1 归一化为 1）
+     * @param size 每页大小（钳制到 [1, 100]）
+     */
+    PagedResult<DocumentDTO> listByTeam(Long teamId, int page, int size);
 
     DocumentDTO getById(Long id);
 

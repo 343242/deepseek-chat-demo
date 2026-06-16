@@ -15,6 +15,8 @@ import com.smart.rag.rag.mapper.RagDocumentMapper;
 import com.smart.rag.rag.service.DocumentApplicationService;
 import com.smart.rag.rag.service.EtlDispatchService;
 import com.smart.rag.infrastructure.web.util.SecurityUtils;
+import com.smart.rag.team.entity.TeamMember;
+import com.smart.rag.team.enums.TeamMemberRole;
 import com.smart.rag.team.service.TeamMembershipVerifier;
 import com.smart.rag.team.upload.UploadStrategyFactory;
 import org.jspecify.annotations.Nullable;
@@ -132,6 +134,7 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
     @Override
     public boolean delete(Long id) {
         RagDocument doc = verifyAccess(id);
+        assertCanDelete(doc);
         return documentLifecycleService.cascadeDelete(doc);
     }
 
@@ -238,12 +241,36 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
                 throw new ClientException(ClientErrorCode.FORBIDDEN, "无权操作该文档");
             }
         } else {
-            // 团队文档 — 必须是成员
-            var member = teamMembershipVerifier.verifyMember(doc.getTeamId(), currentUserId);
-            // TODO: Phase 4 — 按角色进一步细分权限
+            // 团队文档 — 必须是成员（读 / 重试保持共享；删除的 owner/ADMIN 收紧见 assertCanDelete）
+            teamMembershipVerifier.verifyMember(doc.getTeamId(), currentUserId);
         }
 
         return doc;
+    }
+
+    /**
+     * R1-M1: 团队文档删除权限——仅文档所有者或团队管理员/创建者可删除。
+     * <p>
+     * 个人文档已由 {@link #verifyAccess} 保证 owner；retry / getById / getHistory
+     * 保持团队共享（任何成员可读、可重试），仅破坏性的 delete 收紧。采用 PRD 选项 3。
+     */
+    private void assertCanDelete(RagDocument doc) {
+        if (doc.getTeamId() == null) {
+            return; // 个人文档：verifyAccess 已校验 owner
+        }
+        Long currentUserId = SecurityUtils.getCurrentUserId();
+        if (currentUserId.equals(doc.getUserId())) {
+            return; // 文档所有者
+        }
+        // 非所有者 → 需 ADMIN / CREATOR
+        TeamMember member = teamMembershipVerifier.verifyMember(doc.getTeamId(), currentUserId);
+        TeamMemberRole role = member.getRole();
+        if (role != TeamMemberRole.ADMIN && role != TeamMemberRole.CREATOR) {
+            log.warn("Delete denied (R1-M1): userId={} attempted to delete team doc id={} owned by {}",
+                    currentUserId, doc.getId(), doc.getUserId());
+            throw new ServiceException(ServiceErrorCode.DOCUMENT_OWNERSHIP_DENIED,
+                    "仅文档所有者或团队管理员可删除该文档");
+        }
     }
 
     private DocumentDTO toDTO(RagDocument doc) {

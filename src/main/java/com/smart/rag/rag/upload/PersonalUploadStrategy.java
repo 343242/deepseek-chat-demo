@@ -221,14 +221,14 @@ public class PersonalUploadStrategy implements UploadStrategy {
     /**
      * 计算 MultipartFile 的 MD5（hex 32 位）
      * <p>
-     * R1-L2: 失败时返回 null（保持现有行为，W5 将改为失败上传）。
-     * U1: 内部使用 commons-codec {@link DigestUtils#md5Hex(InputStream)}。
+     * R1-L2: 失败时返回 null（保持现有行为，秒传去重对该文件降级为不可用），
+     * 但以 ERROR 级别记录，避免静默降级。U1 使用 commons-codec {@link DigestUtils#md5Hex(InputStream)}。
      */
     private String computeMd5(MultipartFile file) {
         try (InputStream is = file.getInputStream()) {
             return DigestUtils.md5Hex(is);
         } catch (Exception e) {
-            log.warn("Failed to compute file MD5: {}", e.getMessage());
+            log.error("Failed to compute file MD5 (file loses quick-upload dedup): {}", e.getMessage());
             return null;
         }
     }

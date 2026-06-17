@@ -1,5 +1,6 @@
 package com.smart.rag.infrastructure.messaging;
 
+import com.smart.rag.chat.service.MessageDeadLetterQueue;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.apache.rocketmq.client.apis.ClientServiceProvider;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -40,7 +41,8 @@ public class MessagingAutoConfiguration {
     }
 
     @Bean
-    HealthIndicator messagingHealthIndicator(MessageBusManagement busManagement) {
-        return new MessagingHealthIndicator(busManagement);
+    HealthIndicator messagingHealthIndicator(MessageBusManagement busManagement,
+                                             MessageDeadLetterQueue deadLetterQueue) {
+        return new MessagingHealthIndicator(busManagement, deadLetterQueue);
     }
 }

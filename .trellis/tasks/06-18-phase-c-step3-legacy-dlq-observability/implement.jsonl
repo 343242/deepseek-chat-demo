@@ -1,0 +1,2 @@
+{"file": "docs/design/messaging-bus.md", "reason": "§9 Phase C Step 3（legacy DLQ 排空 + 7 天观察前置）+ §5.12 DLQ 约定 + §6.x health/metric 模式 — 可观测性要满足的 Phase D 前置基准"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "代码质量、禁止模式 — 单测覆盖与可选依赖（@Nullable MeterRegistry/Redisson）处理校验"}

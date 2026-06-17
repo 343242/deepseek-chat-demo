@@ -1,0 +1,3 @@
+{"file": "docs/design/messaging-bus.md", "reason": "验收对照 — §9 Phase C Step 3 退出条件、Phase D 前置（legacy DLQ 7 天 0 新条目）的可观测性要求"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "review 维度 — 单测覆盖、可选依赖 null 安全"}
+{"file": ".trellis/spec/backend/code-review-checklist.md", "reason": "提交前自检 — health detail 不改变 UP/DOWN 判定、排空逻辑零变更"}

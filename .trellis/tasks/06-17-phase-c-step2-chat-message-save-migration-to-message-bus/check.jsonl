@@ -1,0 +1,4 @@
+{"file": "docs/design/messaging-bus.md", "reason": "验收对照基准 — §9 Phase C Step 2 退出条件、§7.1 publisher/consumer 接入点、§4 MessageEnvelope 用法、Phase 0（enabled/NoOp 清理 + bus always-on）验收"}
+{"file": ".trellis/spec/backend/llm-spi.md", "reason": "candidateId 一致性校验 — ChatMessagePayload 与 consumer 链路命名一致性"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "代码质量规范、禁止模式 — 单测覆盖（publisher send/fallback/totalTokens + consumer 落库/重抛）与发送-落库解耦校验"}
+{"file": ".trellis/spec/backend/code-review-checklist.md", "reason": "review 维度与检查项 — Phase 0 删除 NoOp/无条件化的回归风险自检 + 提交前自检"}

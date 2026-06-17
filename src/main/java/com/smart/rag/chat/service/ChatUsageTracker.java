@@ -20,10 +20,9 @@ import java.util.function.Function;
  *
  * <p><b>非关键路径</b>：发布失败仅记日志，不影响主对话流程（与改造前的 try/catch 吞咽语义一致）。
  *
- * <p><b>消息丢失声明（见 messaging-bus.md §7.2、§9 Phase C）</b>：当
- * {@code app.messaging.enabled=false} 时使用 {@code NoOpMessageBus}，{@code send} 丢弃消息，
- * usage 不记录——此为预期行为。开发与生产环境均应 {@code enabled=true}（本地/环境 RocketMQ 可用），
- * NoOp 仅 CI / 单测 mock 场景触发。usage 非关键，故不做同步降级 fallback（降级是 chat save 的事，见 §7.1）。
+ * <p><b>非关键路径（见 messaging-bus.md §7.2、§9 Phase C）</b>：Phase 0 后消息总线 always-on，
+ * {@code send} 失败仅记日志、不影响主对话流程（与改造前 try/catch 吞咽语义一致）。usage 不做同步降级
+ * fallback——降级是 chat save 的职责（见 §7.1）；usage 偶发丢失可接受。
  */
 @Component
 public class ChatUsageTracker {

@@ -32,6 +32,11 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+/**
+ * Phase 0 后消息总线 always-on：构造器不再接收 {@code messagingEnabled}，{@code messageBus} 必需非空。
+ * 原 "messagingEnabled=false / null bus → 线程池" 路径已删除；线程池仅作为 {@link MessagingException}
+ * 降级路径存在，故 dispatchViaThreadPool 行为（事件发布 / 失败不发布 / 异常吞咽）统一在 fallback 场景下验证。
+ */
 @ExtendWith(MockitoExtension.class)
 class EtlDispatchServiceImplTest {
 
@@ -48,19 +53,20 @@ class EtlDispatchServiceImplTest {
             "test.pdf", "application/pdf", 1024, 42L, null);
     }
 
+    private EtlDispatchServiceImpl newService() {
+        return new EtlDispatchServiceImpl(
+            strategyFactory, DIRECT_EXECUTOR, loader, eventPublisher, null, messageBus);
+    }
+
     @Nested
     @DisplayName("dispatchAsync — messaging path")
     class MessagingPath {
 
         @Test
-        @DisplayName("messagingEnabled=true sends via messageBus")
+        @DisplayName("sends candidate via messageBus")
         void sendsViaMessageBus() {
-            EtlDispatchServiceImpl service = new EtlDispatchServiceImpl(
-                strategyFactory, DIRECT_EXECUTOR, loader, eventPublisher,
-                null, messageBus, true);
-
             EtlCandidate candidate = testCandidate();
-            service.dispatchAsync(candidate.documentId(), candidate.bucket(), candidate.objectKey(),
+            newService().dispatchAsync(candidate.documentId(), candidate.bucket(), candidate.objectKey(),
                 candidate.fileName(), candidate.mimeType(), candidate.fileSize(),
                 candidate.userId(), candidate.teamId());
 
@@ -73,52 +79,32 @@ class EtlDispatchServiceImplTest {
         }
 
         @Test
-        @DisplayName("messagingEnabled=true does not use thread pool")
+        @DisplayName("does not touch the thread pool / strategy on send success")
         void doesNotUseThreadPool() {
-            EtlDispatchServiceImpl service = new EtlDispatchServiceImpl(
-                strategyFactory, DIRECT_EXECUTOR, loader, eventPublisher,
-                null, messageBus, true);
-
-            service.dispatchAsync(1L, "b", "k", "f.pdf", "application/pdf", 100, 1L, null);
+            newService().dispatchAsync(1L, "b", "k", "f.pdf", "application/pdf", 100, 1L, null);
 
             verifyNoInteractions(strategyFactory);
-        }
-
-        @Test
-        @DisplayName("messageBus null falls back to thread pool even if messagingEnabled=true")
-        void nullMessageBusFallsBack() {
-            EtlRouteStrategy strategy = mock(EtlRouteStrategy.class);
-            when(strategyFactory.resolve(any())).thenReturn(strategy);
-            when(strategy.execute(any())).thenReturn(List.of(EtlResult.success(1L, 5)));
-
-            EtlDispatchServiceImpl service = new EtlDispatchServiceImpl(
-                strategyFactory, DIRECT_EXECUTOR, loader, eventPublisher,
-                null, null, true);
-
-            service.dispatchAsync(1L, "b", "k", "f.pdf", "application/pdf", 100, 1L, null);
-
-            verify(strategyFactory).resolve(any());
         }
     }
 
     @Nested
-    @DisplayName("dispatchAsync — messaging fallback")
+    @DisplayName("dispatchAsync — MessagingException falls back to thread pool")
     class MessagingFallback {
 
-        @Test
-        @DisplayName("MessagingException falls back to thread pool")
-        void messagingExceptionFallsBack() {
+        private void busThrows() {
             when(messageBus.send(any())).thenThrow(
                 new MessagingException(MessagingErrorCode.PUBLISH_FAILED, "broker unreachable"));
+        }
+
+        @Test
+        @DisplayName("bus failure falls back to thread pool and publishes EtlCompletedEvent on success")
+        void fallsBackAndPublishesEvent() {
+            busThrows();
             EtlRouteStrategy strategy = mock(EtlRouteStrategy.class);
             when(strategyFactory.resolve(any())).thenReturn(strategy);
             when(strategy.execute(any())).thenReturn(List.of(EtlResult.success(1L, 10)));
 
-            EtlDispatchServiceImpl service = new EtlDispatchServiceImpl(
-                strategyFactory, DIRECT_EXECUTOR, loader, eventPublisher,
-                null, messageBus, true);
-
-            assertThatCode(() -> service.dispatchAsync(1L, "b", "k", "f.pdf", "application/pdf", 100, 1L, null))
+            assertThatCode(() -> newService().dispatchAsync(1L, "b", "k", "f.pdf", "application/pdf", 100, 1L, null))
                 .doesNotThrowAnyException();
 
             verify(messageBus).send(any());
@@ -127,93 +113,27 @@ class EtlDispatchServiceImplTest {
         }
 
         @Test
-        @DisplayName("MessagingException fallback with failed ETL does not publish event")
-        void messagingExceptionFallbackFailedEtl() {
-            when(messageBus.send(any())).thenThrow(
-                new MessagingException(MessagingErrorCode.PUBLISH_FAILED, "broker unreachable"));
+        @DisplayName("fallback with failed ETL does not publish event")
+        void fallbackFailedEtlNoEvent() {
+            busThrows();
             EtlRouteStrategy strategy = mock(EtlRouteStrategy.class);
             when(strategyFactory.resolve(any())).thenReturn(strategy);
             when(strategy.execute(any())).thenReturn(List.of(EtlResult.failed(1L, "parse error")));
 
-            EtlDispatchServiceImpl service = new EtlDispatchServiceImpl(
-                strategyFactory, DIRECT_EXECUTOR, loader, eventPublisher,
-                null, messageBus, true);
-
-            service.dispatchAsync(1L, "b", "k", "f.pdf", "application/pdf", 100, 1L, null);
-
-            verifyNoInteractions(eventPublisher);
-        }
-    }
-
-    @Nested
-    @DisplayName("dispatchAsync — thread pool path")
-    class ThreadPoolPath {
-
-        @Test
-        @DisplayName("messagingEnabled=false dispatches via thread pool")
-        void dispatchesViaThreadPool() {
-            EtlRouteStrategy strategy = mock(EtlRouteStrategy.class);
-            when(strategyFactory.resolve(any())).thenReturn(strategy);
-            when(strategy.execute(any())).thenReturn(List.of(EtlResult.success(1L, 5)));
-
-            EtlDispatchServiceImpl service = new EtlDispatchServiceImpl(
-                strategyFactory, DIRECT_EXECUTOR, loader, eventPublisher,
-                null, null, false);
-
-            service.dispatchAsync(1L, "b", "k", "f.pdf", "application/pdf", 100, 1L, null);
-
-            verify(strategyFactory).resolve(any());
-            verify(strategy).execute(any());
-        }
-
-        @Test
-        @DisplayName("completed ETL publishes EtlCompletedEvent")
-        void completedEtlPublishesEvent() {
-            EtlRouteStrategy strategy = mock(EtlRouteStrategy.class);
-            when(strategyFactory.resolve(any())).thenReturn(strategy);
-            when(strategy.execute(any())).thenReturn(List.of(EtlResult.success(1L, 10)));
-
-            EtlDispatchServiceImpl service = new EtlDispatchServiceImpl(
-                strategyFactory, DIRECT_EXECUTOR, loader, eventPublisher,
-                null, null, false);
-
-            service.dispatchAsync(1L, "b", "k", "f.pdf", "application/pdf", 100, 42L, 7L);
-
-            ArgumentCaptor<EtlCompletedEvent> eventCaptor = ArgumentCaptor.forClass(EtlCompletedEvent.class);
-            verify(eventPublisher).publishEvent(eventCaptor.capture());
-            assertThat(eventCaptor.getValue().documentId()).isEqualTo(1L);
-            assertThat(eventCaptor.getValue().userId()).isEqualTo(42L);
-            assertThat(eventCaptor.getValue().teamId()).isEqualTo(7L);
-        }
-
-        @Test
-        @DisplayName("failed ETL does not publish event")
-        void failedEtlNoEvent() {
-            EtlRouteStrategy strategy = mock(EtlRouteStrategy.class);
-            when(strategyFactory.resolve(any())).thenReturn(strategy);
-            when(strategy.execute(any())).thenReturn(List.of(EtlResult.failed(1L, "error")));
-
-            EtlDispatchServiceImpl service = new EtlDispatchServiceImpl(
-                strategyFactory, DIRECT_EXECUTOR, loader, eventPublisher,
-                null, null, false);
-
-            service.dispatchAsync(1L, "b", "k", "f.pdf", "application/pdf", 100, 1L, null);
+            newService().dispatchAsync(1L, "b", "k", "f.pdf", "application/pdf", 100, 1L, null);
 
             verifyNoInteractions(eventPublisher);
         }
 
         @Test
-        @DisplayName("exception in dispatch does not propagate")
+        @DisplayName("exception during fallback dispatch is swallowed (does not propagate)")
         void dispatchExceptionSwallowed() {
+            busThrows();
             EtlRouteStrategy strategy = mock(EtlRouteStrategy.class);
             when(strategyFactory.resolve(any())).thenReturn(strategy);
             when(strategy.execute(any())).thenThrow(new RuntimeException("boom"));
 
-            EtlDispatchServiceImpl service = new EtlDispatchServiceImpl(
-                strategyFactory, DIRECT_EXECUTOR, loader, eventPublisher,
-                null, null, false);
-
-            assertThatCode(() -> service.dispatchAsync(1L, "b", "k", "f.pdf", "application/pdf", 100, 1L, null))
+            assertThatCode(() -> newService().dispatchAsync(1L, "b", "k", "f.pdf", "application/pdf", 100, 1L, null))
                 .doesNotThrowAnyException();
         }
     }

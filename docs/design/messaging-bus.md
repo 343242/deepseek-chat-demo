@@ -546,9 +546,8 @@ infrastructure/messaging/
 ├── ConsumerMode.java                  (消费模式枚举)
 ├── RetryPolicy.java                   (重试策略)
 ├── MessagingProperties.java           (@ConfigurationProperties)
-├── MessagingAutoConfiguration.java    (条件装配)
+├── MessagingAutoConfiguration.java    (无条件装配 — Phase 0)
 ├── MessagingHealthIndicator.java      (健康检查)
-├── NoOpMessageBus.java                (disabled 时空实现)
 ├── MessagePayloadCodec.java           (序列化抽象)
 ├── JacksonMessageCodec.java           (JSON 序列化实现)
 ├── idempotent/
@@ -2048,7 +2047,7 @@ mqadmin updateSubGroup -c DefaultCluster -g index-group \
 > - [ ] 消费组 `save-group` 已创建，`maxDeliveryAttempts=16`
 > - [ ] 消费组 `usage-group` 已创建，`maxDeliveryAttempts=16`
 > - [ ] §5.10 幂等检查依赖的 Redis 与 Caffeine 已就绪（Phase A 已落地）
-> - [ ] `app.messaging.enabled=true` 已写入 `application.yml`（Phase A 已落地）
+> - [x] 消息总线 always-on — Phase 0 已移除 `app.messaging.enabled` 开关，`RocketMQMessageBus` 无条件装配（无需手动开启）
 > - [ ] LLM SPI candidate ID 链路打通（commit `a98fa9b` 已落地）
 
 **初始化脚本模板**（`scripts/init-rocketmq-topics.sh`）：
@@ -2149,15 +2148,13 @@ public record MessagingProperties(
 }
 ```
 
-> **`app.messaging.enabled` 不是 record 字段（重要）**：
-> `enabled` 不在 `MessagingProperties` record 中——它是 `@ConditionalOnProperty` 直接读取的属性键，
-> 仅用于 `MessagingAutoConfiguration` 与 `NoOpMessagingConfiguration` 之间的二选一装配：
->
-> - `app.messaging.enabled=true` → 装配真实 `RocketMQMessageBus`
-> - `app.messaging.enabled=false` 或**未设置**（`matchIfMissing=true`）→ 装配 `NoOpMessageBus`
->
-> 业务代码注入 `MessageBus` 时无需判空，NoOp 实现的 `send/subscribe` 都是安全的 no-op。
-> 生产环境通过 `application-{profile}.yml` 或环境变量 `MESSAGING_ENABLED=true` 开启。
+> **消息总线 always-on（Phase 0，2026-06 调整）**：
+> 原设计的 `app.messaging.enabled` 开关与 `NoOpMessageBus` 已**移除**。原因：开关默认缺失时
+> `@ConditionalOnProperty(matchIfMissing=true)` 使 NoOp 生效，导致 app 在 broker 已就绪的情况下
+> 仍跑在 NoOp 上、静默丢弃所有消息（usage / RAG 索引 / chat 落库）。`MessagingAutoConfiguration`
+> 现为无条件 `@Configuration`，`RocketMQMessageBus` 始终装配。`endpoints` 默认 `localhost:8081`
+> 指向 Docker broker 的 Proxy，各环境通过 `ROCKETMQ_ENDPOINTS` 覆盖。业务代码注入 `MessageBus`
+> 无需判空；运行期 broker 不可达时由 publisher 端 `MessagingException` 降级（见 §7.x）+ 熔断兜底。
 
 > **`app.messaging.rocketmq.max-delivery-attempts` 仅作文档参考**：
 > PushConsumer 的实际最大投递次数由 **Broker 端消费组元数据** `maxDeliveryAttempts` 决定，
@@ -2179,8 +2176,6 @@ public record MessagingProperties(
 ```yaml
 app:
   messaging:
-    # enabled 不在 record 中——仅 @ConditionalOnProperty 读取，控制装配 RocketMQMessageBus 或 NoOpMessageBus
-    # 生产环境通过 application-{profile}.yml 或环境变量 MESSAGING_ENABLED=true 开启
     topic-prefix: "SMART_RAG_"
     shutdown-timeout: 30s
     ordered-topics:
@@ -2206,9 +2201,10 @@ app:
 ### 6.2 Auto-Configuration
 
 ```java
+// Phase 0 (2026-06)：无条件装配 — 移除原 app.messaging.enabled 开关与 NoOpMessagingConfiguration。
+// RocketMQMessageBus 始终激活；运行期 broker 不可达由 publisher 端降级（§7.x）+ 熔断兜底。
 @Configuration
 @EnableConfigurationProperties(MessagingProperties.class)
-@ConditionalOnProperty(name = "app.messaging.enabled", havingValue = "true")
 public class MessagingAutoConfiguration {
 
     @Bean
@@ -2227,27 +2223,6 @@ public class MessagingAutoConfiguration {
             bus.setRedisTemplate(redis);
         }
         return bus;
-    }
-}
-
-/**
- * 消息总线未启用时的空实现。
- * 业务代码注入 MessageBus 后无需判空，所有操作为 no-op。
- * <p>
- * 行为约定：
- * - send()：记录 DEBUG 日志，返回空字符串
- * - sendAsync()：记录 DEBUG 日志，返回 CompletableFuture.completedFuture("")
- * - subscribe()：记录 WARN 日志，返回 NoOpSubscription（isActive()=false）
- * - deadLetterOperations()：返回 NoOpDeadLetterOperations（所有方法返回空结果）
- * - shutdown()：无操作
- */
-@Configuration
-@ConditionalOnProperty(name = "app.messaging.enabled",
-    havingValue = "false", matchIfMissing = true)
-public class NoOpMessagingConfiguration {
-    @Bean
-    MessageBus noOpMessageBus() {
-        return new NoOpMessageBus();
     }
 }
 ```
@@ -2350,7 +2325,6 @@ public class JacksonMessageCodec implements MessagePayloadCodec {
  * 通过 Spring Boot Actuator /health 端点暴露，支持运维监控和告警。
  */
 @Component
-@ConditionalOnProperty(name = "app.messaging.enabled", havingValue = "true")
 public class MessagingHealthIndicator extends AbstractHealthIndicator {
 
     private final MessageBusManagement busManagement;
@@ -2403,7 +2377,6 @@ public class MessagingHealthIndicator extends AbstractHealthIndicator {
 
 ```java
 @Bean
-@ConditionalOnProperty(name = "app.messaging.enabled", havingValue = "true")
 HealthIndicator messagingHealthIndicator(MessageBusManagement busManagement) {
     return new MessagingHealthIndicator(busManagement);
 }
@@ -2721,7 +2694,6 @@ messageBus.send(new MessageEnvelope<>(
 ```java
 // 消费端 — EtlDocumentConsumer（已落地）
 @Component
-@ConditionalOnProperty(name = "app.messaging.enabled", havingValue = "true")
 public class EtlDocumentConsumer implements SmartLifecycle {
     public static final String TOPIC = "rag_index_document";
     static final String GROUP = "index-group";
@@ -2781,9 +2753,8 @@ public class EtlDocumentConsumer implements SmartLifecycle {
 | `infrastructure/messaging/ConsumerMode.java` | 新增 | 消费模式枚举（PUSH / SIMPLE） |
 | `infrastructure/messaging/RetryPolicy.java` | 新增 | 重试策略 |
 | `infrastructure/messaging/MessagingProperties.java` | 新增 | 配置属性 |
-| `infrastructure/messaging/MessagingAutoConfiguration.java` | 新增 | 条件装配 |
+| `infrastructure/messaging/MessagingAutoConfiguration.java` | 新增 | 无条件装配（Phase 0 起 always-on） |
 | `infrastructure/messaging/MessagingHealthIndicator.java` | 新增 | 健康检查（Producer/订阅/熔断器） |
-| `infrastructure/messaging/NoOpMessageBus.java` | 新增 | 未启用时的空实现 |
 | `infrastructure/messaging/MessagePayloadCodec.java` | 新增 | 序列化接口 |
 | `infrastructure/messaging/idempotent/IdempotentConfig.java` | 新增 | 幂等配置 record |
 | `infrastructure/messaging/JacksonMessageCodec.java` | 新增 | JSON 序列化 |
@@ -2798,9 +2769,16 @@ public class EtlDocumentConsumer implements SmartLifecycle {
 
 ## 9. 迁移步骤
 
+> **Phase 0（2026-06，前置修订）— 移除 `app.messaging.enabled` 开关与 `NoOpMessageBus`**：
+> Phase A 原设计的 enabled 开关默认缺失时经 `matchIfMissing=true` 落到 NoOp，导致 app 在 broker 已就绪时
+> 仍跑 NoOp、静默丢弃所有消息。Phase 0 将 `MessagingAutoConfiguration` 改为无条件装配、删除
+> `NoOpMessageBus`/`NoOpMessagingConfiguration`、移除所有 consumer 的 `@ConditionalOnProperty(enabled)`，
+> 消息总线从此 always-on（`endpoints` 默认 `localhost:8081` 指向 Docker broker Proxy）。下方 Phase A 描述
+> 保留为历史记录，其中 enabled/NoOp 相关项已被 Phase 0 取代。
+
 ### Phase A — SPI 层 + 核心实现
 
-**目标**：`MessageBus` 接口 + RocketMQ 5.x 发送/消费核心路径可用。默认 `enabled=false`，零行为变更。
+**目标**：`MessageBus` 接口 + RocketMQ 5.x 发送/消费核心路径可用。（Phase 0 后 always-on，无 enabled 开关。）
 
 1. 添加 `rocketmq-client-java` + `caffeine` 依赖到 `pom.xml`。
 2. 创建 `infrastructure/messaging/` 包结构，实现 SPI 接口、record 类型和 `ConsumerMode` 枚举。

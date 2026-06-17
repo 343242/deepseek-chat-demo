@@ -20,7 +20,6 @@ import org.redisson.api.RedissonClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 
@@ -49,23 +48,20 @@ public class EtlDispatchServiceImpl implements EtlDispatchService {
     private final Loader loader;
     private final ApplicationEventPublisher eventPublisher;
     private final @Nullable RedissonClient redissonClient;
-    private final @Nullable MessageBus messageBus;
-    private final boolean messagingEnabled;
+    private final MessageBus messageBus;
 
     public EtlDispatchServiceImpl(EtlRouteStrategyFactory strategyFactory,
                                   @Qualifier("etlIoExecutor") Executor etlIoExecutor,
                                   Loader loader,
                                   ApplicationEventPublisher eventPublisher,
                                   @Nullable RedissonClient redissonClient,
-                                  @Nullable MessageBus messageBus,
-                                  @Value("${app.messaging.enabled:false}") boolean messagingEnabled) {
+                                  MessageBus messageBus) {
         this.strategyFactory = strategyFactory;
         this.etlIoExecutor = etlIoExecutor;
         this.loader = loader;
         this.eventPublisher = eventPublisher;
         this.redissonClient = redissonClient;
         this.messageBus = messageBus;
-        this.messagingEnabled = messagingEnabled;
     }
 
     @Override
@@ -133,16 +129,13 @@ public class EtlDispatchServiceImpl implements EtlDispatchService {
         EtlCandidate candidate = new EtlCandidate(documentId, bucket, objectKey, fileName, mimeType, fileSize, userId, teamId);
         log.info("ETL dispatchAsync: documentId={}, file={}, userId={}, teamId={}", documentId, fileName, userId, teamId);
 
-        if (messagingEnabled && messageBus != null) {
-            try {
-                String dedupKey = String.valueOf(documentId);
-                messageBus.send(new MessageEnvelope<>(null, EtlDocumentConsumer.TOPIC, null, candidate,
-                    dedupKey, dedupKey, Map.of(), System.currentTimeMillis()));
-            } catch (MessagingException e) {
-                log.warn("Message bus send failed, falling back to thread pool: documentId={}, file={}", documentId, fileName, e);
-                dispatchViaThreadPool(candidate, documentId, fileName);
-            }
-        } else {
+        // Phase 0：消息总线 always-on，始终经 bus 投递；send 抛 MessagingException 时降级到线程池。
+        try {
+            String dedupKey = String.valueOf(documentId);
+            messageBus.send(new MessageEnvelope<>(null, EtlDocumentConsumer.TOPIC, null, candidate,
+                dedupKey, dedupKey, Map.of(), System.currentTimeMillis()));
+        } catch (MessagingException e) {
+            log.warn("Message bus send failed, falling back to thread pool: documentId={}, file={}", documentId, fileName, e);
             dispatchViaThreadPool(candidate, documentId, fileName);
         }
     }

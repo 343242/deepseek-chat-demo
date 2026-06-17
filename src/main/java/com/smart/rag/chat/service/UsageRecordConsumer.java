@@ -6,7 +6,6 @@ import com.smart.rag.infrastructure.messaging.MessageBus;
 import com.smart.rag.infrastructure.messaging.Subscription;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.SmartLifecycle;
 import org.springframework.stereotype.Component;
 
@@ -26,11 +25,10 @@ import org.springframework.stereotype.Component;
  * 不可用时，{@code IdempotentHandler} 降级为透传，可能产生重复行（见其类注释的权衡声明）
  * ——usage 为非关键路径，此权衡可接受。
  * <p>
- * 仅在 {@code app.messaging.enabled=true} 时激活，与 publisher 端
- * {@link ChatUsageTracker} 的启用条件一致。
+ * Phase 0 后消息总线 always-on，本 consumer 始终激活（无条件 {@code @Component}），
+ * 与 publisher 端 {@link ChatUsageTracker} 一致。
  */
 @Component
-@ConditionalOnProperty(name = "app.messaging.enabled", havingValue = "true")
 public class UsageRecordConsumer implements SmartLifecycle {
 
     private static final Logger log = LoggerFactory.getLogger(UsageRecordConsumer.class);

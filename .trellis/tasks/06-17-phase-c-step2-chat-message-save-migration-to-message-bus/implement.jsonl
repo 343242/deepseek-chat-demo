@@ -1,0 +1,3 @@
+{"file": "docs/design/messaging-bus.md", "reason": "§7.1 chat 消息异步保存（publisher/consumer 接入点 + payload + MessagingException 降级）、§9 Phase C Step 2 迁移步骤、§4 MessageEnvelope.deduplicated 工厂、Phase 0（移除 enabled/NoOp、bus always-on）的直接蓝图"}
+{"file": ".trellis/spec/backend/llm-spi.md", "reason": "candidateId 契约（registry 候选 ID 格式，禁 provider/model 复合）— ChatMessagePayload.candidateId 字段与 saveMessagesAndNotify 链路命名一致性依据"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "异常体系 + MessagingErrorCode — publisher send 失败时 MessagePublishException/MessagingException 的 catch 同步降级语义对照"}

@@ -2,7 +2,6 @@ package com.smart.rag.rag.etl;
 
 import com.smart.rag.infrastructure.messaging.ConsumerConfig;
 import com.smart.rag.infrastructure.messaging.ConsumerMode;
-import com.smart.rag.infrastructure.messaging.MessageEnvelope;
 import com.smart.rag.infrastructure.messaging.MessageHandler;
 import com.smart.rag.infrastructure.messaging.MessageBus;
 import com.smart.rag.infrastructure.messaging.RetryPolicy;
@@ -11,7 +10,6 @@ import com.smart.rag.rag.event.EtlCompletedEvent;
 import com.smart.rag.rag.service.EtlDispatchService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.SmartLifecycle;
 import org.springframework.stereotype.Component;
@@ -25,10 +23,9 @@ import java.util.List;
  * 使用 SimpleConsumer 模式：LLM 调用（embedding + chunking）耗时不可预测，
  * SimpleConsumer 无消费超时概念，通过 invisibleDuration 控制失败后重新可见时间。
  * <p>
- * 仅在 {@code app.messaging.enabled=true} 时激活。
+ * Phase 0 后消息总线 always-on，本 consumer 始终激活（无条件 {@code @Component}）。
  */
 @Component
-@ConditionalOnProperty(name = "app.messaging.enabled", havingValue = "true")
 public class EtlDocumentConsumer implements SmartLifecycle {
 
     private static final Logger log = LoggerFactory.getLogger(EtlDocumentConsumer.class);

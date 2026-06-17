@@ -20,7 +20,9 @@
         <constructor>
             <idArg column="id_a" javaType="string"/>
             <idArg column="id_b" javaType="string"/>
-            <arg column="distance" javaType="double"/>
+            <!-- _double = primitive double.class 的 MyBatis 别名。写 "double" 会被解析成装箱 Double，
+                 与 record 的 primitive double 构造器签名不匹配 → NoSuchMethodException -->
+            <arg column="distance" javaType="_double"/>
         </constructor>
     </resultMap>
 

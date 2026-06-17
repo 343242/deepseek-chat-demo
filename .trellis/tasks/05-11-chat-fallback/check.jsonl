@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "确认改动不违反项目约束"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "验证异常分类正确，GlobalExceptionHandler 不需要修改"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "验证 OCP、DTO 规则、新增功能 Checklist"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "验证日志级别使用正确"}
+{"file": ".trellis/tasks/05-11-chat-fallback/prd.md", "reason": "对照 PRD 验收标准逐项检查"}

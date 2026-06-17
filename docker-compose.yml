@@ -3,7 +3,7 @@
 
 services:
   postgres:
-    image: postgres:18-bookworm
+    build: ./docker/postgres
     container_name: chat-demo-db
     restart: unless-stopped
     ports:
@@ -14,7 +14,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?请在 .env 中设置 POSTGRES_PASSWORD}
     volumes:
       - pgdata:/var/lib/postgresql
-      - ./sql/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      # schema.sql 已废弃，改由 Flyway (db/migration/) 管理数据库迁移
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-chat_demo}"]
       interval: 5s
@@ -36,6 +36,26 @@ services:
       timeout: 3s
       retries: 10
 
+  minio:
+    image: pgsty/minio:latest
+    container_name: chat-demo-minio
+    restart: unless-stopped
+    ports:
+      - "${MINIO_API_PORT:-9000}:9000"
+      - "${MINIO_CONSOLE_PORT:-9001}:9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-minioadmin123}
+    volumes:
+      - miniodata:/data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
 volumes:
   pgdata:
   redisdata:
+  miniodata:

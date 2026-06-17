@@ -1,0 +1,31 @@
+{
+  "id": "multi-provider-support",
+  "name": "multi-provider-support",
+  "title": "multi-provider-support",
+  "description": "",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "instant",
+  "assignee": "instant",
+  "createdAt": "2026-05-08",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "05-08-p1-infra",
+    "05-08-p2-providers",
+    "05-08-p3-adapt",
+    "05-08-p4-tests"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

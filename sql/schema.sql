@@ -165,3 +165,35 @@ INSERT INTO sys_user_role (user_id, role_id)
 SELECT u.id, r.id FROM sys_user u, sys_role r
 WHERE u.username = 'admin' AND r.role_name = 'ADMIN'
   AND NOT EXISTS (SELECT 1 FROM sys_user_role WHERE user_id = u.id AND role_id = r.id);
+
+-- ========== RAG 文档管理 ==========
+
+-- RAG 文档管理表
+CREATE TABLE IF NOT EXISTS rag_document (
+    id          BIGSERIAL PRIMARY KEY,
+    file_name   VARCHAR(500) NOT NULL,
+    file_size   BIGINT       NOT NULL,
+    mime_type   VARCHAR(200) NOT NULL,
+    storage_key VARCHAR(500) NOT NULL,
+    bucket      VARCHAR(200) NOT NULL,
+    chunk_count INTEGER      DEFAULT 0,
+    status      VARCHAR(50)  NOT NULL DEFAULT 'UPLOADED',
+    error_message TEXT,
+    create_time TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    update_time TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    deleted     INTEGER       NOT NULL DEFAULT 0
+);
+
+COMMENT ON TABLE  rag_document IS 'RAG 文档管理';
+COMMENT ON COLUMN rag_document.id IS '主键';
+COMMENT ON COLUMN rag_document.file_name IS '原始文件名';
+COMMENT ON COLUMN rag_document.file_size IS '文件大小(bytes)';
+COMMENT ON COLUMN rag_document.mime_type IS 'MIME类型';
+COMMENT ON COLUMN rag_document.storage_key IS 'MinIO存储key';
+COMMENT ON COLUMN rag_document.bucket IS 'MinIO bucket';
+COMMENT ON COLUMN rag_document.chunk_count IS '解析后分块数';
+COMMENT ON COLUMN rag_document.status IS '处理状态: UPLOADED/PARSING/CHUNKING/COMPLETED/FAILED';
+COMMENT ON COLUMN rag_document.error_message IS '错误信息';
+COMMENT ON COLUMN rag_document.create_time IS '创建时间';
+COMMENT ON COLUMN rag_document.update_time IS '更新时间';
+COMMENT ON COLUMN rag_document.deleted IS '逻辑删除';

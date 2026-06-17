@@ -1,15 +1,15 @@
 <?xml version="1.0" encoding="UTF-8" ?>
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
-<mapper namespace="com.demo.chat.chat.mapper.ModelParamsMapper">
+<mapper namespace="com.smart.rag.chat.mapper.ModelParamsMapper">
 
     <!-- 按模型 ID 查询 -->
-    <select id="selectByModelId" resultType="com.demo.chat.chat.entity.ModelParams">
+    <select id="selectByModelId" resultType="com.smart.rag.chat.entity.ModelParams">
         SELECT * FROM model_params WHERE model_id = #{modelId}
     </select>
 
     <!-- 查询全部（按 model_id 排序） -->
-    <select id="selectAllOrdered" resultType="com.demo.chat.chat.entity.ModelParams">
+    <select id="selectAllOrdered" resultType="com.smart.rag.chat.entity.ModelParams">
         SELECT * FROM model_params ORDER BY model_id
     </select>
 

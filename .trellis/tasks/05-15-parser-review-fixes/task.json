@@ -1,0 +1,16 @@
+{
+  "id": "05-15-parser-review-fixes",
+  "name": "05-15-parser-review-fixes",
+  "title": "PPT/XLSX Parser 代码审查修复",
+  "description": "修复代码审查发现的 P0+P1 问题：Excel 双次 InputStream、null class 强转、rowCount 语义、synchronizedList、ArrayList.remove(0) 等",
+  "status": "completed",
+  "priority": "P0",
+  "creator": "instant",
+  "assignee": "instant",
+  "createdAt": "2026-05-16",
+  "base_branch": "rag-dev",
+  "relatedFiles": [
+    "src/main/java/com/demo/chat/rag/parser/ExcelDocumentParser.java",
+    "src/main/java/com/demo/chat/rag/parser/PptDocumentParser.java"
+  ]
+}

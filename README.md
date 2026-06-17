@@ -1,6 +1,44 @@
 # Smart-RAG
 
-基于 **Spring Boot 3.5 + Spring AI 1.1 + MyBatis-Plus 3.5** 的多厂商 AI 聊天助手后端。支持 **DeepSeek、智谱 AI (Zhipu)、MiniMax** 三家模型厂商，通过 Provider 抽象层实现统一路由。提供动态模型加载、SSE 流式响应、JDBC 对话记忆、**Tool Calling 工具调用**、RBAC 权限系统、滑块验证码、自研雪花 ID，并通过 Advisor 链实现限流与内容安全过滤。
+基于 **Spring Boot 3.5 + Spring AI 1.1 + MyBatis-Plus 3.5** 的多厂商 AI 聊天助手后端。支持 **DeepSeek、智谱 AI (Zhipu)、MiniMax** 三家模型厂商，通过 Provider 抽象层实现统一路由与自动降级。提供动态模型加载、SSE 流式响应、JDBC 对话记忆、**Tool Calling 工具调用**、RBAC 权限系统、滑块验证码、自研雪花 ID 与 UUIDv7，并通过 Advisor 链实现限流与内容安全过滤。
+
+## RAG 检索增强生成
+
+支持完整的 RAG Pipeline：文档上传（含 GBK/GB2312/GB18030 编码自动检测转码）→ Apache Tika 解析 → Parent-Child 分块 → DashScope Embedding 向量化 → PGvector 存储。
+
+**六阶段检索 Pipeline（H-RAG 优化后）：**
+
+```
+用户查询
+  ↓ QueryNormalize（全角→半角、NFC、空白压缩）
+  ↓ RewriteQueryTransformer（LLM 查询改写，短查询原样透传守卫）
+  ↓ HybridDocumentRetriever（pgvector 向量检索 topK=30 + BM25 全文检索 topK=30, RRF 加权融合）
+  ↓ MmrDocumentPostProcessor（MMR 多样性去冗余 topK=10, pgvector cosine 数据库层计算）
+  ↓ BailianRerankPostProcessor（百炼 Rerank 语义精排 topN=5, 三次重试+指数退避）
+  ↓ ParentDocumentPostProcessor（子块→父文档回查替换, max(childScore) 降序排列）
+  ↓ 注入 LLM prompt → 流式生成
+```
+
+关键设计：
+- **H-RAG 论文驱动优化**：Query Rewrite 守卫规则（短查询原样透传）、自定义 Rewrite 模型与 temperature、Parent-level Rescoring（子块 max-score 聚合排序父文档）
+- **混合检索 + RRF 加权融合**：向量语义检索与 BM25（pg_jieba 中文分词）互补，向量检索利用 cosine 相似度分数加权
+- **先去冗余再精排**：MMR 在 Rerank 之前执行，避免 Rerank 浪费算力在语义重复文档上
+- **HNSW 参数调优**：m=32, ef_construction=128, ef_search=64, iterative_scan=relaxed_order
+- **ETL 双线程池**：IO 池（Extract/Load）+ CPU 池（Transform），多文档并行处理
+- **快速通道**：小文档走 BM25 即搜即用（异步向量化补齐）
+- **MinIO BucketResolver**：个人/团队文档 bucket 隔离
+- **编码自动检测**：文本/Markdown 上传自动识别 GBK/GB2312/GB18030 编码并转码为 UTF-8
+
+## 评估系统
+
+独立的 RAG 评估框架（`@Profile("evaluation")`，dev 环境零侵入）：
+- **检索侧**：召回率 (Recall@K)、准确率 (Precision@K)、MRR、NDCG
+- **生成侧**：忠实度 (Faithfulness)、答案相关性、上下文相关性、上下文召回率
+- **Judge 模型**：独立于 Provider 路由，通过 `application-evaluation.yml` 直连厂商 API
+
+## 团队协作
+
+团队创建与解散、成员管理（邀请/移除/角色变更）、上传审批流、额度控制、文档权限隔离、团队分片上传。
 
 ## 技术栈
 
@@ -8,29 +46,48 @@
 |------|------|------|
 | Java | 21 | 运行时 |
 | Spring Boot | 3.5.14 | 应用框架 |
-| Spring AI | 1.1.6 | AI 模型集成 |
-| spring-ai-starter-model-deepseek | 1.1.6 | DeepSeek 模型接入 |
-| spring-ai-starter-model-zhipuai | 1.1.6 | 智谱 AI 模型接入 |
-| spring-ai-starter-model-minimax | 1.1.6 | MiniMax 模型接入 |
+| Spring AI | 1.1.6 | AI 模型集成（DeepSeek / 智谱 / MiniMax） |
 | MyBatis-Plus | 3.5.16 | ORM 框架 |
-| Spring Security | 随 Boot | 认证与授权 |
-| JJWT | 0.13.0 | JWT 双 Token（Access 15min + Refresh 24h） |
-| Spring Data Redis | 随 Boot | Token 存储、权限缓存、IP 限流 |
-| Caffeine | 3.x | 本地缓存（SystemPrompt / ModelParams / 验证码） |
-| sensitive-word | 0.29.5 | DFA 敏感词过滤（纯内存，14W+ QPS） |
 | PostgreSQL | 18 | 主数据库 |
-| Redis | 8.2 | 缓存 / Token 存储 |
+| PGvector | 0.8.2 | 向量数据库（HNSW 索引） |
+| pg_jieba | - | 中文分词（BM25 全文检索） |
+| Redis | 8.2 | 缓存 / Token 存储 / 权限缓存 |
+| MinIO | 9.0.0 | 对象存储（文档管理） |
+| Flyway | 随 Boot | 数据库版本化迁移 |
+| Spring Security | 随 Boot | JWT 双 Token 认证 + RBAC 授权 |
+| JJWT | 0.13.0 | JWT 双 Token（Access 15min + Refresh 24h） |
+| Apache Tika | 随 Spring AI | 多格式文档解析（PDF/DOCX/PPTX/HTML 等） |
+| juniversalchardet | 2.5.0 | 文本编码自动检测（GBK/GB2312/GB18030） |
+| DashScope text-embedding-v4 | - | 阿里千问 Embedding 模型（1024 维） |
+| Caffeine | 3.x | 本地缓存（SystemPrompt / ModelParams / 验证码） |
+| sensitive-word | 0.29.5 | DFA 敏感词过滤 |
+| Log4j 2 + Disruptor | 4.0.0 | 全异步日志，按级别分目录 |
+| exp4j | 0.4.8 | 安全数学表达式求值 |
+| UUIDv7 (RFC 9562) | 自实现 | 会话 ID 生成（时间有序 + 全局唯一） |
 
 ## 快速开始
 
 ### 1. 启动依赖服务
 
 ```bash
-# 使用 docker compose 一键启动 PostgreSQL + Redis
+# 使用 docker compose 一键启动 PostgreSQL + Redis + MinIO
 cp .env.example .env   # 编辑 POSTGRES_PASSWORD 等配置
 docker compose up -d
 
-# 首次部署会自动执行 sql/schema.sql 建表
+# Flyway 自动执行数据库迁移（共 13 个版本）：
+#   V1  初始表结构（用户/权限/RBAC/聊天）
+#   V2  BM25 全文检索支持（tsvector + 触发器）
+#   V3  初始角色与权限种子数据
+#   V4  pg_jieba 中文分词配置
+#   V5  会话 + 消息表
+#   V6  历史对话数据回填
+#   V7  Spring AI Chat Memory 表
+#   V8  rag_document file_md5 字段
+#   V9  团队协作表
+#   V10 rag_document 时区类型 + DDL COMMENT
+#   V11 RAG 评估表
+#   V12 评估状态 CHECK 约束 + 权限
+#   V13 HNSW 参数调优 + iterative scan
 # 初始管理员：admin / admin123（生产环境请立即修改）
 ```
 
@@ -38,12 +95,9 @@ docker compose up -d
 > ```bash
 > cd sandbox
 > docker build -f Dockerfile.python -t sandbox-python:bookworm .
-> docker build -f Dockerfile.node -t sandbox-node:bookworm .       # 需先拉取 node:22-bookworm
-> docker build -f Dockerfile.java -t sandbox-java:bookworm .       # 需先拉取 eclipse-temurin:21-jre-bookworm
+> docker build -f Dockerfile.node -t sandbox-node:bookworm .
+> docker build -f Dockerfile.java -t sandbox-java:bookworm .
 > ```
-```
-
-> PostgreSQL 18 变更了数据目录结构，docker-compose 已适配。如手动启动需注意 volume 挂载路径为 `/var/lib/postgresql`（而非旧版 `/var/lib/postgresql/data`）。
 
 ### 2. 配置环境变量
 
@@ -53,13 +107,15 @@ export DEEPSEEK_API_KEY=sk-***
 export ZHIPU_API_KEY=***         # 可选
 export MINIMAX_API_KEY=***       # 可选
 
+# RAG（可选）
+export DASHSCOPE_API_KEY=sk-***       # 阿里千问 Embedding + Rerank
+
+# 安全
 export JWT_SECRET=your-jwt-secret-at-least-32-characters-long!!
 
 # 可选
 export POSTGRES_PASSWORD=***
 export REDIS_PASSWORD=***
-
-# 雪花 ID（可选，默认 0）
 export SNOWFLAKE_DATACENTER_ID=0
 export SNOWFLAKE_WORKER_ID=0
 ```
@@ -75,7 +131,7 @@ java -jar target/chat-demo-0.0.1-SNAPSHOT.jar
 
 ```bash
 # 1. 获取验证码（dev 环境会返回 answer）
-CAPTCHA=$(curl -s http://localhost:8080/api/auth/captcha)
+curl -s http://localhost:8080/api/auth/captcha
 
 # 2. 登录
 curl -X POST http://localhost:8080/api/auth/login \
@@ -88,503 +144,90 @@ curl http://localhost:8080/api/models -b cookies.txt
 
 # 4. 聊天 — 复合格式指定厂商
 curl -X POST http://localhost:8080/api/chat \
-  -H "Content-Type: application/json" \
-  -b cookies.txt \
+  -H "Content-Type: application/json" -b cookies.txt \
   -d '{"model":"deepseek/deepseek-chat","message":"你好","conversationId":"test"}'
 
 # 5. SSE 流式聊天
 curl "http://localhost:8080/api/chat/stream?model=zhipu/glm-4.7&message=你好&conversationId=test" \
   -b cookies.txt
+
+# 6. 上传文档（RAG，支持 GBK/GB2312/GB18030 自动转码）
+curl -X POST http://localhost:8080/api/documents/upload \
+  -b cookies.txt -F "file=@document.pdf"
+
+# 7. RAG 增强聊天
+curl -X POST http://localhost:8080/api/chat \
+  -H "Content-Type: application/json" -b cookies.txt \
+  -d '{"model":"deepseek/deepseek-chat","message":"文档里讲了什么？","ragEnabled":true}'
+
+# 8. 查看文档列表（仅当前用户的文档）
+curl http://localhost:8080/api/documents -b cookies.txt
+
+# 9. 删除文档（仅文档所有者可操作）
+curl -X DELETE http://localhost:8080/api/documents/1 -b cookies.txt
+
+# 10. 团队分片上传（大文件）
+curl -X POST http://localhost:8080/api/teams/1/documents/multipart \
+  -H "Content-Type: application/json" -b cookies.txt \
+  -d '{"fileMd5":"d41d8cd98f00b204e9800998ecf8427e","fileName":"report.pdf","fileSize":52428800,"mimeType":"application/pdf","totalChunks":10}'
 ```
-
-## 文档
-
-| 文档 | 说明 |
-|------|------|
-| [API 接口文档](docs/API-DOCS.md) | 所有接口的完整说明 |
-| [数据库设计文档](docs/DATABASE.md) | 表结构、索引、关系、Redis 使用 |
-| [RBAC 用户模块设计](docs/RBAC-USER-MODULE-DESIGN.md) | 权限模型与用户管理 |
-
-**外部参考：** [Spring AI 1.1.6](https://docs.spring.io/spring-ai/docs/1.1.6/api/) · [DeepSeek API](https://api-docs.deepseek.com/) · [智谱 AI API](https://docs.bigmodel.cn/cn/api/introduction) · [MiniMax API](https://platform.minimaxi.com/docs/api-reference/api-overview)
-
----
 
 ## 项目结构
 
 ```
 src/main/java/com/demo/chat/
-├── ChatDemoApplication.java                  # @MapperScan 启动类
-│
-├── common/                                   # 公共模块
-│   └── snowflake/                            #   自研雪花 ID 生成器
-│       ├── SnowflakeProperties.java          #     配置：epoch / datacenterId / workerId
-│       ├── SnowflakeIdGenerator.java         #     核心：64 位雪花算法（线程安全 + 时钟回拨容忍）
-│       └── SnowflakeConfiguration.java       #     Spring Bean 注册
-│
-├── config/                                   # 基础配置
-│   ├── ModelProviderAutoConfiguration.java   #   多厂商自动配置
-│   ├── ToolAutoConfiguration.java            #   Tool Calling 自动配置
-│   ├── SandboxAutoConfiguration.java         #   沙箱自动配置
-│   ├── DeepSeekProperties.java               #   spring.ai.deepseek.*
-│   ├── MiniMaxProperties.java                #   spring.ai.minimax.*
-│   ├── ZhipuProperties.java                  #   spring.ai.zhipuai.*
-│   ├── AdvisorAutoConfiguration.java         #   Advisor 编排 + ChatMemory Bean
-│   ├── MyBatisPlusConfig.java                #   分页插件
-│   ├── MyBatisPlusMetaHandler.java           #   自动填充（createTime / updateTime）
-│   ├── RedisConfig.java                      #   Redis 序列化配置
-│   ├── PasswordEncoderConfig.java            #   BCrypt 密码编码器
-│   └── TransactionConfig.java                #   TransactionTemplate Bean
-│
-├── security/                                 # 安全模块
-│   ├── config/
-│   │   ├── SecurityConfig.java               #   SecurityFilterChain + CORS
-│   │   └── JwtProperties.java                #   JWT 配置属性
-│   ├── dto/
-│   │   └── CaptchaResult.java                #   验证码结果 DTO
-│   ├── filter/
-│   │   └── JwtAuthenticationFilter.java      #   JWT 认证过滤器
-│   ├── service/
-│   │   ├── TokenCacheService.java            #   Redis token 存储/吊销/权限缓存/限流
-│   │   └── CaptchaService.java               #   滑块拼图验证码（纯 Java 2D，Caffeine 缓存）
-│   ├── token/
-│   │   └── CookieTokenManager.java           #   Cookie Token 读/写/清除（HttpOnly + SameSite=Lax）
-│   └── util/
-│       ├── JwtTokenProvider.java             #   JWT 生成/验证 (jti, issuer 校验)
-│       └── SecurityUtils.java                #   getCurrentUserId / extractToken
-│
-├── user/                                     # RBAC 用户模块
-│   ├── entity/                               #   SysUser(雪花ID), SysRole, SysPermission, ...
-│   ├── enums/UserStatus.java                 #   用户状态枚举
-│   ├── mapper/                               #   语义化查询接口 + XML
-│   │   ├── SysUserMapper.java                #     selectByUsername / selectActiveById / selectByEmailExcludingId
-│   │   ├── SysRoleMapper.java                #     selectAllOrdered / selectByRoleName
-│   │   ├── SysPermissionMapper.java          #     selectAllOrdered / selectByPermissionName / selectByResourceKey
-│   │   ├── SysRolePermissionMapper.java      #     selectPermissionsByRoleId(s) / deleteByRoleId / batchInsert
-│   │   └── SysUserRoleMapper.java            #     selectRoleIdsByUserId / selectUserIdsByRoleId / batchInsert
-│   ├── service/                              #   接口层
-│   │   ├── AuthService.java                  #     认证：登录/注册/刷新/登出/改密
-│   │   ├── SysUserService.java               #     用户 CRUD
-│   │   ├── SysRoleService.java               #     角色管理
-│   │   └── SysPermissionService.java         #     权限 CRUD
-│   ├── service/impl/                         #   实现层（业务编排，不含 SQL）
-│   ├── dto/                                  #   Login/Register/Refresh/ChangePassword/...
-│   └── controller/                           #   HTTP 转发
-│       ├── AuthController.java               #     /api/auth/*
-│       ├── UserController.java               #     /api/users/* (ADMIN)
-│       └── RoleController.java               #     /api/roles/* (ADMIN)
-│
-├── chat/                                     # 聊天核心模块
-│   ├── provider/                             #   ★ 多厂商 Provider 抽象层
-│   │   ├── ModelProvider.java                #     Provider 接口（策略模式）
-│   │   ├── DeepSeekModelProvider.java        #     DeepSeek 实现
-│   │   ├── ZhipuModelProvider.java           #     智谱 AI 实现
-│   │   ├── MiniMaxModelProvider.java         #     MiniMax 实现
-│   │   ├── ProviderRegistry.java             #     厂商注册中心（服务定位模式）
-│   │   └── ModelRouter.java                  #     模型 ID 路由解析器
-│   │
-│   ├── client/
-│   │   └── ChatClientRegistry.java           #     ChatClient 注册中心
-│   │
-│   ├── advisor/                              #   Spring AI Advisor 链
-│   │   ├── RateLimiter.java                  #     限流器接口
-│   │   ├── TokenBucketLimiter.java           #     令牌桶实现
-│   │   ├── RateLimitAdvisor.java             #     限流 Advisor (order=0)
-│   │   ├── ContentFilterAdvisor.java         #     内容安全 Advisor (order=1)
-│   │   └── ConversationContextAdvisor.java   #     对话上下文注入 Advisor
-│   │
-│   ├── content/                              #   内容安全
-│   │   ├── ContentFilterService.java         #     过滤服务接口
-│   │   └── SensitiveWordFilterService.java   #     sensitive-word DFA 实现
-│   │
-│   ├── tool/                                 #   ★ 工具集（模型可调用的工具）
-│   │   ├── ToolRegistry.java                 #     工具注册中心（自动发现 @Tool Bean）
-│   │   ├── DateTimeTools.java                #     日期时间查询（当前时间、星期、日期差）
-│   │   ├── CalculatorTools.java              #     数学计算（表达式求值）
-│   │   ├── CodeExecutionTool.java            #     代码执行（Docker 沙箱）
-│   │   └── sandbox/                          #     沙箱引擎
-│   │       ├── SandboxService.java           #       Docker 容器生命周期管理
-│   │       ├── SandboxConfig.java            #       配置属性
-│   │       ├── SandboxResult.java            #       执行结果 DTO
-│   │       └── Language.java                 #       语言枚举
-│   │
-│   ├── util/
-│   │   └── ConversationIdUtil.java           #     对话 ID 用户隔离工具（构建/解析/前缀）
-│   │
-│   ├── service/                              #   业务服务（接口层）
-│   │   ├── ChatService.java                  #     聊天服务接口（阻塞 + 流式 + 记忆 + doFinally）
-│   │   ├── ModelService.java                 #     模型管理接口（按厂商分组）
-│   │   ├── ConversationService.java          #     对话管理接口（用户隔离）
-│   │   ├── SystemPromptService.java          #     System Prompt 管理接口（Caffeine 缓存）
-│   │   ├── PromptLoaderService.java          #     XML 模板加载器接口
-│   │   ├── ModelParamsService.java           #     模型参数管理接口（Caffeine 缓存）
-│   │   ├── UsageService.java                 #     用量统计接口
-│   │   ├── ModelRegistryRefresher.java       #     模型注册刷新器（@Component，无接口）
-│   │   └── impl/                             #     实现层（业务编排，不含 SQL）
-│   │       ├── ChatServiceImpl.java
-│   │       ├── ModelServiceImpl.java
-│   │       ├── ConversationServiceImpl.java
-│   │       ├── SystemPromptServiceImpl.java
-│   │       ├── PromptLoaderServiceImpl.java
-│   │       ├── ModelParamsServiceImpl.java
-│   │       └── UsageServiceImpl.java
-│   │
-│   ├── controller/                           #   REST 接口
-│   │   ├── ChatController.java               #     /api/chat, /api/models
-│   │   ├── ConversationController.java       #     /api/conversations
-│   │   ├── PromptController.java             #     /api/prompts
-│   │   ├── ModelParamsController.java        #     /api/params
-│   │   └── UsageController.java              #     /api/usage
-│   │
-│   ├── entity/                               #   数据实体
-│   │   ├── SystemPrompt.java
-│   │   ├── ModelParams.java
-│   │   └── TokenUsage.java
-│   │
-│   ├── mapper/                               #   MyBatis-Plus Mapper（语义化接口 + XML）
-│   │   ├── SystemPromptMapper.java           #     selectByModelId / selectAllOrdered / deleteByModelId
-│   │   ├── ModelParamsMapper.java            #     selectByModelId / selectAllOrdered / deleteByModelId
-│   │   ├── TokenUsageMapper.java             #     selectByConversationId / aggregateByModel / ...
-│   │   └── ConversationMapper.java           #     selectConversationsByPrefix / selectMessagesByConversationId
-│   │
-│   └── dto/                                  #   数据传输对象（全部 record）
-│       ├── ChatRequest.java
-│       ├── ChatResponse.java
-│       ├── ConversationMessage.java
-│       ├── ConversationSummary.java
-│       ├── ModelInfo.java
-│       ├── ProviderModelInfo.java
-│       ├── ModelsResponse.java
-│       ├── ModelParamsDTO.java
-│       ├── SystemPromptDTO.java
-│       ├── SystemPromptUpdateRequest.java
-│       ├── PromptTemplate.java
-│       ├── TokenUsageDTO.java
-│       ├── UsageStats.java
-│       └── ErrorResponse.java
-│
-└── exception/                                # 异常处理
-    ├── GlobalExceptionHandler.java           #   统一错误响应 (400/401/403/404/429/500)
-    ├── BusinessException.java                #   业务异常（统一替代 IllegalArgumentException）
-    ├── ContentFilteredException.java         #   内容过滤异常
-    ├── ModelNotFoundException.java           #   模型不存在异常
-    ├── ProviderNotFoundException.java        #   厂商不存在异常
-    └── RateLimitExceededException.java       #   限流异常
-
-resources/
-├── application.yml / application-{profile}.yml
-├── static/prompt/                            # XML System Prompt 模板
-│   ├── default.xml
-│   ├── deepseek-chat.xml
-│   └── deepseek-reasoner.xml
-└── mapper/                                   # MyBatis XML Mapper（SQL 全部由 XML 维护）
-    ├── SysUserMapper.xml
-    ├── SysRoleMapper.xml
-    ├── SysPermissionMapper.xml
-    ├── SysUserRoleMapper.xml
-    ├── SysRolePermissionMapper.xml
-    ├── TokenUsageMapper.xml
-    ├── ConversationMapper.xml
-    ├── ModelParamsMapper.xml
-    └── SystemPromptMapper.xml
+├── common/              # 公共模块（错误码、分页、雪花ID、UUIDv7、工具类）
+├── config/              # 基础配置（多厂商、Advisor、MyBatis-Plus、Redis）
+├── security/            # 安全模块（JWT 双Token、验证码、Spring Security）
+├── user/                # RBAC 用户模块（用户/角色/权限 CRUD、BCrypt）
+├── conversation/        # 会话管理（独立于 chat，双写架构）
+├── chat/                # 聊天核心（Provider 抽象、模型路由、Advisor 链、Tool Calling、自动降级）
+├── rag/                 # RAG 模块
+│   ├── config/          #   RAG 配置（RagRetrievalProperties record、RagAdvisorFactory）
+│   ├── retrieval/       #   检索（HybridDocumentRetriever、Rerank、MMR、QueryNormalizer）
+│   ├── chunk/           #   分块（Parent-Child 策略、ParentDocumentPostProcessor 含 Rescoring）
+│   ├── embedding/       #   向量化（DashScopeEmbeddingModel、批量分片、场景识别）
+│   ├── etl/             #   ETL Pipeline（双线程池、Standard/FastTrack 策略路由）
+│   ├── mapper/          #   数据访问（VectorStoreMapper: BM25/ParentChild/Cosine距离）
+│   ├── evaluation/      #   评估系统（@Profile("evaluation"), Judge/LlmScorer/指标计算）
+│   ├── parser/          #   文档解析（Apache Tika + 编码自动检测）
+│   ├── upload/          #   上传策略（个人上传）
+│   └── entity/          #   RAG 实体
+├── team/                # 团队协作（团队/成员/审批/额度/权限隔离/团队上传）
+└── exception/           # 统一异常处理
 ```
 
-## 架构设计
+> 完整的文件级目录结构见 [项目结构文档](docs/PROJECT-STRUCTURE.md)。
 
-### 1. 多厂商 Provider 抽象（核心架构）
+## 文档
 
-```
-ChatController
-     │
-     ▼
-ChatService ─── ModelRouter.resolve("deepseek/deepseek-chat") → Route("deepseek", "deepseek-chat")
-     │                                                              │
-     │                    ProviderRegistry.get("deepseek")           │
-     │                              │                               │
-     │                              ▼                               │
-     │              ┌──────── ModelProvider (interface) ────────┐   │
-     │              │                  │                        │   │
-     │     DeepSeekProvider   ZhipuProvider          MiniMaxProvider
-     │              │                │                       │      │
-     │              ▼                ▼                       ▼      │
-     │         DeepSeekApi     ZhiPuAiApi             MiniMaxApi   │
-     │              │                │                       │      │
-     │              ▼                ▼                       ▼      │
-     │         ChatClient      ChatClient             ChatClient   │
-     │              │                │                       │      │
-     │              └───────┬────────┴──────────┬───────────┘      │
-     │                      ▼                   ▼                   │
-     │             ChatClientRegistry ← ModelRegistryRefresher     │
-     │                                                              │
-     ▼                                                              │
-  ChatClient.call(prompt) ──→ 流式/阻塞响应                         │
-```
+### 设计文档
 
-**关键设计：**
-- **策略模式**：`ModelProvider` 接口封装所有厂商差异（API 调用、ChatOptions 类型、模型列表获取）
-- **服务定位模式**：`ProviderRegistry` 通过 Spring 构造器注入自动发现所有 Provider 实现
-- **开闭原则 (OCP)**：新增厂商只需新增 Provider 实现类 + Properties record + RestClient Bean，零修改现有代码
-- **容错启动**：未配置 API Key 的 Provider 静默跳过，不影响其他 Provider 和服务启动
-
-### 2. 模型 ID 路由
-
-```
-请求 model="deepseek/deepseek-chat"  → Route(providerId="deepseek", modelId="deepseek-chat")
-请求 model="zhipu/glm-4.7"          → Route(providerId="zhipu", modelId="glm-4.7")
-请求 model="minimax/MiniMax-M2.1"    → Route(providerId="minimax", modelId="MiniMax-M2.1")
-请求 model="deepseek-chat"           → Route(providerId="deepseek", modelId="deepseek-chat")  // 向后兼容
-```
-
-- `providerId/modelId` 复合格式精确路由到指定厂商
-- 无前缀时回退到默认厂商（`model.router.default-provider`，默认 `deepseek`）
-
-### 3. 用户隔离
-
-所有对话和用量数据通过 `ConversationIdUtil` 自动附加用户前缀：
-
-```
-用户 42 请求 conversationId="test" → 存储 "u_42_test"
-```
-
-- Controller/Service 通过 `ConversationIdUtil.buildIsolatedId()` 统一构建
-- 对外 API 透明：请求/响应始终使用原始 ID，内部自动隔离
-- 用量统计查询通过 LIKE 前缀过滤当前用户数据
-
-### 4. 双 Token 认证
-
-```
-登录 → Access Token (15min) + Refresh Token (24h)
-      ↓
-请求 → JwtAuthenticationFilter
-      ↓ JWT 验证 + Redis 吊销检查 + 用户状态检查
-      ↓ 权限加载（Redis 缓存 300s → DB fallback）
-      ↓
-@PreAuthorize("hasAuthority('chat:send')")
-```
-
-- JWT 载荷：`sub` (userId), `jti` (UUID), `roles`, `type`, `iss`
-- 权限从 Redis/DB 动态查询，支持实时变更
-- 改密/禁用/删除用户时自动吊销所有 Token
-
-### 5. 滑块验证码
-
-```
-GET /api/auth/captcha → {captchaId, backgroundImage, puzzleImage, answer(dev only)}
-                                    ↓
-前端拖动拼图块 → POST /api/auth/login 携带 captchaId + captchaCode
-                                    ↓
-后端校验：Caffeine 缓存取答案，±5px 容差，一次性使用
-```
-
-- **纯 Java 2D 实现**，无外部图片/模型依赖
-- dev 环境返回 answer 坐标，方便 API 测试；其他环境不返回
-
-### 6. 自研雪花 ID（仅 SysUser）
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│ 0 (1b) │ timestamp (41b) │ datacenterId (5b) │ workerId (5b) │ seq (12b) │
-└─────────────────────────────────────────────────────────────────┘
-```
-
-| 特性 | 说明 |
+| 文档 | 说明 |
 |------|------|
-| 自定义纪元 | 默认 2026-01-01，可用约 69 年 |
-| datacenterId + workerId | 10 位，最多 1024 实例 |
-| 时钟回拨容忍 | ≤5ms 等待恢复 |
-| 线程安全 | ReentrantLock |
-| 吞吐量 | 每秒 409.6 万 |
+| [架构设计](docs/ARCHITECTURE.md) | Provider 抽象、模型路由、Advisor 链、Tool Calling、设计原则 |
+| [安全设计](docs/SECURITY.md) | 双 Token 认证、滑块验证码、RBAC 权限模型 |
+| [会话与 ID 设计](docs/CONVERSATION-DESIGN.md) | 雪花 ID、UUIDv7、Conversation 双写架构 |
+| [RAG 检索增强](docs/RAG-DESIGN.md) | ETL Pipeline、六阶段检索管道、多租户隔离 |
+| [环境配置](docs/CONFIGURATION.md) | Profile 说明、环境变量、完整配置项 |
+| [项目结构](docs/PROJECT-STRUCTURE.md) | 完整的源码目录树（文件级） |
+| [API 接口文档](docs/API-DOCS.md) | 所有接口的完整说明 |
+| [数据库设计文档](docs/DATABASE.md) | 表结构、索引、关系、Redis 使用 |
+| [RBAC 用户模块设计](docs/RBAC-USER-MODULE-DESIGN.md) | 权限模型与用户管理 |
+| [分片上传设计](docs/design/chunk-upload.md) | 分片上传架构、流程、安全措施 |
+| [团队协作功能 PRD](docs/TEAM-FEATURE-PRD.md) | 团队创建/成员管理/审批流/额度控制/权限隔离 |
 
-### 7. RBAC 权限模型
+### 审查报告
 
-```
-sys_user ─< sys_user_role >─ sys_role ─< sys_role_permission >─ sys_permission
-```
-
-| 权限码 | ADMIN | USER |
-|--------|-------|------|
-| `chat:send` | ✅ | ✅ |
-| `chat:stream` | ✅ | ✅ |
-| `conversation:manage` | ✅ | ✅ |
-| `usage:view` | ✅ | ✅ |
-| `model:config` | ✅ | ❌ |
-| `prompt:manage` | ✅ | ❌ |
-| `user:manage` | ✅ | ❌ |
-| `role:manage` | ✅ | ❌ |
-
-### 8. Advisor 链
-
-```
-请求 → ConversationContextAdvisor (order=-1, 注入 conversationId)
-     → RateLimitAdvisor (order=0, 限流)
-     → ContentFilterAdvisor (order=1, 输入检测)
-     → ToolCallAdvisor (order=2, 工具调用循环)
-     → MessageChatMemoryAdvisor (对话记忆写入)
-     → 模型调用
-     → ContentFilterAdvisor (after, 输出过滤)
-     → 响应
-```
-
-### 9. Tool Calling（工具调用）
-
-```
-用户提问 "明天星期几？"
-     │
-     ▼ 模型决定需要调用工具
-     │
-ToolCallAdvisor → ToolCallingManager
-     │
-     ▼ 分发到 DateTimeTools.getCurrentWeekday(offsetDays=1)
-     │
-     ▼ 工具返回 "2026-05-10 是星期日"
-     │
-     ▼ 结果回传模型，生成最终回复
-```
-
-- **声明式注册**：`@Component` + `@Tool` 注解，Spring 自动发现
-- **OCP**：新增工具 = 新增类，零改现有代码
-- **ToolCallAdvisor** 显式在 advisor 链中处理，限流/内容过滤可拦截工具调用过程
-- **disableMemory()**：已有 MessageChatMemoryAdvisor 管理对话历史，避免重复
-- 内置工具：`DateTimeTools`（日期时间查询）、`CalculatorTools`（数学计算）、`CodeExecutionTool`（沙箱代码执行）
-
-#### 沙箱代码执行
-
-```
-模型返回 tool_call: { code: "print(sum(range(1, 101)))", language: "python" }
-     │
-     ▼ CodeExecutionTool.executeCode()
-     │
-     ▼ SandboxService
-     │  docker create --rm --network=none --read-only --user nobody
-     │           --memory=128m --cpus=1 --pids-limit=64
-     │           sandbox-python:bookworm timeout 10 python3 /tmp/code.py
-     │
-     ▼ 执行完毕，容器自动删除
-     │
-     ▼ 返回结果 "退出码: 0\n输出:\n5050"
-     │
-     ▼ 模型生成最终回复："1 到 100 的和是 5050"
-```
-
-| 安全层级 | 措施 |
-|---------|------|
-| 网络 | `--network=none` |
-| 文件系统 | `--read-only` + `tmpfs /tmp` |
-| 用户 | `--user nobody` |
-| 内存 | `--memory=128m` |
-| CPU | `--cpus=1` |
-| 进程 | `--pids-limit=64` |
-| 超时 | `timeout 10` + Java Future 双重保障 |
-| 清理 | `--rm` 用完即弃 |
-
-### 10. 数据访问分层
-
-```
-Controller (@Valid 校验)
-    ↓ 注入 Service 接口
-Service 接口
-    ↓
-ServiceImpl (业务编排，不含 SQL)
-    ↓
-Mapper (语义化接口 + XML，所有查询逻辑在此)
-    ↓
-Database
-```
-
-- **Service 层接口/实现分离**：chat 模块与 user 模块一致，Controller 注入接口，实现类独立维护
-- **Service 层不含 `LambdaQueryWrapper`**：所有查询通过 Mapper 语义化方法（`selectByModelId`、`selectAllOrdered`）或 XML SQL 实现
-- **Mapper SQL 全部由 XML 维护**：不使用 `@Select`/`@Delete` 注解，SQL 集中在 `resources/mapper/*.xml`
-- **编程式事务** `TransactionTemplate`，不使用 `@Transactional`
-- DTO 全部使用 Java record，Entity 不暴露给前端
-- **sql/schema.sql** 全量建表脚本（IF NOT EXISTS 幂等），由 docker-compose 自动执行
-
-### 11. 缓存策略
-
-| 层级 | 技术 | TTL | 场景 |
-|------|------|-----|------|
-| 本地 | Caffeine | 30s | ModelParams 热路径 |
-| 本地 | Caffeine | 5min | SystemPrompt / 验证码答案 |
-| 分布式 | Redis | 300s | 用户权限缓存 |
-| 分布式 | Redis | 900s | Access Token 元数据 |
-| 分布式 | Redis | 86400s | Refresh Token + 用户状态标记 |
-
-## 环境配置
-
-### Profile 说明
-
-| Profile | 用途 | 验证码 answer |
-|---------|------|--------------|
-| `dev` | 本地开发 | ✅ 返回 |
-| `stable` | 测试/预发 | ❌ 不返回 |
-| `prod` | 生产（叠加 stable） | ❌ 不返回 |
-
-启动：`--spring.profiles.active=stable,prod`
-
-### 关键配置项
-
-```yaml
-spring.ai:
-  deepseek:
-    base-url: https://api.deepseek.com
-    api-key: ${DEEPSEEK_API_KEY}
-    chat:
-      model: deepseek-v4-flash
-      temperature: 0.7
-  zhipuai:
-    base-url: ${ZHIPU_BASE_URL:https://open.bigmodel.cn/api/paas/v4}
-    api-key: ${ZHIPU_API_KEY}
-    chat:
-      model: glm-4.7
-      temperature: 0.7
-  minimax:
-    base-url: ${MINIMAX_BASE_URL:https://api.minimaxi.com/v1}
-    api-key: ${MINIMAX_API_KEY}
-    chat:
-      model: MiniMax-M2.1
-      temperature: 0.7
-
-app:
-  jwt:
-    secret: ${JWT_SECRET}
-    access-expiration: 900
-    refresh-expiration: 86400
-  snowflake:
-    epoch: "2026-01-01T00:00:00+08:00"
-    datacenter-id: 0
-    worker-id: 0
-
-model:
-  router:
-    default-provider: deepseek
-```
-
-## 异常处理
-
-| 异常 | HTTP 状态码 | 场景 |
-|------|------------|------|
-| `RateLimitExceededException` | 429 | 登录限流 / API 限流 |
-| `AuthenticationException` | 401 | 未认证 / Token 失效 |
-| `AccessDeniedException` | 403 | 权限不足 |
-| `ContentFilteredException` | 400 | 敏感词 |
-| `ModelNotFoundException` | 404 | 模型不存在 |
-| `ProviderNotFoundException` | 404 | 厂商不存在或未配置 |
-| `BusinessException` | 400 | 业务逻辑错误 |
-| `MethodArgumentNotValidException` | 400 | 参数校验失败 |
-| 通用 `Exception` | 500 | 服务内部错误 |
-
-## 设计原则
-
-| 原则 | 实践 |
+| 文档 | 说明 |
 |------|------|
-| **单一职责 (SRP)** | Controller 只做 HTTP 转发、Service 只做业务编排、Mapper 只做数据访问 |
-| **依赖倒置 (DIP)** | 依赖接口（`AuthService`、`ChatService`、`RateLimiter`、`ContentFilterService`），不依赖实现类 |
-| **开闭原则 (OCP)** | 新增厂商 = 新增 Provider 类；新增限流算法 = 实现 `RateLimiter` 接口；零改旧代码 |
-| **接口隔离 (ISP)** | 每个 Service 提供独立接口（chat 模块与 user 模块一致），Controller 按需注入 |
-| **策略模式** | `ModelProvider` 封装厂商差异，`ProviderRegistry` 自动发现 |
-| **DTO 隔离** | Entity 不暴露给前端，全部通过 record DTO 转换 |
-| **数据访问下沉** | `LambdaQueryWrapper` 全部在 Mapper 层，Service 层不含 SQL 构建逻辑 |
-| **编程式事务** | `TransactionTemplate` 精确控制事务边界 |
-| **安全纵深** | JWT + Redis 吊销 + 用户状态 + IP 限流 + 滑块验证码 + Cookie SameSite |
-| **自研核心** | 雪花 ID 生成器、滑块验证码均为纯 Java 实现，无外部依赖 |
+| [团队模块审查](docs/TEAM-CODE-REVIEW.md) | 六维审查（3B/7H/8M/4L），全部修复，214 测试全绿 |
+| [团队模块审查 (Mimo)](docs/reviews/2026-05-17-team-module-review.md) | Mimo 双模型交叉审查 |
+| [Chat 模块审查](docs/reviews/2026-05-18-chat-module-review.md) | 六维深度审查（4B/6H/13M/9L），5 Phase 全部修复 |
+
+**外部参考：** [Spring AI 1.1.6](https://docs.spring.io/spring-ai/docs/1.1.6/api/) · [DeepSeek API](https://api-docs.deepseek.com/) · [智谱 AI API](https://docs.bigmodel.cn/cn/api/introduction) · [MiniMax API](https://platform.minimaxi.com/docs/api-reference/api-overview) · [PGvector 0.8.2](https://github.com/pgvector/pgvector) · [H-RAG (arXiv:2605.00631)](https://arxiv.org/abs/2605.00631)
+
+---
 
 ## License
 

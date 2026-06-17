@@ -1,9 +1,9 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
-<mapper namespace="com.demo.chat.user.mapper.SysRolePermissionMapper">
+<mapper namespace="com.smart.rag.user.mapper.SysRolePermissionMapper">
 
-    <select id="selectPermissionsByRoleIds" resultType="com.demo.chat.user.entity.SysPermission">
+    <select id="selectPermissionsByRoleIds" resultType="com.smart.rag.user.entity.SysPermission">
         SELECT DISTINCT p.* FROM sys_permission p
         INNER JOIN sys_role_permission rp ON p.id = rp.permission_id
         WHERE rp.role_id IN

@@ -1,4 +1,10 @@
 spring:
+  main:
+    allow-circular-references: true
+  servlet:
+    multipart:
+      max-request-size: 55MB
+      max-file-size: 55MB
   profiles:
     active: ${SPRING_PROFILES_ACTIVE:dev}
 
@@ -8,6 +14,25 @@ app:
   chat:
     memory:
       max-messages: ${CHAT_MEMORY_MAX_MESSAGES:20}
+    fallback:
+      enabled: ${CHAT_FALLBACK_ENABLED:true}
+      max-retries: ${CHAT_FALLBACK_MAX_RETRIES:3}
+      default-chain:
+        - deepseek/deepseek-v4-flash
+        - zhipu/glm-4.7-flash
+        - minimax/MiniMax-M2.1
+      chains:
+        deepseek/deepseek-v4-flash:
+          - zhipu/glm-4.7-flash
+          - minimax/MiniMax-M2.1
+        zhipu/glm-4.7-flash:
+          - deepseek/deepseek-v4-flash
+          - minimax/MiniMax-M2.1
+        minimax/MiniMax-M2.1:
+          - deepseek/deepseek-v4-flash
+          - zhipu/glm-4.7-flash
+  rag:
+    fts-config: ${RAG_FTS_CONFIG:jiebacfg}
   sandbox:
     enabled: ${SANDBOX_ENABLED:true}
     max-concurrency: ${SANDBOX_MAX_CONCURRENCY:3}
@@ -21,7 +46,4 @@ app:
       TYPESCRIPT: sandbox-node:bookworm
       JAVA: sandbox-java:bookworm
 
-logging:
-  level:
-    org.springframework.ai.chat.memory.repository.jdbc.JdbcChatMemoryRepositoryDialect: ERROR
-    org.springframework.ai.chat.memory.repository.jdbc.JdbcChatMemoryRepository$Builder: ERROR
+# Log4j 2 配置见 log4j2.xml，此处不再配置 logging.level

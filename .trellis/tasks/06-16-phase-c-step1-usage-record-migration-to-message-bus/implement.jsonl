@@ -1,0 +1,3 @@
+{"file": "docs/design/messaging-bus.md", "reason": "§7.2 usage 异步记录设计、§9 Phase C Step 1 迁移步骤、§4 MessageEnvelope 工厂方法、§5.12 Topic/消费组约定 — 实施的直接蓝图"}
+{"file": ".trellis/spec/backend/llm-spi.md", "reason": "candidateId 契约（registry 候选 ID 格式，禁 provider/model 复合）— D2 全链路 modelId→candidateId rename 的依据"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "异常体系 + MessagingErrorCode — bus send 失败时 MessagePublishException 语义对照"}

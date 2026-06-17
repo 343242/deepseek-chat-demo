@@ -1,0 +1,157 @@
+package com.smart.rag.chat.service;
+
+import com.smart.rag.infrastructure.messaging.ConsumerConfig;
+import com.smart.rag.infrastructure.messaging.MessageBus;
+import com.smart.rag.infrastructure.messaging.MessageEnvelope;
+import com.smart.rag.infrastructure.messaging.MessageHandler;
+import com.smart.rag.infrastructure.messaging.Subscription;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.DisplayName;
+import org.junit.jupiter.api.Nested;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+
+import java.util.Map;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+/**
+ * UsageRecordConsumer 测试 — 验证订阅 {@code chat_usage_record} 并转发到 UsageService（Phase C Step 1）。
+ */
+@ExtendWith(MockitoExtension.class)
+class UsageRecordConsumerTest {
+
+    @Mock
+    private MessageBus messageBus;
+
+    @Mock
+    private UsageService usageService;
+
+    private UsageRecordConsumer consumer;
+
+    @BeforeEach
+    void setUp() {
+        consumer = new UsageRecordConsumer(messageBus, usageService);
+    }
+
+    @Nested
+    @DisplayName("Lifecycle")
+    class Lifecycle {
+
+        @Test
+        @DisplayName("start 订阅 chat_usage_record，消费组 usage-group，payload 类型 UsagePayload")
+        void startSubscribes() {
+            when(messageBus.subscribe(any(), any(), any(), any(), any()))
+                    .thenReturn(mock(Subscription.class));
+
+            consumer.start();
+
+            verify(messageBus).subscribe(
+                    eq("chat_usage_record"),
+                    eq("usage-group"),
+                    any(),
+                    eq(UsagePayload.class),
+                    any());
+            assertThat(consumer.isRunning()).isTrue();
+        }
+
+        @Test
+        @DisplayName("使用 ConsumerConfig.DEFAULT（PushConsumer 模式）")
+        void usesDefaultPushConfig() {
+            when(messageBus.subscribe(any(), any(), any(), any(), any()))
+                    .thenReturn(mock(Subscription.class));
+
+            consumer.start();
+
+            ArgumentCaptor<ConsumerConfig> configCaptor =
+                    ArgumentCaptor.forClass(ConsumerConfig.class);
+            verify(messageBus).subscribe(any(), any(), configCaptor.capture(), any(), any());
+            assertThat(configCaptor.getValue()).isEqualTo(ConsumerConfig.DEFAULT);
+        }
+
+        @Test
+        @DisplayName("stop 关闭订阅")
+        void stopClosesSubscription() {
+            Subscription subscription = mock(Subscription.class);
+            when(messageBus.subscribe(any(), any(), any(), any(), any()))
+                    .thenReturn(subscription);
+
+            consumer.start();
+            consumer.stop();
+
+            verify(subscription).close();
+            assertThat(consumer.isRunning()).isFalse();
+        }
+
+        @Test
+        @DisplayName("start 幂等")
+        void startIdempotent() {
+            when(messageBus.subscribe(any(), any(), any(), any(), any()))
+                    .thenReturn(mock(Subscription.class));
+
+            consumer.start();
+            consumer.start();
+
+            verify(messageBus).subscribe(any(), any(), any(), any(), any());
+        }
+    }
+
+    @Nested
+    @DisplayName("Handler")
+    class Handler {
+
+        @Test
+        @DisplayName("收到 UsagePayload 后转发到 UsageService.recordUsage")
+        void handlerForwardsToUsageService() {
+            consumer.start();
+
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<MessageHandler<UsagePayload>> handlerCaptor =
+                    ArgumentCaptor.forClass(MessageHandler.class);
+            verify(messageBus).subscribe(any(), any(), any(), eq(UsagePayload.class), handlerCaptor.capture());
+
+            UsagePayload payload = new UsagePayload(
+                    "conv-1", "candidate-a", 100L, 50L, 150L, 200L);
+            MessageEnvelope<UsagePayload> msg = new MessageEnvelope<>(
+                    null, "chat_usage_record", null, payload,
+                    null, "dedup-key", Map.of(), System.currentTimeMillis());
+            handlerCaptor.getValue().onMessage(msg);
+
+            verify(usageService).recordUsage("conv-1", "candidate-a", 100L, 50L, 150L, 200L);
+        }
+
+        @Test
+        @DisplayName("UsageService 抛异常时从 handler 传播出去（触发 broker 重试，不静默吞咽）")
+        void handlerPropagatesPersistenceException() {
+            consumer.start();
+
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<MessageHandler<UsagePayload>> handlerCaptor =
+                    ArgumentCaptor.forClass(MessageHandler.class);
+            verify(messageBus).subscribe(any(), any(), any(), eq(UsagePayload.class), handlerCaptor.capture());
+
+            UsagePayload payload = new UsagePayload(
+                    "conv-1", "candidate-a", 100L, 50L, 150L, 200L);
+            MessageEnvelope<UsagePayload> msg = new MessageEnvelope<>(
+                    null, "chat_usage_record", null, payload,
+                    null, "dedup-key", Map.of(), System.currentTimeMillis());
+
+            RuntimeException ex = new RuntimeException("boom");
+            doThrow(ex).when(usageService)
+                    .recordUsage("conv-1", "candidate-a", 100L, 50L, 150L, 200L);
+
+            assertThatThrownBy(() -> handlerCaptor.getValue().onMessage(msg))
+                    .isSameAs(ex);
+        }
+    }
+}

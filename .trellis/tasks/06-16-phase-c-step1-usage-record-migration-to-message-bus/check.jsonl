@@ -1,0 +1,4 @@
+{"file": "docs/design/messaging-bus.md", "reason": "验收对照基准 — §9 Phase C Step 1 退出条件、§7.2 publisher/consumer 接入点、§4 MessageEnvelope 用法"}
+{"file": ".trellis/spec/backend/llm-spi.md", "reason": "candidateId 一致性校验 — 确认 rename 后值仍为 registry 候选 ID 格式"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "代码质量规范、禁止模式 — 单测覆盖与解耦校验"}
+{"file": ".trellis/spec/backend/code-review-checklist.md", "reason": "review 维度与检查项 — 提交前自检"}

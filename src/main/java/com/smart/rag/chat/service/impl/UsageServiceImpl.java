@@ -35,11 +35,11 @@ public class UsageServiceImpl implements UsageService {
     }
 
     @Override
-    public void recordUsage(String conversationId, String modelId,
+    public void recordUsage(String conversationId, String candidateId,
                             long promptTokens, long completionTokens, long totalTokens,
                             long durationMs) {
         TokenUsage usage = new TokenUsage(
-                conversationId, modelId,
+                conversationId, candidateId,
                 promptTokens, completionTokens, totalTokens,
                 durationMs
         );

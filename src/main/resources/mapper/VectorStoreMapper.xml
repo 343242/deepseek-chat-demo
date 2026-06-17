@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.smart.rag.rag.mapper.VectorStoreMapper">
+
+    <!-- ======================== resultMap ======================== -->
+
+    <!-- vector_store 行：id + content + metadata(json) -->
+    <resultMap id="vectorStoreRow" type="com.smart.rag.rag.mapper.VectorStoreMapper$VectorStoreRow">
+        <constructor>
+            <idArg column="id" javaType="string"/>
+            <arg column="content" javaType="string"/>
+            <arg column="metadata" javaType="java.util.Map"
+                 typeHandler="com.smart.rag.rag.mapper.VectorStoreMetadataTypeHandler"/>
+        </constructor>
+    </resultMap>
+
+    <!-- 文档间 cosine 距离行 -->
+    <resultMap id="pairwiseDistanceRow" type="com.smart.rag.rag.mapper.VectorStoreMapper$PairwiseDistanceRow">
+        <constructor>
+            <idArg column="id_a" javaType="string"/>
+            <idArg column="id_b" javaType="string"/>
+            <arg column="distance" javaType="double"/>
+        </constructor>
+    </resultMap>
+
+    <!-- ts_headline 高亮行 -->
+    <resultMap id="highlightRow" type="com.smart.rag.rag.mapper.VectorStoreMapper$HighlightRow">
+        <constructor>
+            <idArg column="id" javaType="string"/>
+            <arg column="highlight" javaType="string"/>
+        </constructor>
+    </resultMap>
+
+    <!-- ======================== BM25 全文检索 ======================== -->
+
+    <select id="selectBm25Rows" resultMap="vectorStoreRow">
+        WITH tsq AS (SELECT plainto_tsquery(#{ftsConfig}::regconfig, #{sanitizedQuery}) AS q)
+        SELECT v.id AS id, v.content AS content, v.metadata AS metadata
+        FROM vector_store v, tsq
+        WHERE v.content_tsv @@ tsq.q
+          AND v.metadata->> #{isolationField} = #{isolationValue}
+        ORDER BY ts_rank_cd(v.content_tsv, tsq.q) DESC
+        LIMIT #{topK}
+    </select>
+
+    <!-- ======================== Parent-Child 回查 ======================== -->
+    <!-- parentId 存于 metadata，是 text，无需 ::uuid 转型 -->
+
+    <select id="selectParentRows" resultMap="vectorStoreRow">
+        SELECT id, content, metadata
+        FROM vector_store
+        WHERE metadata->>'parentId' IN
+        <foreach collection="parentIds" item="pid" open="(" separator="," close=")">#{pid}</foreach>
+          AND metadata->>'isParent' = 'true'
+    </select>
+
+    <!-- ======================== FastTrack 快速写入 ======================== -->
+
+    <insert id="insertFastTrackRowInternal">
+        INSERT INTO vector_store (id, content, metadata, embedding)
+        VALUES (gen_random_uuid(), #{content},
+                CAST(#{metadata, typeHandler=com.smart.rag.rag.mapper.VectorStoreMetadataTypeHandler} AS json), NULL)
+    </insert>
+
+    <delete id="deleteFastTrackRowsInternal">
+        DELETE FROM vector_store
+        WHERE metadata->>'documentId' = #{documentId}
+          AND metadata->>'fastTrack' = 'true'
+    </delete>
+
+    <!-- ======================== 文档间 Cosine 距离 ======================== -->
+    <!-- id 列是 UUID，#{id}::uuid 显式转型避免 "operator does not exist: uuid = text" (PG 42883) -->
+
+    <select id="selectPairwiseDistance" resultMap="pairwiseDistanceRow">
+        SELECT a.id AS id_a, b.id AS id_b, a.embedding &lt;=&gt; b.embedding AS distance
+        FROM vector_store a, vector_store b
+        WHERE a.id IN
+        <foreach collection="docIds" item="id" open="(" separator="," close=")">#{id}::uuid</foreach>
+          AND b.id IN
+        <foreach collection="docIds" item="id" open="(" separator="," close=")">#{id}::uuid</foreach>
+          AND a.id &lt; b.id
+    </select>
+
+    <!-- ======================== ts_headline 高亮 ======================== -->
+
+    <select id="selectHighlightRows" resultMap="highlightRow">
+        WITH tsq AS (SELECT plainto_tsquery(#{ftsConfig}::regconfig, #{queryText}) AS q)
+        SELECT v.id AS id,
+               ts_headline(v.content, tsq.q,
+                           'StartSel=&lt;mark&gt; StopSel=&lt;/mark&gt; MaxWords=50 MinWords=10') AS highlight
+        FROM vector_store v, tsq
+        WHERE v.id IN
+        <foreach collection="docIds" item="id" open="(" separator="," close=")">#{id}::uuid</foreach>
+    </select>
+
+    <!-- ======================== 知识库统计 ======================== -->
+
+    <select id="countDocsInternal" resultType="int">
+        SELECT COUNT(*) FROM vector_store WHERE metadata->> #{isolationField} = #{isolationValue}
+    </select>
+
+</mapper>

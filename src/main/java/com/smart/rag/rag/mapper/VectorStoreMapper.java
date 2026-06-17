@@ -1,131 +1,120 @@
 package com.smart.rag.rag.mapper;
 
-import com.fasterxml.jackson.core.type.TypeReference;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import org.apache.ibatis.annotations.Mapper;
+import org.apache.ibatis.annotations.Param;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.document.Document;
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.stereotype.Repository;
 
-import java.util.*;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 /**
- * vector_store 表统一数据访问
+ * vector_store 表统一数据访问（MyBatis 接口 + XML）。
  * <p>
- * 集中管理所有对 PGvector 托管表 vector_store 的直接 JDBC 查询，
- * 包括 BM25 全文检索、Parent-Child 回查、FastTrack 快速写入/清理。
+ * 集中管理所有对 PGvector 托管表 vector_store 的查询：BM25 全文检索、Parent-Child 回查、
+ * FastTrack 快速写入/清理、MMR 文档间 cosine 距离、ts_headline 高亮、知识库统计。
  * <p>
  * 设计原则：
  * <ul>
  *   <li>SRP — 只负责 vector_store 表的 CRUD，不包含业务逻辑</li>
  *   <li>封装 — SQL 细节不泄漏到调用方</li>
- *   <li>参数化查询 — 所有用户输入通过 PreparedStatement 参数绑定</li>
+ *   <li>参数化查询 — 所有用户输入通过 {@code #{}} 绑定；id 列上的 IN 一律 {@code #{id}::uuid}
+ *       （vector_store.id 为 UUID 列，String 不显式转型会触发 PostgreSQL 42883
+ *       "operator does not exist: uuid = text"）</li>
  * </ul>
+ * <p>
+ * 行映射：SQL 返回轻量 row record，由 {@code default} 方法组装成 Document / 对称距离矩阵等业务结构。
+ * 公共方法签名与原 {@code @Repository} 类保持一致 → 所有调用方零改动。
  */
-@Repository
-public class VectorStoreMapper {
+@Mapper
+public interface VectorStoreMapper {
 
-    private static final Logger log = LoggerFactory.getLogger(VectorStoreMapper.class);
+    Logger LOG = LoggerFactory.getLogger(VectorStoreMapper.class);
 
-    private final JdbcTemplate jdbcTemplate;
-    private final ObjectMapper objectMapper;
+    /** MMR pairwise 距离 SQL 是 O(n²)，超过此阈值截断（防御性） */
+    int MAX_PAIRWISE_DOCS = 50;
 
-    public VectorStoreMapper(JdbcTemplate jdbcTemplate, ObjectMapper objectMapper) {
-        this.jdbcTemplate = jdbcTemplate;
-        this.objectMapper = objectMapper;
-    }
+    // ======================== row records（仅供 XML 映射）========================
+
+    /** vector_store 行：id + content + metadata(json) */
+    record VectorStoreRow(String id, String content, Map<String, Object> metadata) {}
+
+    /** 文档间 cosine 距离行 */
+    record PairwiseDistanceRow(String idA, String idB, double distance) {}
+
+    /** ts_headline 高亮行 */
+    record HighlightRow(String id, String highlight) {}
 
     // ======================== BM25 全文检索 ========================
 
     /**
-     * 执行 BM25 全文检索（PostgreSQL tsvector）
+     * 执行 BM25 全文检索（PostgreSQL tsvector）。
      *
      * @param ftsConfig      全文检索配置名（如 "jiebacfg"）
      * @param sanitizedQuery 已净化的查询文本
      * @param isolationField metadata 中隔离字段名（"userId" 或 "teamId"）
      * @param isolationValue 隔离字段值
      * @param topK           返回数量上限
-     * @return 按 BM25 排名降序排列的文档列表
+     * @return 按 BM25 排名降序排列的文档列表（每条 metadata 带 {@code retrievalSource=bm25}）
      */
-    public List<Document> bm25Search(String ftsConfig, String sanitizedQuery,
-                                     String isolationField, String isolationValue, int topK) {
-        String sql = """
-                WITH tsq AS (SELECT plainto_tsquery(?::regconfig, ?) AS q)
-                SELECT v.id, v.content, v.metadata
-                FROM vector_store v, tsq
-                WHERE v.content_tsv @@ tsq.q
-                  AND v.metadata->> ? = ?
-                ORDER BY ts_rank_cd(v.content_tsv, tsq.q) DESC
-                LIMIT ?
-                """;
-
-        return jdbcTemplate.query(sql,
-                (rs, rowNum) -> {
-                    String id = rs.getString("id");
-                    String content = rs.getString("content");
-                    String metadataJson = rs.getString("metadata");
-
-                    Map<String, Object> metadata = parseMetadata(metadataJson);
-                    metadata.put("retrievalSource", "bm25");
-
-                    return new Document(id, content, metadata);
-                },
-                ftsConfig, sanitizedQuery, isolationField, isolationValue, topK
-        );
+    default List<Document> bm25Search(String ftsConfig, String sanitizedQuery,
+                                      String isolationField, String isolationValue, int topK) {
+        List<VectorStoreRow> rows = selectBm25Rows(ftsConfig, sanitizedQuery, isolationField, isolationValue, topK);
+        List<Document> docs = new ArrayList<>(rows.size());
+        for (VectorStoreRow row : rows) {
+            Map<String, Object> metadata = row.metadata() != null ? row.metadata() : new HashMap<>();
+            metadata.put("retrievalSource", "bm25");
+            docs.add(new Document(row.id(), row.content(), metadata));
+        }
+        return docs;
     }
+
+    List<VectorStoreRow> selectBm25Rows(@Param("ftsConfig") String ftsConfig,
+                                        @Param("sanitizedQuery") String sanitizedQuery,
+                                        @Param("isolationField") String isolationField,
+                                        @Param("isolationValue") String isolationValue,
+                                        @Param("topK") int topK);
 
     // ======================== Parent-Child 回查 ========================
 
     /**
-     * 批量回查父文档（Parent-Child 切分策略）
+     * 批量回查父文档（Parent-Child 切分策略）。
      *
      * @param parentIds 需要回查的父文档 ID 集合
      * @return parentId → Document 的映射
      */
-    public Map<String, Document> batchFetchParents(Set<String> parentIds) {
-        if (parentIds.isEmpty()) {
+    default Map<String, Document> batchFetchParents(Set<String> parentIds) {
+        if (parentIds == null || parentIds.isEmpty()) {
             return Map.of();
         }
-
+        List<VectorStoreRow> rows = selectParentRows(parentIds);
         Map<String, Document> result = new HashMap<>();
-        String placeholders = String.join(",", Collections.nCopies(parentIds.size(), "?"));
-        String sql = """
-                SELECT id, content, metadata
-                FROM vector_store
-                WHERE metadata->>'parentId' IN (%s)
-                  AND metadata->>'isParent' = 'true'
-                """.formatted(placeholders);
-
-        List<Document> docs = jdbcTemplate.query(sql,
-                (rs, rowNum) -> {
-                    String id = rs.getString("id");
-                    String content = rs.getString("content");
-                    String metadataJson = rs.getString("metadata");
-                    return new Document(id, content, parseMetadata(metadataJson));
-                },
-                parentIds.toArray()
-        );
-
-        for (Document doc : docs) {
-            Object pid = doc.getMetadata().get("parentId");
+        for (VectorStoreRow row : rows) {
+            Map<String, Object> metadata = row.metadata() != null ? row.metadata() : new HashMap<>();
+            Object pid = metadata.get("parentId");
             if (pid != null) {
-                result.put(pid.toString(), doc);
+                result.put(pid.toString(), new Document(row.id(), row.content(), metadata));
             }
         }
-
-        log.debug("Batch fetched {} parent docs for {} parentIds", docs.size(), parentIds.size());
+        LOG.debug("Batch fetched {} parent docs for {} parentIds", rows.size(), parentIds.size());
         return result;
     }
+
+    List<VectorStoreRow> selectParentRows(@Param("parentIds") Set<String> parentIds);
 
     // ======================== FastTrack 快速写入 ========================
 
     /**
-     * 写入 FastTrack BM25 原文行
+     * 写入 FastTrack BM25 原文行。
      * <p>
      * embedding 设为 NULL，BM25 检索通过 content_tsv 命中。
      */
-    public void insertFastTrackRow(Long documentId, String content, Long userId, Long teamId) {
+    default void insertFastTrackRow(Long documentId, String content, Long userId, Long teamId) {
         Map<String, Object> metadata = new HashMap<>();
         metadata.put("documentId", String.valueOf(documentId));
         metadata.put("userId", String.valueOf(userId));
@@ -133,154 +122,98 @@ public class VectorStoreMapper {
         if (teamId != null) {
             metadata.put("teamId", String.valueOf(teamId));
         }
-
-        String metadataJson;
-        try {
-            metadataJson = objectMapper.writeValueAsString(metadata);
-        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
-            log.error("Failed to serialize BM25 metadata for documentId={}", documentId, e);
-            throw new RuntimeException(e);
-        }
-
-        jdbcTemplate.update("""
-                INSERT INTO vector_store (id, content, metadata, embedding)
-                VALUES (gen_random_uuid(), ?, ?::json, NULL)
-                """, content, metadataJson);
-
-        log.debug("BM25 fast-track row written for documentId={}", documentId);
+        insertFastTrackRowInternal(content, metadata);
+        LOG.debug("BM25 fast-track row written for documentId={}", documentId);
     }
+
+    void insertFastTrackRowInternal(@Param("content") String content,
+                                    @Param("metadata") Map<String, Object> metadata);
 
     /**
      * 删除指定文档的 FastTrack BM25 原文行
      */
-    public void deleteFastTrackRows(Long documentId) {
-        jdbcTemplate.update("""
-                DELETE FROM vector_store
-                WHERE metadata->>'documentId' = ?
-                  AND metadata->>'fastTrack' = 'true'
-                """, String.valueOf(documentId));
-        log.debug("BM25 fast-track rows deleted for documentId={}", documentId);
+    default void deleteFastTrackRows(Long documentId) {
+        deleteFastTrackRowsInternal(String.valueOf(documentId));
+        LOG.debug("BM25 fast-track rows deleted for documentId={}", documentId);
     }
 
-    // ======================== 文档间 Cosine 距离 ========================
+    void deleteFastTrackRowsInternal(@Param("documentId") String documentId);
 
-    private static final int MAX_PAIRWISE_DOCS = 50;
+    // ======================== 文档间 Cosine 距离 ========================
 
     /**
      * 批量计算文档间 cosine 距离矩阵。
      * <p>
-     * 利用 pgvector 的 {@code embedding <=> embedding} 运算符在数据库层计算，
-     * 避免额外调用 Embedding API。
+     * 利用 pgvector 的 {@code embedding <=> embedding} 运算符在数据库层计算，避免额外调用 Embedding API。
      *
      * @param docIds 文档 ID 列表（通常 5-10 条）
-     * @return 距离矩阵 key = "idA|idB", value = cosine distance (0=相同, 2=相反)
+     * @return 对称距离矩阵 key = "idA|idB", value = cosine distance (0=相同, 2=相反)
      */
-    public Map<String, Double> pairwiseCosineDistance(List<String> docIds) {
+    default Map<String, Double> pairwiseCosineDistance(List<String> docIds) {
         if (docIds == null || docIds.size() < 2) {
             return Map.of();
         }
 
         // 防御性截断：O(n²) SQL，超过上限时截断并告警
         if (docIds.size() > MAX_PAIRWISE_DOCS) {
-            log.warn("pairwiseCosineDistance: truncating {} docs to {} (O(n²) SQL defense)",
+            LOG.warn("pairwiseCosineDistance: truncating {} docs to {} (O(n²) SQL defense)",
                     docIds.size(), MAX_PAIRWISE_DOCS);
             docIds = docIds.subList(0, MAX_PAIRWISE_DOCS);
         }
 
-        String placeholders = String.join(",", Collections.nCopies(docIds.size(), "?"));
-        String sql = """
-                SELECT a.id AS id_a, b.id AS id_b, a.embedding <=> b.embedding AS distance
-                FROM vector_store a, vector_store b
-                WHERE a.id IN (%s) AND b.id IN (%s) AND a.id < b.id
-                """.formatted(placeholders, placeholders);
-
-        // 参数：两组 id
-        Object[] params = new Object[docIds.size() * 2];
-        for (int i = 0; i < docIds.size(); i++) {
-            params[i] = docIds.get(i);
-            params[docIds.size() + i] = docIds.get(i);
+        List<PairwiseDistanceRow> rows = selectPairwiseDistance(docIds);
+        Map<String, Double> result = new HashMap<>(rows.size() * 2);
+        for (PairwiseDistanceRow row : rows) {
+            result.put(row.idA() + "|" + row.idB(), row.distance());
+            result.put(row.idB() + "|" + row.idA(), row.distance());
         }
 
-        Map<String, Double> result = new HashMap<>();
-        jdbcTemplate.query(sql, rs -> {
-            String idA = rs.getString("id_a");
-            String idB = rs.getString("id_b");
-            double distance = rs.getDouble("distance");
-            result.put(idA + "|" + idB, distance);
-            result.put(idB + "|" + idA, distance);
-        }, params);
-
-        log.debug("Computed {} pairwise distances for {} docs", result.size() / 2, docIds.size());
+        LOG.debug("Computed {} pairwise distances for {} docs", rows.size(), docIds.size());
         return result;
     }
+
+    List<PairwiseDistanceRow> selectPairwiseDistance(@Param("docIds") List<String> docIds);
 
     // ======================== 文档详情（ts_headline 高亮）========================
 
     /**
-     * 按文档 ID 获取内容片段，使用 ts_headline 高亮查询关键词
+     * 按文档 ID 获取内容片段，使用 ts_headline 高亮查询关键词。
      *
-     * @param docIds       文档 ID 列表
-     * @param queryText    查询文本（用于 ts_headline 高亮）
-     * @param ftsConfig    全文检索配置名（如 "jiebacfg"）
-     * @return 文档 ID -> 高亮内容片段的映射
+     * @param docIds    文档 ID 列表
+     * @param queryText 查询文本（用于 ts_headline 高亮）
+     * @param ftsConfig 全文检索配置名（如 "jiebacfg"）
+     * @return 文档 ID -> 高亮内容片段的映射（保持 DB 返回顺序）
      */
-    public Map<String, String> fetchDocHighlights(List<String> docIds, String queryText, String ftsConfig) {
+    default Map<String, String> fetchDocHighlights(List<String> docIds, String queryText, String ftsConfig) {
         if (docIds == null || docIds.isEmpty()) {
             return Map.of();
         }
-
-        String placeholders = String.join(",", Collections.nCopies(docIds.size(), "?"));
-        String sql = """
-                WITH tsq AS (SELECT plainto_tsquery(?::regconfig, ?) AS q)
-                SELECT v.id,
-                       ts_headline(v.content, tsq.q, 'StartSel=<mark> StopSel=</mark> MaxWords=50 MinWords=10') AS highlight
-                FROM vector_store v, tsq
-                WHERE v.id IN (%s)
-                """.formatted(placeholders);
-
-        Object[] params = new Object[docIds.size() + 2];
-        params[0] = ftsConfig;
-        params[1] = queryText;
-        for (int i = 0; i < docIds.size(); i++) {
-            params[i + 2] = docIds.get(i);
-        }
-
+        List<HighlightRow> rows = selectHighlightRows(docIds, queryText, ftsConfig);
         Map<String, String> result = new LinkedHashMap<>();
-        jdbcTemplate.query(sql, rs -> {
-            result.put(rs.getString("id"), rs.getString("highlight"));
-        }, params);
-
-        log.debug("Fetched highlights for {} docIds, got {} results", docIds.size(), result.size());
+        for (HighlightRow row : rows) {
+            result.put(row.id(), row.highlight());
+        }
+        LOG.debug("Fetched highlights for {} docIds, got {} results", docIds.size(), result.size());
         return result;
     }
+
+    List<HighlightRow> selectHighlightRows(@Param("docIds") List<String> docIds,
+                                           @Param("queryText") String queryText,
+                                           @Param("ftsConfig") String ftsConfig);
 
     // ======================== 知识库统计 ========================
 
     /**
-     * 统计指定用户/团队的向量文档数量
+     * 统计指定用户/团队的向量文档数量。
      *
      * @param isolationField 隔离字段名（"userId" 或 "teamId"）
      * @param isolationValue 隔离字段值
      * @return 文档总数
      */
-    public int countDocs(String isolationField, String isolationValue) {
-        String sql = "SELECT COUNT(*) FROM vector_store WHERE metadata->> ? = ?";
-        Integer count = jdbcTemplate.queryForObject(sql, Integer.class,
-            isolationField, isolationValue);
-        return count != null ? count : 0;
+    default int countDocs(String isolationField, String isolationValue) {
+        return countDocsInternal(isolationField, isolationValue);
     }
 
-    // ======================== 工具方法 ========================
-
-    private Map<String, Object> parseMetadata(String json) {
-        if (json == null || json.isBlank() || "null".equals(json)) {
-            return new HashMap<>();
-        }
-        try {
-            return objectMapper.readValue(json, new TypeReference<Map<String, Object>>() {});
-        } catch (Exception e) {
-            log.debug("Failed to parse vector_store metadata JSON: {}", e.getMessage());
-            return new HashMap<>();
-        }
-    }
+    int countDocsInternal(@Param("isolationField") String isolationField,
+                          @Param("isolationValue") String isolationValue);
 }

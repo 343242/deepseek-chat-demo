@@ -128,8 +128,28 @@ run_cmd "$MQADMIN" updateSubGroup \
     -g index-group \
     -n "$NAMESRV"
 
+echo ""
 
-# ── 3. 验证 ──────────────────────────────────────────────────────────────
+# ── 3. 创建 DLQ Topic ───────────────────────────────────────────────────
+# PushConsumer 组的死信队列 topic。RocketMQ 5.x 不会在 producer.send 时自动创建
+# %DLQ%<group>，必须显式建——否则 poison 消息转 DLQ 会 404（No topic route info），
+# 消息卡在 RETRY 队列反复重投。SimpleConsumer（index-group）走应用层重试、无 broker
+# DLQ，故不建。updateTopic 幂等，重跑安全。
+echo "=== Creating DLQ Topics (PushConsumer groups) ==="
+
+run_cmd "$MQADMIN" updateTopic \
+    -c "$CLUSTER" \
+    -t '%DLQ%save-group' \
+    -n "$NAMESRV"
+
+run_cmd "$MQADMIN" updateTopic \
+    -c "$CLUSTER" \
+    -t '%DLQ%usage-group' \
+    -n "$NAMESRV"
+
+echo ""
+
+# ── 4. 验证 ──────────────────────────────────────────────────────────────
 echo "=== Verifying Topics ==="
 
 # 5.2.0 的 topicStatus 不支持 -c 参数，改用 topicList + grep 验证

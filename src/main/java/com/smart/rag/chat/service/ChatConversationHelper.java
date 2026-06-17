@@ -87,17 +87,22 @@ public class ChatConversationHelper {
      * <p>
      * 使用编程式事务保证 USER 消息 + ASSISTANT 消息 + 会话计数的原子性。
      * 事务失败时向上传播异常，调用方决定是否影响主流程。
+     * <p>
+     * <b>Phase C Step 2 调整</b>：参数从 {@code ChatResponse aiResponse} 改为 {@code int totalTokens}，
+     * 让消息总线 publisher/consumer 链路能直接传入 payload 中已携带的 totalTokens（方案 A）。
+     * AI 响应 → totalTokens 的提取逻辑由 {@link #extractTotalTokens(ChatResponse)} 统一提供，
+     * publisher（构建 payload）与 publisher 的同步降级路径均复用同一逻辑。
      *
      * @param conversationId  会话 ID
      * @param userContent     用户消息内容
      * @param assistantContent AI 回复内容
-     * @param modelId         模型 ID
-     * @param aiResponse      AI 响应（含 usage 元数据，可为 null）
+     * @param modelId         模型 ID（registry candidate ID 字符串）
+     * @param totalTokens     总 token 数（{@code -1} 表示未知）
      * @param durationMs      调用耗时（毫秒）
      */
     public void saveMessagesAndNotify(String conversationId, String userContent, String assistantContent,
                                       String modelId,
-                                      org.springframework.ai.chat.model.ChatResponse aiResponse,
+                                      int totalTokens,
                                       long durationMs) {
         try {
             transactionTemplate.executeWithoutResult(status -> {
@@ -106,11 +111,6 @@ public class ChatConversationHelper {
                 conversationMessageService.saveMessage(userMsg);
 
                 // 写入 ASSISTANT 消息
-                int totalTokens = -1;
-                if (aiResponse != null && aiResponse.getMetadata().getUsage() != null) {
-                    Usage usage = aiResponse.getMetadata().getUsage();
-                    totalTokens = usage.getTotalTokens() != null ? usage.getTotalTokens().intValue() : -1;
-                }
                 Message assistantMsg = Message.assistantMessage(
                         conversationId, userMsg.getId(), assistantContent,
                         modelId, totalTokens, durationMs);
@@ -124,14 +124,27 @@ public class ChatConversationHelper {
             log.error("Failed to save message records: conversationId={}, model={}",
                     ConversationIdUtil.mask(conversationId), modelId, e);
 
-            int totalTokens = -1;
-            if (aiResponse != null && aiResponse.getMetadata() != null && aiResponse.getMetadata().getUsage() != null) {
-                Usage usage = aiResponse.getMetadata().getUsage();
-                totalTokens = usage.getTotalTokens() != null ? usage.getTotalTokens().intValue() : -1;
-            }
             deadLetterQueue.enqueue(new DeadLetterEntry(
                     conversationId, userContent, assistantContent, modelId, totalTokens, durationMs));
         }
+    }
+
+    /**
+     * 从 AI 响应安全提取 totalTokens；{@code aiResponse} / {@code metadata} / {@code usage}
+     * 任一为空或值为 {@code null} 时返回 {@code -1}。
+     * <p>
+     * Publisher 构建消息 payload、以及 publisher 端 {@code MessageBus} 故障时的同步降级路径
+     * 均通过此方法提取 token 数，避免逻辑重复。
+     */
+    public static int extractTotalTokens(org.springframework.ai.chat.model.ChatResponse aiResponse) {
+        if (aiResponse == null || aiResponse.getMetadata() == null) {
+            return -1;
+        }
+        Usage usage = aiResponse.getMetadata().getUsage();
+        if (usage == null || usage.getTotalTokens() == null) {
+            return -1;
+        }
+        return usage.getTotalTokens().intValue();
     }
 
     /**

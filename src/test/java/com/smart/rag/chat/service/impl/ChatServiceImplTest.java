@@ -17,6 +17,7 @@ import com.smart.rag.chat.mode.ChatMode;
 import com.smart.rag.chat.mode.ChatModeStrategy;
 import com.smart.rag.chat.mode.ModeRouter;
 import com.smart.rag.chat.service.ChatConversationHelper;
+import com.smart.rag.chat.service.ChatMessagePublisher;
 import com.smart.rag.chat.service.ChatUsageTracker;
 import com.smart.rag.chat.service.StrategyExecuteResult;
 import com.smart.rag.chat.service.StrategyExecutionContext;
@@ -47,6 +48,7 @@ class ChatServiceImplTest {
     @Mock private ModeRouter modeRouter;
     @Mock private ChatUsageTracker usageTracker;
     @Mock private ChatConversationHelper conversationHelper;
+    @Mock private ChatMessagePublisher chatMessagePublisher;
     @Mock private SseStreamBridge sseStreamBridge;
     @Mock private RequestContextManager cagContextManager;
     @Mock private CagProperties cagProperties;
@@ -64,7 +66,7 @@ class ChatServiceImplTest {
     private ChatServiceImpl createService() {
         return new ChatServiceImpl(
                 llmRegistry, fallbackEligibility, modeRouter, usageTracker,
-                conversationHelper, sseStreamBridge, cagContextManager,
+                conversationHelper, chatMessagePublisher, sseStreamBridge, cagContextManager,
                 cagProperties, userContextProvider);
     }
 
@@ -125,7 +127,7 @@ class ChatServiceImplTest {
             assertNull(response.fallback());
 
             verify(usageTracker).recordUsage(eq(ISOLATED_CONV_ID), eq(CANDIDATE_ID), anyLong());
-            verify(conversationHelper).saveMessagesAndNotify(eq(ISOLATED_CONV_ID),
+            verify(chatMessagePublisher).publishMessageSave(eq(ISOLATED_CONV_ID),
                     eq("hello"), eq("Hi there!"), eq(CANDIDATE_ID), isNull(), anyLong());
         }
     }

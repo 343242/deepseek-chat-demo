@@ -9,6 +9,7 @@ import com.smart.rag.infrastructure.llm.LlmCapability;
 import com.smart.rag.infrastructure.llm.registry.LlmClientRegistry;
 import com.smart.rag.chat.mode.ModeRouter;
 import com.smart.rag.chat.service.ChatConversationHelper;
+import com.smart.rag.chat.service.ChatMessagePublisher;
 import com.smart.rag.chat.service.ChatUsageTracker;
 import com.smart.rag.chat.service.SseStreamBridge;
 import com.smart.rag.chat.service.UserContextProvider;
@@ -41,6 +42,7 @@ class ChatServiceImplResolveCandidateIdTest {
     @Mock private ModeRouter modeRouter;
     @Mock private ChatUsageTracker usageTracker;
     @Mock private ChatConversationHelper conversationHelper;
+    @Mock private ChatMessagePublisher chatMessagePublisher;
     @Mock private SseStreamBridge sseStreamBridge;
     @Mock private RequestContextManager cagContextManager;
     @Mock private CagProperties cagProperties;
@@ -53,7 +55,7 @@ class ChatServiceImplResolveCandidateIdTest {
     private ChatServiceImpl createService() {
         return new ChatServiceImpl(
                 llmRegistry, fallbackEligibility, modeRouter, usageTracker,
-                conversationHelper, sseStreamBridge, cagContextManager,
+                conversationHelper, chatMessagePublisher, sseStreamBridge, cagContextManager,
                 cagProperties, userContextProvider);
     }
 

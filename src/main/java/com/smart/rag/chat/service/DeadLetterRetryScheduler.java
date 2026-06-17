@@ -37,7 +37,7 @@ public class DeadLetterRetryScheduler {
             try {
                 conversationHelper.saveMessagesAndNotify(
                         entry.conversationId(), entry.userContent(), entry.assistantContent(),
-                        entry.modelId(), null, entry.durationMs());
+                        entry.modelId(), entry.totalTokens(), entry.durationMs());
                 log.info("Dead-letter retry succeeded: conversationId={}, attempts={}",
                         ConversationIdUtil.mask(entry.conversationId()), entry.retryCount() + 1);
             } catch (Exception e) {

@@ -128,7 +128,7 @@ class ChatConversationHelperTest {
             setupTransactionTemplate();
             ChatConversationHelper helper = createHelper();
 
-            helper.saveMessagesAndNotify("conv-1", "hello", "hi there", "gpt-4", null, 100L);
+            helper.saveMessagesAndNotify("conv-1", "hello", "hi there", "gpt-4", 150, 100L);
 
             verify(conversationMessageService, times(2)).saveMessage(any(Message.class));
             verify(conversationService).onNewMessages("conv-1", "hello", 2);
@@ -141,7 +141,7 @@ class ChatConversationHelperTest {
                     .when(transactionTemplate).executeWithoutResult(any(Consumer.class));
 
             ChatConversationHelper helper = createHelper();
-            helper.saveMessagesAndNotify("conv-1", "hello", "hi", "gpt-4", null, 100L);
+            helper.saveMessagesAndNotify("conv-1", "hello", "hi", "gpt-4", -1, 100L);
         }
     }
 

@@ -17,6 +17,7 @@ import com.smart.rag.infrastructure.llm.registry.LlmClientRegistry;
 import com.smart.rag.chat.mode.ChatModeStrategy;
 import com.smart.rag.chat.mode.ModeRouter;
 import com.smart.rag.chat.service.ChatConversationHelper;
+import com.smart.rag.chat.service.ChatMessagePublisher;
 import com.smart.rag.chat.service.ChatService;
 import com.smart.rag.chat.service.ChatUsageTracker;
 import com.smart.rag.chat.service.MdcPropagator;
@@ -53,6 +54,7 @@ public class ChatServiceImpl implements ChatService {
     private final ModeRouter modeRouter;
     private final ChatUsageTracker usageTracker;
     private final ChatConversationHelper conversationHelper;
+    private final ChatMessagePublisher chatMessagePublisher;
     private final SseStreamBridge sseStreamBridge;
     private final RequestContextManager cagContextManager;
     private final CagProperties cagProperties;
@@ -63,6 +65,7 @@ public class ChatServiceImpl implements ChatService {
                            ModeRouter modeRouter,
                            ChatUsageTracker usageTracker,
                            ChatConversationHelper conversationHelper,
+                           ChatMessagePublisher chatMessagePublisher,
                            SseStreamBridge sseStreamBridge,
                            RequestContextManager cagContextManager,
                            CagProperties cagProperties,
@@ -72,6 +75,7 @@ public class ChatServiceImpl implements ChatService {
         this.modeRouter = modeRouter;
         this.usageTracker = usageTracker;
         this.conversationHelper = conversationHelper;
+        this.chatMessagePublisher = chatMessagePublisher;
         this.sseStreamBridge = sseStreamBridge;
         this.cagContextManager = cagContextManager;
         this.cagProperties = cagProperties;
@@ -187,7 +191,7 @@ public class ChatServiceImpl implements ChatService {
                 elapsed(pctx.startTimeMs));
         }
 
-        conversationHelper.saveMessagesAndNotify(pctx.conversationId,
+        chatMessagePublisher.publishMessageSave(pctx.conversationId,
             pctx.request().message(), result.content(),
             candidateId, result.springAiResponse(), elapsed(pctx.startTimeMs));
 

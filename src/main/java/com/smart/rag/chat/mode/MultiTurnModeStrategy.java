@@ -4,6 +4,7 @@ import com.smart.rag.infrastructure.advisor.ConversationContextAdvisor;
 import com.smart.rag.chat.service.AdvisorChainContext;
 import com.smart.rag.chat.service.AdvisorInfrastructure;
 import com.smart.rag.chat.service.ChatConversationHelper;
+import com.smart.rag.chat.service.ChatMessagePublisher;
 import com.smart.rag.chat.service.ChatRequestSpecFactory;
 import com.smart.rag.chat.service.ChatUsageTracker;
 import com.smart.rag.chat.service.ModeChainResult;
@@ -29,13 +30,16 @@ public class MultiTurnModeStrategy extends AbstractModeStrategy {
     private static final Logger log = LoggerFactory.getLogger(MultiTurnModeStrategy.class);
 
     private final ChatConversationHelper conversationHelper;
+    private final ChatMessagePublisher chatMessagePublisher;
 
     public MultiTurnModeStrategy(AdvisorInfrastructure infra,
                                  ChatRequestSpecFactory requestSpecFactory,
                                  ChatUsageTracker usageTracker,
-                                 ChatConversationHelper conversationHelper) {
+                                 ChatConversationHelper conversationHelper,
+                                 ChatMessagePublisher chatMessagePublisher) {
         super(infra, requestSpecFactory, usageTracker);
         this.conversationHelper = conversationHelper;
+        this.chatMessagePublisher = chatMessagePublisher;
     }
 
     @Override
@@ -93,7 +97,9 @@ public class MultiTurnModeStrategy extends AbstractModeStrategy {
                                      SignalType signal) {
         switch (signal) {
             case ON_COMPLETE -> {
-                conversationHelper.saveMessagesAndNotify(ctx.conversationId(),
+                // 流式路径：aiResponse=null（usage 已走独立 chat_usage_record 链路），
+                // 由 ChatMessagePublisher 从 payload 携带 totalTokens（这里 aiResponse=null → -1）。
+                chatMessagePublisher.publishMessageSave(ctx.conversationId(),
                     ctx.request().message(), content,
                     ctx.candidateId(), null, ctx.elapsed());
             }

@@ -438,3 +438,36 @@ BREAKING: all model IDs must be registry candidate ID format (deepseek-v4-flash,
 ### Next Steps
 
 - None - task complete
+
+
+## Session 14: 登录路径 review 修复 + token 存储竞态消除
+
+**Date**: 2026-06-18
+**Task**: 登录路径 review 修复 + token 存储竞态消除
+**Branch**: `agentic-rag-dev`
+
+### Summary
+
+对 CaptchaService/AuthServiceImpl/TokenCacheService 做 code review 修复并推送：(1) 异步权限预热改用专用显式 ThreadPoolExecutor(AuthAsyncConfig)，弃 CompletableFuture/common pool，不用结构化并发(fork-join 与 fire-and-forget 冲突)；(2) batchStoreTokens 改原子 Lua 条件写——disabled/deleted 用户不落 token，消除先写后查竞态；(3) logout 全端下线，去掉未用 accessToken 形参+死 extractToken；(4) 清理死代码 5 成员+对应测试，新增 checkAndIncrementLoginAttempts 用例；(5) CaptchaService Executors→显式 ScheduledThreadPoolExecutor 合规。测试 AuthServiceTest19/TokenCacheServiceTest4/SysUserServiceTest9 全绿，trellis-check PASS。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `cf51035` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

@@ -1,9 +1,13 @@
 package com.smart.rag.infrastructure.messaging;
 
 import io.micrometer.core.instrument.MeterRegistry;
+import io.micrometer.core.instrument.Tags;
 import jakarta.annotation.Nullable;
 
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Centralized metrics for the messaging module.
@@ -14,6 +18,9 @@ import java.util.concurrent.TimeUnit;
 public class MessagingMetrics {
 
     private final MeterRegistry registry;
+
+    /** O-03: 每 (topic,group) 最近一次成功 receive 的 epoch ms。receive 抛异常时不更新 → 监控据此检测消费者卡死。 */
+    private final Map<String, AtomicLong> lastReceiveSuccess = new ConcurrentHashMap<>();
 
     MessagingMetrics(@Nullable MeterRegistry registry) {
         this.registry = registry;
@@ -56,6 +63,24 @@ public class MessagingMetrics {
         if (registry == null) return;
         registry.counter("messaging.consume.count",
             "topic", topic, "group", group, "mode", mode, "result", "fail").increment();
+    }
+
+    /**
+     * O-03: 记录 SimpleConsumer 最近一次成功 receive 的时间戳（epoch ms）。
+     * <p>
+     * 即使本次拉取为空也更新——{@code receive()} 无异常返回即证明消费者存活、Broker 可达。
+     * {@code receive()} 抛异常（进入退避）时不更新，gauge 值变陈旧，监控用
+     * {@code now - last.success > N × invisibleDuration} 检测消费者卡死。
+     */
+    public void recordReceiveSuccess(String topic, String group) {
+        if (registry == null) return;
+        AtomicLong ts = lastReceiveSuccess.computeIfAbsent(topic + ":" + group, k -> {
+            AtomicLong holder = new AtomicLong(0L);
+            registry.gauge("messaging.consumer.receive.last.success",
+                Tags.of("topic", topic, "group", group), holder, AtomicLong::doubleValue);
+            return holder;
+        });
+        ts.set(System.currentTimeMillis());
     }
 
     // ==================== Retry ====================

@@ -143,6 +143,7 @@ class SimpleConsumerReceiveLoop<T> {
                         Math.min(config.batchSize(), config.concurrency()),
                         config.invisibleDuration());
                     backoffMs = 1000;
+                    metrics.recordReceiveSuccess(topic, group);  // O-03: receive() 无异常返回即更新（空拉取也算）
                     if (messages.isEmpty()) {
                         inflightSemaphore.release();
                         continue;

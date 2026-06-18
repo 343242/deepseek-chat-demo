@@ -471,3 +471,41 @@ BREAKING: all model IDs must be registry candidate ID format (deepseek-v4-flash,
 ### Next Steps
 
 - None - task complete
+
+
+## Session 15: Phase D 消息总线收尾（legacy DLQ 退役 + 迁移补全）
+
+**Date**: 2026-06-18
+**Task**: Phase D 消息总线收尾（legacy DLQ 退役 + 迁移补全）
+**Branch**: `agentic-rag-dev`
+
+### Summary
+
+落地 docs/design/messaging-bus.md §9 Phase D 全部项。D-4 切断 legacy Redis DLQ（ChatConversationHelper 不再吞异常+enqueue，chat-save 改由 bus 重试/%DLQ% 接管；publisher 降级路径加有限重试+chat.save.fallback_failed 告警；启动 7 天 soak）。D-5 Step1 补 messaging.consumer.receive.last.success gauge（O-03 卡死检测）；R2 lag/R3 assigned.groups 核对后关闭（前者需 rocketmq-tools+admin、后者公开 API 不可行，均被 Dashboard+既有指标覆盖）。D-6 方案 b 引入 micrometer-tracing-bridge-otel+opentelemetry-sdk，OpenTelemetryTracePropagator 用 W3C traceparent 跨消息传播 traceId+MDC，无 exporter（升 a 仅加 OTLP）。D-1 经评估 deferred（与 §2.2 非目标冲突，现状已崩溃安全）。D-2/D-3 删 MessageDeadLetterQueue/DeadLetterRetryScheduler/DeadLetterEntry+清引用（用户授权提前执行，Redis chat:dead-letter 残留需手动清），顺带修好 InfrastructureBoundaryTest 既有红。全量 mvnw test BUILD SUCCESS 0 失败。ecc:java-reviewer 审 D-4 APPROVE。LitePushConsumer 核查：公开 API 但不暴露 lag/assignment。6 commit 全 push origin/agentic-rag-dev。
+
+### Main Changes
+
+(Add details)
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c53783a` | (see git log) |
+| `b5868cb` | (see git log) |
+| `58cad50` | (see git log) |
+| `1edd16a` | (see git log) |
+| `747bcf2` | (see git log) |
+| `3734e65` | (see git log) |
+
+### Testing
+
+- [OK] (Add test results)
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

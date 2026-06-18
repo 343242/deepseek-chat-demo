@@ -40,13 +40,9 @@ class ChatConversationHelperTest {
     @Mock
     private ChatMemory chatMemory;
 
-    @Mock
-    private MessageDeadLetterQueue deadLetterQueue;
-
     private ChatConversationHelper createHelper() {
         return new ChatConversationHelper(
-                conversationService, conversationMessageService, transactionTemplate, chatMemory,
-                deadLetterQueue);
+                conversationService, conversationMessageService, transactionTemplate, chatMemory);
     }
 
     @SuppressWarnings("unchecked")
@@ -135,13 +131,14 @@ class ChatConversationHelperTest {
         }
 
         @Test
-        @DisplayName("事务失败不向外传播（静默处理）")
-        void swallowsTransactionFailure() {
+        @DisplayName("事务失败向外传播（Phase D D-4：不再吞咽/不入 legacy DLQ，由 bus 重试 + %DLQ% 接管）")
+        void propagatesTransactionFailure() {
             doThrow(new RuntimeException("tx failed"))
                     .when(transactionTemplate).executeWithoutResult(any(Consumer.class));
 
             ChatConversationHelper helper = createHelper();
-            helper.saveMessagesAndNotify("conv-1", "hello", "hi", "gpt-4", -1, 100L);
+            assertThrows(RuntimeException.class,
+                    () -> helper.saveMessagesAndNotify("conv-1", "hello", "hi", "gpt-4", -1, 100L));
         }
     }
 

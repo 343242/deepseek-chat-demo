@@ -32,19 +32,16 @@ public class ChatConversationHelper {
     private final ConversationMessageService conversationMessageService;
     private final TransactionTemplate transactionTemplate;
     private final ChatMemory chatMemory;
-    private final MessageDeadLetterQueue deadLetterQueue;
 
     public ChatConversationHelper(
             ConversationService conversationService,
             ConversationMessageService conversationMessageService,
             TransactionTemplate transactionTemplate,
-            ChatMemory chatMemory,
-            MessageDeadLetterQueue deadLetterQueue) {
+            ChatMemory chatMemory) {
         this.conversationService = conversationService;
         this.conversationMessageService = conversationMessageService;
         this.transactionTemplate = transactionTemplate;
         this.chatMemory = chatMemory;
-        this.deadLetterQueue = deadLetterQueue;
     }
 
     /**
@@ -104,29 +101,25 @@ public class ChatConversationHelper {
                                       String modelId,
                                       int totalTokens,
                                       long durationMs) {
-        try {
-            transactionTemplate.executeWithoutResult(status -> {
-                // 写入 USER 消息
-                Message userMsg = Message.userMessage(conversationId, null, userContent);
-                conversationMessageService.saveMessage(userMsg);
+        // Phase D D-4：落库失败时异常向上传播（不再 catch + enqueue legacy DLQ + 吞咽）。
+        //  - bus consumer 路径：PushConsumerListener 捕获 → ConsumeResult.FAILURE → broker 按 maxDeliveryAttempts 重试 → %DLQ%{save-group}
+        //  - 同步降级路径：ChatMessagePublisher.saveWithBoundedRetry 做有限重试覆盖瞬时 DB 故障
+        //  - legacy retry scheduler：自带 catch，D-3 才删
+        // 事务模板失败已自动回滚（无半写入），broker 重试干净。
+        transactionTemplate.executeWithoutResult(status -> {
+            // 写入 USER 消息
+            Message userMsg = Message.userMessage(conversationId, null, userContent);
+            conversationMessageService.saveMessage(userMsg);
 
-                // 写入 ASSISTANT 消息
-                Message assistantMsg = Message.assistantMessage(
-                        conversationId, userMsg.getId(), assistantContent,
-                        modelId, totalTokens, durationMs);
-                conversationMessageService.saveMessage(assistantMsg);
+            // 写入 ASSISTANT 消息
+            Message assistantMsg = Message.assistantMessage(
+                    conversationId, userMsg.getId(), assistantContent,
+                    modelId, totalTokens, durationMs);
+            conversationMessageService.saveMessage(assistantMsg);
 
-                // 通知会话更新计数和标题
-                conversationService.onNewMessages(conversationId, userContent, 2);
-            });
-        } catch (Exception e) {
-            // 消息持久化失败不影响已返回给用户的响应，但必须记录完整异常栈
-            log.error("Failed to save message records: conversationId={}, model={}",
-                    ConversationIdUtil.mask(conversationId), modelId, e);
-
-            deadLetterQueue.enqueue(new DeadLetterEntry(
-                    conversationId, userContent, assistantContent, modelId, totalTokens, durationMs));
-        }
+            // 通知会话更新计数和标题
+            conversationService.onNewMessages(conversationId, userContent, 2);
+        });
     }
 
     /**

@@ -4,11 +4,16 @@ import com.smart.rag.common.util.ConversationIdUtil;
 import com.smart.rag.infrastructure.messaging.MessageBus;
 import com.smart.rag.infrastructure.messaging.MessageEnvelope;
 import com.smart.rag.infrastructure.exception.MessagingException;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.apache.commons.codec.digest.DigestUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.model.ChatResponse;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DataAccessException;
+import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.TransactionSystemException;
 
 /**
  * 聊天消息保存发布者 — 把同步路径与流式路径的落库请求都路由到消息总线
@@ -41,10 +46,21 @@ public class ChatMessagePublisher {
 
     private final MessageBus messageBus;
     private final ChatConversationHelper conversationHelper;
+    private final @Nullable MeterRegistry meterRegistry;
+    private final long[] backoffMs;
 
-    public ChatMessagePublisher(MessageBus messageBus, ChatConversationHelper conversationHelper) {
+    public ChatMessagePublisher(MessageBus messageBus, ChatConversationHelper conversationHelper,
+                                @Autowired(required = false) @Nullable MeterRegistry meterRegistry) {
+        this(messageBus, conversationHelper, meterRegistry, DEFAULT_BACKOFF_MS);
+    }
+
+    /** 包级构造器：测试注入退避数组（生产用 {@link #DEFAULT_BACKOFF_MS}）。 */
+    ChatMessagePublisher(MessageBus messageBus, ChatConversationHelper conversationHelper,
+                         @Nullable MeterRegistry meterRegistry, long[] backoffMs) {
         this.messageBus = messageBus;
         this.conversationHelper = conversationHelper;
+        this.meterRegistry = meterRegistry;
+        this.backoffMs = backoffMs.clone();  // 防御性拷贝：避免外部 mutate 污染退避
     }
 
     /**
@@ -75,13 +91,72 @@ public class ChatMessagePublisher {
             log.debug("Chat message save published: conversationId={}, candidate={}, totalTokens={}",
                     ConversationIdUtil.mask(conversationId), candidateId, totalTokens);
         } catch (MessagingException e) {
-            // Bus 失败同步降级：直接走原 saveMessagesAndNotify，
-            // 保留事务、双消息写入、onNewMessages 全部语义。
+            // Bus 失败同步降级：走有限重试的 saveMessagesAndNotify（Phase D D-4）。
+            // 保留事务、双消息写入、onNewMessages 全部语义；DB 瞬时故障由有限重试覆盖，
+            // 重试耗尽或硬故障 → 记 ERROR + chat.save.fallback_failed 告警计数（不再写 legacy Redis DLQ）。
             log.warn("Message bus unavailable, falling back to synchronous save: conversationId={}",
                     ConversationIdUtil.mask(conversationId), e);
-            conversationHelper.saveMessagesAndNotify(
-                    conversationId, userMessage, assistantContent,
+            saveWithBoundedRetry(conversationId, userMessage, assistantContent,
                     candidateId, totalTokens, elapsedMs);
+        }
+    }
+
+    /** 同步降级路径默认指数退避（ms）：覆盖 DB 瞬时故障（连接抖动/死锁）。测试可经包级构造器注入。 */
+    static final long[] DEFAULT_BACKOFF_MS = {200, 1000, 3000};
+
+    /**
+     * 同步降级路径有限重试：仅对瞬时 DB 异常（{@link DataAccessException} /
+     * {@link TransactionSystemException}）重试，覆盖现实主流的 DB 失败模式。
+     * 硬故障重试耗尽或非瞬时异常 → {@link #reportFallbackFailure}（记 ERROR + 告警计数）。
+     * <p>
+     * 降级路径罕见（仅 bus 不可达时触发），阻塞可接受；不保留 legacy Redis DLQ（会卡死 Phase D soak 门控）。
+     */
+    private void saveWithBoundedRetry(String conversationId, String userMessage, String assistantContent,
+                                      String candidateId, int totalTokens, long elapsedMs) {
+        for (int attempt = 0; ; attempt++) {
+            try {
+                conversationHelper.saveMessagesAndNotify(
+                        conversationId, userMessage, assistantContent, candidateId, totalTokens, elapsedMs);
+                return;  // 落库成功
+            } catch (DataAccessException | TransactionSystemException e) {
+                if (attempt >= backoffMs.length - 1) {
+                    reportFallbackFailure(conversationId, e);  // 重试耗尽 → DB 硬故障
+                    return;
+                }
+                log.warn("Fallback save transient DB failure, retry in {}ms (attempt {}/{}): conversationId={}",
+                        backoffMs[attempt + 1], attempt + 1, backoffMs.length,
+                        ConversationIdUtil.mask(conversationId));
+                if (!sleepNoThrow(backoffMs[attempt + 1])) {
+                    return;  // 线程被中断，放弃
+                }
+            } catch (RuntimeException e) {
+                // 非瞬时 DB 异常（逻辑错误等）：不重试，直接告警
+                reportFallbackFailure(conversationId, e);
+                return;
+            }
+        }
+    }
+
+    /**
+     * 重试耗尽 / 不可重试：记 ERROR（脱敏）+ 自增 {@code chat.save.fallback_failed} 告警计数。
+     * 数据已 SSE 投递给用户，丢的是会话历史持久化（用户可重发）。
+     */
+    private void reportFallbackFailure(String conversationId, RuntimeException e) {
+        log.error("Fallback save failed (bus + DB both unavailable): conversationId={}",
+                ConversationIdUtil.mask(conversationId), e);
+        if (meterRegistry != null) {
+            meterRegistry.counter("chat.save.fallback_failed", "result", "exhausted").increment();
+        }
+    }
+
+    /** {@link Thread#sleep} 封装：被中断时恢复中断标志并返回 false（调用方放弃重试）。 */
+    private static boolean sleepNoThrow(long millis) {
+        try {
+            Thread.sleep(millis);
+            return true;
+        } catch (InterruptedException ie) {
+            Thread.currentThread().interrupt();
+            return false;
         }
     }
 }

@@ -133,6 +133,16 @@
     	    <artifactId>spring-boot-starter-actuator</artifactId>
 	</dependency>
 
+	<!-- Tracing (Phase D D-6 方案 b): micrometer-tracing 抽象 + OTel bridge + SDK（无 exporter，仅本地日志 traceId 串联）。升级方案 a 仅加 OTLP exporter + collector，本类不改。 -->
+	<dependency>
+		<groupId>io.micrometer</groupId>
+		<artifactId>micrometer-tracing-bridge-otel</artifactId>
+	</dependency>
+	<dependency>
+		<groupId>io.opentelemetry</groupId>
+		<artifactId>opentelemetry-sdk</artifactId>
+	</dependency>
+
         <!-- exp4j (safe math expression evaluator, replaces ScriptEngine) -->
         <dependency>
             <groupId>net.objecthunter</groupId>

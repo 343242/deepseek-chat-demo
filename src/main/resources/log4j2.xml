@@ -5,7 +5,7 @@
         <!-- 日志根目录 -->
         <Property name="LOG_HOME">${sys:LOG_PATH:-./logs}</Property>
         <!-- 日志格式：时间 | 级别 | 线程 | Logger | 消息 | 异常 -->
-        <Property name="PATTERN">%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%t] %logger{36} - %msg%n</Property>
+        <Property name="PATTERN">%d{yyyy-MM-dd HH:mm:ss.SSS} %-5level [%t] [%X{traceId}/%X{spanId}] %logger{36} - %msg%n</Property>
         <!-- 滚动文件名日期格式 -->
         <Property name="DATE_FORMAT">%d{yyyy-MM-dd}</Property>
     </Properties>
@@ -14,7 +14,7 @@
 
         <!-- ==================== 控制台 ==================== -->
         <Console name="Console" target="SYSTEM_OUT">
-            <PatternLayout pattern="%d{HH:mm:ss.SSS} %highlight{%-5level} [%t] %style{%logger{36}}{cyan} - %msg%n"/>
+            <PatternLayout pattern="%d{HH:mm:ss.SSS} %highlight{%-5level} [%t] [%X{traceId}/%X{spanId}] %style{%logger{36}}{cyan} - %msg%n"/>
         </Console>
 
         <!-- ==================== ERROR 级别 ==================== -->

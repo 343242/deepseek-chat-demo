@@ -1,6 +1,5 @@
 package com.smart.rag.infrastructure.messaging;
 
-import com.smart.rag.chat.service.MessageDeadLetterQueue;
 import org.springframework.boot.actuate.health.AbstractHealthIndicator;
 import org.springframework.boot.actuate.health.Health;
 
@@ -10,22 +9,15 @@ import java.util.Map;
  * Messaging bus health check — monitors producer connectivity, subscription activity,
  * and circuit breaker state via Spring Boot Actuator /health endpoint.
  * <p>
- * Also surfaces the legacy Redis {@link MessageDeadLetterQueue} depth as a detail
- * ({@code legacyDlqSize}) to support the Phase D precondition verification
- * (legacy DLQ 0 new entries over a 7-day window). This is <b>detail-only</b> —
- * a sustained non-zero size is NOT treated as unhealthy because
- * {@code DeadLetterRetryScheduler} continuously drains the queue; DOWN remains
- * producer-unreachable (and circuit-breaker-open) only.
+ * DOWN = producer unreachable OR any send circuit breaker open/half-open.
+ * (Phase D D-2/D-3: 移除了 legacy Redis DLQ depth detail —— 随 {@code MessageDeadLetterQueue} 一并退役。)
  */
 public class MessagingHealthIndicator extends AbstractHealthIndicator {
 
     private final MessageBusManagement busManagement;
-    private final MessageDeadLetterQueue deadLetterQueue;
 
-    public MessagingHealthIndicator(MessageBusManagement busManagement,
-                                    MessageDeadLetterQueue deadLetterQueue) {
+    public MessagingHealthIndicator(MessageBusManagement busManagement) {
         this.busManagement = busManagement;
-        this.deadLetterQueue = deadLetterQueue;
     }
 
     @Override
@@ -35,8 +27,7 @@ public class MessagingHealthIndicator extends AbstractHealthIndicator {
         if (!producerHealthy) {
             builder.down()
                 .withDetail("producer", "unreachable")
-                .withDetail("action", "Check RocketMQ Broker/Proxy connectivity")
-                .withDetail("legacyDlqSize", deadLetterQueue.size());
+                .withDetail("action", "Check RocketMQ Broker/Proxy connectivity");
             return;
         }
 
@@ -46,8 +37,7 @@ public class MessagingHealthIndicator extends AbstractHealthIndicator {
             builder.up()
                 .withDetail("producer", "healthy")
                 .withDetail("subscriptions", "none")
-                .withDetail("warning", "No active subscriptions registered")
-                .withDetail("legacyDlqSize", deadLetterQueue.size());
+                .withDetail("warning", "No active subscriptions registered");
             return;
         }
 
@@ -59,7 +49,6 @@ public class MessagingHealthIndicator extends AbstractHealthIndicator {
         (hasOpenBreaker ? builder.down() : builder.up())
             .withDetail("producer", "healthy")
             .withDetail("activeSubscriptions", activeSubscriptions)
-            .withDetail("circuitBreaker", circuitBreakerState)
-            .withDetail("legacyDlqSize", deadLetterQueue.size());
+            .withDetail("circuitBreaker", circuitBreakerState);
     }
 }

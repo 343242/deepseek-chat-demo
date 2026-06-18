@@ -34,8 +34,18 @@
 - [ ] lag 指标采集不显著影响吞吐（采样式）
 - [ ] `design.md` 记录依赖与采集策略决策
 
+## Resolution（2026-06-18 核对存档）
+
+- **R1 `receive.last.success`** — ✅ **DONE**（commit `b5868cb`）：SimpleConsumer receive 成功后记 epoch ms，per-(topic,group) AtomicLong 懒注册 gauge。
+- **R2 `consumer.lag`** — ⏸ **DEFERRED**：需 `rocketmq-tools`（pom 未引入，重依赖）+ Broker admin（nameserver + ACL，本环境未配）。公开客户端 API（含 `LitePushConsumer`）不暴露 broker offset，应用层算不出 lag。**已被 RocketMQ Dashboard（:8082）+ 既有 `receive.last.success`（卡死检测）覆盖**；待多实例规模 / 真有积压告警需求时连同 `rocketmq-tools` 一起评估。
+- **R3 `assigned.groups`** — ❌ **INFEASIBLE / 已关闭**：核对 `rocketmq-client-java` 5.2.0 公开 API（`PushConsumer`/`SimpleConsumer`/`LitePushConsumer`/`MessageView`）均不暴露 assignment/partition；仅内部 `apache/rocketmq/v2` protobuf 有（非公开 API，硬用=脆耦合）。`MessageView.getMessageGroup()` 可在应用层近似"近期见过的 group"，但非 broker 真实分配、单实例价值边际。
+
+**LitePushConsumer 核对**（应要求核查）：确为公开 API（`ClientServiceProvider.newLitePushConsumerBuilder()`），但特征是「lite topic 订阅模型」（`subscribeLite`/`getLiteTopicSet`/`MessageView.getLiteTopic()`），**非** lag/assignment 可观测性入口——不解 R2/R3 阻塞。
+
+**§5.6 `DeadLetterOperations`（关联项，d5 范围外但一并核对）**：scan/replay 应用层可行（订阅 `%DLQ%{group}` + resend，零新依赖），但 **S-02 ops-only、当前无调用方**；看死信已被 RocketMQ Dashboard 覆盖；`deadLetterCount` 需 admin（同 R2 阻塞）。→ 维持 `UNSUPPORTED` 桩，待有运维工具需要该 SPI 时再做。
+
+**结论**：R1 落地；R2/R3/§5.6 收益低、有真实阻塞（API/infra），且真实运维需求已被 Dashboard + 既有指标覆盖——**不为凑设计清单堆投机代码，本轮收尾**。
+
 ## Notes
 
-- 详细 `design.md` / `implement.md` 在激活时补齐。
-- 建议拆两步：先 `receive.last.success`（纯应用层、零外部依赖），再 `lag`（需 `rocketmq-tools` + Admin API）。
 - 设计依据：`docs/design/messaging-bus.md` §3.1（O-03）+ §5.11 + §9 Phase D Step 5。

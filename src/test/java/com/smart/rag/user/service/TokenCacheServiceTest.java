@@ -55,68 +55,37 @@ class TokenCacheServiceTest {
     class LoginRateLimitTests {
 
         @Test
-        @DisplayName("isLoginRateLimited_underLimit: count=9 时返回 false")
-        void isLoginRateLimited_underLimit() {
-            when(redisTemplate.opsForValue()).thenReturn(valueOperations);
-            when(valueOperations.get("ratelimit:login:127.0.0.1")).thenReturn("9");
-
-            assertFalse(tokenCacheService.isLoginRateLimited("127.0.0.1"));
-        }
-
-        @Test
-        @DisplayName("isLoginRateLimited_atLimit: count=10 时返回 true（off-by-one 修复验证）")
-        void isLoginRateLimited_atLimit() {
-            when(redisTemplate.opsForValue()).thenReturn(valueOperations);
-            when(valueOperations.get("ratelimit:login:127.0.0.1")).thenReturn("10");
-
-            assertTrue(tokenCacheService.isLoginRateLimited("127.0.0.1"));
-        }
-
-        @Test
-        @DisplayName("isLoginRateLimited_overLimit: count=11 时返回 true")
-        void isLoginRateLimited_overLimit() {
-            when(redisTemplate.opsForValue()).thenReturn(valueOperations);
-            when(valueOperations.get("ratelimit:login:127.0.0.1")).thenReturn("11");
-
-            assertTrue(tokenCacheService.isLoginRateLimited("127.0.0.1"));
-        }
-
-        @Test
-        @DisplayName("incrementLoginAttempts_firstRequest: 首次请求 count=1（Lua 原子脚本）")
+        @DisplayName("checkAndIncrementLoginAttempts_underLimit: 未超限时返回递增后的计数")
         @SuppressWarnings("unchecked")
-        void incrementLoginAttempts_firstRequest() {
-            doReturn(1L).when(redisTemplate).execute(
+        void checkAndIncrementLoginAttempts_underLimit() {
+            doReturn(5L).when(redisTemplate).execute(
                     any(org.springframework.data.redis.core.script.RedisScript.class),
                     anyList(),
                     any(Object[].class)
             );
 
-            long count = tokenCacheService.incrementLoginAttempts("127.0.0.1");
+            long count = tokenCacheService.checkAndIncrementLoginAttempts("127.0.0.1");
 
-            assertEquals(1L, count);
+            assertEquals(5L, count);
             verify(redisTemplate).execute(
                     any(org.springframework.data.redis.core.script.RedisScript.class),
                     eq(java.util.List.of("ratelimit:login:127.0.0.1")),
-                    eq("300")
+                    eq("300"),
+                    eq("10")
             );
         }
 
         @Test
-        @DisplayName("getRemainingLoginAttempts_noRecord: 返回 10")
-        void getRemainingLoginAttempts_noRecord() {
-            when(redisTemplate.opsForValue()).thenReturn(valueOperations);
-            when(valueOperations.get("ratelimit:login:127.0.0.1")).thenReturn(null);
+        @DisplayName("checkAndIncrementLoginAttempts_atLimit: 超限时返回 -1（本次不递增）")
+        @SuppressWarnings("unchecked")
+        void checkAndIncrementLoginAttempts_atLimit() {
+            doReturn(-1L).when(redisTemplate).execute(
+                    any(org.springframework.data.redis.core.script.RedisScript.class),
+                    anyList(),
+                    any(Object[].class)
+            );
 
-            assertEquals(10L, tokenCacheService.getRemainingLoginAttempts("127.0.0.1"));
-        }
-
-        @Test
-        @DisplayName("getRemainingLoginAttempts_someUsed: count=3 返回 7")
-        void getRemainingLoginAttempts_someUsed() {
-            when(redisTemplate.opsForValue()).thenReturn(valueOperations);
-            when(valueOperations.get("ratelimit:login:127.0.0.1")).thenReturn("3");
-
-            assertEquals(7L, tokenCacheService.getRemainingLoginAttempts("127.0.0.1"));
+            assertEquals(-1L, tokenCacheService.checkAndIncrementLoginAttempts("127.0.0.1"));
         }
     }
 

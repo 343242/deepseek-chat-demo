@@ -23,7 +23,11 @@ import com.smart.rag.user.service.AuthService;
 import org.springframework.dao.DuplicateKeyException;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.transaction.support.TransactionTemplate;
+import java.util.concurrent.Executor;
 
 import java.util.*;
 import java.util.regex.Pattern;
@@ -40,6 +44,8 @@ public class AuthServiceImpl implements AuthService {
 
     private static final String PASSWORD_RULE_MSG = "密码需8-72位，不允许空白字符，需包含大写字母、小写字母、数字、特殊字符中至少3种";
 
+    private static final Logger log = LoggerFactory.getLogger(AuthServiceImpl.class);
+
     private final SysUserMapper sysUserMapper;
     private final SysUserRoleMapper sysUserRoleMapper;
     private final SysRoleMapper sysRoleMapper;
@@ -51,6 +57,7 @@ public class AuthServiceImpl implements AuthService {
     private final SnowflakeIdGenerator idGenerator;
     private final TransactionTemplate transactionTemplate;
     private final PasswordEncoder passwordEncoder;
+    private final Executor permissionWarmupExecutor;
 
     public AuthServiceImpl(SysUserMapper sysUserMapper,
                        SysUserRoleMapper sysUserRoleMapper,
@@ -62,7 +69,8 @@ public class AuthServiceImpl implements AuthService {
                        UserPermissionProvider userPermissionProvider,
                        SnowflakeIdGenerator idGenerator,
                        TransactionTemplate transactionTemplate,
-                       PasswordEncoder passwordEncoder) {
+                       PasswordEncoder passwordEncoder,
+                       @Qualifier("authPermissionWarmupExecutor") Executor permissionWarmupExecutor) {
         this.sysUserMapper = sysUserMapper;
         this.sysUserRoleMapper = sysUserRoleMapper;
         this.sysRoleMapper = sysRoleMapper;
@@ -74,16 +82,17 @@ public class AuthServiceImpl implements AuthService {
         this.idGenerator = idGenerator;
         this.transactionTemplate = transactionTemplate;
         this.passwordEncoder = passwordEncoder;
+        this.permissionWarmupExecutor = permissionWarmupExecutor;
     }
 
     @Override
     public LoginResult login(String username, String password, String ip,
                                 String captchaId, String captchaCode) {
-        // 1. IP rate limit check
-        if (tokenCacheService.isLoginRateLimited(ip)) {
+        // 1. IP rate limit — 合并检查+递增为单次 Redis 往返
+        long attemptCount = tokenCacheService.checkAndIncrementLoginAttempts(ip);
+        if (attemptCount < 0) {
             throw new RateLimitExceededException("登录尝试过于频繁，请5分钟后再试");
         }
-        tokenCacheService.incrementLoginAttempts(ip);
 
         // 2. Captcha validation
         validateCaptcha(captchaId, captchaCode);
@@ -97,29 +106,29 @@ public class AuthServiceImpl implements AuthService {
             throw new ClientException(ClientErrorCode.LOGIN_FAILED);
         }
 
-        // 5. Check user status
+        // 5. Check DB user status
         if (user.getStatus() != null && user.getStatus() != 1) {
             throw new ClientException(ClientErrorCode.LOGIN_FAILED);
         }
 
-        // 6. Check Redis status
-        String redisStatus = tokenCacheService.getUserStatus(user.getId());
+        // 6. Query roles & permissions（复用 roleIds，避免 loadUserPermissions 重复查询）
+        List<Long> roleIds = sysUserRoleMapper.selectRoleIdsByUserId(user.getId());
+        List<String> roleNames = getRoleNames(roleIds);
+        // 权限预热：异步执行，不阻塞登录响应；best-effort，失败仅记日志（miss 由 getCurrentUser 兜底）
+        warmupUserPermissions(user.getId());
+
+        // 7. Generate tokens
+        String accessToken = jwtTokenProvider.generateAccessToken(user.getId(), roleNames);
+        String refreshToken = jwtTokenProvider.generateRefreshToken(user.getId());
+        String tokenId = jwtTokenProvider.getJtiFromToken(accessToken);
+
+        // 8. Pipeline 批量：用户状态检查 + Token 存储（3+ Redis → 1 Pipeline 往返）
+        String redisStatus = tokenCacheService.batchStoreTokens(
+                user.getId(), tokenId, roleNames, refreshToken,
+                jwtProperties.accessExpiration(), jwtProperties.refreshExpiration());
         if ("disabled".equals(redisStatus) || "deleted".equals(redisStatus)) {
             throw new ClientException(ClientErrorCode.LOGIN_FAILED);
         }
-
-        // 7. Query roles & generate tokens
-        List<Long> roleIds = sysUserRoleMapper.selectRoleIdsByUserId(user.getId());
-        List<String> roleNames = getRoleNames(roleIds);
-
-        String accessToken = jwtTokenProvider.generateAccessToken(user.getId(), roleNames);
-        String refreshToken = jwtTokenProvider.generateRefreshToken(user.getId());
-
-        String tokenId = jwtTokenProvider.getJtiFromToken(accessToken);
-        tokenCacheService.storeAccessToken(user.getId(), tokenId, roleNames);
-        tokenCacheService.storeRefreshToken(refreshToken, user.getId());
-
-        userPermissionProvider.loadUserPermissions(user.getId());
 
         TokenPair tokenPair = new TokenPair(accessToken, refreshToken);
         LoginResponse response = new LoginResponse(
@@ -130,6 +139,7 @@ public class AuthServiceImpl implements AuthService {
         );
         return new LoginResult(tokenPair, response);
     }
+
 
     @Override
     public LoginResponse.UserInfo register(String username, String password, String email,
@@ -201,20 +211,20 @@ public class AuthServiceImpl implements AuthService {
             throw new ClientException(ClientErrorCode.USER_STATUS_ABNORMAL);
         }
 
-        String redisStatus = tokenCacheService.getUserStatus(userId);
-        if ("disabled".equals(redisStatus) || "deleted".equals(redisStatus)) {
-            throw new ClientException(ClientErrorCode.USER_DISABLED);
-        }
-
         List<Long> roleIds = sysUserRoleMapper.selectRoleIdsByUserId(userId);
         List<String> roleNames = getRoleNames(roleIds);
 
         String newAccessToken = jwtTokenProvider.generateAccessToken(userId, roleNames);
         String newRefreshToken = jwtTokenProvider.generateRefreshToken(userId);
 
+        // Pipeline 批量：用户状态检查 + Token 存储（与 login 一致，1 次往返）
         String tokenId = jwtTokenProvider.getJtiFromToken(newAccessToken);
-        tokenCacheService.storeAccessToken(userId, tokenId, roleNames);
-        tokenCacheService.storeRefreshToken(newRefreshToken, userId);
+        String redisStatus = tokenCacheService.batchStoreTokens(
+                userId, tokenId, roleNames, newRefreshToken,
+                jwtProperties.accessExpiration(), jwtProperties.refreshExpiration());
+        if ("disabled".equals(redisStatus) || "deleted".equals(redisStatus)) {
+            throw new ClientException(ClientErrorCode.USER_DISABLED);
+        }
 
         TokenPair tokenPair = new TokenPair(newAccessToken, newRefreshToken);
         LoginResponse response = new LoginResponse(
@@ -226,8 +236,11 @@ public class AuthServiceImpl implements AuthService {
         return new LoginResult(tokenPair, response);
     }
 
+    /**
+     * 全端下线：撤销该用户全部会话的 access + refresh token，并清空权限缓存。
+     */
     @Override
-    public void logout(Long userId, String accessToken) {
+    public void logout(Long userId) {
         tokenCacheService.revokeAllTokens(userId);
         tokenCacheService.evictUserPermissions(userId);
     }
@@ -302,6 +315,21 @@ public class AuthServiceImpl implements AuthService {
     }
 
     // ==================== Private helpers ====================
+
+    /** 异步预热用户权限缓存（best-effort，不阻塞调用方；失败仅记日志，miss 由 getCurrentUser 兜底）。 */
+    private void warmupUserPermissions(Long userId) {
+        try {
+            permissionWarmupExecutor.execute(() -> {
+                try {
+                    userPermissionProvider.loadUserPermissions(userId);
+                } catch (Exception e) {
+                    log.warn("Permission warmup failed for userId={}", userId, e);
+                }
+            });
+        } catch (Exception e) {
+            log.debug("Permission warmup not scheduled for userId={}: {}", userId, e.getMessage());
+        }
+    }
 
     private List<String> getRoleNames(List<Long> roleIds) {
         if (roleIds == null || roleIds.isEmpty()) {

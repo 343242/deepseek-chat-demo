@@ -78,11 +78,9 @@ public class AuthController {
     }
 
     @PostMapping("/logout")
-    public GlobalResponse<Void> logout(HttpServletRequest request,
-                                       HttpServletResponse httpResponse) {
+    public GlobalResponse<Void> logout(HttpServletResponse httpResponse) {
         Long userId = SecurityUtils.getCurrentUserId();
-        String token = SecurityUtils.extractToken(request);
-        authService.logout(userId, token);
+        authService.logout(userId);
         cookieTokenManager.clearTokenCookies(httpResponse);
         return GlobalResponse.ok("已登出");
     }

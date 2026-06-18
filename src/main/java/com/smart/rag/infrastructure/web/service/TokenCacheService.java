@@ -20,9 +20,15 @@ import java.util.HexFormat;
 @Service
 public class TokenCacheService {
 
-    /** 原子化 INCR + 首次 EXPIRE，修复两步 TTL 窗口问题 */
-    private static final DefaultRedisScript<Long> INCR_WITH_EXPIRE_SCRIPT =
+    /**
+     * 原子化限流检查+递增：GET 判断 → 超限返回 -1 → 否则 INCR+EXPIRE。
+     */
+    private static final DefaultRedisScript<Long> CHECK_AND_INCREMENT_LOGIN_SCRIPT =
             new DefaultRedisScript<>(
+                    "local val = redis.call('GET', KEYS[1]) " +
+                    "if val ~= false and tonumber(val) >= tonumber(ARGV[2]) then " +
+                    "  return -1 " +
+                    "end " +
                     "local count = redis.call('INCR', KEYS[1]) " +
                     "if count == 1 then redis.call('EXPIRE', KEYS[1], ARGV[1]) end " +
                     "return count", Long.class);
@@ -35,6 +41,22 @@ public class TokenCacheService {
                     "redis.call('DEL', KEYS[1]) " +
                     "redis.call('SREM', 'auth:user_refresh:' .. val, ARGV[1]) " +
                     "return val", String.class);
+
+    /**
+     * 原子化会话 Token 存储：读取用户状态，仅当未 disabled/deleted 时才写入 access+refresh，
+     * 单次 Redis 往返。消除「先写 token 再查状态」的竞态——disabled/deleted 用户不会落任何 token。
+     */
+    private static final DefaultRedisScript<String> STORE_TOKENS_IF_ACTIVE_SCRIPT =
+            new DefaultRedisScript<>(
+                    "local status = redis.call('GET', KEYS[2]) " +
+                    "if status == 'disabled' or status == 'deleted' then " +
+                    "  return status " +
+                    "end " +
+                    "redis.call('SET', KEYS[1], ARGV[1], 'EX', tonumber(ARGV[2])) " +
+                    "redis.call('SET', KEYS[3], ARGV[3], 'EX', tonumber(ARGV[4])) " +
+                    "redis.call('SADD', KEYS[4], ARGV[5]) " +
+                    "redis.call('EXPIRE', KEYS[4], tonumber(ARGV[4])) " +
+                    "return status", String.class);
 
     private final StringRedisTemplate redisTemplate;
     private final JwtProperties jwtProperties;
@@ -93,13 +115,6 @@ public class TokenCacheService {
         String indexKey = "auth:user_refresh:" + userId;
         redisTemplate.opsForSet().add(indexKey, hash);
         redisTemplate.expire(indexKey, jwtProperties.refreshExpiration(), TimeUnit.SECONDS);
-    }
-
-    public Long getUserIdByRefreshToken(String refreshToken) {
-        String hash = sha256Hex(refreshToken);
-        String key = "auth:refresh:" + hash;
-        String val = redisTemplate.opsForValue().get(key);
-        return val != null ? Long.parseLong(val) : null;
     }
 
     /**
@@ -186,27 +201,52 @@ public class TokenCacheService {
         redisTemplate.delete("auth:status:" + userId);
     }
 
-    // --- Login Rate Limiting ---
-
-    public long incrementLoginAttempts(String ip) {
+    /**
+     * 合并限流检查+递增为单次原子 Redis 往返。
+     * @return 递增后的计数（1..limit）；-1 表示已超限（本次不递增）
+     */
+    public long checkAndIncrementLoginAttempts(String ip) {
         String key = "ratelimit:login:" + ip;
-        Long count = redisTemplate.execute(INCR_WITH_EXPIRE_SCRIPT,
+        Long result = redisTemplate.execute(CHECK_AND_INCREMENT_LOGIN_SCRIPT,
                 List.of(key),
-                String.valueOf(300));
-        return count != null ? count : 0;
+                String.valueOf(300),   // TTL
+                String.valueOf(10));  // 限制次数
+        return result != null ? result : 0;
     }
 
-    public boolean isLoginRateLimited(String ip) {
-        String key = "ratelimit:login:" + ip;
-        String val = redisTemplate.opsForValue().get(key);
-        return val != null && Long.parseLong(val) >= 10;
-    }
 
-    public long getRemainingLoginAttempts(String ip) {
-        String key = "ratelimit:login:" + ip;
-        String val = redisTemplate.opsForValue().get(key);
-        if (val == null) return 10;
-        long count = Long.parseLong(val);
-        return Math.max(0, 10 - count);
+    /**
+     * 批量存储会话 Token（access + refresh）+ 用户状态查询。
+     * <p>
+     * 登录与刷新共用：用 Lua 脚本原子地「读状态 → 仅当未 disabled/deleted 才写 token」，
+     * 单次 Redis 往返，消除先写后查的竞态（disabled/deleted 用户不写入任何 token）。
+     *
+     * @return 用户状态字符串（active 时为 null；disabled/deleted 时返回对应串且不写入 token）
+     */
+    public String batchStoreTokens(Long userId, String tokenId, List<String> roles,
+                                    String refreshToken, long accessExp, long refreshExp) {
+        String accessKey = jwtProperties.redisPrefix() + userId + ":" + tokenId;
+        String refreshHash = sha256Hex(refreshToken);
+        String refreshKey = "auth:refresh:" + refreshHash;
+        String userStatusKey = "auth:status:" + userId;
+        String refreshIndexKey = "auth:user_refresh:" + userId;
+
+        String accessJson;
+        try {
+            Map<String, Object> data = Map.of("roles", roles, "createdAt", Instant.now().toString());
+            accessJson = objectMapper.writeValueAsString(data);
+        } catch (JsonProcessingException e) {
+            throw new RuntimeException("Failed to serialize token metadata", e);
+        }
+
+        return redisTemplate.execute(
+                STORE_TOKENS_IF_ACTIVE_SCRIPT,
+                List.of(accessKey, userStatusKey, refreshKey, refreshIndexKey),
+                accessJson,
+                String.valueOf(accessExp),
+                String.valueOf(userId),
+                String.valueOf(refreshExp),
+                refreshHash
+        );
     }
 }

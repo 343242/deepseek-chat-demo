@@ -32,6 +32,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.Executor;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -53,6 +54,7 @@ class AuthServiceTest {
     @Mock private SnowflakeIdGenerator idGenerator;
     @Mock private TransactionTemplate transactionTemplate;
     @Mock private PasswordEncoder passwordEncoder;
+    @Mock private Executor permissionWarmupExecutor;
 
     @InjectMocks
     private AuthServiceImpl authService;
@@ -70,7 +72,7 @@ class AuthServiceTest {
     }
 
     private void setupLoginMocks(SysUser user) {
-        when(tokenCacheService.isLoginRateLimited(anyString())).thenReturn(false);
+        when(tokenCacheService.checkAndIncrementLoginAttempts(anyString())).thenReturn(5L);
         when(captchaService.validate(anyString(), anyInt())).thenReturn(true);
         when(sysUserMapper.selectByUsername(anyString())).thenReturn(Optional.of(user));
         when(passwordEncoder.matches(eq("Password1!"), anyString())).thenReturn(true);
@@ -80,8 +82,11 @@ class AuthServiceTest {
         when(jwtTokenProvider.generateAccessToken(eq(1L), anyList())).thenReturn("access-token");
         when(jwtTokenProvider.generateRefreshToken(1L)).thenReturn("refresh-token");
         when(jwtTokenProvider.getJtiFromToken("access-token")).thenReturn("jti-123");
+        when(tokenCacheService.batchStoreTokens(eq(1L), anyString(), anyList(), anyString(), anyLong(), anyLong()))
+                .thenReturn(null);
         when(tokenCacheService.getUserPermissions(1L)).thenReturn(null);
     }
+
 
     // ==================== Login ====================
 
@@ -102,23 +107,23 @@ class AuthServiceTest {
             assertEquals("access-token", result.tokens().accessToken());
             assertEquals("refresh-token", result.tokens().refreshToken());
             assertEquals(1L, result.response().user().id());
-            verify(tokenCacheService).incrementLoginAttempts("127.0.0.1");
+            verify(tokenCacheService).checkAndIncrementLoginAttempts("127.0.0.1");
         }
 
         @Test
         @DisplayName("login_rateLimited: 限流时抛 RateLimitExceededException")
         void login_rateLimited() {
-            when(tokenCacheService.isLoginRateLimited("127.0.0.1")).thenReturn(true);
+            when(tokenCacheService.checkAndIncrementLoginAttempts("127.0.0.1")).thenReturn(-1L);
 
             assertThrows(RateLimitExceededException.class,
                     () -> authService.login("testuser", "Password1!", "127.0.0.1", "cap-id", "150"));
-            verify(tokenCacheService, never()).incrementLoginAttempts(anyString());
         }
+
 
         @Test
         @DisplayName("login_invalidCaptcha: 验证码错误时抛 ClientException")
         void login_invalidCaptcha() {
-            when(tokenCacheService.isLoginRateLimited(anyString())).thenReturn(false);
+            when(tokenCacheService.checkAndIncrementLoginAttempts(anyString())).thenReturn(5L);
             when(captchaService.validate("cap-id", 150)).thenReturn(false);
 
             assertThrows(ClientException.class,
@@ -128,7 +133,7 @@ class AuthServiceTest {
         @Test
         @DisplayName("login_userNotFound: 用户不存在时抛 ClientException")
         void login_userNotFound() {
-            when(tokenCacheService.isLoginRateLimited(anyString())).thenReturn(false);
+            when(tokenCacheService.checkAndIncrementLoginAttempts(anyString())).thenReturn(5L);
             when(captchaService.validate(anyString(), anyInt())).thenReturn(true);
             when(sysUserMapper.selectByUsername(anyString())).thenReturn(Optional.empty());
 
@@ -140,7 +145,7 @@ class AuthServiceTest {
         @DisplayName("login_wrongPassword: 密码错误时抛 ClientException")
         void login_wrongPassword() {
             SysUser user = buildActiveUser();
-            when(tokenCacheService.isLoginRateLimited(anyString())).thenReturn(false);
+            when(tokenCacheService.checkAndIncrementLoginAttempts(anyString())).thenReturn(5L);
             when(captchaService.validate(anyString(), anyInt())).thenReturn(true);
             when(sysUserMapper.selectByUsername(anyString())).thenReturn(Optional.of(user));
             when(passwordEncoder.matches(eq("WrongPass1!"), anyString())).thenReturn(false);
@@ -154,7 +159,7 @@ class AuthServiceTest {
         void login_userDisabled_status0() {
             SysUser user = buildActiveUser();
             user.setStatus(0);
-            when(tokenCacheService.isLoginRateLimited(anyString())).thenReturn(false);
+            when(tokenCacheService.checkAndIncrementLoginAttempts(anyString())).thenReturn(5L);
             when(captchaService.validate(anyString(), anyInt())).thenReturn(true);
             when(sysUserMapper.selectByUsername(anyString())).thenReturn(Optional.of(user));
             when(passwordEncoder.matches(anyString(), anyString())).thenReturn(true);
@@ -167,11 +172,9 @@ class AuthServiceTest {
         @DisplayName("login_userDisabled_redisStatus: Redis status=disabled 时抛 ClientException")
         void login_userDisabled_redisStatus() {
             SysUser user = buildActiveUser();
-            when(tokenCacheService.isLoginRateLimited(anyString())).thenReturn(false);
-            when(captchaService.validate(anyString(), anyInt())).thenReturn(true);
-            when(sysUserMapper.selectByUsername(anyString())).thenReturn(Optional.of(user));
-            when(passwordEncoder.matches(anyString(), anyString())).thenReturn(true);
-            when(tokenCacheService.getUserStatus(1L)).thenReturn("disabled");
+            setupLoginMocks(user);
+            when(tokenCacheService.batchStoreTokens(eq(1L), anyString(), anyList(), anyString(), anyLong(), anyLong()))
+                    .thenReturn("disabled");
 
             assertThrows(ClientException.class,
                     () -> authService.login("testuser", "Password1!", "127.0.0.1", "cap-id", "150"));

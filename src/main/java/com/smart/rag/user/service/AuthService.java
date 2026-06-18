@@ -21,7 +21,10 @@ public interface AuthService {
 
     LoginResult refreshToken(String refreshToken);
 
-    void logout(Long userId, String accessToken);
+    /**
+     * 注销：撤销该用户的全部会话/设备（access + refresh token 全部清空，权限缓存一并驱逐）。
+     */
+    void logout(Long userId);
 
     LoginResponse.UserInfo getCurrentUser(Long userId);
 

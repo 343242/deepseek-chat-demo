@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/guides/jwt-best-practices.md", "reason": "token/logout/refresh 约定（#3 #4 #5 + 删除/全端下线/Rotation 语义）"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "预热 try/catch 日志级别（WARN）+ 拒绝策略 DEBUG + 参数化、不记 token"}
+{"file": ".trellis/spec/guides/code-reuse-thinking-guide.md", "reason": "复用 ThreadPoolConstants + batchStoreLoginTokens pipeline 模式"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "预热任务 try/catch 包装模式"}

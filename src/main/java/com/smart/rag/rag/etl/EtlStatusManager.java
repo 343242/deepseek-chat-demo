@@ -1,9 +1,11 @@
 package com.smart.rag.rag.etl;
 
 import com.smart.rag.rag.entity.RagDocument;
+import com.smart.rag.rag.event.EtlFailedEvent;
 import com.smart.rag.rag.mapper.RagDocumentMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -23,11 +25,14 @@ public class EtlStatusManager {
 
     private final RagDocumentMapper ragDocumentMapper;
     private final TransactionTemplate transactionTemplate;
+    private final ApplicationEventPublisher eventPublisher;
 
     public EtlStatusManager(RagDocumentMapper ragDocumentMapper,
-                            TransactionTemplate transactionTemplate) {
+                            TransactionTemplate transactionTemplate,
+                            ApplicationEventPublisher eventPublisher) {
         this.ragDocumentMapper = ragDocumentMapper;
         this.transactionTemplate = transactionTemplate;
+        this.eventPublisher = eventPublisher;
     }
 
     /**
@@ -85,8 +90,11 @@ public class EtlStatusManager {
                     ragDocumentMapper.updateById(doc);
                 }
             });
+            // 事务已提交、DB 状态可见 → 发布失败事件，供下游（pendingSupersede 加速层等）清理
+            eventPublisher.publishEvent(new EtlFailedEvent(documentId, truncate(e.getMessage(), 2000)));
         } catch (Exception txEx) {
             log.error("Failed to persist FAILED status for document: id={}", documentId, txEx);
+            // 事务失败 → 不发事件，保持「DB=FAILED ⟺ 发 EtlFailedEvent」一致
         }
     }
 

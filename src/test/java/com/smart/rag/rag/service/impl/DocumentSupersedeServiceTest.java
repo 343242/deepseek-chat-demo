@@ -4,7 +4,9 @@ import com.smart.rag.rag.entity.RagDocument;
 import com.smart.rag.rag.etl.EtlStatus;
 import com.smart.rag.rag.etl.Loader;
 import com.smart.rag.rag.event.DocumentCreatedEvent;
+import com.smart.rag.rag.event.DocumentDeletedEvent;
 import com.smart.rag.rag.event.EtlCompletedEvent;
+import com.smart.rag.rag.event.EtlFailedEvent;
 import com.smart.rag.rag.mapper.RagDocumentMapper;
 import com.smart.rag.rag.mapper.VectorStoreMapper;
 import com.smart.rag.rag.service.FileStorageService;
@@ -17,6 +19,7 @@ import org.springframework.dao.DuplicateKeyException;
 import org.springframework.transaction.TransactionStatus;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Consumer;
 
@@ -431,6 +434,70 @@ class DocumentSupersedeServiceTest {
             verify(vectorStoreMapper).deleteFastTrackRows(50L);
             // 文件删除被跳过（oldDoc 为 null）
             verify(fileStorageService, never()).delete(anyString(), anyString());
+        }
+    }
+
+    // ==================== onEtlFailed / onDocumentDeleted — 失败与删除清理 ====================
+
+    @Nested
+    @DisplayName("onEtlFailed / onDocumentDeleted — 清理 pendingSupersede 加速层")
+    class CleanupListenerTests {
+
+        @Test
+        @DisplayName("onEtlFailed: 清除 pendingSupersede 中该文档的 entry")
+        void onEtlFailed_clearsEntry() throws Exception {
+            setPendingSupersede(100L, 50L);
+
+            service.onEtlFailed(new EtlFailedEvent(100L, "extract failed"));
+
+            assertThat(getPendingSupersede()).doesNotContainKey(100L);
+        }
+
+        @Test
+        @DisplayName("onEtlFailed_idempotent: 未命中的 documentId 不报错")
+        void onEtlFailed_idempotent() {
+            assertThatCode(() -> service.onEtlFailed(new EtlFailedEvent(999L, "err")))
+                    .doesNotThrowAnyException();
+        }
+
+        @Test
+        @DisplayName("onDocumentDeleted: 清除 pendingSupersede 中该文档的 entry")
+        void onDocumentDeleted_clearsEntry() throws Exception {
+            setPendingSupersede(100L, 50L);
+
+            service.onDocumentDeleted(new DocumentDeletedEvent(100L));
+
+            assertThat(getPendingSupersede()).doesNotContainKey(100L);
+        }
+
+        @Test
+        @DisplayName("onDocumentDeleted_idempotent: 未命中的 documentId 不报错")
+        void onDocumentDeleted_idempotent() {
+            assertThatCode(() -> service.onDocumentDeleted(new DocumentDeletedEvent(999L)))
+                    .doesNotThrowAnyException();
+        }
+
+        @Test
+        @DisplayName("onEtlFailed 后 onEtlCompleted 走 DB 兜底仍能完成替换（重试安全）")
+        void onEtlFailed_thenCompletedViaDbFallback() throws Exception {
+            setPendingSupersede(100L, 50L);
+
+            // 失败清理 entry
+            service.onEtlFailed(new EtlFailedEvent(100L, "err"));
+            assertThat(getPendingSupersede()).doesNotContainKey(100L);
+
+            // 重试成功：策略 1 miss → 策略 2 DB 兜底
+            RagDocument newDoc = buildDoc(100L, "group-abc", 2, 1L, null);
+            RagDocument oldDoc = buildDoc(50L, "group-abc", 1, 1L, null);
+            oldDoc.setSupersededBy(100L);
+            when(ragDocumentMapper.selectById(100L)).thenReturn(newDoc);
+            when(ragDocumentMapper.selectById(50L)).thenReturn(oldDoc);
+            when(ragDocumentMapper.selectList(any())).thenReturn(List.of(oldDoc));
+
+            service.onEtlCompleted(new EtlCompletedEvent(100L, 1L, null));
+
+            // 仍执行了替换（重试不因缓存清理而丢失）
+            verify(ragDocumentMapper).updateSuperseded(50L, 100L);
         }
     }
 

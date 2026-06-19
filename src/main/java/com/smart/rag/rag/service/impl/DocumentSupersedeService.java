@@ -2,7 +2,9 @@ package com.smart.rag.rag.service.impl;
 
 import com.smart.rag.common.util.UuidGeneratorUtil;
 import com.smart.rag.rag.event.DocumentCreatedEvent;
+import com.smart.rag.rag.event.DocumentDeletedEvent;
 import com.smart.rag.rag.event.EtlCompletedEvent;
+import com.smart.rag.rag.event.EtlFailedEvent;
 import com.smart.rag.rag.etl.Loader;
 import com.smart.rag.rag.etl.EtlStatus;
 import com.smart.rag.rag.mapper.RagDocumentMapper;
@@ -148,6 +150,50 @@ public class DocumentSupersedeService {
             }
         } catch (Exception e) {
             log.error("onEtlCompleted failed for docId={}: {}", event.documentId(), e.getMessage(), e);
+        }
+    }
+
+    /**
+     * 监听 ETL 失败事件：清理 pendingSupersede 加速层中该文档的 entry。
+     * <p>
+     * 文档进入 FAILED 终态后不会再走向 completed，对应 entry（newDocId → oldDocId）
+     * 已无意义；清理释放内存。失败后用户若重试并成功，{@link #onEtlCompleted} 的
+     * DB 兜底（策略 2）仍能正确执行替换，故清理不影响功能正确性。
+     * <p>
+     * 幂等：未命中（remove 返回 null）不报错。
+     */
+    @EventListener
+    @Async("etlIoExecutor")
+    public void onEtlFailed(EtlFailedEvent event) {
+        try {
+            Long removed = pendingSupersede.remove(event.documentId());
+            if (removed != null) {
+                log.info("pendingSupersede cleared on ETL failure: newDocId={} → oldDocId={}",
+                         event.documentId(), removed);
+            }
+        } catch (Exception e) {
+            log.warn("onEtlFailed cleanup failed for docId={}: {}", event.documentId(), e.getMessage());
+        }
+    }
+
+    /**
+     * 监听文档删除事件：清理 pendingSupersede 加速层中该文档的 entry。
+     * <p>
+     * 文档被级联删除后不会再走向 completed，对应 entry 已无意义；清理释放内存。
+     * <p>
+     * 幂等：未命中（remove 返回 null）不报错。
+     */
+    @EventListener
+    @Async("etlIoExecutor")
+    public void onDocumentDeleted(DocumentDeletedEvent event) {
+        try {
+            Long removed = pendingSupersede.remove(event.documentId());
+            if (removed != null) {
+                log.info("pendingSupersede cleared on document delete: newDocId={} → oldDocId={}",
+                         event.documentId(), removed);
+            }
+        } catch (Exception e) {
+            log.warn("onDocumentDeleted cleanup failed for docId={}: {}", event.documentId(), e.getMessage());
         }
     }
 

@@ -2,10 +2,12 @@ package com.smart.rag.rag.service.impl;
 
 import com.smart.rag.rag.etl.Loader;
 import com.smart.rag.rag.entity.RagDocument;
+import com.smart.rag.rag.event.DocumentDeletedEvent;
 import com.smart.rag.rag.mapper.RagDocumentMapper;
 import com.smart.rag.rag.service.FileStorageService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 
 /**
@@ -28,13 +30,16 @@ public class DocumentLifecycleService {
     private final Loader vectorStoreLoader;
     private final FileStorageService fileStorageService;
     private final RagDocumentMapper ragDocumentMapper;
+    private final ApplicationEventPublisher eventPublisher;
 
     public DocumentLifecycleService(Loader vectorStoreLoader,
                                     FileStorageService fileStorageService,
-                                    RagDocumentMapper ragDocumentMapper) {
+                                    RagDocumentMapper ragDocumentMapper,
+                                    ApplicationEventPublisher eventPublisher) {
         this.vectorStoreLoader = vectorStoreLoader;
         this.fileStorageService = fileStorageService;
         this.ragDocumentMapper = ragDocumentMapper;
+        this.eventPublisher = eventPublisher;
     }
 
     /**
@@ -66,6 +71,9 @@ public class DocumentLifecycleService {
 
         // 3. 逻辑删除数据库记录
         ragDocumentMapper.deleteById(id);
+
+        // DB 删除后发布事件，供下游（pendingSupersede 加速层等）清理该文档相关内存状态
+        eventPublisher.publishEvent(new DocumentDeletedEvent(id));
 
         if (!vectorDeleted) {
             log.warn("Document {} deleted from DB/Storage but vectors remain — manual cleanup may be required", id);

@@ -1,6 +1,7 @@
 package com.smart.rag.rag.etl;
 
 import com.smart.rag.rag.entity.RagDocument;
+import com.smart.rag.rag.event.EtlFailedEvent;
 import com.smart.rag.rag.mapper.RagDocumentMapper;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -10,6 +11,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -31,11 +33,14 @@ class EtlStatusManagerTest {
     @Mock
     private TransactionTemplate transactionTemplate;
 
+    @Mock
+    private ApplicationEventPublisher eventPublisher;
+
     private EtlStatusManager statusManager;
 
     @BeforeEach
     void setUp() {
-        statusManager = new EtlStatusManager(ragDocumentMapper, transactionTemplate);
+        statusManager = new EtlStatusManager(ragDocumentMapper, transactionTemplate, eventPublisher);
         // 模拟 TransactionTemplate：立即执行回调
         lenient().doAnswer(invocation -> {
             java.util.function.Consumer<org.springframework.transaction.TransactionStatus> consumer = invocation.getArgument(0);
@@ -211,6 +216,42 @@ class EtlStatusManagerTest {
             ArgumentCaptor<RagDocument> captor = ArgumentCaptor.forClass(RagDocument.class);
             verify(ragDocumentMapper).updateById(captor.capture());
             assertThat(captor.getValue().getErrorMessage()).isNull();
+        }
+
+        @Test
+        @DisplayName("落库成功后发布 EtlFailedEvent（含 documentId 与错误信息）")
+        void failDocument_publishesEvent() {
+            RagDocument existing = new RagDocument();
+            existing.setId(34L);
+            when(ragDocumentMapper.selectById(34L)).thenReturn(existing);
+
+            statusManager.failDocument(34L, new RuntimeException("boom"));
+
+            ArgumentCaptor<EtlFailedEvent> captor = ArgumentCaptor.forClass(EtlFailedEvent.class);
+            verify(eventPublisher).publishEvent(captor.capture());
+            EtlFailedEvent ev = captor.getValue();
+            assertThat(ev.documentId()).isEqualTo(34L);
+            assertThat(ev.errorMessage()).contains("boom");
+        }
+
+        @Test
+        @DisplayName("事务自身失败时不发布 EtlFailedEvent（保持 DB-事件一致）")
+        void failDocument_transactionFailure_noEvent() {
+            // 重新配置 transactionTemplate 使其真正执行（触发 updateById doThrow）
+            doAnswer(invocation -> {
+                java.util.function.Consumer<org.springframework.transaction.TransactionStatus> consumer = invocation.getArgument(0);
+                consumer.accept(null);
+                return null;
+            }).when(transactionTemplate).executeWithoutResult(any());
+
+            RagDocument existing = new RagDocument();
+            existing.setId(35L);
+            when(ragDocumentMapper.selectById(35L)).thenReturn(existing);
+            doThrow(new RuntimeException("DB down")).when(ragDocumentMapper).updateById(any(RagDocument.class));
+
+            assertThatCode(() -> statusManager.failDocument(35L, new RuntimeException("original")))
+                    .doesNotThrowAnyException();
+            verify(eventPublisher, never()).publishEvent(any());
         }
     }
 

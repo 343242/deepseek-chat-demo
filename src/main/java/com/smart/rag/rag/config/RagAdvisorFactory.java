@@ -10,6 +10,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.ai.document.Document;
+import org.springframework.ai.rag.Query;
 import org.springframework.ai.rag.advisor.RetrievalAugmentationAdvisor;
 import org.springframework.ai.rag.preretrieval.query.transformation.QueryTransformer;
 import org.springframework.ai.rag.retrieval.search.DocumentRetriever;
@@ -101,6 +103,28 @@ public class RagAdvisorFactory {
 
         log.debug("Created RAG Advisor for userId={}, teamId={}", userId, teamId);
         return builder.build();
+    }
+
+    /**
+     * 直接检索（方案 A：chat 路径不套 RetrievalAugmentationAdvisor 壳）。
+     * <p>
+     * 复刻 {@link #create} 的内部编排：query-transform → 隔离检索 → postProcessor（MMR/Rerank/Parent）逐个 process。
+     * 100% 复用隔离 + MMR + Rerank + Parent 组件，召回行为与改造前一致；返回原始 Document 列表，
+     * 由 {@code ChatReferenceCollector} 统一编号 + 拼 {@code <<REF>>} 块。
+     */
+    public List<Document> retrieve(String query, Long userId, @Nullable Long teamId) {
+        Objects.requireNonNull(userId, "userId must not be null for RAG retrieval");
+        Query queryObj = new Query(query);
+        if (properties.queryRewriteEnabled()) {
+            queryObj = rewriteQueryTransformer.transform(queryObj);
+        }
+        DocumentRetriever retriever = createIsolatedRetriever(userId, teamId);
+        List<Document> docs = new ArrayList<>(retriever.retrieve(queryObj));
+        for (org.springframework.ai.rag.postretrieval.document.DocumentPostProcessor pp : getPostProcessors()) {
+            docs = pp.process(queryObj, docs);
+        }
+        log.debug("Chat retrieval: {} docs for userId={}, teamId={}", docs.size(), userId, teamId);
+        return docs;
     }
 
     /**

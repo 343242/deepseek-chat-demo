@@ -182,9 +182,9 @@ public class AgentToolCallbackFactory {
     private ToolCallback buildDocDetail(ToolWorkspace workspace) {
         return FunctionToolCallback.<DocDetailRequest, String>builder(
                 "docDetail",
-                (request, ctx) -> docDetailTool.execute(request.docIds(), request.queryText(), workspace)
+                (request, ctx) -> docDetailTool.execute(request.chunkIds(), request.queryText(), workspace)
             )
-            .description("按需获取文档详情片段。输入 JSON: {\"docIds\": \"文档ID逗号分隔\", \"queryText\": \"查询文本(可选,用于高亮)\"}")
+            .description("按需获取文档详情片段。输入 JSON: {\"chunkIds\": \"chunkID逗号分隔(检索结果的chunkId)\", \"queryText\": \"查询文本(可选,用于高亮)\"}")
             .inputType(DocDetailRequest.class)
             .build();
     }

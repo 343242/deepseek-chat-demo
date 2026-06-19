@@ -39,28 +39,28 @@ public class DocDetailTool implements RagTool {
     /**
      * 获取文档详情
      *
-     * @param docIds    文档 ID 列表（逗号分隔）
+     * @param chunkIds   chunk ID 列表（逗号分隔，即检索结果 [n] 对应的 chunkId）
      * @param queryText 查询文本（用于 ts_headline 高亮）
      * @param workspace 闭包捕获的 workspace 局部变量
      * @return JSON 格式的 ToolResult
      */
-    public String execute(String docIds, String queryText, ToolWorkspace workspace) {
+    public String execute(String chunkIds, String queryText, ToolWorkspace workspace) {
         long start = System.currentTimeMillis();
         try {
-            if (docIds == null || docIds.isBlank()) {
+            if (chunkIds == null || chunkIds.isBlank()) {
                 return ToolResult.failure("docDetail",
-                    "文档 ID 不能为空", "INVALID_INPUT", 0).toJson(objectMapper);
+                    "chunk ID 不能为空", "INVALID_INPUT", 0).toJson(objectMapper);
             }
 
-            // 解析逗号分隔的文档 ID
-            List<String> idList = Arrays.stream(docIds.split(","))
+            // 解析逗号分隔的 chunk ID
+            List<String> idList = Arrays.stream(chunkIds.split(","))
                 .map(String::trim)
                 .filter(s -> !s.isBlank())
                 .collect(Collectors.toList());
 
             if (idList.isEmpty()) {
                 return ToolResult.failure("docDetail",
-                    "解析后无有效文档 ID", "INVALID_INPUT", 0).toJson(objectMapper);
+                    "解析后无有效 chunk ID", "INVALID_INPUT", 0).toJson(objectMapper);
             }
 
             // 限制查询数量防止过载

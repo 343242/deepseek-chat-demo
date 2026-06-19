@@ -1,45 +1,43 @@
 package com.smart.rag.chat.mode;
 
 import com.smart.rag.infrastructure.advisor.ConversationContextAdvisor;
+import com.smart.rag.chat.context.ContextPromptInjector;
 import com.smart.rag.chat.service.AdvisorChainContext;
 import com.smart.rag.chat.service.AdvisorInfrastructure;
 import com.smart.rag.chat.service.ChatConversationHelper;
 import com.smart.rag.chat.service.ChatMessagePublisher;
+import com.smart.rag.chat.service.ChatReferenceCollector;
 import com.smart.rag.chat.service.ChatRequestSpecFactory;
+import com.smart.rag.chat.service.ChatRetrievalService;
 import com.smart.rag.chat.service.ChatUsageTracker;
 import com.smart.rag.chat.service.ModeChainResult;
-import com.smart.rag.chat.service.StrategyExecutionContext;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
 import org.springframework.ai.chat.client.advisor.api.Advisor;
 import org.springframework.stereotype.Component;
-import reactor.core.publisher.Flux;
-import reactor.core.publisher.SignalType;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
- * MULTI_TURN 模式策略 -- 多轮对话，自动维护记忆和上下文
+ * MULTI_TURN 模式策略 -- 多轮对话，自动维护记忆和上下文。
+ * <p>
+ * 阻塞式/流式执行 + 落库 + onStreamComplete 由 {@link AbstractModeStrategy} 统一实现；
+ * 本类只负责 buildAdvisorChain（含 MessageChatMemoryAdvisor → Redis 记忆 load/save）。
  */
 @Component
 public class MultiTurnModeStrategy extends AbstractModeStrategy {
 
-    private static final Logger log = LoggerFactory.getLogger(MultiTurnModeStrategy.class);
-
-    private final ChatConversationHelper conversationHelper;
-    private final ChatMessagePublisher chatMessagePublisher;
-
     public MultiTurnModeStrategy(AdvisorInfrastructure infra,
                                  ChatRequestSpecFactory requestSpecFactory,
                                  ChatUsageTracker usageTracker,
-                                 ChatConversationHelper conversationHelper,
-                                 ChatMessagePublisher chatMessagePublisher) {
-        super(infra, requestSpecFactory, usageTracker);
-        this.conversationHelper = conversationHelper;
-        this.chatMessagePublisher = chatMessagePublisher;
+                                 ChatRetrievalService chatRetrievalService,
+                                 ChatReferenceCollector chatReferenceCollector,
+                                 ContextPromptInjector contextPromptInjector,
+                                 ChatMessagePublisher chatMessagePublisher,
+                                 ChatConversationHelper conversationHelper) {
+        super(infra, requestSpecFactory, usageTracker,
+            chatRetrievalService, chatReferenceCollector, contextPromptInjector,
+            chatMessagePublisher, conversationHelper);
     }
 
     @Override
@@ -54,10 +52,7 @@ public class MultiTurnModeStrategy extends AbstractModeStrategy {
         chain.add(new ConversationContextAdvisor(ctx.conversationId()));
         chain.addAll(infra.getGlobalAdvisors());
 
-        if (ctx.request().isRagEnabled()) {
-            chain.add(infra.getRagAdvisorFactory()
-                .create(ctx.userId(), ctx.request().teamId()));
-        }
+        // RAG 检索由 AbstractModeStrategy 经 ChatRetrievalService + RagContextAdvisor 处理（方案 A）
 
         if (infra.hasTools()) {
             chain.add(infra.getToolCallAdvisor());
@@ -66,49 +61,5 @@ public class MultiTurnModeStrategy extends AbstractModeStrategy {
         chain.add(MessageChatMemoryAdvisor.builder(infra.getChatMemory()).build());
 
         return ModeChainResult.standard(chain);
-    }
-
-    @Override
-    public Flux<String> executeStream(StrategyExecutionContext ctx) {
-        StringBuilder collectedContent = new StringBuilder();
-        final int maxContentLength = 1 << 20;
-        AtomicBoolean usageRecorded = new AtomicBoolean(false);
-
-        return ctx.chatClient().prompt()
-                .user(ctx.request().message())
-                .stream()
-                .content()
-                .doOnNext(text -> {
-                    if (text != null && collectedContent.length() < maxContentLength) {
-                        int remaining = maxContentLength - collectedContent.length();
-                        collectedContent.append(text, 0, Math.min(text.length(), remaining));
-                    }
-                })
-                .doFinally(signal -> {
-                    onStreamComplete(ctx, collectedContent.toString(), signal);
-
-                    if (usageRecorded.compareAndSet(false, true)) {
-                        recordUsage(usageTracker, ctx, null);
-                    }
-                });
-    }
-
-    protected void onStreamComplete(StrategyExecutionContext ctx, String content,
-                                     SignalType signal) {
-        switch (signal) {
-            case ON_COMPLETE -> {
-                // 流式路径：aiResponse=null（usage 已走独立 chat_usage_record 链路），
-                // 由 ChatMessagePublisher 从 payload 携带 totalTokens（这里 aiResponse=null → -1）。
-                chatMessagePublisher.publishMessageSave(ctx.conversationId(),
-                    ctx.request().message(), content,
-                    ctx.candidateId(), null, ctx.elapsed());
-            }
-            case ON_ERROR, CANCEL -> {
-                log.warn("Stream {} for conversation {}: collected {} chars",
-                    signal, ctx.conversationId(), content.length());
-                conversationHelper.savePartialResponse(ctx.conversationId(), content);
-            }
-            default -> {}
-        }
     }
 }

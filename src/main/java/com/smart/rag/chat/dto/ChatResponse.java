@@ -1,7 +1,9 @@
 package com.smart.rag.chat.dto;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
+import org.jspecify.annotations.Nullable;
 
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -12,6 +14,7 @@ import java.util.Map;
  * @param conversationId 对话 ID
  * @param fallback       降级元数据（null 时序列化省略，兼容旧客户端）
  * @param agentMetadata  Agent 模式元数据（intent、token 用量、tool 调用统计等）
+ * @param references     检索引用映射（#n → chunkId/documentId/fileName/page），非 RAG 时为 null（序列化省略）
  */
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public record ChatResponse(
@@ -19,14 +22,20 @@ public record ChatResponse(
     String content,
     String conversationId,
     FallbackMeta fallback,
-    Map<String, Object> agentMetadata
+    Map<String, Object> agentMetadata,
+    @Nullable List<Reference> references
 ) {
 
     public ChatResponse(String model, String content, String conversationId) {
-        this(model, content, conversationId, null, null);
+        this(model, content, conversationId, null, null, null);
     }
 
     public ChatResponse(String model, String content, String conversationId, FallbackMeta fallback) {
-        this(model, content, conversationId, fallback, null);
+        this(model, content, conversationId, fallback, null, null);
+    }
+
+    public ChatResponse(String model, String content, String conversationId,
+                        FallbackMeta fallback, Map<String, Object> agentMetadata) {
+        this(model, content, conversationId, fallback, agentMetadata, null);
     }
 }

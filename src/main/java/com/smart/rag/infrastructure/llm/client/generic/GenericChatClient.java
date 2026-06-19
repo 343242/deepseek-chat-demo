@@ -248,11 +248,24 @@ public class GenericChatClient extends AbstractChatClient {
         return toolCalls;
     }
 
-    private LlmResponse.TokenUsage parseTokenUsage(JsonNode usage) {
+    private static LlmResponse.TokenUsage parseTokenUsage(JsonNode usage) {
+        Integer cacheHitTokens = null;
+        // DeepSeek: prompt_cache_hit_tokens
+        if (usage.has("prompt_cache_hit_tokens")) {
+            cacheHitTokens = usage.get("prompt_cache_hit_tokens").asInt(0);
+        }
+        // 百炼/Qwen/GLM: prompt_tokens_details.cached_tokens
+        if (cacheHitTokens == null) {
+            JsonNode details = usage.path("prompt_tokens_details");
+            if (details.has("cached_tokens")) {
+                cacheHitTokens = details.get("cached_tokens").asInt(0);
+            }
+        }
         return new LlmResponse.TokenUsage(
             usage.path("prompt_tokens").asInt(0),
             usage.path("completion_tokens").asInt(0),
-            usage.path("total_tokens").asInt(0)
+            usage.path("total_tokens").asInt(0),
+            cacheHitTokens
         );
     }
 

@@ -130,6 +130,12 @@ public class PromptLoaderServiceImpl implements PromptLoaderService {
     }
 
     @Override
+    public String getDefaultPrompt() {
+        PromptTemplate defaultTemplate = state.defaultTemplate();
+        return defaultTemplate != null ? defaultTemplate.toSystemPrompt() : null;
+    }
+
+    @Override
     public void reload() {
         Map<String, PromptTemplate> newTemplates = new java.util.LinkedHashMap<>();
         PromptTemplate newDefault = null;

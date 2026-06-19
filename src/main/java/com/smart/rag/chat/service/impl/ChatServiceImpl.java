@@ -6,6 +6,7 @@ import com.smart.rag.chat.context.RequestContextManager;
 import com.smart.rag.chat.dto.ChatRequest;
 import com.smart.rag.chat.dto.ChatResponse;
 import com.smart.rag.chat.dto.FallbackMeta;
+import com.smart.rag.chat.dto.Reference;
 import com.smart.rag.infrastructure.exception.ProviderNotFoundException;
 import com.smart.rag.infrastructure.fallback.FallbackEligibility;
 import com.smart.rag.infrastructure.llm.CapabilityClient;
@@ -23,6 +24,7 @@ import com.smart.rag.chat.service.ChatUsageTracker;
 import com.smart.rag.chat.service.MdcPropagator;
 import com.smart.rag.chat.service.SseStreamBridge;
 import com.smart.rag.chat.service.UserContextProvider;
+import com.smart.rag.chat.service.StreamResult;
 import com.smart.rag.chat.service.StrategyExecuteResult;
 import com.smart.rag.chat.service.StrategyExecutionContext;
 import com.smart.rag.common.util.UuidGeneratorUtil;
@@ -35,6 +37,7 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import reactor.core.publisher.Flux;
 
 import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.Map;
 
 /**
@@ -118,6 +121,8 @@ public class ChatServiceImpl implements ChatService {
         List<CapabilityClient> chain = llmRegistry.getChain(LlmCapability.CHAT);
         Map<String, String> parentMdc = MdcPropagator.capture();
 
+        AtomicReference<List<Reference>> refsRef = new AtomicReference<>();
+
         Flux<String> stream = fallbackExecutor.executeStream(chain, client -> {
             ChatCapable chatCapable = (ChatCapable) client;
             ChatClient chatClient = ChatClient.builder(new ChatModelAdapter(chatCapable)).build();
@@ -126,7 +131,9 @@ public class ChatServiceImpl implements ChatService {
                 pctx.conversationId, pctx.rawConversationId, pctx.userId,
                 pctx.cagCtx, System.currentTimeMillis());
 
-            Flux<String> flux = pctx.modeStrategy.executeStream(execCtx);
+            StreamResult sr = pctx.modeStrategy.executeStream(execCtx);
+            refsRef.set(sr.references()); // 捕获最终成功模型的 references（fallback 时后者覆盖前者）
+            Flux<String> flux = sr.content();
             if (parentMdc != null) {
                 flux = flux.doOnSubscribe(s -> MdcPropagator.restore(parentMdc))
                            .doFinally(signal -> MdcPropagator.clear());
@@ -134,7 +141,7 @@ public class ChatServiceImpl implements ChatService {
             return flux;
         });
 
-        return sseStreamBridge.bridge(stream);
+        return sseStreamBridge.bridge(stream, refsRef);
     }
 
     // ==================== 内部辅助 ====================
@@ -197,10 +204,10 @@ public class ChatServiceImpl implements ChatService {
 
         if (result.agentMetadata() != null) {
             return new ChatResponse(candidateId, result.content(),
-                pctx.rawConversationId, null, result.agentMetadata());
+                pctx.rawConversationId, null, result.agentMetadata(), result.references());
         }
         return new ChatResponse(candidateId, result.content(),
-            pctx.rawConversationId, fallback);
+            pctx.rawConversationId, fallback, null, result.references());
     }
 
     private static long elapsed(long startTimeMs) {

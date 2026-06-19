@@ -4,7 +4,7 @@ import com.smart.rag.chat.service.AdvisorChainContext;
 import com.smart.rag.chat.service.ModeChainResult;
 import com.smart.rag.chat.service.StrategyExecuteResult;
 import com.smart.rag.chat.service.StrategyExecutionContext;
-import reactor.core.publisher.Flux;
+import com.smart.rag.chat.service.StreamResult;
 
 /**
  * 对话模式策略接口
@@ -43,10 +43,13 @@ public interface ChatModeStrategy {
 
     /**
      * 流式执行 — 策略负责链构建 + 流式调用 + 流式收尾。
-     * 内部使用 .stream().chatResponse() 追踪 lastAiResponse，
-     * doFinally 中完成消息持久化。
+     * <p>
+     * 返回 {@link StreamResult}：content Flux 走 advisor 链（Redis 记忆 load/save +
+     * RagContextAdvisor 动态尾注入），references 为检索引用映射（非 RAG 时 null）。
+     * content Flux 由 chatStream 经 fallbackExecutor 做跨模型降级；
+     * references 由 chatStream 用 AtomicReference 捕获最终成功模型的值。
      */
-    default Flux<String> executeStream(StrategyExecutionContext ctx) {
+    default StreamResult executeStream(StrategyExecutionContext ctx) {
         throw new UnsupportedOperationException(
             getMode() + " mode does not support streaming in this version.");
     }

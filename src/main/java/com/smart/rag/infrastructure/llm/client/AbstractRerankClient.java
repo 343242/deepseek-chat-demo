@@ -68,7 +68,11 @@ public abstract class AbstractRerankClient implements RerankCapable {
                                                              List<String> documents) {
         try {
             JsonNode root = objectMapper.readTree(json);
+            // 兼容两种响应：OpenAI/百炼兼容端点（顶层 results）与 百炼原生端点（output.results 嵌套）
             JsonNode results = root.path("results");
+            if (!results.isArray()) {
+                results = root.path("output").path("results");
+            }
             if (!results.isArray()) {
                 return List.of();
             }

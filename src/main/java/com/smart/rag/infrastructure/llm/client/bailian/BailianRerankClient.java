@@ -64,7 +64,14 @@ public class BailianRerankClient extends AbstractRerankClient {
                 .retrieve()
                 .body(String.class);
 
-            return parseRerankResponse(objectMapper, json, request.documents());
+            if (log.isDebugEnabled()) {
+                log.debug("Bailian rerank response (model={}, docs={}): {}",
+                    candidate.model(), request.documents().size(),
+                    json.length() > 800 ? json.substring(0, 800) + "..." : json);
+            }
+            List<RerankResult> parsed = parseRerankResponse(objectMapper, json, request.documents());
+            log.debug("Bailian rerank parsed: {} results from {} docs", parsed.size(), request.documents().size());
+            return parsed;
         } catch (RemoteException e) {
             throw e;
         } catch (Exception e) {

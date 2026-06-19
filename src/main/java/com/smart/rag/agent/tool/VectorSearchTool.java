@@ -14,9 +14,7 @@ import org.springframework.ai.vectorstore.filter.FilterExpressionBuilder;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 
 /**
  * 向量检索 Tool -- 纯向量语义检索
@@ -72,13 +70,7 @@ public class VectorSearchTool implements RagTool {
 
             List<RetrievedDocument> retrieved = new ArrayList<>(docs.size());
             for (Document doc : docs) {
-                Map<String, Object> metadata = doc.getMetadata() != null
-                    ? new HashMap<>(doc.getMetadata()) : Map.of();
-                retrieved.add(new RetrievedDocument(
-                    doc.getId(), doc.getText(),
-                    doc.getScore() != null ? doc.getScore() : 0.0,
-                    "vectorSearch", -1, metadata
-                ));
+                retrieved.add(RetrievedDocument.from(doc).withSource("vectorSearch"));
             }
             workspace.addRetrievedDocs(retrieved);
 

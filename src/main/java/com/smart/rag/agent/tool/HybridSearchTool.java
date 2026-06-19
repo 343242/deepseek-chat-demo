@@ -11,9 +11,7 @@ import org.springframework.ai.document.Document;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 
 /**
  * 混合检索 Tool -- 向量 + BM25 + RRF 融合
@@ -73,16 +71,7 @@ public class HybridSearchTool implements RagTool {
     private List<RetrievedDocument> toRetrievedDocs(List<Document> docs, ToolWorkspace workspace) {
         List<RetrievedDocument> result = new ArrayList<>(docs.size());
         for (Document doc : docs) {
-            Map<String, Object> metadata = doc.getMetadata() != null
-                ? new HashMap<>(doc.getMetadata()) : Map.of();
-            result.add(new RetrievedDocument(
-                doc.getId(),
-                doc.getText(),
-                doc.getScore() != null ? doc.getScore() : 0.0,
-                "hybridSearch",
-                -1,
-                metadata
-            ));
+            result.add(RetrievedDocument.from(doc).withSource("hybridSearch"));
         }
         return result;
     }

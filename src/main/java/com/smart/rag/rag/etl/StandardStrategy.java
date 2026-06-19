@@ -121,9 +121,11 @@ public class StandardStrategy implements EtlRouteStrategy {
                             String docIdStr = String.valueOf(c.documentId());
                             String userIdStr = String.valueOf(c.userId());
                             String teamIdStr = c.teamId() != null ? String.valueOf(c.teamId()) : null;
+                            String fileName = (c.fileName() != null && !c.fileName().isBlank()) ? c.fileName() : docIdStr;
                             for (Document chunk : chunks) {
                                 chunk.getMetadata().put("documentId", docIdStr);
                                 chunk.getMetadata().put("userId", userIdStr);
+                                chunk.getMetadata().put("fileName", fileName);
                                 if (teamIdStr != null) {
                                     chunk.getMetadata().put("teamId", teamIdStr);
                                 }

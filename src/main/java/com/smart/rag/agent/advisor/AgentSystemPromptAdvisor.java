@@ -19,35 +19,38 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Agent System Prompt Advisor
+ * Agent System Prompt Advisor（v5 静态/动态拆分，前缀缓存优化）。
  * <p>
- * 1. 根据意图注入动态 System Prompt（含原子决策引导、自省格式、检索代价规则、CAG 上下文）
- * 2. 每轮 ReAct 循环前从 Workspace 读取中间答案注入
- * 3. order=1，在 ToolCallAdvisor(order=2) 之前执行
- * 4. 护栏检查：每轮调用 AgentGuardrails，STOP 时注入停止指令，WARN 时注入提醒
+ * before() 把 prompt 拆成两个 SystemMessage：
+ * <ol>
+ *   <li>静态（首位）= default.xml 基座 + 意图模板，跨 ReAct 轮次字节稳定 → 前缀缓存命中。</li>
+ *   <li>动态（末尾）= CAG 段 + 中间答案 + 护栏，每轮变化 → miss（紧邻生成点，仅自身重算）。</li>
+ * </ol>
+ * 消息序：{@code [system:静态] → [tools] → [tool历史/user] → [system:动态]}。
+ * 动态必须在 tools 与历史之后（v5 修正）——否则 tool 定义+历史每轮全重算，拆分失效。
  * <p>
- * 容量控制：中间答案注入受字符预算约束，超出时截断低优先级内容。
- * <p>
- * 构造时接收 ToolWorkspace 引用（与 Tool 闭包共享同一个对象引用），
- * before() 每轮从 workspace 读取中间答案，追加到 System Prompt 末尾。
- * 每次请求创建新实例（非单例 Bean），因为 intent/mergedSystemPrompt/workspace 都是请求级别的。
+ * order=1，在 ToolCallAdvisor(order=2) 之前执行。每轮 before() 从原 messages 过滤旧 SystemMessage
+ * 后重建，避免 ReAct 累积重复。
  */
 public class AgentSystemPromptAdvisor implements BaseAdvisor {
 
     private static final Logger log = LoggerFactory.getLogger(AgentSystemPromptAdvisor.class);
 
-    /** 中间答案注入到 system prompt 的最大字符数预算 */
+    /** 中间答案注入的最大字符数预算 */
     private static final int INTERMEDIATE_ANSWERS_BUDGET = 20_000;
 
     private final AgentIntent intent;
-    private final String mergedSystemPrompt;  // Agent Prompt + CAG Context 已合并
-    private final ToolWorkspace workspace;     // 与 Tool 闭包共享同一个引用
-    private final @Nullable AgentGuardrails guardrails; // 可空，未接线时无护栏
+    private final String staticSystemPrompt;       // default.xml 基座 + 意图模板（跨轮次稳定）
+    private final @Nullable String cagSegment;     // CAG 上下文段（每请求可能不同）
+    private final ToolWorkspace workspace;          // 与 Tool 闭包共享同一个引用
+    private final @Nullable AgentGuardrails guardrails;
 
-    public AgentSystemPromptAdvisor(AgentIntent intent, String mergedSystemPrompt,
+    public AgentSystemPromptAdvisor(AgentIntent intent, String staticSystemPrompt,
+                                    @Nullable String cagSegment,
                                     ToolWorkspace workspace, @Nullable AgentGuardrails guardrails) {
         this.intent = intent;
-        this.mergedSystemPrompt = mergedSystemPrompt;
+        this.staticSystemPrompt = staticSystemPrompt;
+        this.cagSegment = cagSegment;
         this.workspace = workspace;
         this.guardrails = guardrails;
     }
@@ -66,47 +69,38 @@ public class AgentSystemPromptAdvisor implements BaseAdvisor {
     @Override
     @NonNull
     public ChatClientRequest before(@NonNull ChatClientRequest request, @NonNull AdvisorChain chain) {
-        // 护栏检查
         String guardrailMessage = checkGuardrails();
-
-        // 构建最终 System Prompt = 基础 Prompt + 中间答案（如有，受预算约束）+ 护栏消息（如有）
-        String finalPrompt = mergedSystemPrompt;
         String intermediateSummary = workspace.getIntermediateAnswersSummaryBounded(INTERMEDIATE_ANSWERS_BUDGET);
+
+        // 动态尾：CAG 段 + 中间答案 + 护栏
+        StringBuilder dynamic = new StringBuilder();
+        if (cagSegment != null && !cagSegment.isBlank()) {
+            dynamic.append(cagSegment).append("\n\n");
+        }
         if (intermediateSummary != null && !intermediateSummary.isBlank()) {
-            finalPrompt += "\n\n## 已收集的信息\n" + intermediateSummary;
+            dynamic.append("## 已收集的信息\n").append(intermediateSummary).append("\n\n");
         }
         if (guardrailMessage != null) {
-            finalPrompt += "\n\n## 系统提醒\n" + guardrailMessage;
+            dynamic.append("## 系统提醒\n").append(guardrailMessage);
         }
+        String dynamicPart = dynamic.length() == 0 ? null : dynamic.toString().trim();
 
-        // 查找已有 SystemMessage 的位置，替换而非追加（防止 ReAct 每轮重复累积）
+        // 重建 messages：静态 SystemMessage 首位 + 非system历史 + 动态 SystemMessage 末尾
         List<Message> originalMessages = request.prompt().getInstructions();
-        int existingSystemIndex = -1;
-        for (int i = 0; i < originalMessages.size(); i++) {
-            if (originalMessages.get(i) instanceof SystemMessage) {
-                existingSystemIndex = i;
-                break;
+        List<Message> newMessages = new ArrayList<>(originalMessages.size() + 2);
+        newMessages.add(new SystemMessage(staticSystemPrompt));   // ① 首位：静态
+        for (Message m : originalMessages) {                       // ② history + user + tool（过滤旧 SystemMessage 防累积）
+            if (!(m instanceof SystemMessage)) {
+                newMessages.add(m);
             }
         }
-
-        List<Message> newMessages = new ArrayList<>(originalMessages.size());
-        if (existingSystemIndex >= 0) {
-            // 替换已有 SystemMessage
-            for (int i = 0; i < originalMessages.size(); i++) {
-                if (i == existingSystemIndex) {
-                    newMessages.add(new SystemMessage(finalPrompt));
-                } else {
-                    newMessages.add(originalMessages.get(i));
-                }
-            }
-        } else {
-            // 首次：SystemMessage 在首位
-            newMessages.add(new SystemMessage(finalPrompt));
-            newMessages.addAll(originalMessages);
+        if (dynamicPart != null && !dynamicPart.isBlank()) {       // ③ 末尾：动态
+            newMessages.add(new SystemMessage(dynamicPart));
         }
 
-        log.debug("Agent system prompt injected: intent={}, intermediateAnswers={}, promptLength={}, systemReplaced={}",
-            intent, workspace.getIntermediateAnswers().size(), finalPrompt.length(), existingSystemIndex >= 0);
+        log.debug("Agent system prompt: intent={}, staticLen={}, dynamicLen={}, intermediateAnswers={}",
+            intent, staticSystemPrompt.length(),
+            dynamicPart != null ? dynamicPart.length() : 0, workspace.getIntermediateAnswers().size());
 
         return request.mutate()
             .prompt(new Prompt(newMessages, request.prompt().getOptions()))
@@ -116,7 +110,6 @@ public class AgentSystemPromptAdvisor implements BaseAdvisor {
     @Override
     @NonNull
     public ChatClientResponse after(@NonNull ChatClientResponse response, @NonNull AdvisorChain chain) {
-        // 不修改响应
         return response;
     }
 
@@ -127,23 +120,17 @@ public class AgentSystemPromptAdvisor implements BaseAdvisor {
         if (guardrails == null) {
             return null;
         }
-
-        // 使用护栏中追踪的最近 Tool 名称
         String lastToolName = guardrails.getLastToolName();
-
         AgentGuardrails.GuardrailCheck check = guardrails.check(lastToolName);
-
         if (check.shouldStop()) {
             log.warn("Agent guardrail STOP triggered: reason={}, message={}", check.reason(), check.message());
             return "[系统指令 - 必须遵守] " + check.message()
                 + "\n\n请立即停止调用任何工具，直接使用已收集的信息生成最终回答。不要再尝试检索。";
         }
-
         if (check.shouldWarn()) {
             log.info("Agent guardrail WARN: reason={}, message={}", check.reason(), check.message());
             return check.message();
         }
-
         return null;
     }
 }

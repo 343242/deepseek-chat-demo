@@ -48,8 +48,10 @@ public class ChatRequestSpecFactory {
             spec = spec.tools((Object) advisorChainFactory.getToolCallbacks());
         }
 
+        // system = 纯 default.xml 静态基座（跨请求字节稳定 → 前缀缓存命中）；
+        // CAG 段 + <<REF>> 检索块改由 RagContextAdvisor 以动态 SystemMessage 注入历史之后（design §2.8）。
+        // cagContext 仍透传，但 CAG 不再在此注入静态基座。
         String systemPrompt = resolveSystemPrompt(candidateId);
-        systemPrompt = contextPromptInjector.inject(systemPrompt, cagContext);
         if (systemPrompt != null && !systemPrompt.isBlank()) {
             spec = spec.system(systemPrompt);
         }

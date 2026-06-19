@@ -50,17 +50,13 @@ public class ChatMessagePublisher {
     private final long[] backoffMs;
 
     public ChatMessagePublisher(MessageBus messageBus, ChatConversationHelper conversationHelper,
-                                @Autowired(required = false) @Nullable MeterRegistry meterRegistry) {
-        this(messageBus, conversationHelper, meterRegistry, DEFAULT_BACKOFF_MS);
-    }
-
-    /** 包级构造器：测试注入退避数组（生产用 {@link #DEFAULT_BACKOFF_MS}）。 */
-    ChatMessagePublisher(MessageBus messageBus, ChatConversationHelper conversationHelper,
-                         @Nullable MeterRegistry meterRegistry, long[] backoffMs) {
+                                @Autowired(required = false) @Nullable MeterRegistry meterRegistry,
+                                @Autowired(required = false) @Nullable long[] backoffMs) {
         this.messageBus = messageBus;
         this.conversationHelper = conversationHelper;
         this.meterRegistry = meterRegistry;
-        this.backoffMs = backoffMs.clone();  // 防御性拷贝：避免外部 mutate 污染退避
+        // 生产无 long[] bean → backoffMs 为 null → 用 DEFAULT_BACKOFF_MS；测试可注入 ZERO_BACKOFF
+        this.backoffMs = (backoffMs != null) ? backoffMs.clone() : DEFAULT_BACKOFF_MS.clone();
     }
 
     /**

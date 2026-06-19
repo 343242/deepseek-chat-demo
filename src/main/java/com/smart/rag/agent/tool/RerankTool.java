@@ -78,29 +78,21 @@ public class RerankTool implements RagTool {
             for (RetrievedDocument rd : docs) {
                 Map<String, Object> metadata = rd.metadata() != null
                     ? new HashMap<>(rd.metadata()) : new HashMap<>();
-                springDocs.add(new Document(rd.docId(), rd.content(), metadata));
+                springDocs.add(new Document(rd.chunkId(), rd.content(), metadata));
             }
 
             // 使用注入的单例 Bean 执行精排（无需 try/finally shutdown，生命周期由 Spring 管理）
             List<Document> reranked = reranker.process(new Query(queryText), springDocs);
 
-            // 转回 RetrievedDocument 并替换 workspace
+            // 转回 RetrievedDocument 并替换 workspace（refNumber 由 replaceRetrievedDocs 保全）
             List<RetrievedDocument> rerankedDocs = new ArrayList<>(reranked.size());
             for (Document doc : reranked) {
-                Map<String, Object> metadata = doc.getMetadata() != null
-                    ? new HashMap<>(doc.getMetadata()) : Map.of();
+                RetrievedDocument rd = RetrievedDocument.from(doc).withSource("rerank");
+                Map<String, Object> meta = rd.metadata();
                 // 保留 rerankScore
-                double score = metadata.containsKey("rerankScore")
-                    ? ((Number) metadata.get("rerankScore")).doubleValue()
-                    : 0.0;
-                rerankedDocs.add(new RetrievedDocument(
-                    doc.getId(),
-                    doc.getText(),
-                    score,
-                    "rerank",
-                    -1,
-                    metadata
-                ));
+                double score = meta.get("rerankScore") instanceof Number num
+                    ? num.doubleValue() : 0.0;
+                rerankedDocs.add(rd.withScore(score));
             }
             workspace.replaceRetrievedDocs(rerankedDocs);
 

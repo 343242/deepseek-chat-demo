@@ -43,7 +43,7 @@ class ToolResultTest {
         @DisplayName("创建带文档的成功结果")
         void success_withDocuments() {
             List<RetrievedDocument> docs = List.of(
-                    new RetrievedDocument("doc1", "content", 0.95, "search", 0, Map.of())
+                    new RetrievedDocument("doc1", null, null, null, 0, "content", 0.95, "search", 0, Map.of())
             );
 
             ToolResult result = ToolResult.success("search", "found docs", docs, 200L);
@@ -123,8 +123,8 @@ class ToolResultTest {
         @DisplayName("documents 非空时包含 documentCount 和 documents")
         void nonEmptyDocuments_containsDocumentsField() {
             List<RetrievedDocument> docs = List.of(
-                    new RetrievedDocument("d1", "content1", 0.9, "search", 0, Map.of()),
-                    new RetrievedDocument("d2", "content2", 0.8, "search", 1, Map.of())
+                    new RetrievedDocument("d1", null, null, null, 0, "content1", 0.9, "search", 0, Map.of()),
+                    new RetrievedDocument("d2", null, null, null, 0, "content2", 0.8, "search", 1, Map.of())
             );
             ToolResult result = ToolResult.success("search", "ok", docs, 100L);
             String json = result.toJson(objectMapper);
@@ -138,7 +138,7 @@ class ToolResultTest {
         void longContent_truncated() {
             String longContent = "a".repeat(600);
             List<RetrievedDocument> docs = List.of(
-                    new RetrievedDocument("d1", longContent, 0.9, "search", 0, Map.of())
+                    new RetrievedDocument("d1", null, null, null, 0, longContent, 0.9, "search", 0, Map.of())
             );
             ToolResult result = ToolResult.success("search", "ok", docs, 100L);
             String json = result.toJson(objectMapper);

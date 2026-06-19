@@ -78,7 +78,7 @@ class ChatMessagePublisherTest {
             when(metadata.getUsage()).thenReturn(usage);
             when(usage.getTotalTokens()).thenReturn(150);
 
-            ChatMessagePublisher publisher = new ChatMessagePublisher(messageBus, conversationHelper, null);
+            ChatMessagePublisher publisher = new ChatMessagePublisher(messageBus, conversationHelper, null, null);
             publisher.publishMessageSave("conv-1", "hello", "Hi there!",
                     "candidate-a", aiResponse, 200L);
 
@@ -101,7 +101,7 @@ class ChatMessagePublisherTest {
         @Test
         @DisplayName("aiResponse 为 null 时 totalTokens=-1，仍正常发布")
         void sendSuccessWithNullAiResponseUsesNegOne() {
-            ChatMessagePublisher publisher = new ChatMessagePublisher(messageBus, conversationHelper, null);
+            ChatMessagePublisher publisher = new ChatMessagePublisher(messageBus, conversationHelper, null, null);
             publisher.publishMessageSave("conv-1", "hello", "Hi there!",
                     "candidate-a", null, 200L);
 
@@ -116,7 +116,7 @@ class ChatMessagePublisherTest {
             when(aiResponse.getMetadata()).thenReturn(metadata);
             when(metadata.getUsage()).thenReturn(null);
 
-            ChatMessagePublisher publisher = new ChatMessagePublisher(messageBus, conversationHelper, null);
+            ChatMessagePublisher publisher = new ChatMessagePublisher(messageBus, conversationHelper, null, null);
             publisher.publishMessageSave("conv-1", "hello", "Hi there!",
                     "candidate-a", aiResponse, 200L);
 
@@ -132,7 +132,7 @@ class ChatMessagePublisherTest {
             when(usage.getTotalTokens()).thenReturn(150);
             busDown();
 
-            ChatMessagePublisher publisher = new ChatMessagePublisher(messageBus, conversationHelper, null);
+            ChatMessagePublisher publisher = new ChatMessagePublisher(messageBus, conversationHelper, null, null);
             publisher.publishMessageSave("conv-1", "hello", "Hi there!",
                     "candidate-a", aiResponse, 200L);
 
@@ -147,7 +147,7 @@ class ChatMessagePublisherTest {
         void messagingExceptionFallbackWithNullAiResponse() {
             busDown();
 
-            ChatMessagePublisher publisher = new ChatMessagePublisher(messageBus, conversationHelper, null);
+            ChatMessagePublisher publisher = new ChatMessagePublisher(messageBus, conversationHelper, null, null);
             publisher.publishMessageSave("conv-1", "hello", "Hi there!",
                     "candidate-a", null, 200L);
 

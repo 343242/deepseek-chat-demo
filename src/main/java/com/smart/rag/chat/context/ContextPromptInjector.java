@@ -51,4 +51,23 @@ public class ContextPromptInjector {
                 %s
                 """.formatted(contextSegment, basePrompt);
     }
+
+    /**
+     * 仅生成 CAG 上下文段（不含系统指令基座），供动态尾注入（RagContextAdvisor）。
+     * <p>
+     * 受 {@link CagProperties#isInjectPrompt()} 开关控制；CAG 关闭或上下文为空时返回 null。
+     *
+     * @param context 请求上下文（可能为 null）
+     * @return CAG 段文本（含 [用户上下文] 标记），或 null
+     */
+    public String cagSegment(RequestContext context) {
+        if (!cagProperties.isInjectPrompt() || context == null) {
+            return null;
+        }
+        String segment = context.toPromptSegment();
+        if (segment == null || segment.isBlank()) {
+            return null;
+        }
+        return "[用户上下文]\n" + segment;
+    }
 }

@@ -169,7 +169,7 @@ class VectorStoreMapperTest {
         @Test
         @DisplayName("metadata 含 documentId/userId/fastTrack=true，teamId 缺省")
         void insertFastTrackRow_noTeamId() {
-            mapper.insertFastTrackRow(100L, "内容", 1L, null);
+            mapper.insertFastTrackRow(100L, "内容", 1L, null, "report.pdf");
 
             @SuppressWarnings("unchecked")
             ArgumentCaptor<Map<String, Object>> captor = ArgumentCaptor.forClass(Map.class);
@@ -178,6 +178,7 @@ class VectorStoreMapperTest {
             Map<String, Object> metadata = captor.getValue();
             assertThat(metadata).containsEntry("documentId", "100");
             assertThat(metadata).containsEntry("userId", "1");
+            assertThat(metadata).containsEntry("fileName", "report.pdf");
             assertThat(metadata).containsEntry("fastTrack", true);
             assertThat(metadata).doesNotContainKey("teamId");
         }
@@ -185,7 +186,7 @@ class VectorStoreMapperTest {
         @Test
         @DisplayName("带 teamId 时 metadata 含 teamId")
         void insertFastTrackRow_withTeamId() {
-            mapper.insertFastTrackRow(200L, "内容", 1L, 99L);
+            mapper.insertFastTrackRow(200L, "内容", 1L, 99L, "guide.pdf");
 
             @SuppressWarnings("unchecked")
             ArgumentCaptor<Map<String, Object>> captor = ArgumentCaptor.forClass(Map.class);

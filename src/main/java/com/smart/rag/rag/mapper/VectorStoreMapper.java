@@ -114,11 +114,12 @@ public interface VectorStoreMapper {
      * <p>
      * embedding 设为 NULL，BM25 检索通过 content_tsv 命中。
      */
-    default void insertFastTrackRow(Long documentId, String content, Long userId, Long teamId) {
+    default void insertFastTrackRow(Long documentId, String content, Long userId, Long teamId, String fileName) {
         Map<String, Object> metadata = new HashMap<>();
         metadata.put("documentId", String.valueOf(documentId));
         metadata.put("userId", String.valueOf(userId));
         metadata.put("fastTrack", true);
+        metadata.put("fileName", (fileName != null && !fileName.isBlank()) ? fileName : String.valueOf(documentId));
         if (teamId != null) {
             metadata.put("teamId", String.valueOf(teamId));
         }

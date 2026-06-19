@@ -13,9 +13,7 @@ import org.springframework.ai.document.Document;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 
 /**
  * BM25 全文检索 Tool -- PostgreSQL tsvector 关键词匹配
@@ -82,17 +80,11 @@ public class Bm25SearchTool implements RagTool {
             // 转为 RetrievedDocument
             List<RetrievedDocument> retrieved = new ArrayList<>(docs.size());
             for (Document doc : docs) {
-                Map<String, Object> metadata = doc.getMetadata() != null
-                    ? new HashMap<>(doc.getMetadata()) : new HashMap<>();
-                metadata.put("retrievalSource", "bm25");
-                retrieved.add(new RetrievedDocument(
-                    doc.getId(),
-                    doc.getText(),
-                    0.0, // BM25 分数不直接可用，由 RRF 融合时计算
-                    "bm25Search",
-                    -1,
-                    metadata
-                ));
+                RetrievedDocument rd = RetrievedDocument.from(doc)
+                    .withSource("bm25Search")
+                    .withScore(0.0); // BM25 分数不直接可用，由 RRF 融合时计算
+                rd.metadata().put("retrievalSource", "bm25");
+                retrieved.add(rd);
             }
 
             // P1 去重追加

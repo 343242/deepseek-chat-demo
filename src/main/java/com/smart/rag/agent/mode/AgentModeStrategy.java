@@ -14,6 +14,8 @@ import com.smart.rag.infrastructure.llm.registry.LlmClientRegistry;
 import com.smart.rag.chat.service.AdvisorChainContext;
 import com.smart.rag.chat.service.AdvisorInfrastructure;
 import com.smart.rag.chat.service.ModeChainResult;
+import com.smart.rag.chat.service.PromptLoaderService;
+import com.smart.rag.chat.service.StreamResult;
 import com.smart.rag.chat.service.StrategyExecuteResult;
 import com.smart.rag.chat.service.StrategyExecutionContext;
 import com.smart.rag.agent.advisor.AgentSystemPromptAdvisor;
@@ -25,8 +27,10 @@ import com.smart.rag.agent.intent.AgentIntent;
 import com.smart.rag.agent.intent.IntentClassifier;
 import com.smart.rag.agent.intent.IntentResult;
 import com.smart.rag.agent.tool.callback.AgentToolCallbackFactory;
+import com.smart.rag.agent.workspace.RetrievedDocument;
 import com.smart.rag.agent.workspace.ToolWorkspace;
 import com.smart.rag.agent.workspace.ToolWorkspaceFactory;
+import com.smart.rag.chat.dto.Reference;
 import org.jspecify.annotations.NonNull;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
@@ -90,6 +94,7 @@ public class AgentModeStrategy implements ChatModeStrategy {
     private final AgentToolCallbackFactory agentToolCallbackFactory;
     private final AgentRagProperties agentProperties;
     private final ContextPromptInjector contextPromptInjector;
+    private final PromptLoaderService promptLoaderService;
     private final LlmClientRegistry llmRegistry;
     private final AgentDegradationStrategy degradationStrategy;
     private final ObjectProvider<MultiTurnModeStrategy> multiTurnProvider;
@@ -100,6 +105,7 @@ public class AgentModeStrategy implements ChatModeStrategy {
                               AgentToolCallbackFactory agentToolCallbackFactory,
                               AgentRagProperties agentProperties,
                               ContextPromptInjector contextPromptInjector,
+                              PromptLoaderService promptLoaderService,
                               LlmClientRegistry llmRegistry,
                               AgentDegradationStrategy degradationStrategy,
                               ObjectProvider<MultiTurnModeStrategy> multiTurnProvider) {
@@ -109,6 +115,7 @@ public class AgentModeStrategy implements ChatModeStrategy {
         this.agentToolCallbackFactory = agentToolCallbackFactory;
         this.agentProperties = agentProperties;
         this.contextPromptInjector = contextPromptInjector;
+        this.promptLoaderService = promptLoaderService;
         this.llmRegistry = llmRegistry;
         this.degradationStrategy = degradationStrategy;
         this.multiTurnProvider = multiTurnProvider;
@@ -159,10 +166,11 @@ public class AgentModeStrategy implements ChatModeStrategy {
                 toolCallbacks.length, intentResult.intent());
         }
 
-        // Step 7: AgentSystemPromptAdvisor -- 动态 System Prompt + 每轮中间答案注入 + 护栏检查
-        String mergedPrompt = resolveAgentPrompt(intentResult.intent(), ctx.cagContext());
+        // Step 7: AgentSystemPromptAdvisor -- 静态基座+意图（首位）+ 动态尾 CAG/中间答案/护栏（末尾）
+        String staticPrompt = resolveAgentPrompt(intentResult.intent());
+        String cagSegment = contextPromptInjector.cagSegment(ctx.cagContext());
         AgentGuardrails guardrails = createGuardrails(ctx.candidateId());
-        chain.add(new AgentSystemPromptAdvisor(intentResult.intent(), mergedPrompt, workspace, guardrails));
+        chain.add(new AgentSystemPromptAdvisor(intentResult.intent(), staticPrompt, cagSegment, workspace, guardrails));
 
         // Step 8: 对话记忆
         // 过滤 Redis 历史中残留的 tool 消息，避免 DeepSeek "role 'tool' without preceding tool_calls" 报错
@@ -192,9 +200,12 @@ public class AgentModeStrategy implements ChatModeStrategy {
     }
 
     /**
-     * 根据意图选择 System Prompt 模板，并合并 CAG 上下文
+     * 根据意图选择 System Prompt 模板，叠加 default.xml 基座（覆盖全部 4 意图，design §2.11）。
+     * <p>
+     * v5：只返回静态（基座 + 意图）；CAG 上下文改由 {@link AgentSystemPromptAdvisor} 注入动态尾
+     * （CAG 每请求变化，进静态会破坏前缀缓存）。
      */
-    private String resolveAgentPrompt(AgentIntent intent, com.smart.rag.chat.context.RequestContext cagContext) {
+    private String resolveAgentPrompt(AgentIntent intent) {
         String template = switch (intent) {
             case DIRECT_ANSWER -> agentProperties.directAnswerPrompt();
             case RETRIEVAL -> agentProperties.retrievalPrompt();
@@ -206,7 +217,11 @@ public class AgentModeStrategy implements ChatModeStrategy {
             template = "你是一个 AI 助手。请根据用户的问题提供准确的回答。";
         }
 
-        return contextPromptInjector.inject(template, cagContext);
+        String base = promptLoaderService.getDefaultPrompt();
+        if (base != null && !base.isBlank()) {
+            template = base + "\n\n" + template;
+        }
+        return template;
     }
 
     /**
@@ -255,7 +270,8 @@ public class AgentModeStrategy implements ChatModeStrategy {
 
             String content = AbstractModeStrategy.extractContent(springResponse);
             Map<String, Object> agentMetadata = buildAgentMetadata(result);
-            return StrategyExecuteResult.agent(springResponse, content, agentMetadata);
+            List<Reference> references = buildReferences(result.workspace().getRetrievedDocs());
+            return StrategyExecuteResult.agent(springResponse, content, agentMetadata, references);
 
         } catch (Exception e) {
             if (degradationStrategy.shouldDegrade(e)) {
@@ -275,13 +291,26 @@ public class AgentModeStrategy implements ChatModeStrategy {
         Map<String, Object> degradedMeta = new LinkedHashMap<>();
         degradedMeta.put("agentDegraded", true);
         degradedMeta.put("degradedTo", "MULTI_TURN");
-        return new StrategyExecuteResult(result.springAiResponse(), result.content(), degradedMeta);
+        return StrategyExecuteResult.agent(result.springAiResponse(), result.content(), degradedMeta, result.references());
     }
 
     @Override
-    public Flux<String> executeStream(StrategyExecutionContext ctx) {
+    public StreamResult executeStream(StrategyExecutionContext ctx) {
         throw new ClientException(ClientErrorCode.UNSUPPORTED_OPERATION,
             "Agent mode does not support streaming in this version. Use blocking call instead.");
+    }
+
+    /** 从 workspace 检索文档构造引用映射（#n → chunkId/documentId/fileName/page），无检索时返回 null */
+    private static List<Reference> buildReferences(List<RetrievedDocument> docs) {
+        if (docs == null || docs.isEmpty()) {
+            return null;
+        }
+        List<Reference> refs = new ArrayList<>(docs.size());
+        for (RetrievedDocument doc : docs) {
+            refs.add(new Reference(doc.refNumber(), doc.chunkId(), doc.documentId(),
+                doc.fileName(), doc.page()));
+        }
+        return refs;
     }
 
     private static Map<String, Object> buildAgentMetadata(ModeChainResult result) {

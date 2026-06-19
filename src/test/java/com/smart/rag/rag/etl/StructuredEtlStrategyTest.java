@@ -89,7 +89,7 @@ class StructuredEtlStrategyTest {
             strategy.awaitAsyncCompletion();
 
             assertThat(results).containsExactly(EtlResult.success(2L, 0));
-            verify(vectorStoreMapper).insertFastTrackRow(2L, "raw", 10L, null);
+            verify(vectorStoreMapper).insertFastTrackRow(2L, "raw", 10L, null, "file-2.txt");
             verify(vectorStoreMapper).deleteFastTrackRows(2L);
             assertThat(scopedTasks.scopeNames())
                     .containsExactly("fast-track-extract", "fast-track-vectorize");

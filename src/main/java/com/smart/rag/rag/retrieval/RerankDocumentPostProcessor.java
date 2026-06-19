@@ -48,7 +48,15 @@ public class RerankDocumentPostProcessor implements DocumentPostProcessor {
             .toList();
 
         RerankRequest request = new RerankRequest(query.text(), docTexts);
-        List<RerankResult> results = reranker.rerank(request, topN);
+        List<RerankResult> results;
+        try {
+            results = reranker.rerank(request, topN);
+        } catch (RuntimeException e) {
+            // R1-M8 降级契约：rerank 失败（API 错误/超时/熔断）→ 原样透传，不中断检索与 chat 链路。
+            // 不抛异常是硬契约——否则 rerank 任何失败会传播到 chat call，触发跨模型 fallback 误判。
+            log.warn("Rerank failed, returning original order (query='{}'): {}", query.text(), e.getMessage());
+            return documents;
+        }
 
         if (results.isEmpty()) {
             log.warn("Rerank returned empty results for query: {}", query.text());

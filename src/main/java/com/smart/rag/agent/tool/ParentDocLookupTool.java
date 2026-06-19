@@ -107,20 +107,14 @@ public class ParentDocLookupTool implements RagTool {
 
                 Document parentDoc = parentDocMap.get(parentId);
                 if (parentDoc != null) {
-                    Map<String, Object> parentMetadata = parentDoc.getMetadata() != null
-                        ? new HashMap<>(parentDoc.getMetadata()) : new HashMap<>();
-                    parentMetadata.put("sourceDocId", doc.docId());
+                    RetrievedDocument parentRd = RetrievedDocument.from(parentDoc)
+                        .withSource("parentDocLookup")
+                        .withScore(doc.score())
+                        .withSubQueryIndex(doc.subQueryIndex());
+                    parentRd.metadata().put("sourceDocId", doc.chunkId());
                     // Fix H4: parentId 必须写入 metadata，否则后续排序读不到
-                    parentMetadata.put(ParentChildChunkStrategy.META_PARENT_ID, parentId);
-
-                    resolvedParents.put(parentId, new RetrievedDocument(
-                        parentDoc.getId(),
-                        parentDoc.getText(),
-                        doc.score(),
-                        "parentDocLookup",
-                        doc.subQueryIndex(),
-                        parentMetadata
-                    ));
+                    parentRd.metadata().put(ParentChildChunkStrategy.META_PARENT_ID, parentId);
+                    resolvedParents.put(parentId, parentRd);
                 } else {
                     log.warn("Parent document not found for parentId={}, using child chunk as fallback", parentId);
                     resolvedParents.put(parentId, doc);

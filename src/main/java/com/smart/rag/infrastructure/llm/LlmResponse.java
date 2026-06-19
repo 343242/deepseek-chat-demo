@@ -1,5 +1,7 @@
 package com.smart.rag.infrastructure.llm;
 
+import org.jspecify.annotations.Nullable;
+
 import java.util.List;
 import java.util.Map;
 
@@ -33,6 +35,12 @@ public record LlmResponse(
         responseMetadata = responseMetadata != null ? Map.copyOf(responseMetadata) : Map.of();
     }
 
-    public record TokenUsage(int promptTokens, int completionTokens, int totalTokens) {}
+    public record TokenUsage(int promptTokens, int completionTokens, int totalTokens,
+                             @Nullable Integer cacheHitTokens) {
+        /** 向后兼容：未提供缓存命中信息时 cacheHitTokens=null */
+        public TokenUsage(int promptTokens, int completionTokens, int totalTokens) {
+            this(promptTokens, completionTokens, totalTokens, null);
+        }
+    }
     public record ToolCall(String id, String name, String arguments) {}
 }

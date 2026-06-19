@@ -17,6 +17,13 @@ public interface PromptLoaderService {
 
     List<String> getAvailableModels();
 
+    /**
+     * 获取 default.xml 兜底模板的 system prompt（raw XML）。
+     *
+     * @return default 模板文本，无 default 模板时返回 null
+     */
+    String getDefaultPrompt();
+
     void loadPrompts();
 
     void reload();

@@ -117,7 +117,7 @@ public class FastTrackStrategy implements EtlRouteStrategy {
                         .map(Document::getText)
                         .collect(Collectors.joining("\n\n"));
 
-                writeBm25Row(c.documentId(), fullContent, c.userId(), c.teamId());
+                writeBm25Row(c.documentId(), fullContent, c.userId(), c.teamId(), c.fileName());
                 statusManager.completeDocument(c.documentId(), 0);
 
                 results.add(EtlResult.success(c.documentId(), 0));
@@ -155,8 +155,8 @@ public class FastTrackStrategy implements EtlRouteStrategy {
      * 将原文直接写入 vector_store 表，content_tsv 由触发器自动填充。
      * embedding 设为 NULL（无向量），BM25 检索仍可通过 content_tsv 命中。
      */
-    private void writeBm25Row(Long documentId, String content, Long userId, @Nullable Long teamId) {
-        vectorStoreMapper.insertFastTrackRow(documentId, content, userId, teamId);
+    private void writeBm25Row(Long documentId, String content, Long userId, @Nullable Long teamId, String fileName) {
+        vectorStoreMapper.insertFastTrackRow(documentId, content, userId, teamId, fileName);
     }
 
     // ==================== 异步向量化（P0 修复：直接指定 executor） ====================
@@ -177,9 +177,11 @@ public class FastTrackStrategy implements EtlRouteStrategy {
                             String docIdStr = String.valueOf(c.documentId());
                             String userIdStr = String.valueOf(c.userId());
                             String teamIdStr = c.teamId() != null ? String.valueOf(c.teamId()) : null;
+                            String fileName = (c.fileName() != null && !c.fileName().isBlank()) ? c.fileName() : docIdStr;
                             for (Document chunk : transformed) {
                                 chunk.getMetadata().put("documentId", docIdStr);
                                 chunk.getMetadata().put("userId", userIdStr);
+                                chunk.getMetadata().put("fileName", fileName);
                                 if (teamIdStr != null) {
                                     chunk.getMetadata().put("teamId", teamIdStr);
                                 }

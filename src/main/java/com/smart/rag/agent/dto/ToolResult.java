@@ -60,7 +60,7 @@ public record ToolResult(
      * Java record 默认 toString() 产出 {@code ToolResult[success=true, ...]} 格式，
      * LLM 无法解析。此方法返回标准 JSON。
      * <p>
-     * 检索到的文档（documents）只保留摘要字段（docId、score、content 截断），
+     * 检索到的文档（documents）只保留摘要字段（refNumber、chunkId、documentId、fileName、page、score、content 截断、source），
      * 避免 JSON 过长。
      *
      * @deprecated 降级用，调用方应使用 {@link #toJson(ObjectMapper)}
@@ -93,7 +93,13 @@ public record ToolResult(
         if (documents != null && !documents.isEmpty()) {
             List<Map<String, Object>> docSummaries = documents.stream().map(doc -> {
                 Map<String, Object> d = new LinkedHashMap<>();
-                d.put("docId", doc.docId());
+                d.put("refNumber", doc.refNumber());
+                d.put("chunkId", doc.chunkId());
+                d.put("documentId", doc.documentId());
+                d.put("fileName", doc.fileName());
+                if (doc.page() != null) {
+                    d.put("page", doc.page());
+                }
                 d.put("score", doc.score());
                 // 截断内容，避免 JSON 过长
                 String content = doc.content();

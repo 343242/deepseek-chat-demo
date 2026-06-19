@@ -9,12 +9,14 @@ import org.slf4j.LoggerFactory;
 
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
 /**
@@ -53,7 +55,10 @@ public class ToolWorkspace {
     private final List<String> rewrittenQueries = new CopyOnWriteArrayList<>();
     private final List<SelfReflection> selfReflections = new CopyOnWriteArrayList<>();
     private final List<IntermediateAnswer> intermediateAnswers = new CopyOnWriteArrayList<>();
+    /** 已见 chunk ID 集合（去重依据；字段名沿用历史，内容为 RetrievedDocument.chunkId()） */
     private final Set<String> seenDocIds = ConcurrentHashMap.newKeySet();
+    /** 全局稳定引用编号计数器（[n]），独立于 list size 以扛 replace/dedup 不烧号 */
+    private final AtomicInteger refCounter = new AtomicInteger(0);
 
     public ToolWorkspace(long userId, @Nullable Long teamId) {
         this.userId = userId;
@@ -105,7 +110,7 @@ public class ToolWorkspace {
         return Collections.unmodifiableList(retrievedDocs);
     }
 
-    /** 追加检索文档（带去重 + 容量上限 + 内容预算控制） */
+    /** 追加检索文档（带去重 + 容量上限 + 内容预算控制）；入列的每条分配稳定 [n] 编号 */
     public void addRetrievedDocs(List<RetrievedDocument> docs) {
         for (RetrievedDocument doc : docs) {
             if (retrievedDocs.size() >= MAX_RETRIEVED_DOCS || totalContentChars() >= MAX_TOTAL_CONTENT_CHARS) {
@@ -113,17 +118,26 @@ public class ToolWorkspace {
                     retrievedDocs.size(), totalContentChars());
                 break;
             }
-            if (seenDocIds.contains(doc.docId())) {
-                continue;
+            if (seenDocIds.contains(doc.chunkId())) {
+                continue; // dedup 跳过，不分配编号（不烧号）
             }
-            RetrievedDocument truncated = truncateIfNeeded(doc);
+            RetrievedDocument truncated = truncateIfNeeded(doc)
+                .withRefNumber(refCounter.incrementAndGet());
             retrievedDocs.add(truncated);
-            seenDocIds.add(doc.docId());
+            seenDocIds.add(doc.chunkId());
         }
     }
 
-    /** 替换所有检索文档（用于 rerank、parentDocLookup 等替换场景，带容量上限） */
+    /**
+     * 替换所有检索文档（用于 rerank、parentDocLookup 等替换场景，带容量上限）。
+     * <p>
+     * 保留稳定编号：旧 chunkId 已有 [n] 则复用，新 chunkId 续号——rerank 重排不改变既有引用编号。
+     */
     public void replaceRetrievedDocs(List<RetrievedDocument> docs) {
+        Map<String, Integer> oldRefNumbers = new HashMap<>();
+        for (RetrievedDocument d : retrievedDocs) {
+            oldRefNumbers.put(d.chunkId(), d.refNumber());
+        }
         retrievedDocs.clear();
         seenDocIds.clear();
         int count = 0;
@@ -133,9 +147,14 @@ public class ToolWorkspace {
                     count, totalContentChars());
                 break;
             }
-            RetrievedDocument truncated = truncateIfNeeded(doc);
+            // 注意：不能用 getOrDefault(k, refCounter.incrementAndGet())——Java 参数 eager 求值
+            // 会导致 refCounter 每次循环都递增（即使 key 存在），续号错误。必须显式判断。
+            int n = oldRefNumbers.containsKey(doc.chunkId())
+                ? oldRefNumbers.get(doc.chunkId())
+                : refCounter.incrementAndGet();
+            RetrievedDocument truncated = truncateIfNeeded(doc).withRefNumber(n);
             retrievedDocs.add(truncated);
-            seenDocIds.add(doc.docId());
+            seenDocIds.add(doc.chunkId());
             count++;
         }
     }
@@ -147,7 +166,7 @@ public class ToolWorkspace {
             .collect(Collectors.toList());
     }
 
-    /** P1 去重追加：排除 seenDocIds 中已有的文档，带容量上限 */
+    /** P1 去重追加：排除 seenDocIds 中已有的文档，带容量上限；入列的每条分配稳定 [n] 编号 */
     public void addRetrievedDocsDeduplicated(List<RetrievedDocument> docs) {
         for (RetrievedDocument doc : docs) {
             if (retrievedDocs.size() >= MAX_RETRIEVED_DOCS || totalContentChars() >= MAX_TOTAL_CONTENT_CHARS) {
@@ -155,10 +174,11 @@ public class ToolWorkspace {
                     retrievedDocs.size(), totalContentChars());
                 break;
             }
-            if (!seenDocIds.contains(doc.docId())) {
-                RetrievedDocument truncated = truncateIfNeeded(doc);
+            if (!seenDocIds.contains(doc.chunkId())) {
+                RetrievedDocument truncated = truncateIfNeeded(doc)
+                    .withRefNumber(refCounter.incrementAndGet());
                 retrievedDocs.add(truncated);
-                seenDocIds.add(doc.docId());
+                seenDocIds.add(doc.chunkId());
             }
         }
     }
@@ -300,12 +320,8 @@ public class ToolWorkspace {
     private RetrievedDocument truncateIfNeeded(RetrievedDocument doc) {
         if (doc.content() != null && doc.content().length() > SINGLE_DOC_TRUNCATE_CHARS) {
             log.debug("Truncating doc {} content from {} to {} chars",
-                doc.docId(), doc.content().length(), SINGLE_DOC_TRUNCATE_CHARS);
-            return new RetrievedDocument(
-                doc.docId(),
-                doc.content().substring(0, SINGLE_DOC_TRUNCATE_CHARS) + "...",
-                doc.score(), doc.source(), doc.subQueryIndex(), doc.metadata()
-            );
+                doc.chunkId(), doc.content().length(), SINGLE_DOC_TRUNCATE_CHARS);
+            return doc.withContent(doc.content().substring(0, SINGLE_DOC_TRUNCATE_CHARS) + "...");
         }
         return doc;
     }

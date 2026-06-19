@@ -19,7 +19,6 @@ import org.springframework.stereotype.Component;
 
 import java.time.Duration;
 import java.util.List;
-import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -173,14 +172,13 @@ public class LlmClientRegistry {
     }
 
     /** 按 candidateId + 目标类型获取客户端 */
-    @SuppressWarnings("unchecked")
     public <T extends CapabilityClient> T get(String candidateId, Class<T> type) {
         CapabilityClient client = get(candidateId);
         if (!type.isInstance(client)) {
             throw new RemoteException(RemoteErrorCode.LLM_CONFIG_ERROR,
                 "Client '" + candidateId + "' does not implement " + type.getSimpleName());
         }
-        return (T) client;
+        return type.cast(client);
     }
 
     /** 获取指定能力的默认客户端 */
@@ -194,14 +192,13 @@ public class LlmClientRegistry {
     }
 
     /** 获取指定能力的默认客户端（类型安全） */
-    @SuppressWarnings("unchecked")
     public <T extends CapabilityClient> T getDefault(LlmCapability capability, Class<T> type) {
         CapabilityClient client = getDefault(capability);
         if (!type.isInstance(client)) {
             throw new RemoteException(RemoteErrorCode.LLM_CONFIG_ERROR,
                 "Default client for " + capability + " does not implement " + type.getSimpleName());
         }
-        return (T) client;
+        return type.cast(client);
     }
 
     /** 获取指定能力的 deep-thinking 客户端 */

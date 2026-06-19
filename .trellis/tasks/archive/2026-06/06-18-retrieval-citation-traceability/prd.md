@@ -79,18 +79,18 @@
 
 ## Acceptance Criteria
 
-- [ ] `RetrievedDocument` 新增稳定编号字段，`docId → chunkId` 全量重命名（含 DocDetailTool LLM-facing 参数 `docIds→chunkIds` + description 同步），所有消费点（workspace 去重 / RerankTool / DocDetailTool / ParentDocLookupTool / 6 处构造点）契约一致、编译通过。
-- [ ] 入库时 `fileName` 写入 `vector_store.metadata` 的**全部写点**（`StandardStrategy` / `FastTrackStrategy.asyncVectorize` / `VectorStoreMapper.insertFastTrackRow`；`EtlPipelineServiceImpl` 视在用情况）；空文件名降级（documentId / "未知"）。
-- [ ] agent：`ToolResult.toJson()` 每条输出 `[n]+chunkId+documentId+文件名+页码+score+截断 content`；编号在多次 tool call / rerank replace / dedup 下稳定、不重排、不烧号（单测覆盖）。
-- [ ] chat：方案 A 落地——`ChatRetrievalService` 复用现有检索组件；**静态基座（纯 default.xml）+ 动态尾（`<<REF>>[n]` 以 `SystemMessage` 经 `RagContextAdvisor` 注入历史之后）**；user message 保持干净；`SimpleModeStrategy`/`MultiTurnModeStrategy` 不再 `add(ragAdvisor)`；召回行为（数量/排序/MMR/rerank/parent）与改造前一致（回归）。
-- [ ] agent system prompt = `default.xml` 基座 + 意图模板叠加，**覆盖全部 4 个意图**（DIRECT_ANSWER/RETRIEVAL/DEEP_RETRIEVAL/GENERAL_TOOL）；r2 对 chat 和 agent 都生效；agent 编排能力未丢失。**Agent prompt 静态/动态拆分**：`AgentSystemPromptAdvisor.before()` 拆成两个 `SystemMessage`（静态基座+意图模板 / 动态中间答案+护栏），静态部分跨 ReAct 轮次字节不变（前缀缓存命中）。
-- [ ] agent + chat **阻塞式**响应均含 `#n → (chunkId, documentId, 文件名, 页码)` 结构化映射（`ChatResponse.references` 新字段，`@JsonInclude(NON_NULL)` 不影响非 RAG 调用）。
-- [ ] chat **流式** SSE：跑 RAG（`<<REF>>` 注入 system）+ 下发 references 帧；**走 advisor 链**（Redis 记忆 load+save）；**SIMPLE 与 MULTI_TURN 都落库**。
-- [ ] **R9 记忆/落库干净**：连问两轮后，Redis ChatMemory 的 user message 与 DB messages 均**不含 `<<REF>>` 块**（`SystemMessage` role 级保证）。
-- [ ] **R10 缓存友好**：**chat** 消息序为 `[system:纯default.xml] → [历史] → [system:动态<<REF>>] → [user:问题]`；**agent** 消息序为 `[system:静态基座+意图] → [tools] → [tool历史] → [system:动态(CAG+中间答案+护栏)]`（动态在 tools 与历史**之后**，非之前）；静态基座 + tools 跨请求/轮次字节稳定（DeepSeek `prompt_cache_hit_tokens` 命中）；CAG 注入已移出静态基座（chat `createSpec:52` + agent `resolveAgentPrompt:209`）。
-- [ ] **Cache hit 可观测**：`GenericChatClient.parseTokenUsage()` 解析 DeepSeek `prompt_cache_hit_tokens` / 百炼 `prompt_tokens_details.cached_tokens`；`LlmResponse.TokenUsage` 新增 `cacheHitTokens` 字段。
-- [ ] 现有 `hybridSearch/vectorSearch/bm25Search` 召回行为不变（回归通过）。
-- [ ] `docs/design/page-index-search-tool.md` 已删除；死代码 `AgentChatResponse.java` 已删除。
+- [x] `RetrievedDocument` 新增稳定编号字段，`docId → chunkId` 全量重命名（含 DocDetailTool LLM-facing 参数 `docIds→chunkIds` + description 同步），所有消费点（workspace 去重 / RerankTool / DocDetailTool / ParentDocLookupTool / 6 处构造点）契约一致、编译通过。
+- [x] 入库时 `fileName` 写入 `vector_store.metadata` 的**全部写点**（`StandardStrategy` / `FastTrackStrategy.asyncVectorize` / `VectorStoreMapper.insertFastTrackRow`；`EtlPipelineServiceImpl` 视在用情况）；空文件名降级（documentId / "未知"）。
+- [x] agent：`ToolResult.toJson()` 每条输出 `[n]+chunkId+documentId+文件名+页码+score+截断 content`；编号在多次 tool call / rerank replace / dedup 下稳定、不重排、不烧号（单测覆盖）。
+- [x] chat：方案 A 落地——`ChatRetrievalService` 复用现有检索组件；**静态基座（纯 default.xml）+ 动态尾（`<<REF>>[n]` 以 `SystemMessage` 经 `RagContextAdvisor` 注入历史之后）**；user message 保持干净；`SimpleModeStrategy`/`MultiTurnModeStrategy` 不再 `add(ragAdvisor)`；召回行为（数量/排序/MMR/rerank/parent）与改造前一致（回归）。
+- [x] agent system prompt = `default.xml` 基座 + 意图模板叠加，**覆盖全部 4 个意图**（DIRECT_ANSWER/RETRIEVAL/DEEP_RETRIEVAL/GENERAL_TOOL）；r2 对 chat 和 agent 都生效；agent 编排能力未丢失。**Agent prompt 静态/动态拆分**：`AgentSystemPromptAdvisor.before()` 拆成两个 `SystemMessage`（静态基座+意图模板 / 动态中间答案+护栏），静态部分跨 ReAct 轮次字节不变（前缀缓存命中）。
+- [x] agent + chat **阻塞式**响应均含 `#n → (chunkId, documentId, 文件名, 页码)` 结构化映射（`ChatResponse.references` 新字段，`@JsonInclude(NON_NULL)` 不影响非 RAG 调用）。
+- [x] chat **流式** SSE：跑 RAG（`<<REF>>` 注入 system）+ 下发 references 帧；**走 advisor 链**（Redis 记忆 load+save）；**SIMPLE 与 MULTI_TURN 都落库**。
+- [x] **R9 记忆/落库干净**：连问两轮后，Redis ChatMemory 的 user message 与 DB messages 均**不含 `<<REF>>` 块**（`SystemMessage` role 级保证）。
+- [x] **R10 缓存友好**：**chat** 消息序为 `[system:纯default.xml] → [历史] → [system:动态<<REF>>] → [user:问题]`；**agent** 消息序为 `[system:静态基座+意图] → [tools] → [tool历史] → [system:动态(CAG+中间答案+护栏)]`（动态在 tools 与历史**之后**，非之前）；静态基座 + tools 跨请求/轮次字节稳定（DeepSeek `prompt_cache_hit_tokens` 命中）；CAG 注入已移出静态基座（chat `createSpec:52` + agent `resolveAgentPrompt:209`）。
+- [x] **Cache hit 可观测**：`GenericChatClient.parseTokenUsage()` 解析 DeepSeek `prompt_cache_hit_tokens` / 百炼 `prompt_tokens_details.cached_tokens`；`LlmResponse.TokenUsage` 新增 `cacheHitTokens` 字段。
+- [x] 现有 `hybridSearch/vectorSearch/bm25Search` 召回行为不变（回归通过）。
+- [x] `docs/design/page-index-search-tool.md` 已删除；死代码 `AgentChatResponse.java` 已删除。
 
 ## Out of Scope
 

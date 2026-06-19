@@ -21,6 +21,7 @@ Spring Boot 3.5 + MyBatis-Plus + PostgreSQL + Redis 的 DeepSeek 聊天助手后
 - [ ] [Code Review Checklist](./code-review-checklist.md) — Review 维度、检查项、常见陷阱
 - [ ] [Logging Guidelines](./logging-guidelines.md) — 日志级别和规范
 - [ ] [LLM SPI](./llm-spi.md) — 基础设施层 LLM 客户端契约（禁止注入 `ChatClient.Builder`）
+- [ ] [RAG 引用与上下文工程](./rag-citation-context.md) — RetrievedDocument 契约、检索段 SystemMessage 注入、静态/动态 prompt 拆分（改 RAG 检索/prompt/DTO 前必读）
 
 ---
 
@@ -35,6 +36,7 @@ Spring Boot 3.5 + MyBatis-Plus + PostgreSQL + Redis 的 DeepSeek 聊天助手后
 | [Code Review Checklist](./code-review-checklist.md) | Review 维度、检查项、常见陷阱 | ✅ Filled |
 | [Logging Guidelines](./logging-guidelines.md) | 日志级别、Profile 差异 | ✅ Filled |
 | [LLM SPI](./llm-spi.md) | LLM 客户端契约、Resolver 模式、fail-fast | ✅ Filled |
+| [RAG 引用与上下文工程](./rag-citation-context.md) | RetrievedDocument 契约、Reference DTO、`<<REF>>` SystemMessage 注入、静态/动态 prompt 拆分 | ✅ Filled |
 
 ---
 

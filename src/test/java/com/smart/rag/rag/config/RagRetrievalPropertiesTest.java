@@ -20,6 +20,7 @@ class RagRetrievalPropertiesTest {
             var props = new RagRetrievalProperties(
                     true, true, "jiebacfg",
                     30, 30, 60,
+                    60,
                     false,
                     20,
                     true, 0.5, 10, 0.5,
@@ -35,6 +36,7 @@ class RagRetrievalPropertiesTest {
             var props = new RagRetrievalProperties(
                     true, true, "jiebacfg",
                     30, 30, 60,
+                    60,
                     false,
                     20,
                     true, 0.5, 10, 0.5,
@@ -55,6 +57,7 @@ class RagRetrievalPropertiesTest {
             assertThatThrownBy(() -> new RagRetrievalProperties(
                     true, true, "jiebacfg",
                     30, 30, 60,
+                    60,
                     true,
                     5,
                     true, 0.7, 10, 0.5,
@@ -69,12 +72,48 @@ class RagRetrievalPropertiesTest {
             var props = new RagRetrievalProperties(
                     true, true, "jiebacfg",
                     30, 30, 60,
+                    60,
                     false,
                     0,
                     false, 0.7, 5, 0.5,
                     null, null
             );
             assertThat(props.rerankTopN()).isEqualTo(20);
+        }
+    }
+
+    @Nested
+    @DisplayName("召回约束（fusionTopK vs rerankTopN）")
+    class FusionTopKValidationTest {
+
+        @Test
+        @DisplayName("fusionTopK < rerankTopN 时构造抛异常（Rerank 候选不足）")
+        void fusionTopKMustBeAtLeastRerankTopN() {
+            assertThatThrownBy(() -> new RagRetrievalProperties(
+                    true, true, "jiebacfg",
+                    30, 30, 60,
+                    15,
+                    true,
+                    20,
+                    true, 0.7, 10, 0.5,
+                    null, null
+            )).isInstanceOf(IllegalArgumentException.class)
+              .hasMessageContaining("fusionTopK must be >= rerankTopN");
+        }
+
+        @Test
+        @DisplayName("fusionTopK 未配置（<=0）回退默认 60")
+        void fusionTopKDefaultsTo60WhenUnset() {
+            var props = new RagRetrievalProperties(
+                    true, true, "jiebacfg",
+                    30, 30, 60,
+                    0,
+                    false,
+                    20,
+                    false, 0.7, 5, 0.5,
+                    null, null
+            );
+            assertThat(props.fusionTopK()).isEqualTo(60);
         }
     }
 }

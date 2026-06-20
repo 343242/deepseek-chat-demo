@@ -143,23 +143,38 @@ public interface VectorStoreMapper {
     // ======================== 文档间 Cosine 距离 ========================
 
     /**
-     * 批量计算文档间 cosine 距离矩阵。
+     * 批量计算文档间 cosine 距离矩阵（截断阈值 = {@link #MAX_PAIRWISE_DOCS}）。
      * <p>
-     * 利用 pgvector 的 {@code embedding <=> embedding} 运算符在数据库层计算，避免额外调用 Embedding API。
+     * 向后兼容重载：等价于 {@code pairwiseCosineDistance(docIds, MAX_PAIRWISE_DOCS)}。
      *
-     * @param docIds 文档 ID 列表（通常 5-10 条）
+     * @param docIds 文档 ID 列表
      * @return 对称距离矩阵 key = "idA|idB", value = cosine distance (0=相同, 2=相反)
      */
     default Map<String, Double> pairwiseCosineDistance(List<String> docIds) {
+        return pairwiseCosineDistance(docIds, MAX_PAIRWISE_DOCS);
+    }
+
+    /**
+     * 批量计算文档间 cosine 距离矩阵，可指定截断阈值。
+     * <p>
+     * 利用 pgvector 的 {@code embedding <=> embedding} 运算符在数据库层计算，避免额外调用 Embedding API。
+     *
+     * @param docIds  文档 ID 列表
+     * @param maxDocs 截断阈值；实际下限 = {@code max(MAX_PAIRWISE_DOCS, maxDocs)}。
+     *                fusionTopK 联动场景传 fusionTopK（如 60），召回 60 时避免 50 截断导致 MMR distance key miss。
+     * @return 对称距离矩阵 key = "idA|idB", value = cosine distance (0=相同, 2=相反)
+     */
+    default Map<String, Double> pairwiseCosineDistance(List<String> docIds, int maxDocs) {
         if (docIds == null || docIds.size() < 2) {
             return Map.of();
         }
 
-        // 防御性截断：O(n²) SQL，超过上限时截断并告警
-        if (docIds.size() > MAX_PAIRWISE_DOCS) {
+        // 防御性截断：O(n²) SQL，超过上限时截断并告警；下限保留 MAX_PAIRWISE_DOCS（fusionTopK 联动取 max）
+        int limit = Math.max(MAX_PAIRWISE_DOCS, maxDocs);
+        if (docIds.size() > limit) {
             LOG.warn("pairwiseCosineDistance: truncating {} docs to {} (O(n²) SQL defense)",
-                    docIds.size(), MAX_PAIRWISE_DOCS);
-            docIds = docIds.subList(0, MAX_PAIRWISE_DOCS);
+                    docIds.size(), limit);
+            docIds = docIds.subList(0, limit);
         }
 
         List<PairwiseDistanceRow> rows = selectPairwiseDistance(docIds);

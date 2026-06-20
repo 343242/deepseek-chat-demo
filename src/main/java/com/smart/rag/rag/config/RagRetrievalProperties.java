@@ -17,6 +17,8 @@ public record RagRetrievalProperties(
         int vectorTopK,
         int bm25TopK,
         int rrfK,
+        /** RRF 融合后最终召回量（独立于 vector-top-k，解耦自 HybridSearchService.rrfFusion），必须 >= rerankTopN */
+        int fusionTopK,
         boolean rerankEnabled,
         /** Rerank 精排保留的文档数（候选池），必须 > mmrTopK，否则调换顺序后 MMR 命中早退退化为 no-op */
         int rerankTopN,
@@ -37,12 +39,22 @@ public record RagRetrievalProperties(
         if (rerankTopN <= 0) {
             rerankTopN = 20;
         }
+        // fusionTopK 未显式配置（<=0）时回退默认 60（= vectorTopK + bm25TopK 上限），保证旧 yml 不填仍可启动
+        if (fusionTopK <= 0) {
+            fusionTopK = 60;
+        }
         // 候选池约束：rerankTopN 必须 > mmrTopK，否则调换顺序为 Rerank→MMR 后，
         // MMR 命中 documents.size() <= topK 早退（MmrDocumentPostProcessor#process）退化为 no-op
         if (rerankTopN <= mmrTopK) {
             throw new IllegalArgumentException(
                     "rerankTopN must be > mmrTopK (rerankTopN=" + rerankTopN
                             + ", mmrTopK=" + mmrTopK + ")，否则 MMR 退化为 no-op");
+        }
+        // 召回约束：fusionTopK 必须 >= rerankTopN，否则 RRF 融合后文档数 < rerankTopN，Rerank 候选不足
+        if (fusionTopK < rerankTopN) {
+            throw new IllegalArgumentException(
+                    "fusionTopK must be >= rerankTopN (fusionTopK=" + fusionTopK
+                            + ", rerankTopN=" + rerankTopN + ")，否则 Rerank 候选不足");
         }
     }
 
@@ -59,6 +71,7 @@ public record RagRetrievalProperties(
                 vectorTopKOverride != null ? vectorTopKOverride : vectorTopK,
                 bm25TopKOverride != null ? bm25TopKOverride : bm25TopK,
                 rrfKOverride != null ? rrfKOverride : rrfK,
+                fusionTopK,
                 rerankEnabled,
                 rerankTopN,
                 mmrEnabled,

@@ -217,7 +217,7 @@ public class HybridSearchService {
 
         return scores.entrySet().stream()
                 .sorted(Map.Entry.<String, Double>comparingByValue().reversed())
-                .limit(properties.vectorTopK())
+                .limit(properties.fusionTopK())
                 .map(e -> {
                     Document doc = docMap.get(e.getKey());
                     if (doc != null) {

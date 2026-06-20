@@ -87,6 +87,42 @@ class VectorStoreMapperTest {
             verify(mapper).selectPairwiseDistance(captor.capture());
             assertThat(captor.getValue()).hasSize(VectorStoreMapper.MAX_PAIRWISE_DOCS);
         }
+
+        @Test
+        @DisplayName("maxDocs 联动：maxDocs=60 时 60 条不截断（fusionTopK 阈值）")
+        void pairwise_maxDocs_noTruncation() {
+            when(mapper.selectPairwiseDistance(anyList())).thenReturn(List.of());
+
+            List<String> ids = new ArrayList<>();
+            for (int i = 0; i < 60; i++) {
+                ids.add("id" + i);
+            }
+
+            mapper.pairwiseCosineDistance(ids, 60);
+
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<List<String>> captor = ArgumentCaptor.forClass(List.class);
+            verify(mapper).selectPairwiseDistance(captor.capture());
+            assertThat(captor.getValue()).hasSize(60);
+        }
+
+        @Test
+        @DisplayName("maxDocs 下限防御：maxDocs < MAX_PAIRWISE_DOCS 时仍保留 50 下限")
+        void pairwise_maxDocs_floor() {
+            when(mapper.selectPairwiseDistance(anyList())).thenReturn(List.of());
+
+            List<String> ids = new ArrayList<>();
+            for (int i = 0; i < 51; i++) {
+                ids.add("id" + i);
+            }
+
+            mapper.pairwiseCosineDistance(ids, 10);
+
+            @SuppressWarnings("unchecked")
+            ArgumentCaptor<List<String>> captor = ArgumentCaptor.forClass(List.class);
+            verify(mapper).selectPairwiseDistance(captor.capture());
+            assertThat(captor.getValue()).hasSize(VectorStoreMapper.MAX_PAIRWISE_DOCS);
+        }
     }
 
     // ========================================================================

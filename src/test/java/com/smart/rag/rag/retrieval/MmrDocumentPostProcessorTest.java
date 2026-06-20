@@ -17,6 +17,7 @@ import java.util.Map;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.when;
 
 /**
@@ -40,7 +41,7 @@ class MmrDocumentPostProcessorTest {
     }
 
     private MmrDocumentPostProcessor createProcessor(double lambda, int topK) {
-        return new MmrDocumentPostProcessor(lambda, topK, vectorStoreMapper);
+        return new MmrDocumentPostProcessor(lambda, topK, 60, vectorStoreMapper);
     }
 
     // ====================================================================
@@ -128,7 +129,7 @@ class MmrDocumentPostProcessorTest {
             distances.put("d2|d3", 0.5); distances.put("d3|d2", 0.5);
             distances.put("d2|d4", 0.5); distances.put("d4|d2", 0.5);
             distances.put("d3|d4", 0.5); distances.put("d4|d3", 0.5);
-            when(vectorStoreMapper.pairwiseCosineDistance(any())).thenReturn(distances);
+            when(vectorStoreMapper.pairwiseCosineDistance(any(), anyInt())).thenReturn(distances);
 
             List<Document> result = processor.process(query, docs);
 
@@ -148,7 +149,7 @@ class MmrDocumentPostProcessorTest {
                     doc("d4", Map.of("rerankScore", 0.3))
             );
 
-            when(vectorStoreMapper.pairwiseCosineDistance(any())).thenReturn(Map.of());
+            when(vectorStoreMapper.pairwiseCosineDistance(any(), anyInt())).thenReturn(Map.of());
 
             List<Document> result = processor.process(query, docs);
 
@@ -177,7 +178,7 @@ class MmrDocumentPostProcessorTest {
             distances.put("d2|d3", 0.8); distances.put("d3|d2", 0.8);
             distances.put("d2|d4", 0.9); distances.put("d4|d2", 0.9);
             distances.put("d3|d4", 0.2); distances.put("d4|d3", 0.2);
-            when(vectorStoreMapper.pairwiseCosineDistance(any())).thenReturn(distances);
+            when(vectorStoreMapper.pairwiseCosineDistance(any(), anyInt())).thenReturn(distances);
 
             List<Document> result = processor.process(query, docs);
 
@@ -208,7 +209,7 @@ class MmrDocumentPostProcessorTest {
                     doc("d3", Map.of("rrfScore", 0.6))
             );
 
-            when(vectorStoreMapper.pairwiseCosineDistance(any())).thenReturn(Map.of());
+            when(vectorStoreMapper.pairwiseCosineDistance(any(), anyInt())).thenReturn(Map.of());
 
             List<Document> result = processor.process(query, docs);
 
@@ -226,7 +227,7 @@ class MmrDocumentPostProcessorTest {
                     doc("d3", Map.of())
             );
 
-            when(vectorStoreMapper.pairwiseCosineDistance(any())).thenReturn(Map.of());
+            when(vectorStoreMapper.pairwiseCosineDistance(any(), anyInt())).thenReturn(Map.of());
 
             List<Document> result = processor.process(query, docs);
 
@@ -245,7 +246,7 @@ class MmrDocumentPostProcessorTest {
                     doc("d3", Map.of())
             );
 
-            when(vectorStoreMapper.pairwiseCosineDistance(any())).thenReturn(Map.of());
+            when(vectorStoreMapper.pairwiseCosineDistance(any(), anyInt())).thenReturn(Map.of());
 
             List<Document> result = processor.process(query, docs);
 

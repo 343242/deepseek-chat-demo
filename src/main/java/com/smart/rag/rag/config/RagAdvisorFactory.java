@@ -6,6 +6,7 @@ import com.smart.rag.rag.mapper.VectorStoreMapper;
 import com.smart.rag.rag.retrieval.RerankDocumentPostProcessor;
 import com.smart.rag.rag.retrieval.HybridDocumentRetriever;
 import com.smart.rag.rag.retrieval.MmrDocumentPostProcessor;
+import com.smart.rag.rag.retrieval.RerankThenMmrPostProcessor;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
@@ -18,12 +19,14 @@ import org.springframework.ai.rag.retrieval.search.DocumentRetriever;
 import org.springframework.ai.rag.retrieval.search.VectorStoreDocumentRetriever;
 import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.ai.vectorstore.filter.FilterExpressionBuilder;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
+import java.util.concurrent.ExecutorService;
 
 /**
  * RAG Advisor 工厂 -- 按请求动态创建带用户/团队隔离的 RetrievalAugmentationAdvisor
@@ -52,6 +55,9 @@ public class RagAdvisorFactory {
     /** Rerank 单例 Bean（null when rerank-enabled=false），生命周期由 Spring 容器管理 */
     private final RerankDocumentPostProcessor rerankPostProcessor;
 
+    /** 后处理并行 executor（Rerank⊥distance），独立于 ragSearchExecutor */
+    private final ExecutorService ragPostProcessExecutor;
+
     /** 缓存的 PostProcessor 列表，避免每次请求重建 */
     private volatile List<org.springframework.ai.rag.postretrieval.document.DocumentPostProcessor> cachedPostProcessors;
 
@@ -63,7 +69,8 @@ public class RagAdvisorFactory {
                              ParentDocumentPostProcessor parentDocumentPostProcessor,
                              QueryTransformer rewriteQueryTransformer,
                              ObjectMapper objectMapper,
-                             @Nullable RerankDocumentPostProcessor rerankPostProcessor) {
+                             @Nullable RerankDocumentPostProcessor rerankPostProcessor,
+                             @Qualifier("ragPostProcessExecutor") ExecutorService ragPostProcessExecutor) {
         this.vectorStore = vectorStore;
         this.vectorStoreMapper = vectorStoreMapper;
         this.jdbcTemplate = jdbcTemplate;
@@ -73,6 +80,7 @@ public class RagAdvisorFactory {
         this.rewriteQueryTransformer = rewriteQueryTransformer;
         this.objectMapper = objectMapper;
         this.rerankPostProcessor = rerankPostProcessor;
+        this.ragPostProcessExecutor = ragPostProcessExecutor;
     }
 
     /**
@@ -179,22 +187,25 @@ public class RagAdvisorFactory {
     private List<org.springframework.ai.rag.postretrieval.document.DocumentPostProcessor> buildPostProcessors() {
         List<org.springframework.ai.rag.postretrieval.document.DocumentPostProcessor> postProcessors = new ArrayList<>();
 
-        // 1. Rerank 语义精排（召回全量 → 精排，写 rerankScore 供后续 MMR 作相关性信号）
-        //    使用注入的单例 Bean，生命周期由 Spring 容器管理
-        if (rerankPostProcessor != null) {
+        boolean rerankOn = rerankPostProcessor != null;
+        boolean mmrOn = properties.mmrEnabled();
+
+        if (rerankOn && mmrOn) {
+            // 1. 复合处理器：Rerank(LLM 精排) ⊥ MMR distance 预取(DB) 并行 → MMR 贪心。
+            //    封装进单个 process() 是 Spring AI Advisor(final) postProcessor 链硬编码顺序下的唯一并行形态（design §2）。
+            MmrDocumentPostProcessor mmr = new MmrDocumentPostProcessor(
+                    properties.mmrLambda(), properties.mmrTopK(), properties.fusionTopK(), vectorStoreMapper);
+            postProcessors.add(new RerankThenMmrPostProcessor(rerankPostProcessor, mmr, ragPostProcessExecutor));
+        } else if (rerankOn) {
+            // 仅 Rerank（MMR 关闭）
             postProcessors.add(rerankPostProcessor);
-        }
-
-        // 2. MMR 多样性去冗余（精排后 → 去冗余，复用 rerankScore 作相关性，符合 MMR 设计本意）
-        if (properties.mmrEnabled()) {
+        } else if (mmrOn) {
+            // 仅 MMR（Rerank 关闭，MMR 用 rrfScore 作相关性 fallback）
             postProcessors.add(new MmrDocumentPostProcessor(
-                    properties.mmrLambda(),
-                    properties.mmrTopK(),
-                    vectorStoreMapper
-            ));
+                    properties.mmrLambda(), properties.mmrTopK(), properties.fusionTopK(), vectorStoreMapper));
         }
 
-        // 3. Parent-Child 子块→父文档替换
+        // 末步：Parent-Child 子块→父文档替换（串行，输入依赖精排+去冗余存活文档，无下游可重叠）
         postProcessors.add(parentDocumentPostProcessor);
 
         return postProcessors;

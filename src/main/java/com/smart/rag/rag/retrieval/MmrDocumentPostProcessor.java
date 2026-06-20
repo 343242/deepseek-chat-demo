@@ -30,6 +30,9 @@ import java.util.stream.Collectors;
  *   <li>sim(q,d) = 查询-文档相关性（使用 rerankScore）</li>
  *   <li>sim(d,d') = 文档间相似度（pgvector cosine distance → 1 - distance）</li>
  * </ul>
+ *
+ * <p>核心逻辑拆为包级 {@link #fetchDistanceMatrix(List)} + {@link #selectByMmr(Query, List, Map)}，
+ * 供 {@link RerankThenMmrPostProcessor} 并行编排（B3 无状态：纯函数 + 只读字段，跨请求共享安全）。</p>
  */
 public class MmrDocumentPostProcessor implements DocumentPostProcessor {
 
@@ -37,9 +40,11 @@ public class MmrDocumentPostProcessor implements DocumentPostProcessor {
 
     private final double lambda;
     private final int topK;
+    /** 召回上限，联动 pairwiseCosineDistance 截断阈值 max(MAX_PAIRWISE_DOCS, fusionTopK) */
+    private final int fusionTopK;
     private final VectorStoreMapper vectorStoreMapper;
 
-    public MmrDocumentPostProcessor(double lambda, int topK, VectorStoreMapper vectorStoreMapper) {
+    public MmrDocumentPostProcessor(double lambda, int topK, int fusionTopK, VectorStoreMapper vectorStoreMapper) {
         if (lambda < 0.0 || lambda > 1.0) {
             throw new IllegalArgumentException("MMR lambda must be in [0, 1], got: " + lambda);
         }
@@ -48,9 +53,10 @@ public class MmrDocumentPostProcessor implements DocumentPostProcessor {
         }
         this.lambda = lambda;
         this.topK = topK;
+        this.fusionTopK = fusionTopK;
         this.vectorStoreMapper = vectorStoreMapper;
-        log.info("MmrDocumentPostProcessor initialized: lambda={}, topK={}, similarity=pgvector_cosine",
-                lambda, topK);
+        log.info("MmrDocumentPostProcessor initialized: lambda={}, topK={}, fusionTopK={}, similarity=pgvector_cosine",
+                lambda, topK, fusionTopK);
     }
 
     @Override
@@ -58,34 +64,68 @@ public class MmrDocumentPostProcessor implements DocumentPostProcessor {
         if (documents == null || documents.isEmpty()) {
             return documents;
         }
-
         if (documents.size() <= topK) {
             return documents;
         }
+        Map<String, Double> distance = fetchDistanceMatrix(documents);
+        return selectByMmr(query, documents, distance);
+    }
 
+    /**
+     * 预取文档间 cosine 距离矩阵（DB pgvector），失败→null（调用方走 relevance-only 降级）。
+     * <p>
+     * 截断阈值联动 fusionTopK（{@code max(MAX_PAIRWISE_DOCS, fusionTopK)}），召回 60 时覆盖全 60 条，
+     * 避免 Rerank top20 落在 RRF 51-60 位时 distance key miss（被误判无冗余）。
+     * <p>
+     * B3 无状态：只读 vectorStoreMapper/fusionTopK 字段，无中间实例状态。
+     *
+     * @param documents 待计算距离的文档（复合处理器传召回全量，独立调用传 MMR 候选）
+     * @return 对称距离矩阵 key="idA|idB"，或 null（DB 失败降级）
+     */
+    Map<String, Double> fetchDistanceMatrix(List<Document> documents) {
+        List<String> docIds = documents.stream().map(Document::getId).toList();
+        try {
+            return vectorStoreMapper.pairwiseCosineDistance(docIds, fusionTopK);
+        } catch (Exception e) {
+            log.warn("MMR pairwise distance fetch failed, degrading to relevance-only: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * MMR 贪心选择。
+     * <ul>
+     *   <li>distance=null → relevance-only 降级（rerankScore/rrfScore 排序取 topK）</li>
+     *   <li>doc数 <= topK → 原样返回（保持原序，节省计算）</li>
+     *   <li>否则 → λ·relevance - (1-λ)·maxSim 贪心迭代</li>
+     * </ul>
+     * B3 无状态：只读 lambda/topK 字段。
+     *
+     * @param distance {@link #fetchDistanceMatrix} 预取的距离矩阵，null 走 relevance-only
+     */
+    List<Document> selectByMmr(Query query, List<Document> documents, Map<String, Double> distance) {
         int n = documents.size();
-
-        // 提取相关性分数（优先 rerankScore > rrfScore > 默认 0.5）
-        double[] relevanceScores = new double[n];
-        for (int i = 0; i < n; i++) {
-            relevanceScores[i] = resolveRelevanceScore(documents.get(i));
+        if (n == 0) {
+            return documents;
+        }
+        if (n <= topK) {
+            return documents;
         }
 
-        // 数据库层计算文档间 cosine distance 矩阵
-        // TODO: 热门文档可考虑短时缓存距离矩阵，避免重复 DB 查询（当前文档量小，暂不缓存）
-        // R1-L5: pairwiseCosineDistance 内部将 docIds 截断到 MAX_PAIRWISE_DOCS=50（O(n²) SQL 防御，
-        // 见 VectorStoreMapper，截断时 log.warn）——故 MMR 多样性计算基于最多 50 个文档的子集。
-        List<String> docIds = documents.stream().map(Document::getId).toList();
-        Map<String, Double> distanceMatrix;
-        try {
-            distanceMatrix = vectorStoreMapper.pairwiseCosineDistance(docIds);
-        } catch (Exception e) {
-            log.warn("MMR pairwise distance failed, degrading to relevance-only selection: {}", e.getMessage());
+        if (distance == null) {
+            log.debug("MMR relevance-only (distance unavailable): {} docs → {}", n, topK);
             return documents.stream()
                     .sorted(Comparator.comparingDouble(this::resolveRelevanceScore).reversed())
                     .limit(topK)
                     .collect(Collectors.toList());
         }
+
+        double[] relevanceScores = new double[n];
+        for (int i = 0; i < n; i++) {
+            relevanceScores[i] = resolveRelevanceScore(documents.get(i));
+        }
+
+        List<String> docIds = documents.stream().map(Document::getId).toList();
 
         // 贪心 MMR 选择
         List<Integer> selected = new ArrayList<>(topK);
@@ -109,14 +149,11 @@ public class MmrDocumentPostProcessor implements DocumentPostProcessor {
             for (int i = 0; i < n; i++) {
                 if (used[i]) continue;
 
-                // 相关性项
                 double relevance = relevanceScores[i];
-
-                // 冗余项：与已选文档的最大相似度（cosine similarity = 1 - cosine distance）
                 double maxSim = 0.0;
                 for (int selIdx : selected) {
                     String key = docIds.get(i) + "|" + docIds.get(selIdx);
-                    Double dist = distanceMatrix.get(key);
+                    Double dist = distance.get(key);
                     double sim = dist != null ? 1.0 - dist : 0.0;
                     maxSim = Math.max(maxSim, sim);
                 }
@@ -133,7 +170,6 @@ public class MmrDocumentPostProcessor implements DocumentPostProcessor {
             used[nextIdx] = true;
         }
 
-        // 构建结果
         List<Document> result = new ArrayList<>(selected.size());
         for (int idx : selected) {
             result.add(documents.get(idx));

@@ -18,6 +18,8 @@ public record RagRetrievalProperties(
         int bm25TopK,
         int rrfK,
         boolean rerankEnabled,
+        /** Rerank 精排保留的文档数（候选池），必须 > mmrTopK，否则调换顺序后 MMR 命中早退退化为 no-op */
+        int rerankTopN,
         boolean mmrEnabled,
         double mmrLambda,
         int mmrTopK,
@@ -30,6 +32,17 @@ public record RagRetrievalProperties(
     public RagRetrievalProperties {
         if (ftsConfig == null || ftsConfig.isBlank()) {
             ftsConfig = "jiebacfg";
+        }
+        // rerankTopN 未显式配置（<=0）时回退默认 20，保证旧 yml 不填仍可启动
+        if (rerankTopN <= 0) {
+            rerankTopN = 20;
+        }
+        // 候选池约束：rerankTopN 必须 > mmrTopK，否则调换顺序为 Rerank→MMR 后，
+        // MMR 命中 documents.size() <= topK 早退（MmrDocumentPostProcessor#process）退化为 no-op
+        if (rerankTopN <= mmrTopK) {
+            throw new IllegalArgumentException(
+                    "rerankTopN must be > mmrTopK (rerankTopN=" + rerankTopN
+                            + ", mmrTopK=" + mmrTopK + ")，否则 MMR 退化为 no-op");
         }
     }
 
@@ -47,6 +60,7 @@ public record RagRetrievalProperties(
                 bm25TopKOverride != null ? bm25TopKOverride : bm25TopK,
                 rrfKOverride != null ? rrfKOverride : rrfK,
                 rerankEnabled,
+                rerankTopN,
                 mmrEnabled,
                 mmrLambda,
                 mmrTopK,

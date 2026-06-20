@@ -108,8 +108,8 @@ public class RagAdvisorFactory {
     /**
      * 直接检索（方案 A：chat 路径不套 RetrievalAugmentationAdvisor 壳）。
      * <p>
-     * 复刻 {@link #create} 的内部编排：query-transform → 隔离检索 → postProcessor（MMR/Rerank/Parent）逐个 process。
-     * 100% 复用隔离 + MMR + Rerank + Parent 组件，召回行为与改造前一致；返回原始 Document 列表，
+     * 复刻 {@link #create} 的内部编排：query-transform → 隔离检索 → postProcessor（Rerank/MMR/Parent）逐个 process。
+     * 100% 复用隔离 + Rerank + MMR + Parent 组件，召回行为与 create() 路径一致；返回原始 Document 列表，
      * 由 {@code ChatReferenceCollector} 统一编号 + 拼 {@code <<REF>>} 块。
      */
     public List<Document> retrieve(String query, Long userId, @Nullable Long teamId) {
@@ -179,19 +179,19 @@ public class RagAdvisorFactory {
     private List<org.springframework.ai.rag.postretrieval.document.DocumentPostProcessor> buildPostProcessors() {
         List<org.springframework.ai.rag.postretrieval.document.DocumentPostProcessor> postProcessors = new ArrayList<>();
 
-        // 1. MMR 多样性去冗余（粗召回 → 去重，减少后续 Rerank 算力浪费）
+        // 1. Rerank 语义精排（召回全量 → 精排，写 rerankScore 供后续 MMR 作相关性信号）
+        //    使用注入的单例 Bean，生命周期由 Spring 容器管理
+        if (rerankPostProcessor != null) {
+            postProcessors.add(rerankPostProcessor);
+        }
+
+        // 2. MMR 多样性去冗余（精排后 → 去冗余，复用 rerankScore 作相关性，符合 MMR 设计本意）
         if (properties.mmrEnabled()) {
             postProcessors.add(new MmrDocumentPostProcessor(
                     properties.mmrLambda(),
                     properties.mmrTopK(),
                     vectorStoreMapper
             ));
-        }
-
-        // 2. Rerank 语义精排（去冗余后 → 精排，聚焦有效候选）
-        //    使用注入的单例 Bean，生命周期由 Spring 容器管理
-        if (rerankPostProcessor != null) {
-            postProcessors.add(rerankPostProcessor);
         }
 
         // 3. Parent-Child 子块→父文档替换

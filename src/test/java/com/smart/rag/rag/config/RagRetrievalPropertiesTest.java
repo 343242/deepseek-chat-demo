@@ -5,6 +5,7 @@ import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @DisplayName("RagRetrievalProperties")
 class RagRetrievalPropertiesTest {
@@ -20,6 +21,7 @@ class RagRetrievalPropertiesTest {
                     true, true, "jiebacfg",
                     30, 30, 60,
                     false,
+                    20,
                     true, 0.5, 10, 0.5,
                     null, null
             );
@@ -34,11 +36,45 @@ class RagRetrievalPropertiesTest {
                     true, true, "jiebacfg",
                     30, 30, 60,
                     false,
+                    20,
                     true, 0.5, 10, 0.5,
                     "deepseek/deepseek-chat", 0.2
             );
             assertThat(props.queryRewriteModel()).isEqualTo("deepseek/deepseek-chat");
             assertThat(props.queryRewriteTemperature()).isEqualTo(0.2);
+        }
+    }
+
+    @Nested
+    @DisplayName("候选池校验（rerankTopN vs mmrTopK）")
+    class CandidatePoolValidationTest {
+
+        @Test
+        @DisplayName("rerankTopN <= mmrTopK 时构造抛异常（避免调换顺序后 MMR 退化为 no-op）")
+        void rerankTopNMustBeGreaterThanMmrTopK() {
+            assertThatThrownBy(() -> new RagRetrievalProperties(
+                    true, true, "jiebacfg",
+                    30, 30, 60,
+                    true,
+                    5,
+                    true, 0.7, 10, 0.5,
+                    null, null
+            )).isInstanceOf(IllegalArgumentException.class)
+              .hasMessageContaining("rerankTopN must be > mmrTopK");
+        }
+
+        @Test
+        @DisplayName("rerankTopN 未配置（<=0）回退默认 20")
+        void rerankTopNDefaultsTo20WhenUnset() {
+            var props = new RagRetrievalProperties(
+                    true, true, "jiebacfg",
+                    30, 30, 60,
+                    false,
+                    0,
+                    false, 0.7, 5, 0.5,
+                    null, null
+            );
+            assertThat(props.rerankTopN()).isEqualTo(20);
         }
     }
 }

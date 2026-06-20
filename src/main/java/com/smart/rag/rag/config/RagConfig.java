@@ -81,7 +81,7 @@ public class RagConfig {
             LlmClientRegistry llmClientRegistry,
             RagRetrievalProperties properties) {
         RerankCapable reranker = llmClientRegistry.getDefault(LlmCapability.RERANKING, RerankCapable.class);
-        log.info("RerankDocumentPostProcessor registered: candidate={}", reranker.candidateId());
-        return new RerankDocumentPostProcessor(reranker, 10);
+        log.info("RerankDocumentPostProcessor registered: candidate={}, topN={}", reranker.candidateId(), properties.rerankTopN());
+        return new RerankDocumentPostProcessor(reranker, properties.rerankTopN());
     }
 }

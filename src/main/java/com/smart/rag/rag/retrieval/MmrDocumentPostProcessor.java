@@ -157,7 +157,7 @@ public class MmrDocumentPostProcessor implements DocumentPostProcessor {
             return ((Number) rrfScore).doubleValue();
         }
         log.debug("No rerankScore/rrfScore in metadata for doc {}, falling back to 0.5 " +
-                "(expected when MMR runs before Rerank)", doc.getId());
+                "(Rerank→MMR 顺序下罕见：仅 Rerank 关闭/透传且 rrfScore 缺失时)", doc.getId());
         return 0.5;
     }
 }

@@ -26,7 +26,7 @@ class UserUpdateRequestTest {
     @Test
     @DisplayName("所有字段合法 → 0 violations")
     void allFieldsValid() {
-        UserUpdateRequest req = new UserUpdateRequest("nickname", "test@example.com", "13800138000", "avatar.png");
+        UserUpdateRequest req = new UserUpdateRequest("nickname", "test@example.com", "13800138000", "https://cdn.example.com/a.png");
         Set<ConstraintViolation<UserUpdateRequest>> violations = validator.validate(req);
         assertThat(violations).isEmpty();
     }

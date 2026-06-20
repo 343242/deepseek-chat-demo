@@ -60,7 +60,7 @@ class AuthControllerTest {
         @Test
         @DisplayName("register_validRequest → 200")
         void register_validRequest() throws Exception {
-            when(authService.register(anyString(), anyString(), anyString(), any(), anyString(), anyString()))
+            when(authService.register(anyString(), anyString(), anyString(), any(), anyString(), anyString(), any()))
                     .thenReturn(buildUserInfo());
 
             mockMvc.perform(post("/api/auth/register")

@@ -1,6 +1,7 @@
 package com.smart.rag.user.controller;
 
 import com.smart.rag.infrastructure.response.GlobalResponse;
+import com.smart.rag.user.dto.AssignPermissionsResult;
 import com.smart.rag.user.dto.AssignPermissionsRequest;
 import com.smart.rag.user.dto.CreateRoleRequest;
 import com.smart.rag.user.dto.PermissionVO;
@@ -14,7 +15,6 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
-import java.util.Map;
 
 /**
  * 角色管理控制器 — 仅负责 HTTP 请求/响应的转发
@@ -64,14 +64,10 @@ public class RoleController {
     }
 
     @PostMapping("/{id}/permissions/update")
-    public GlobalResponse<Map<String, Object>> assignPermissions(@PathVariable Long id,
-                                                                   @Valid @RequestBody AssignPermissionsRequest request) {
+    public GlobalResponse<AssignPermissionsResult> assignPermissions(@PathVariable Long id,
+                                                                       @Valid @RequestBody AssignPermissionsRequest request) {
         roleService.assignPermissions(id, request.permissionIds());
-        return GlobalResponse.ok(Map.of(
-                "roleId", id,
-                "permissionIds", request.permissionIds(),
-                "message", "权限已更新"
-        ));
+        return GlobalResponse.ok(new AssignPermissionsResult(id, request.permissionIds(), "权限已更新"));
     }
 
     @GetMapping("/permissions")

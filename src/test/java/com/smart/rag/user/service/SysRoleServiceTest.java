@@ -161,6 +161,11 @@ class SysRoleServiceTest {
             role.setId(1L);
             when(roleMapper.selectById(1L)).thenReturn(role);
             when(permissionMapper.selectByIds(List.of(999L))).thenReturn(List.of());
+            doAnswer(invocation -> {
+                java.util.function.Consumer<org.springframework.transaction.TransactionStatus> consumer = invocation.getArgument(0);
+                consumer.accept(null);
+                return null;
+            }).when(transactionTemplate).executeWithoutResult(any());
 
             assertThrows(ServiceException.class,
                     () -> sysRoleService.assignPermissions(1L, List.of(999L)));

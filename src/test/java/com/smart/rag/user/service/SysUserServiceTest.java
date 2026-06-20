@@ -159,6 +159,11 @@ class SysUserServiceTest {
             SysUser user = buildUser();
             when(userMapper.selectById(1L)).thenReturn(user);
             when(roleMapper.selectByIds(List.of(999L))).thenReturn(List.of());
+            doAnswer(invocation -> {
+                java.util.function.Consumer<org.springframework.transaction.TransactionStatus> consumer = invocation.getArgument(0);
+                consumer.accept(null);
+                return null;
+            }).when(transactionTemplate).executeWithoutResult(any());
 
             assertThrows(ServiceException.class,
                     () -> sysUserService.assignRoles(1L, new AssignRolesRequest(List.of(999L))));

@@ -44,6 +44,9 @@ public class AuthServiceImpl implements AuthService {
 
     private static final String PASSWORD_RULE_MSG = "密码需8-72位，不允许空白字符，需包含大写字母、小写字母、数字、特殊字符中至少3种";
 
+    /** 注册时分配的默认角色名 */
+    private static final String DEFAULT_ROLE_NAME = "USER";
+
     private static final Logger log = LoggerFactory.getLogger(AuthServiceImpl.class);
 
     private final SysUserMapper sysUserMapper;
@@ -88,21 +91,26 @@ public class AuthServiceImpl implements AuthService {
     @Override
     public LoginResult login(String username, String password, String ip,
                                 String captchaId, String captchaCode) {
-        // 1. IP rate limit — 合并检查+递增为单次 Redis 往返
+        // 1. Captcha first — 错误验证码不应消耗 IP 登录次数（避免被用来恶意锁死账户）
+        validateCaptcha(captchaId, captchaCode);
+
+        // 2. IP rate limit — 合并检查+递增为单次 Redis 往返
         long attemptCount = tokenCacheService.checkAndIncrementLoginAttempts(ip);
         if (attemptCount < 0) {
+            log.warn("Login rate-limited: ip={}, username={}", ip, username);
             throw new RateLimitExceededException("登录尝试过于频繁，请5分钟后再试");
         }
 
-        // 2. Captcha validation
-        validateCaptcha(captchaId, captchaCode);
-
         // 3. Query user
         SysUser user = sysUserMapper.selectByUsername(username)
-                .orElseThrow(() -> new ClientException(ClientErrorCode.LOGIN_FAILED));
+                .orElseThrow(() -> {
+                    log.warn("Login failed (user not found): ip={}, username={}", ip, username);
+                    return new ClientException(ClientErrorCode.LOGIN_FAILED);
+                });
 
         // 4. Verify password
         if (!passwordEncoder.matches(password, user.getPassword())) {
+            log.warn("Login failed (bad password): ip={}, username={}", ip, username);
             throw new ClientException(ClientErrorCode.LOGIN_FAILED);
         }
 
@@ -143,8 +151,16 @@ public class AuthServiceImpl implements AuthService {
 
     @Override
     public LoginResponse.UserInfo register(String username, String password, String email,
-                                            String nickname, String captchaId, String captchaCode) {
+                                            String nickname, String captchaId, String captchaCode, String ip) {
         validateCaptcha(captchaId, captchaCode);
+
+        if (ip != null) {
+            long attemptCount = tokenCacheService.checkAndIncrementLoginAttempts(ip);
+            if (attemptCount < 0) {
+                log.warn("Register rate-limited: ip={}, username={}", ip, username);
+                throw new RateLimitExceededException("注册尝试过于频繁，请5分钟后再试");
+            }
+        }
 
         String normalizedUsername = username.trim();
         String normalizedEmail = email.trim().toLowerCase(Locale.ROOT);
@@ -163,12 +179,13 @@ public class AuthServiceImpl implements AuthService {
                 user.setUsername(normalizedUsername);
                 user.setPassword(encodedPassword);
                 user.setEmail(normalizedEmail);
-                user.setNickname(nickname != null ? nickname.trim() : normalizedUsername);
+                user.setNickname((nickname == null || nickname.isBlank()) ? normalizedUsername : nickname.trim());
                 user.setStatus(1);
                 sysUserMapper.insert(user);
 
-                SysRole userRole = sysRoleMapper.selectByRoleName("USER")
-                        .orElseThrow(() -> new RuntimeException("默认 USER 角色未找到，请检查数据库初始化"));
+                SysRole userRole = sysRoleMapper.selectByRoleName(DEFAULT_ROLE_NAME)
+                        .orElseThrow(() -> new ServiceException(ServiceErrorCode.ROLE_NOT_FOUND,
+                                "默认 " + DEFAULT_ROLE_NAME + " 角色未找到，请检查数据库初始化"));
                 SysUserRole userRoleBinding = new SysUserRole();
                 userRoleBinding.setUserId(user.getId());
                 userRoleBinding.setRoleId(userRole.getId());
@@ -181,12 +198,12 @@ public class AuthServiceImpl implements AuthService {
         }
 
         if (newUser == null) {
-            throw new RuntimeException("注册失败");
+            throw new ServiceException(ServiceErrorCode.INTERNAL_ERROR, "注册失败");
         }
 
         return new LoginResponse.UserInfo(
             newUser.getId(), newUser.getUsername(), newUser.getNickname(),
-            newUser.getEmail(), newUser.getAvatar(), List.of("USER")
+            newUser.getEmail(), newUser.getAvatar(), List.of(DEFAULT_ROLE_NAME)
         );
     }
 
@@ -282,8 +299,13 @@ public class AuthServiceImpl implements AuthService {
         user.setPassword(passwordEncoder.encode(newPassword));
         sysUserMapper.updateById(user);
 
-        tokenCacheService.revokeAllTokens(userId);
-        tokenCacheService.evictUserPermissions(userId);
+        // DB 已提交；Redis 撤销/驱逐失败仅记 WARN（旧 token 最迟在 access 过期或下次状态校验时失效）
+        try {
+            tokenCacheService.revokeAllTokens(userId);
+            tokenCacheService.evictUserPermissions(userId);
+        } catch (Exception e) {
+            log.warn("Post-changePassword Redis cleanup failed (userId={}): old tokens may remain valid until expiry", userId, e);
+        }
     }
 
     @Override

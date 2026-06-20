@@ -17,7 +17,7 @@ public interface AuthService {
                       String captchaId, String captchaCode);
 
     LoginResponse.UserInfo register(String username, String password, String email,
-                                    String nickname, String captchaId, String captchaCode);
+                                    String nickname, String captchaId, String captchaCode, String ip);
 
     LoginResult refreshToken(String refreshToken);
 

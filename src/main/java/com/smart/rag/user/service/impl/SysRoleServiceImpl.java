@@ -117,14 +117,14 @@ public class SysRoleServiceImpl implements SysRoleService {
 
         List<Long> uniquePermIds = permissionIds.stream().distinct().toList();
 
-        List<SysPermission> existingPerms = permissionMapper.selectByIds(uniquePermIds);
-        if (existingPerms.size() != uniquePermIds.size()) {
-            Set<Long> found = existingPerms.stream().map(SysPermission::getId).collect(Collectors.toSet());
-            List<Long> missing = uniquePermIds.stream().filter(pid -> !found.contains(pid)).toList();
-            throw new ServiceException(ServiceErrorCode.PERMISSION_NOT_FOUND, "权限不存在: " + missing);
-        }
-
         transactionTemplate.executeWithoutResult(status -> {
+            // 存在性校验放入事务，关闭 TOCTOU（校验与写入原子）
+            List<SysPermission> existingPerms = permissionMapper.selectByIds(uniquePermIds);
+            if (existingPerms.size() != uniquePermIds.size()) {
+                Set<Long> found = existingPerms.stream().map(SysPermission::getId).collect(Collectors.toSet());
+                List<Long> missing = uniquePermIds.stream().filter(pid -> !found.contains(pid)).toList();
+                throw new ServiceException(ServiceErrorCode.PERMISSION_NOT_FOUND, "权限不存在: " + missing);
+            }
             rolePermissionMapper.deleteByRoleId(roleId);
 
             List<SysRolePermission> bindings = uniquePermIds.stream()

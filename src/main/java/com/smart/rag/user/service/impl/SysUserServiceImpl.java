@@ -55,7 +55,6 @@ public class SysUserServiceImpl implements SysUserService {
         PageRequest req = PageRequest.of(page, size);
         var pageResult = userMapper.selectPage(req.toPage(),
                 new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<SysUser>()
-                        .eq(SysUser::getDeleted, 0)
                         .and(keyword != null && !keyword.isBlank(), w ->
                                 w.like(SysUser::getUsername, keyword)
                                         .or().like(SysUser::getNickname, keyword))
@@ -79,6 +78,7 @@ public class SysUserServiceImpl implements SysUserService {
         if (!UserStatus.isValid(status)) {
             throw new ClientException(ClientErrorCode.USER_STATUS_INVALID);
         }
+        int code = status;  // isValid 已确保非 null，单次拆箱避免反复自动拆箱
         SysUser user = userMapper.selectById(id);
         if (user == null) {
             throw new ServiceException(ServiceErrorCode.USER_NOT_FOUND);
@@ -86,13 +86,13 @@ public class SysUserServiceImpl implements SysUserService {
         user.setStatus(status);
         userMapper.updateById(user);
 
-        if (status == UserStatus.DISABLED.code) {
+        if (code == UserStatus.DISABLED.code) {
             authService.revokeAllUserTokens(id);
-        } else if (status == UserStatus.ENABLED.code) {
+        } else if (code == UserStatus.ENABLED.code) {
             tokenCacheService.clearUserStatus(id);
         }
 
-        return new UserStatusUpdateResult(id, status, status == UserStatus.ENABLED.code ? "已启用" : "已禁用");
+        return new UserStatusUpdateResult(id, status, code == UserStatus.ENABLED.code ? "已启用" : "已禁用");
     }
 
     @Override
@@ -104,14 +104,14 @@ public class SysUserServiceImpl implements SysUserService {
 
         List<Long> uniqueRoleIds = request.roleIds().stream().distinct().toList();
 
-        List<SysRole> existingRoles = roleMapper.selectByIds(uniqueRoleIds);
-        if (existingRoles.size() != uniqueRoleIds.size()) {
-            Set<Long> found = existingRoles.stream().map(SysRole::getId).collect(Collectors.toSet());
-            List<Long> missing = uniqueRoleIds.stream().filter(rid -> !found.contains(rid)).toList();
-            throw new ServiceException(ServiceErrorCode.ROLE_NOT_FOUND, "角色不存在: " + missing);
-        }
-
         transactionTemplate.executeWithoutResult(status -> {
+            // 存在性校验放入事务，关闭 TOCTOU（校验与写入原子）
+            List<SysRole> existingRoles = roleMapper.selectByIds(uniqueRoleIds);
+            if (existingRoles.size() != uniqueRoleIds.size()) {
+                Set<Long> found = existingRoles.stream().map(SysRole::getId).collect(Collectors.toSet());
+                List<Long> missing = uniqueRoleIds.stream().filter(rid -> !found.contains(rid)).toList();
+                throw new ServiceException(ServiceErrorCode.ROLE_NOT_FOUND, "角色不存在: " + missing);
+            }
             userRoleMapper.deleteByUserId(id);
             List<SysUserRole> bindings = uniqueRoleIds.stream()
                     .map(roleId -> {

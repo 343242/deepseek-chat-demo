@@ -44,10 +44,12 @@ public class AuthController {
     }
 
     @PostMapping("/register")
-    public GlobalResponse<LoginResponse.UserInfo> register(@Valid @RequestBody RegisterRequest request) {
+    public GlobalResponse<LoginResponse.UserInfo> register(@Valid @RequestBody RegisterRequest request,
+                                                            HttpServletRequest httpRequest) {
         return GlobalResponse.ok(authService.register(
                 request.username(), request.password(), request.email(),
-                request.nickname(), request.captchaId(), request.captchaCode()
+                request.nickname(), request.captchaId(), request.captchaCode(),
+                httpRequest.getRemoteAddr()
         ));
     }
 

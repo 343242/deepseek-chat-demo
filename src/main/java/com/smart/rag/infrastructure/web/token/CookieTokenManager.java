@@ -79,6 +79,7 @@ public class CookieTokenManager {
     private Cookie buildExpiredCookie(String name, String path) {
         Cookie cookie = new Cookie(name, "");
         cookie.setHttpOnly(true);
+        cookie.setSecure(jwtProperties.cookieSecure());
         cookie.setPath(path);
         cookie.setMaxAge(0);
         cookie.setAttribute("SameSite", "Lax");

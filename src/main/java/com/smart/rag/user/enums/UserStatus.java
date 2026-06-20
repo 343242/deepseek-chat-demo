@@ -15,13 +15,6 @@ public enum UserStatus {
         this.desc = desc;
     }
 
-    public static UserStatus fromCode(int code) {
-        for (UserStatus s : values()) {
-            if (s.code == code) return s;
-        }
-        throw new IllegalArgumentException("无效的用户状态: " + code);
-    }
-
     public static boolean isValid(int code) {
         return code == 0 || code == 1;
     }

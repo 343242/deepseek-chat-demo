@@ -113,6 +113,7 @@ class AuthServiceTest {
         @Test
         @DisplayName("login_rateLimited: 限流时抛 RateLimitExceededException")
         void login_rateLimited() {
+            when(captchaService.validate(anyString(), anyInt())).thenReturn(true);
             when(tokenCacheService.checkAndIncrementLoginAttempts("127.0.0.1")).thenReturn(-1L);
 
             assertThrows(RateLimitExceededException.class,
@@ -206,7 +207,7 @@ class AuthServiceTest {
                 return cb.doInTransaction(null);
             });
 
-            LoginResponse.UserInfo result = authService.register("newuser", "Password1!", "new@example.com", "Nick", "cap-id", "150");
+            LoginResponse.UserInfo result = authService.register("newuser", "Password1!", "new@example.com", "Nick", "cap-id", "150", null);
 
             assertNotNull(result);
             assertEquals("newuser", result.username());
@@ -219,7 +220,7 @@ class AuthServiceTest {
             when(transactionTemplate.execute(any())).thenThrow(new DuplicateKeyException("dup"));
 
             assertThrows(ClientException.class,
-                    () -> authService.register("existing", "Password1!", "new@example.com", "Nick", "cap-id", "150"));
+                    () -> authService.register("existing", "Password1!", "new@example.com", "Nick", "cap-id", "150", null));
         }
 
         @Test
@@ -228,7 +229,7 @@ class AuthServiceTest {
             when(captchaService.validate(anyString(), anyInt())).thenReturn(true);
 
             assertThrows(ClientException.class,
-                    () -> authService.register("user", "123", "new@example.com", "Nick", "cap-id", "150"));
+                    () -> authService.register("user", "123", "new@example.com", "Nick", "cap-id", "150", null));
         }
 
         @Test
@@ -240,7 +241,7 @@ class AuthServiceTest {
                 return cb.doInTransaction(null);
             });
 
-            LoginResponse.UserInfo result = authService.register("newuser", "Password1!", "New@EXAMPLE.com", "Nick", "cap-id", "150");
+            LoginResponse.UserInfo result = authService.register("newuser", "Password1!", "New@EXAMPLE.com", "Nick", "cap-id", "150", null);
 
             assertEquals("new@example.com", result.email());
         }
@@ -255,7 +256,7 @@ class AuthServiceTest {
         private void assertPasswordRejected(String password) {
             when(captchaService.validate(anyString(), anyInt())).thenReturn(true);
             assertThrows(ClientException.class,
-                    () -> authService.register("user", password, "e@e.com", "n", "c", "1"));
+                    () -> authService.register("user", password, "e@e.com", "n", "c", "1", null));
         }
 
         @Test @DisplayName("太短 <8 位被拒绝")
@@ -277,7 +278,7 @@ class AuthServiceTest {
                 org.springframework.transaction.support.TransactionCallback<?> cb = inv.getArgument(0);
                 return cb.doInTransaction(null);
             });
-            assertDoesNotThrow(() -> authService.register("user", "Password1", "e@e.com", "n", "c", "1"));
+            assertDoesNotThrow(() -> authService.register("user", "Password1", "e@e.com", "n", "c", "1", null));
         }
 
         private void setupRegisterMocks_forPassword() {

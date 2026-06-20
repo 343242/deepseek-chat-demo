@@ -1,0 +1,30 @@
+{
+  "id": "rag-rerank-mmr-reorder",
+  "name": "rag-rerank-mmr-reorder",
+  "title": "RAG 链路调换 Rerank/MMR 顺序 + 并行化",
+  "description": "先Rerank精排(20)再MMR去重(10)；复合处理器并行封装distance预取；topN提参；虚拟线程pinning验证；EvaluationRunner A/B",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P1",
+  "creator": "instant",
+  "assignee": "instant",
+  "createdAt": "2026-06-20",
+  "completedAt": "2026-06-21",
+  "branch": null,
+  "base_branch": "agentic-rag-dev",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "06-20-rag-reorder-core",
+    "06-20-rag-fusion-pairwise",
+    "06-20-rag-parallel-cf"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

@@ -5,6 +5,7 @@ import com.smart.rag.infrastructure.exception.ServiceException;
 import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;
 import com.smart.rag.infrastructure.exception.errorcode.ServiceErrorCode;
 import com.smart.rag.infrastructure.web.service.TokenCacheService;
+import com.smart.rag.user.dto.AssignPermissionsResult;
 import com.smart.rag.user.dto.PermissionVO;
 import com.smart.rag.user.dto.RoleDetailVO;
 import com.smart.rag.user.dto.RoleVO;
@@ -151,6 +152,19 @@ public class SysRoleServiceImpl implements SysRoleService {
         return rolePermissionMapper.selectPermissionsByRoleId(roleId).stream()
                 .map(SysRoleServiceImpl::toPermissionVO)
                 .toList();
+    }
+
+    @Override
+    public AssignPermissionsResult clearPermissions(Long roleId) {
+        SysRole role = roleMapper.selectById(roleId);
+        if (role == null) {
+            throw new ServiceException(ServiceErrorCode.ROLE_NOT_FOUND);
+        }
+        // 提交前捕获受影响用户，提交后驱逐权限缓存
+        List<Long> userIds = userRoleMapper.selectUserIdsByRoleId(roleId);
+        transactionTemplate.executeWithoutResult(status -> rolePermissionMapper.deleteByRoleId(roleId));
+        userIds.forEach(tokenCacheService::evictUserPermissions);
+        return new AssignPermissionsResult(roleId, List.of(), "权限已清空");
     }
 
     // ==================== Entity → VO 转换 ====================

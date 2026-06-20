@@ -70,6 +70,11 @@ public class RoleController {
         return GlobalResponse.ok(new AssignPermissionsResult(id, request.permissionIds(), "权限已更新"));
     }
 
+    @PostMapping("/{id}/permissions/clear")
+    public GlobalResponse<AssignPermissionsResult> clearPermissions(@PathVariable Long id) {
+        return GlobalResponse.ok(roleService.clearPermissions(id));
+    }
+
     @GetMapping("/permissions")
     public GlobalResponse<List<PermissionVO>> listAllPermissions() {
         return GlobalResponse.ok(permissionService.listPermissions());

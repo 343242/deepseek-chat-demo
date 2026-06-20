@@ -132,6 +132,17 @@ public class SysUserServiceImpl implements SysUserService {
     }
 
     @Override
+    public RoleAssignResult clearRoles(Long id) {
+        SysUser user = userMapper.selectById(id);
+        if (user == null) {
+            throw new ServiceException(ServiceErrorCode.USER_NOT_FOUND);
+        }
+        transactionTemplate.executeWithoutResult(status -> userRoleMapper.deleteByUserId(id));
+        tokenCacheService.evictUserPermissions(id);
+        return new RoleAssignResult(id, List.of(), "角色已清空");
+    }
+
+    @Override
     public UserDeleteResult deleteUser(Long id) {
         SysUser user = userMapper.selectById(id);
         if (user == null) {

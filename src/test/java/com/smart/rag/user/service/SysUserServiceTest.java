@@ -168,6 +168,24 @@ class SysUserServiceTest {
             assertThrows(ServiceException.class,
                     () -> sysUserService.assignRoles(1L, new AssignRolesRequest(List.of(999L))));
         }
+
+        @Test
+        @DisplayName("clearRoles_success: 清空用户全部角色 + 清缓存")
+        void clearRoles_success() {
+            SysUser user = buildUser();
+            when(userMapper.selectById(1L)).thenReturn(user);
+            doAnswer(invocation -> {
+                java.util.function.Consumer<org.springframework.transaction.TransactionStatus> consumer = invocation.getArgument(0);
+                consumer.accept(null);
+                return null;
+            }).when(transactionTemplate).executeWithoutResult(any());
+
+            RoleAssignResult result = sysUserService.clearRoles(1L);
+
+            assertTrue(result.roleIds().isEmpty());
+            verify(userRoleMapper).deleteByUserId(1L);
+            verify(tokenCacheService).evictUserPermissions(1L);
+        }
     }
 
     @Nested

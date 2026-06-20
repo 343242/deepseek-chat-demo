@@ -18,5 +18,8 @@ public interface SysUserService {
 
     RoleAssignResult assignRoles(Long id, AssignRolesRequest request);
 
+    /** 清空用户的全部角色（显式操作，区别于 assign 的 @NotEmpty 护栏；管理员谨慎使用，避免清空自身角色导致失权） */
+    RoleAssignResult clearRoles(Long id);
+
     UserDeleteResult deleteUser(Long id);
 }

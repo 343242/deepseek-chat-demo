@@ -1,5 +1,6 @@
 package com.smart.rag.user.service;
 
+import com.smart.rag.user.dto.AssignPermissionsResult;
 import com.smart.rag.user.dto.PermissionVO;
 import com.smart.rag.user.dto.RoleDetailVO;
 import com.smart.rag.user.dto.RoleVO;
@@ -20,4 +21,7 @@ public interface SysRoleService {
     void assignPermissions(Long roleId, List<Long> permissionIds);
 
     List<PermissionVO> getRolePermissions(Long roleId);
+
+    /** 清空角色的全部权限（显式操作，区别于 assignPermissions 的 @NotEmpty 护栏） */
+    AssignPermissionsResult clearPermissions(Long roleId);
 }

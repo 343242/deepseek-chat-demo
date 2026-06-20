@@ -50,6 +50,11 @@ public class UserController {
         return GlobalResponse.ok(sysUserService.assignRoles(id, request));
     }
 
+    @PostMapping("/{id}/roles/clear")
+    public GlobalResponse<RoleAssignResult> clearRoles(@PathVariable Long id) {
+        return GlobalResponse.ok(sysUserService.clearRoles(id));
+    }
+
     @PostMapping("/{id}/delete")
     public GlobalResponse<UserDeleteResult> deleteUser(@PathVariable Long id) {
         return GlobalResponse.ok(sysUserService.deleteUser(id));

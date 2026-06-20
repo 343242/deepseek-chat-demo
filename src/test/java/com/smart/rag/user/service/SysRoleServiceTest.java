@@ -4,6 +4,7 @@ import com.smart.rag.user.service.impl.SysRoleServiceImpl;
 import com.smart.rag.infrastructure.exception.ClientException;
 import com.smart.rag.infrastructure.exception.ServiceException;
 import com.smart.rag.infrastructure.web.service.TokenCacheService;
+import com.smart.rag.user.dto.AssignPermissionsResult;
 import com.smart.rag.user.dto.RoleVO;
 import com.smart.rag.user.entity.SysPermission;
 import com.smart.rag.user.entity.SysRole;
@@ -178,6 +179,26 @@ class SysRoleServiceTest {
 
             assertThrows(ServiceException.class,
                     () -> sysRoleService.assignPermissions(999L, List.of(10L)));
+        }
+
+        @Test
+        @DisplayName("clearPermissions_success: 清空角色全部权限 + 驱逐受影响用户缓存")
+        void clearPermissions_success() {
+            SysRole role = new SysRole();
+            role.setId(1L);
+            when(roleMapper.selectById(1L)).thenReturn(role);
+            when(userRoleMapper.selectUserIdsByRoleId(1L)).thenReturn(List.of(10L));
+            doAnswer(invocation -> {
+                java.util.function.Consumer<org.springframework.transaction.TransactionStatus> consumer = invocation.getArgument(0);
+                consumer.accept(null);
+                return null;
+            }).when(transactionTemplate).executeWithoutResult(any());
+
+            AssignPermissionsResult result = sysRoleService.clearPermissions(1L);
+
+            assertTrue(result.permissionIds().isEmpty());
+            verify(rolePermissionMapper).deleteByRoleId(1L);
+            verify(tokenCacheService).evictUserPermissions(10L);
         }
     }
 }

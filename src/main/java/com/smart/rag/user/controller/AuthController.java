@@ -67,10 +67,10 @@ public class AuthController {
     }
 
     @PostMapping("/refresh")
-    public GlobalResponse<LoginResponse> refresh(@RequestBody(required = false) @Valid RefreshRequest request,
-                                                  HttpServletRequest httpRequest,
+    public GlobalResponse<LoginResponse> refresh(HttpServletRequest httpRequest,
                                                   HttpServletResponse httpResponse) {
-        String refreshToken = resolveRefreshToken(request, httpRequest);
+        // refresh token 仅从 HttpOnly cookie 读取（纯浏览器客户端，禁止 body 携带以防 XSS 窃取）
+        String refreshToken = cookieTokenManager.extractRefreshToken(httpRequest);
         if (refreshToken == null || refreshToken.isBlank()) {
             throw new ClientException(ClientErrorCode.REFRESH_TOKEN_MISSING);
         }
@@ -104,14 +104,5 @@ public class AuthController {
     public GlobalResponse<LoginResponse.UserInfo> updateProfile(@Valid @RequestBody UserUpdateRequest request) {
         Long userId = SecurityUtils.getCurrentUserId();
         return GlobalResponse.ok(authService.updateProfile(userId, request));
-    }
-
-    // ==================== Private ====================
-
-    private String resolveRefreshToken(RefreshRequest request, HttpServletRequest httpRequest) {
-        if (request != null && request.refreshToken() != null) {
-            return request.refreshToken();
-        }
-        return cookieTokenManager.extractRefreshToken(httpRequest);
     }
 }

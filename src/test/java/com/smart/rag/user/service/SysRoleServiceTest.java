@@ -4,6 +4,7 @@ import com.smart.rag.user.service.impl.SysRoleServiceImpl;
 import com.smart.rag.infrastructure.exception.ClientException;
 import com.smart.rag.infrastructure.exception.ServiceException;
 import com.smart.rag.infrastructure.web.service.TokenCacheService;
+import com.smart.rag.user.dto.RoleVO;
 import com.smart.rag.user.entity.SysPermission;
 import com.smart.rag.user.entity.SysRole;
 import com.smart.rag.user.mapper.SysPermissionMapper;
@@ -50,9 +51,9 @@ class SysRoleServiceTest {
             when(roleMapper.selectByRoleName("EDITOR")).thenReturn(Optional.empty());
             when(roleMapper.insert(any(SysRole.class))).thenReturn(1);
 
-            SysRole result = sysRoleService.createRole("EDITOR", "编辑者");
+            RoleVO result = sysRoleService.createRole("EDITOR", "编辑者");
 
-            assertEquals("EDITOR", result.getRoleName());
+            assertEquals("EDITOR", result.roleName());
             verify(roleMapper).insert(any(SysRole.class));
         }
 
@@ -79,6 +80,12 @@ class SysRoleServiceTest {
             role.setId(1L);
             when(roleMapper.selectById(1L)).thenReturn(role);
             when(userRoleMapper.selectUserIdsByRoleId(1L)).thenReturn(List.of(10L));
+
+            doAnswer(invocation -> {
+                java.util.function.Consumer<org.springframework.transaction.TransactionStatus> consumer = invocation.getArgument(0);
+                consumer.accept(null);
+                return null;
+            }).when(transactionTemplate).executeWithoutResult(any());
 
             sysRoleService.deleteRole(1L);
 

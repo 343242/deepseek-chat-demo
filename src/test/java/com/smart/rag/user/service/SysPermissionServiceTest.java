@@ -3,6 +3,7 @@ package com.smart.rag.user.service;
 import com.smart.rag.user.service.impl.SysPermissionServiceImpl;
 import com.smart.rag.infrastructure.exception.ClientException;
 import com.smart.rag.infrastructure.exception.ServiceException;
+import com.smart.rag.user.dto.PermissionVO;
 import com.smart.rag.user.entity.SysPermission;
 import com.smart.rag.user.mapper.SysPermissionMapper;
 import org.junit.jupiter.api.DisplayName;
@@ -38,7 +39,7 @@ class SysPermissionServiceTest {
         when(permissionMapper.selectByResourceKey("api:user:read")).thenReturn(Optional.empty());
         when(permissionMapper.insert(any(SysPermission.class))).thenReturn(1);
 
-        SysPermission result = sysPermissionService.createPermission("user:read", "查看用户", "API", "api:user:read");
+        PermissionVO result = sysPermissionService.createPermission("user:read", "查看用户", "API", "api:user:read");
 
         assertNotNull(result);
         verify(permissionMapper).insert(any(SysPermission.class));
@@ -108,10 +109,10 @@ class SysPermissionServiceTest {
         perm.setPermissionName("user:read");
         when(permissionMapper.selectAllOrdered()).thenReturn(List.of(perm));
 
-        List<SysPermission> result = sysPermissionService.listPermissions();
+        List<PermissionVO> result = sysPermissionService.listPermissions();
 
         assertNotNull(result);
         assertEquals(1, result.size());
-        assertEquals("user:read", result.get(0).getPermissionName());
+        assertEquals("user:read", result.get(0).permissionName());
     }
 }

@@ -67,6 +67,7 @@ app:
     refresh-expiration: ${JWT_REFRESH_EXPIRATION:86400}
     issuer: smart-rag
     redis-prefix: "auth:token:"
+    cookie-secure: true   # 生产环境 Cookie 必须 Secure（防 HTTP 降级截获 token）；dev/evaluation 保持 false
   snowflake:
     epoch: ${SNOWFLAKE_EPOCH:2026-01-01T00:00:00+08:00}
     datacenter-id: ${SNOWFLAKE_DATACENTER_ID:0}

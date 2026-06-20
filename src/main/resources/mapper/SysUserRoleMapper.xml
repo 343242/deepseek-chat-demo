@@ -4,7 +4,10 @@
 <mapper namespace="com.smart.rag.user.mapper.SysUserRoleMapper">
 
     <select id="selectRoleIdsByUserId" resultType="java.lang.Long">
-        SELECT role_id FROM sys_user_role WHERE user_id = #{userId}
+        SELECT ur.role_id
+        FROM sys_user_role ur
+        INNER JOIN sys_role r ON ur.role_id = r.id
+        WHERE ur.user_id = #{userId} AND r.status = 1 AND r.deleted = 0
     </select>
 
     <select id="selectUserIdsByRoleId" resultType="java.lang.Long">

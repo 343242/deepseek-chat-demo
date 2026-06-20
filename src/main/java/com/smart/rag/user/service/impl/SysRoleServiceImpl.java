@@ -5,10 +5,12 @@ import com.smart.rag.infrastructure.exception.ServiceException;
 import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;
 import com.smart.rag.infrastructure.exception.errorcode.ServiceErrorCode;
 import com.smart.rag.infrastructure.web.service.TokenCacheService;
+import com.smart.rag.user.dto.PermissionVO;
+import com.smart.rag.user.dto.RoleDetailVO;
+import com.smart.rag.user.dto.RoleVO;
 import com.smart.rag.user.entity.SysPermission;
 import com.smart.rag.user.entity.SysRole;
 import com.smart.rag.user.entity.SysRolePermission;
-import com.smart.rag.user.dto.RoleDetailVO;
 import com.smart.rag.user.mapper.SysPermissionMapper;
 import com.smart.rag.user.mapper.SysRoleMapper;
 import com.smart.rag.user.mapper.SysRolePermissionMapper;
@@ -45,8 +47,10 @@ public class SysRoleServiceImpl implements SysRoleService {
     }
 
     @Override
-    public List<SysRole> listRoles() {
-        return roleMapper.selectAllOrdered();
+    public List<RoleVO> listRoles() {
+        return roleMapper.selectAllOrdered().stream()
+                .map(SysRoleServiceImpl::toRoleVO)
+                .toList();
     }
 
     @Override
@@ -55,12 +59,14 @@ public class SysRoleServiceImpl implements SysRoleService {
         if (role == null) {
             throw new ServiceException(ServiceErrorCode.ROLE_NOT_FOUND);
         }
-        List<SysPermission> permissions = rolePermissionMapper.selectPermissionsByRoleId(roleId);
-        return new RoleDetailVO(role, permissions);
+        List<PermissionVO> permissions = rolePermissionMapper.selectPermissionsByRoleId(roleId).stream()
+                .map(SysRoleServiceImpl::toPermissionVO)
+                .toList();
+        return new RoleDetailVO(toRoleVO(role), permissions);
     }
 
     @Override
-    public SysRole createRole(String roleName, String roleDesc) {
+    public RoleVO createRole(String roleName, String roleDesc) {
         roleMapper.selectByRoleName(roleName)
                 .ifPresent(existing -> { throw new ClientException(ClientErrorCode.ROLE_NAME_EXISTS); });
 
@@ -69,18 +75,18 @@ public class SysRoleServiceImpl implements SysRoleService {
         role.setRoleDesc(roleDesc);
         role.setStatus(1);
         roleMapper.insert(role);
-        return role;
+        return toRoleVO(role);
     }
 
     @Override
-    public SysRole updateRole(Long roleId, String roleDesc) {
+    public RoleVO updateRole(Long roleId, String roleDesc) {
         SysRole role = roleMapper.selectById(roleId);
         if (role == null) {
             throw new ServiceException(ServiceErrorCode.ROLE_NOT_FOUND);
         }
         role.setRoleDesc(roleDesc);
         roleMapper.updateById(role);
-        return role;
+        return toRoleVO(role);
     }
 
     @Override
@@ -90,14 +96,16 @@ public class SysRoleServiceImpl implements SysRoleService {
             throw new ServiceException(ServiceErrorCode.ROLE_NOT_FOUND);
         }
 
+        // 提交前捕获受影响用户（删完 sys_user_role 绑定后查不到），提交后再驱逐权限缓存
         List<Long> userIds = userRoleMapper.selectUserIdsByRoleId(roleId);
-        for (Long userId : userIds) {
-            tokenCacheService.evictUserPermissions(userId);
-        }
 
-        rolePermissionMapper.deleteByRoleId(roleId);
-        userRoleMapper.deleteByRoleId(roleId);
-        roleMapper.deleteById(roleId);
+        transactionTemplate.executeWithoutResult(status -> {
+            rolePermissionMapper.deleteByRoleId(roleId);
+            userRoleMapper.deleteByRoleId(roleId);
+            roleMapper.deleteById(roleId);
+        });
+
+        userIds.forEach(tokenCacheService::evictUserPermissions);
     }
 
     @Override
@@ -139,7 +147,22 @@ public class SysRoleServiceImpl implements SysRoleService {
     }
 
     @Override
-    public List<SysPermission> getRolePermissions(Long roleId) {
-        return rolePermissionMapper.selectPermissionsByRoleId(roleId);
+    public List<PermissionVO> getRolePermissions(Long roleId) {
+        return rolePermissionMapper.selectPermissionsByRoleId(roleId).stream()
+                .map(SysRoleServiceImpl::toPermissionVO)
+                .toList();
+    }
+
+    // ==================== Entity → VO 转换 ====================
+
+    private static RoleVO toRoleVO(SysRole role) {
+        return new RoleVO(role.getId(), role.getRoleName(), role.getRoleDesc(),
+                role.getStatus(), role.getCreatedAt(), role.getUpdatedAt());
+    }
+
+    private static PermissionVO toPermissionVO(SysPermission p) {
+        return new PermissionVO(p.getId(), p.getPermissionName(), p.getPermissionDesc(),
+                p.getResourceType(), p.getResourceKey(), p.getParentId(), p.getStatus(),
+                p.getCreatedAt(), p.getUpdatedAt());
     }
 }

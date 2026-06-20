@@ -3,10 +3,10 @@ package com.smart.rag.user.controller;
 import com.smart.rag.infrastructure.response.GlobalResponse;
 import com.smart.rag.user.dto.AssignPermissionsRequest;
 import com.smart.rag.user.dto.CreateRoleRequest;
+import com.smart.rag.user.dto.PermissionVO;
 import com.smart.rag.user.dto.RoleDetailVO;
+import com.smart.rag.user.dto.RoleVO;
 import com.smart.rag.user.dto.UpdateRoleRequest;
-import com.smart.rag.user.entity.SysPermission;
-import com.smart.rag.user.entity.SysRole;
 import com.smart.rag.user.service.SysPermissionService;
 import com.smart.rag.user.service.SysRoleService;
 import jakarta.validation.Valid;
@@ -33,7 +33,7 @@ public class RoleController {
     }
 
     @GetMapping
-    public GlobalResponse<List<SysRole>> listRoles() {
+    public GlobalResponse<List<RoleVO>> listRoles() {
         return GlobalResponse.ok(roleService.listRoles());
     }
 
@@ -43,12 +43,12 @@ public class RoleController {
     }
 
     @PostMapping
-    public GlobalResponse<SysRole> createRole(@Valid @RequestBody CreateRoleRequest request) {
+    public GlobalResponse<RoleVO> createRole(@Valid @RequestBody CreateRoleRequest request) {
         return GlobalResponse.ok(roleService.createRole(request.roleName(), request.roleDesc()));
     }
 
     @PostMapping("/{id}/update")
-    public GlobalResponse<SysRole> updateRole(@PathVariable Long id, @Valid @RequestBody UpdateRoleRequest request) {
+    public GlobalResponse<RoleVO> updateRole(@PathVariable Long id, @Valid @RequestBody UpdateRoleRequest request) {
         return GlobalResponse.ok(roleService.updateRole(id, request.roleDesc()));
     }
 
@@ -59,7 +59,7 @@ public class RoleController {
     }
 
     @GetMapping("/{id}/permissions")
-    public GlobalResponse<List<SysPermission>> getRolePermissions(@PathVariable Long id) {
+    public GlobalResponse<List<PermissionVO>> getRolePermissions(@PathVariable Long id) {
         return GlobalResponse.ok(roleService.getRolePermissions(id));
     }
 
@@ -75,7 +75,7 @@ public class RoleController {
     }
 
     @GetMapping("/permissions")
-    public GlobalResponse<List<SysPermission>> listAllPermissions() {
+    public GlobalResponse<List<PermissionVO>> listAllPermissions() {
         return GlobalResponse.ok(permissionService.listPermissions());
     }
 }

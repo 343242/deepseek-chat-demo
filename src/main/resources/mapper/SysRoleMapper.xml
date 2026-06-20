@@ -12,7 +12,7 @@
     </select>
 
     <select id="selectByIds" resultType="com.smart.rag.user.entity.SysRole">
-        SELECT id, role_name, role_desc, status, created_at, updated_at, deleted FROM sys_role WHERE deleted = 0 AND id IN
+        SELECT id, role_name, role_desc, status, created_at, updated_at, deleted FROM sys_role WHERE deleted = 0 AND status = 1 AND id IN
         <foreach item="id" collection="ids" open="(" separator="," close=")">
             #{id}
         </foreach>

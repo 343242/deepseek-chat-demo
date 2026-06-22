@@ -7,9 +7,8 @@ import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;
 import java.util.Map;
 
 /**
- * Chat 请求
- * <p>
- * 仅包含 Chat 场景所需的字段。Embedding 和 Rerank 各自定义独立的请求类型。
+ * Chat 请求。新增 {@link ChatTool} tools 字段（Fix B-i），由 ChatModelAdapter
+ * 从 Spring AI ToolCallingChatOptions 提取后透传给厂商。
  */
 public record ChatRequest(
     String input,
@@ -18,7 +17,8 @@ public record ChatRequest(
     Double temperature,
     Integer maxTokens,
     Double topP,
-    Map<String, Object> extraParams
+    Map<String, Object> extraParams,
+    List<ChatTool> tools
 ) {
     public ChatRequest {
         if (input == null) {
@@ -26,16 +26,17 @@ public record ChatRequest(
         }
         history = history != null ? List.copyOf(history) : List.of();
         extraParams = extraParams != null ? Map.copyOf(extraParams) : Map.of();
+        tools = tools != null ? List.copyOf(tools) : List.of();
     }
 
     public static ChatRequest of(String input) {
         return new ChatRequest(input, null, List.of(),
-            null, null, null, Map.of());
+            null, null, null, Map.of(), List.of());
     }
 
     public static ChatRequest withSystem(String systemPrompt, String input) {
         return new ChatRequest(input, systemPrompt, List.of(),
-            null, null, null, Map.of());
+            null, null, null, Map.of(), List.of());
     }
 
     public static Builder builder(String input) {
@@ -68,6 +69,7 @@ public record ChatRequest(
         private Integer maxTokens;
         private Double topP;
         private Map<String, Object> extraParams = Map.of();
+        private List<ChatTool> tools = List.of();
 
         private Builder(String input) { this.input = input; }
 
@@ -77,11 +79,12 @@ public record ChatRequest(
         public Builder maxTokens(Integer mt) { this.maxTokens = mt; return this; }
         public Builder topP(Double tp) { this.topP = tp; return this; }
         public Builder extraParams(Map<String, Object> ep) { this.extraParams = ep != null ? Map.copyOf(ep) : Map.of(); return this; }
+        public Builder tools(List<ChatTool> t) { this.tools = t != null ? List.copyOf(t) : List.of(); return this; }
 
         public ChatRequest build() {
             if (input == null || input.isBlank()) throw new ClientException(ClientErrorCode.BAD_REQUEST, "ChatRequest.input 不能为空");
             return new ChatRequest(input, systemPrompt, history,
-                temperature, maxTokens, topP, extraParams);
+                temperature, maxTokens, topP, extraParams, tools);
         }
     }
 }

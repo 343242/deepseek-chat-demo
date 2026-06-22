@@ -208,6 +208,24 @@ public class GenericChatClient extends AbstractChatClient {
         if (request.temperature() != null) body.put("temperature", request.temperature());
         if (request.maxTokens() != null) body.put("max_tokens", request.maxTokens());
         if (request.topP() != null) body.put("top_p", request.topP());
+        if (request.tools() != null && !request.tools().isEmpty()) {
+            List<Map<String, Object>> tools = new ArrayList<>();
+            for (com.smart.rag.infrastructure.llm.ChatTool t : request.tools()) {
+                Map<String, Object> fn = new LinkedHashMap<>();
+                fn.put("name", t.name());
+                if (t.description() != null) fn.put("description", t.description());
+                try {
+                    fn.put("parameters", objectMapper.readTree(t.inputSchemaJson()));
+                } catch (Exception e) {
+                    fn.put("parameters", t.inputSchemaJson());
+                }
+                Map<String, Object> tool = new LinkedHashMap<>();
+                tool.put("type", "function");
+                tool.put("function", fn);
+                tools.add(tool);
+            }
+            body.put("tools", tools);
+        }
         return body;
     }
 

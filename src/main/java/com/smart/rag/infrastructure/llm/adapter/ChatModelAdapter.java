@@ -2,6 +2,7 @@ package com.smart.rag.infrastructure.llm.adapter;
 
 import com.smart.rag.infrastructure.llm.ChatCapable;
 import com.smart.rag.infrastructure.llm.ChatRequest;
+import com.smart.rag.infrastructure.llm.ChatTool;
 import com.smart.rag.infrastructure.llm.LlmResponse;
 import com.smart.rag.infrastructure.llm.MessageInformation;
 import reactor.core.publisher.Flux;
@@ -17,6 +18,8 @@ import org.springframework.ai.chat.model.Generation;
 import org.springframework.ai.chat.prompt.ChatOptions;
 import org.springframework.ai.chat.prompt.Prompt;
 import org.springframework.ai.model.tool.ToolCallingChatOptions;
+import org.springframework.ai.tool.ToolCallback;
+import org.springframework.ai.tool.definition.ToolDefinition;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -24,21 +27,12 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Spring AI ChatModel 适配器
+ * Spring AI ChatModel 适配器。
  * <p>
- * 将任何 {@code ChatCapable} 实例适配为 Spring AI {@code ChatModel}。
- * 这是 ChatCapable 与 ChatModel 之间桥接代码的唯一存放位置。
- * <p>
- * 默认 options 暴露为 {@link ToolCallingChatOptions}，使得自建 ChatClient 可以挂载
- * {@code ToolCallAdvisor}（Spring AI 在 {@code spec.tools(Object)} 写入工具回调时
- * 强制要求 options 为 {@code ToolCallingChatOptions} 实例）。
- * <p>
- * <b>设计原则</b>：
+ * Fix B-i：工具透传。
  * <ul>
- *   <li>ISP — ChatCapable 不被迫继承 ChatModel 的所有方法</li>
- *   <li>LSP — 适配器是独立的 ChatModel 实现，不影响 ChatCapable 的契约</li>
- *   <li>SRP — 桥接逻辑（Prompt→ChatRequest、LlmResponse→ChatResponse）集中在此</li>
- *   <li>厂商无关 — 默认 options 不耦合具体厂商子类，实际 LLM 调用由 {@code delegate} 处理</li>
+ *   <li>请求侧 extractTools：从 Prompt options 的 ToolCallingChatOptions 取 ToolCallback，转成 ChatTool 透传给厂商</li>
+ *   <li>响应侧 wrapAsChatResponse：把 LlmResponse.toolCalls 回灌进 AssistantMessage.toolCalls，供 ToolCallAdvisor 驱动 ReAct 循环</li>
  * </ul>
  */
 public class ChatModelAdapter implements ChatModel {
@@ -51,13 +45,6 @@ public class ChatModelAdapter implements ChatModel {
 
     public ChatCapable delegate() { return delegate; }
 
-    /**
-     * 暴露 {@link ToolCallingChatOptions} 作为默认 options，使自建 ChatClient
-     * 可以挂载 {@code ToolCallAdvisor}（Spring AI 在 {@code spec.tools(Object)}
-     * 写入工具回调时强校验 options 类型）。
-     * <p>
-     * 返回厂商无关的通用实现，实际 LLM 调用由 {@code delegate} 处理。
-     */
     @Override
     public ChatOptions getDefaultOptions() {
         return ToolCallingChatOptions.builder().build();
@@ -79,8 +66,11 @@ public class ChatModelAdapter implements ChatModel {
     }
 
     private ChatResponse wrapAsChatResponse(LlmResponse llmResp) {
-        AssistantMessage assistantMsg = new AssistantMessage(
-            llmResp.content() != null ? llmResp.content() : "");
+        String content = llmResp.content() != null ? llmResp.content() : "";
+        List<AssistantMessage.ToolCall> springToolCalls = toSpringToolCalls(llmResp.toolCalls());
+        AssistantMessage assistantMsg = springToolCalls.isEmpty()
+            ? new AssistantMessage(content)
+            : new ToolCallAssistantMessage(content, springToolCalls);
         Generation generation = new Generation(assistantMsg,
             ChatGenerationMetadata.builder()
                 .finishReason(llmResp.truncated() ? "length" : "stop")
@@ -95,14 +85,48 @@ public class ChatModelAdapter implements ChatModel {
         return new ChatResponse(List.of(generation), metaBuilder.build());
     }
 
+    private static List<AssistantMessage.ToolCall> toSpringToolCalls(List<LlmResponse.ToolCall> tcs) {
+        if (tcs == null || tcs.isEmpty()) return List.of();
+        List<AssistantMessage.ToolCall> out = new ArrayList<>(tcs.size());
+        for (LlmResponse.ToolCall tc : tcs) {
+            out.add(new AssistantMessage.ToolCall(
+                tc.id() != null ? tc.id() : "",
+                "function",
+                tc.name(),
+                tc.arguments() != null ? tc.arguments() : ""));
+        }
+        return out;
+    }
+
+    /** 子类访问 AssistantMessage 的 protected 四参构造器，用于回灌 toolCalls */
+    private static final class ToolCallAssistantMessage extends AssistantMessage {
+        ToolCallAssistantMessage(String content, List<AssistantMessage.ToolCall> toolCalls) {
+            super(content, Map.of(), toolCalls, List.of());
+        }
+    }
+
     private ChatRequest extractChatRequest(Prompt prompt) {
         String systemPrompt = extractSystemPrompt(prompt);
         List<MessageInformation> history = extractHistory(prompt);
+        List<ChatTool> tools = extractTools(prompt);
         return new ChatRequest(prompt.getContents(), systemPrompt, history,
-            null, null, null, Map.of());
+            null, null, null, Map.of(), tools);
     }
 
-    /** 从 Prompt instructions 中提取第一条 SystemMessage 的文本 */
+    /** Fix B-i 请求侧：从 ToolCallingChatOptions 提取 ToolCallback 转 ChatTool */
+    private List<ChatTool> extractTools(Prompt prompt) {
+        ChatOptions opts = prompt.getOptions();
+        if (!(opts instanceof ToolCallingChatOptions tco)) return List.of();
+        List<ToolCallback> callbacks = tco.getToolCallbacks();
+        if (callbacks == null || callbacks.isEmpty()) return List.of();
+        List<ChatTool> tools = new ArrayList<>(callbacks.size());
+        for (ToolCallback cb : callbacks) {
+            ToolDefinition def = cb.getToolDefinition();
+            tools.add(new ChatTool(def.name(), def.description(), def.inputSchema()));
+        }
+        return tools;
+    }
+
     private String extractSystemPrompt(Prompt prompt) {
         if (prompt.getInstructions() == null) return null;
         for (var msg : prompt.getInstructions()) {
@@ -111,7 +135,6 @@ public class ChatModelAdapter implements ChatModel {
         return null;
     }
 
-    /** 从 Prompt instructions 中提取非系统、非最后一条 UserMessage 的历史记录 */
     private List<MessageInformation> extractHistory(Prompt prompt) {
         if (prompt.getInstructions() == null || prompt.getInstructions().isEmpty()) {
             return List.of();
@@ -134,7 +157,6 @@ public class ChatModelAdapter implements ChatModel {
         return Collections.unmodifiableList(builder);
     }
 
-    /** 从消息列表中从后往前查找最后一条 UserMessage 的索引，未找到返回 -1 */
     private int findLastUserIndex(List<org.springframework.ai.chat.messages.Message> messages) {
         for (int i = messages.size() - 1; i >= 0; i--) {
             if (messages.get(i) instanceof UserMessage) return i;

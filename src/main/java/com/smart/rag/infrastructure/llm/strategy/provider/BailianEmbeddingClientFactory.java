@@ -35,6 +35,8 @@ public class BailianEmbeddingClientFactory implements ProviderClientFactory {
 
     @Override
     public CapabilityClient create(String baseUrl, String endpoint, String apiKey, ModelCandidate candidate) {
-        return new BailianEmbeddingClient(baseUrl, endpoint, apiKey, candidate, scopedTasks);
+        // 临时硬编码：百炼 embedding 端点已迁移到 workspace 级 MaaS 域名（与 chat/rerank 的 dashscope.aliyuncs.com 不同）。WorkspaceId 后续改为配置项。
+        String embeddingBaseUrl = "https://llm-l3buonxbvhgk4qiy.cn-beijing.maas.aliyuncs.com";
+        return new BailianEmbeddingClient(embeddingBaseUrl, endpoint, apiKey, candidate, scopedTasks);
     }
 }

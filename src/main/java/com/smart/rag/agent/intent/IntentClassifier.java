@@ -4,7 +4,6 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smart.rag.infrastructure.llm.ChatCapable;
 import com.smart.rag.infrastructure.llm.adapter.ChatModelAdapter;
-import com.smart.rag.infrastructure.llm.LlmCapability;
 import com.smart.rag.infrastructure.llm.registry.LlmClientRegistry;
 import com.smart.rag.infrastructure.exception.ServiceException;
 import com.smart.rag.infrastructure.exception.errorcode.ServiceErrorCode;
@@ -13,6 +12,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.stereotype.Component;
+import reactor.core.publisher.Mono;
+import reactor.util.retry.Retry;
 
 import java.util.Collections;
 import java.util.List;
@@ -64,6 +65,56 @@ public class IntentClassifier {
         log.warn("Intent classification failed after {} retries, falling back to {}",
             MAX_RETRIES, SAFE_FALLBACK.intent());
         return SAFE_FALLBACK;
+    }
+
+    /**
+     * 流式意图分类 -- LLM 调用走 chatStream 通道（聚合完整 JSON 再解析），返回 {@link Mono}。
+     * <p>
+     * 与 {@link #classify} 同源：复用 {@link #buildPrompt} / {@link #parseResponse} / {@link #validate}，
+     * 区别仅在 LLM 调用走流式通道。语义上仍是"一次分类、异步产出"（Mono）-- 意图 JSON 必须收完整才能 parse，
+     * 故流式化本身不降低意图判定的首字延迟；其价值在于与主响应统一走 chatStream（共用 ResilientChatClient
+     * 流式降级链路），并为 Agent 流式（{@link com.smart.rag.agent.mode.AgentModeStrategy#executeStream}）铺路。
+     * <p>
+     * 容错策略与 {@link #classify} 一致：重试 {@value #MAX_RETRIES} 次，失败降级 {@link #SAFE_FALLBACK}。
+     * 需意图模型声明 supports-streaming；不支持时 chatStream 抛异常 -> 重试耗尽 -> 降级 SAFE_FALLBACK。
+     *
+     * @param query 用户查询
+     * @return Mono，发出分类结果；query 为空时立即发出 SAFE_FALLBACK
+     */
+    public Mono<IntentResult> classifyStream(String query) {
+        if (query == null || query.isBlank()) {
+            return Mono.just(SAFE_FALLBACK);
+        }
+        return doClassifyStream(query)
+            .map(this::validate)
+            .retryWhen(Retry.max(MAX_RETRIES)
+                .doAfterRetry(sig -> log.warn("Intent classification stream retry (attempt {}): {}",
+                    sig.totalRetries(), sig.failure().getMessage())))
+            .onErrorResume(e -> {
+                log.warn("Intent classification stream failed after {} retries, falling back to {}",
+                    MAX_RETRIES, SAFE_FALLBACK.intent());
+                return Mono.just(SAFE_FALLBACK);
+            });
+    }
+
+    private Mono<IntentResult> doClassifyStream(String query) {
+        String prompt = buildPrompt(query);
+        // Mono.defer 包裹：每次订阅（含 retryWhen 重试）都重新发起 LLM 调用，
+        // 与阻塞版 doClassify 的 for-loop 重试语义一致 -- 否则 retry 只重订阅已组装的
+        // Flux，不会真正重新调用 chatStream，部分成功后失败的请求无法真正重试。
+        return Mono.defer(() -> resolveChatClient().prompt()
+            .user(prompt)
+            .stream()
+            .content()
+            .collectList()
+            .map(chunks -> String.join("", chunks))
+            .flatMap(response -> {
+                if (response == null || response.isBlank()) {
+                    return Mono.error(new IllegalStateException(
+                        "Intent classification returned empty response"));
+                }
+                return Mono.just(parseResponse(response));
+            }));
     }
 
     private IntentResult doClassify(String query) {

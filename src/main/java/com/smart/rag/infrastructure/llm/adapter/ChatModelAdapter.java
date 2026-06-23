@@ -151,8 +151,26 @@ public class ChatModelAdapter implements ChatModel {
         for (int i = 0; i < nonSystemMessages.size(); i++) {
             if (i == lastUserIdx) continue;
             var m = nonSystemMessages.get(i);
-            builder.add(MessageInformation.of(
-                m.getMessageType().name().toLowerCase(), m.getText()));
+            if (m instanceof AssistantMessage am && am.getToolCalls() != null && !am.getToolCalls().isEmpty()) {
+                List<Map<String, Object>> tcs = new ArrayList<>();
+                for (AssistantMessage.ToolCall tc : am.getToolCalls()) {
+                    Map<String, Object> fn = new java.util.LinkedHashMap<>();
+                    fn.put("name", tc.name());
+                    fn.put("arguments", tc.arguments() != null ? tc.arguments() : "");
+                    Map<String, Object> entry = new java.util.LinkedHashMap<>();
+                    entry.put("id", tc.id());
+                    entry.put("type", "function");
+                    entry.put("function", fn);
+                    tcs.add(entry);
+                }
+                builder.add(MessageInformation.assistant(am.getText() != null ? am.getText() : "", Map.of("tool_calls", tcs)));
+            } else if (m instanceof org.springframework.ai.chat.messages.ToolResponseMessage trm) {
+                for (org.springframework.ai.chat.messages.ToolResponseMessage.ToolResponse tr : trm.getResponses()) {
+                    builder.add(MessageInformation.tool(tr.id(), tr.responseData()));
+                }
+            } else {
+                builder.add(MessageInformation.of(m.getMessageType().name().toLowerCase(), m.getText()));
+            }
         }
         return Collections.unmodifiableList(builder);
     }

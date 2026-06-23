@@ -187,19 +187,33 @@ public class GenericChatClient extends AbstractChatClient {
     }
 
     private Map<String, Object> buildRequestBody(ChatRequest request, boolean stream) {
-        List<Map<String, String>> messages = new ArrayList<>();
+        List<Map<String, Object>> messages = new ArrayList<>();
         if (request.systemPrompt() != null) {
-            messages.add(Map.of("role", "system", "content", request.systemPrompt()));
+            Map<String, Object> sys = new LinkedHashMap<>();
+            sys.put("role", "system");
+            sys.put("content", request.systemPrompt());
+            messages.add(sys);
         }
         if (request.history() != null) {
             for (MessageInformation msg : request.history()) {
-                Map<String, String> m = new LinkedHashMap<>();
+                Map<String, Object> m = new LinkedHashMap<>();
                 m.put("role", msg.role());
-                m.put("content", msg.content() != null ? msg.content() : "");
+                if ("tool".equals(msg.role())) {
+                    if (msg.toolCallId() != null) m.put("tool_call_id", msg.toolCallId());
+                    m.put("content", msg.content() != null ? msg.content() : "");
+                } else if ("assistant".equals(msg.role()) && msg.metadata() != null && msg.metadata().containsKey("tool_calls")) {
+                    m.put("content", msg.content() != null ? msg.content() : "");
+                    m.put("tool_calls", msg.metadata().get("tool_calls"));
+                } else {
+                    m.put("content", msg.content() != null ? msg.content() : "");
+                }
                 messages.add(m);
             }
         }
-        messages.add(Map.of("role", "user", "content", request.input()));
+        Map<String, Object> userMsg = new LinkedHashMap<>();
+        userMsg.put("role", "user");
+        userMsg.put("content", request.input());
+        messages.add(userMsg);
 
         Map<String, Object> body = new LinkedHashMap<>();
         body.put("model", candidate.model());

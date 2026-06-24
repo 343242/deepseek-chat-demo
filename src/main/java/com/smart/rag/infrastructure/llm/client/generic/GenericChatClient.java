@@ -133,7 +133,7 @@ public class GenericChatClient extends AbstractChatClient {
                     sink.error(new RemoteException(RemoteErrorCode.LLM_STREAM_ERROR, "Stream response body is null"));
                     return;
                 }
-                readSse(responseBody.source(), call, sink);
+                readSse(objectMapper, responseBody.source(), call, sink);
                 if (!sink.isCancelled()) {
                     sink.complete();
                 }
@@ -147,7 +147,7 @@ public class GenericChatClient extends AbstractChatClient {
         }).subscribeOn(Schedulers.boundedElastic());
     }
 
-    private void readSse(BufferedSource source, Call call, FluxSink<StreamChunk> sink) throws IOException {
+    static void readSse(ObjectMapper objectMapper, BufferedSource source, Call call, FluxSink<StreamChunk> sink) throws IOException {
         ToolCallAccumulator acc = new ToolCallAccumulator();
         while (!source.exhausted()) {
             if (sink.isCancelled()) {

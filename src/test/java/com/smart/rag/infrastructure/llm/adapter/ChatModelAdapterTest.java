@@ -277,6 +277,50 @@ class ChatModelAdapterTest {
 
             assertThat(responses).isEmpty();
         }
+
+        @Test
+        @DisplayName("P3：toolCall 汇总包 → AssistantMessage.toolCalls + finishReason=tool_calls（触发 ToolCallAdvisor）")
+        void toolCallSummaryProjectedAsToolCalls() {
+            when(delegate.chatStream(any())).thenReturn(reactor.core.publisher.Flux.just(
+                new StreamChunk(null,
+                    List.of(new StreamChunk.ToolCallDelta(0, "call_1", "hybridSearch", "{\"q\":\"Paris\"}")),
+                    StreamChunk.FinishReason.TOOL_CALLS, null)));
+
+            java.util.List<ChatResponse> responses =
+                adapter.stream(new Prompt(List.of(new UserMessage("search Paris")))).collectList().block();
+
+            assertThat(responses).hasSize(1);
+            ChatResponse r = responses.get(0);
+            AssistantMessage msg = (AssistantMessage) r.getResult().getOutput();
+            assertThat(msg.getToolCalls()).hasSize(1);
+            assertThat(msg.getToolCalls().get(0).id()).isEqualTo("call_1");
+            assertThat(msg.getToolCalls().get(0).name()).isEqualTo("hybridSearch");
+            assertThat(msg.getToolCalls().get(0).arguments()).isEqualTo("{\"q\":\"Paris\"}");
+            // Generation metadata finishReason=tool_calls（Spring AI 据此驱动工具执行 ReAct）
+            assertThat(r.getResult().getMetadata().getFinishReason()).isEqualTo("tool_calls");
+        }
+
+        @Test
+        @DisplayName("P3：STOP+usage 末包 → finishReason=stop + usage metadata（供 TokenCountingChatModel 累计）")
+        void stopWithUsageCarriedInMetadata() {
+            when(delegate.chatStream(any())).thenReturn(reactor.core.publisher.Flux.just(
+                new StreamChunk("answer", null, null, null),  // 文本 chunk
+                new StreamChunk(null, null, StreamChunk.FinishReason.STOP,
+                    new LlmResponse.TokenUsage(10, 20, 30, null))));  // STOP+usage 末包
+
+            java.util.List<ChatResponse> responses =
+                adapter.stream(new Prompt(List.of(new UserMessage("hi")))).collectList().block();
+
+            assertThat(responses).hasSize(2);
+            // text chunk：content 透传，无 finishReason
+            assertThat(responses.get(0).getResult().getOutput().getText()).isEqualTo("answer");
+            assertThat(responses.get(0).getResult().getMetadata().getFinishReason()).isNull();
+            // STOP 末包：finishReason=stop + usage metadata
+            ChatResponse end = responses.get(1);
+            assertThat(end.getResult().getMetadata().getFinishReason()).isEqualTo("stop");
+            assertThat(end.getMetadata().getUsage()).isNotNull();
+            assertThat(end.getMetadata().getUsage().getTotalTokens()).isEqualTo(30);
+        }
     }
 
     // ==================== accessor ====================

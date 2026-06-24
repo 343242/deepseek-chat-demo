@@ -61,11 +61,25 @@ public class ChatModelAdapter implements ChatModel {
     @Override
     public Flux<ChatResponse> stream(Prompt prompt) {
         ChatRequest request = extractChatRequest(prompt);
-        // P0a 占位：chunk 是 StreamChunk，仅取 text（P3 重写为轮末汇总包回灌 tool_calls/finishReason/usage）。
+        // P3：StreamChunk → ChatResponse 投影（design §4 + §0 #3：边界层不累积，SSE 层已合并 toolCalls 分片）。
+        //  - 轮末汇总包(完整 toolCalls) → AssistantMessage.toolCalls + finishReason="tool_calls"
+        //    → ToolCallAdvisor.adviseStream 检测并执行工具，驱动流式 ReAct（Poc6 验证 streamCount=2）。
+        //  - 文本 chunk → AssistantMessage(content) 透传（保 TTFT）；STOP/LENGTH 末包携带 finishReason + usage。
         return delegate.chatStream(request)
-            .map(chunk -> new ChatResponse(
-                List.of(new Generation(new AssistantMessage(
-                    chunk.hasText() ? chunk.text() : "")))));
+            .map(chunk -> {
+                if (chunk.hasToolCall()) {
+                    String content = chunk.text() != null ? chunk.text() : "";
+                    AssistantMessage msg = new ToolCallAssistantMessage(content,
+                        toSpringToolCallsFromDeltas(chunk.toolCalls()));
+                    Generation gen = new Generation(msg, ChatGenerationMetadata.builder()
+                        .finishReason("tool_calls").build());
+                    return new ChatResponse(List.of(gen), buildResponseMetadata(chunk));
+                }
+                String content = chunk.hasText() ? chunk.text() : "";
+                AssistantMessage msg = new AssistantMessage(content);
+                Generation gen = new Generation(msg, buildGenerationMetadata(chunk.finishReason()));
+                return new ChatResponse(List.of(gen), buildResponseMetadata(chunk));
+            });
     }
 
     private ChatResponse wrapAsChatResponse(LlmResponse llmResp) {
@@ -99,6 +113,43 @@ public class ChatModelAdapter implements ChatModel {
                 tc.arguments() != null ? tc.arguments() : ""));
         }
         return out;
+    }
+
+    /** P3：StreamChunk.ToolCallDelta → AssistantMessage.ToolCall（流式汇总包回灌，SSE 层已合并分片）。 */
+    private static List<AssistantMessage.ToolCall> toSpringToolCallsFromDeltas(List<StreamChunk.ToolCallDelta> deltas) {
+        if (deltas == null || deltas.isEmpty()) return List.of();
+        List<AssistantMessage.ToolCall> out = new ArrayList<>(deltas.size());
+        for (StreamChunk.ToolCallDelta d : deltas) {
+            out.add(new AssistantMessage.ToolCall(
+                d.id() != null ? d.id() : "",
+                "function",
+                d.name(),
+                d.arguments() != null ? d.arguments() : ""));
+        }
+        return out;
+    }
+
+    /** P3：StreamChunk.FinishReason → Spring AI finishReason（null → 空 metadata，中间 chunk 无 finishReason）。 */
+    private static ChatGenerationMetadata buildGenerationMetadata(StreamChunk.FinishReason fr) {
+        if (fr == null) return ChatGenerationMetadata.builder().build();
+        return ChatGenerationMetadata.builder().finishReason(switch (fr) {
+            case STOP -> "stop";
+            case LENGTH -> "length";
+            case TOOL_CALLS -> "tool_calls";
+            case CONTENT_FILTER -> "content_filter";
+        }).build();
+    }
+
+    /** P3：轮末 usage → ChatResponseMetadata（供 TokenCountingChatModel.stream 累计，P4b）。 */
+    private static ChatResponseMetadata buildResponseMetadata(StreamChunk chunk) {
+        ChatResponseMetadata.Builder b = ChatResponseMetadata.builder();
+        if (chunk.usage() != null) {
+            b.usage(new DefaultUsage(
+                chunk.usage().promptTokens(),
+                chunk.usage().completionTokens(),
+                chunk.usage().totalTokens()));
+        }
+        return b.build();
     }
 
     /** 子类访问 AssistantMessage 的 protected 四参构造器，用于回灌 toolCalls */

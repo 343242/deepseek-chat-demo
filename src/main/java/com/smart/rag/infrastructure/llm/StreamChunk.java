@@ -2,6 +2,8 @@ package com.smart.rag.infrastructure.llm;
 
 import org.springframework.lang.Nullable;
 
+import java.util.List;
+
 /**
  * 流式 chunk 载体 — 跨边界传递 text / tool delta / finishReason / usage（design §2）。
  * <p>
@@ -17,14 +19,14 @@ import org.springframework.lang.Nullable;
  */
 public record StreamChunk(
     @Nullable String text,
-    @Nullable ToolCallDelta toolDelta,
+    @Nullable List<ToolCallDelta> toolCalls,
     @Nullable FinishReason finishReason,
     @Nullable LlmResponse.TokenUsage usage
 ) {
 
     public boolean hasText() { return text != null && !text.isEmpty(); }
 
-    public boolean hasToolCall() { return toolDelta != null; }
+    public boolean hasToolCall() { return toolCalls != null && !toolCalls.isEmpty(); }
 
     /** 单个 tool call 的流式分片（OpenAI 按 index 分片，arguments 为流式 JSON 片段）。 */
     public record ToolCallDelta(int index, @Nullable String id,

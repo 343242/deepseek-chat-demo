@@ -102,7 +102,7 @@ public class GenericChatClient extends AbstractChatClient {
         Map<String, Object> body = buildRequestBody(request, true);
         String url = buildUrl();
 
-        return Flux.<String>create(sink -> {
+        return Flux.<StreamChunk>create(sink -> {
             String jsonBody;
             try {
                 jsonBody = objectMapper.writeValueAsString(body);
@@ -144,42 +144,83 @@ public class GenericChatClient extends AbstractChatClient {
                     sink.error(HttpClientErrorHandler.translate("Chat Stream", url, e));
                 }
             }
-        }).subscribeOn(Schedulers.boundedElastic())
-        // P0a 占位：String → StreamChunk（仅 text）。P0b 改 readSse 为 FluxSink<StreamChunk> + SSE 三态解析。
-        .map(s -> new StreamChunk(s, null, null, null));
+        }).subscribeOn(Schedulers.boundedElastic());
     }
 
-    private void readSse(BufferedSource source, Call call, FluxSink<String> sink) throws IOException {
+    private void readSse(BufferedSource source, Call call, FluxSink<StreamChunk> sink) throws IOException {
+        ToolCallAccumulator acc = new ToolCallAccumulator();
         while (!source.exhausted()) {
             if (sink.isCancelled()) {
                 call.cancel();
                 return;
             }
             String line = source.readUtf8Line();
-            if (line == null) return;
+            if (line == null) break;
             if (!line.startsWith("data:")) continue;
 
             String data = line.substring(5).trim();
-            if ("[DONE]".equals(data)) return;
+            if ("[DONE]".equals(data)) {
+                // [DONE] 兜底：finish_reason 未到的极端情况也发轮末汇总包
+                emitRoundEnd(sink, acc, null, null);
+                return;
+            }
+            try {
+                JsonNode root = objectMapper.readTree(data);
+                JsonNode choices = root.path("choices");
+                if (!choices.isArray() || choices.isEmpty()) continue;
+                JsonNode choice0 = choices.get(0);
+                JsonNode delta = choice0.path("delta");
 
-            String content = extractContent(data);
-            if (content != null && !content.isEmpty()) {
-                sink.next(content);
+                // 1) content → text chunk（即时发，保 TTFT）
+                JsonNode contentNode = delta.path("content");
+                if (contentNode.isTextual() && !contentNode.asText().isEmpty()) {
+                    sink.next(new StreamChunk(contentNode.asText(), null, null, null));
+                }
+
+                // 2) tool_calls 分片 → acc 按 index 累积（轮末汇总发，不依赖 Spring AI delta 合并行为）
+                JsonNode tcArray = delta.path("tool_calls");
+                if (tcArray.isArray()) {
+                    for (JsonNode tc : tcArray) {
+                        int idx = tc.path("index").asInt(0);
+                        String id = tc.has("id") ? tc.path("id").asText() : null;
+                        JsonNode fn = tc.path("function");
+                        String name = fn.has("name") ? fn.path("name").asText() : null;
+                        String args = fn.has("arguments") ? fn.path("arguments").asText() : null;
+                        acc.merge(idx, id, name, args);
+                    }
+                }
+
+                // 3) finish_reason → 轮末汇总包（完整 toolCalls + finishReason + usage）
+                JsonNode frNode = choice0.path("finish_reason");
+                if (frNode.isTextual() && !"null".equals(frNode.asText())) {
+                    LlmResponse.TokenUsage usage = parseTokenUsage(root.path("usage"));
+                    emitRoundEnd(sink, acc, frNode.asText(), usage);
+                    return;
+                }
+            } catch (IOException e) {
+                log.debug("Failed to parse SSE data chunk: {}", data, e);
             }
         }
     }
 
-    private String extractContent(String data) {
-        try {
-            JsonNode root = objectMapper.readTree(data);
-            JsonNode choices = root.path("choices");
-            if (!choices.isArray() || choices.isEmpty()) return null;
-            JsonNode delta = choices.get(0).path("delta").path("content");
-            return delta.isTextual() ? delta.asText() : null;
-        } catch (IOException e) {
-            log.debug("Failed to parse SSE data chunk: {}", data, e);
-            return null;
-        }
+    /** 轮末汇总包：完整 toolCalls（若累积到）+ finishReason + usage。Poc6 防御式契约，供 ChatModelAdapter 检测工具调用。 */
+    private static void emitRoundEnd(FluxSink<StreamChunk> sink, ToolCallAccumulator acc,
+                                     String finishReason, LlmResponse.TokenUsage usage) {
+        java.util.List<StreamChunk.ToolCallDelta> toolCalls = acc.drain();
+        StreamChunk.FinishReason fr = mapFinishReason(finishReason);
+        if (toolCalls.isEmpty() && fr == null && usage == null) return;
+        sink.next(new StreamChunk(null, toolCalls.isEmpty() ? null : toolCalls, fr, usage));
+    }
+
+    private static StreamChunk.FinishReason mapFinishReason(String raw) {
+        if (raw == null) return null;
+        return switch (raw) {
+            case "stop" -> StreamChunk.FinishReason.STOP;
+            case "length" -> StreamChunk.FinishReason.LENGTH;
+            case "tool_calls" -> StreamChunk.FinishReason.TOOL_CALLS;
+            case "content_filter" -> StreamChunk.FinishReason.CONTENT_FILTER;
+            default -> null;
+        };
     }
 
     private String buildUrl() {

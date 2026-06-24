@@ -2,8 +2,6 @@ package com.smart.rag.agent.mode;
 
 import com.smart.rag.infrastructure.advisor.ConversationContextAdvisor;
 import com.smart.rag.chat.context.ContextPromptInjector;
-import com.smart.rag.infrastructure.exception.ClientException;
-import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;
 import com.smart.rag.chat.mode.ChatMode;
 import com.smart.rag.chat.mode.ChatModeStrategy;
 import com.smart.rag.chat.mode.MultiTurnModeStrategy;
@@ -13,7 +11,10 @@ import com.smart.rag.infrastructure.llm.adapter.ChatModelAdapter;
 import com.smart.rag.infrastructure.llm.registry.LlmClientRegistry;
 import com.smart.rag.chat.service.AdvisorChainContext;
 import com.smart.rag.chat.service.AdvisorInfrastructure;
+import com.smart.rag.chat.service.ChatConversationHelper;
+import com.smart.rag.chat.service.ChatMessagePublisher;
 import com.smart.rag.chat.service.ModeChainResult;
+import com.smart.rag.chat.service.StreamCompletionHelper;
 import com.smart.rag.chat.service.PromptLoaderService;
 import com.smart.rag.chat.service.StreamResult;
 import com.smart.rag.chat.service.StrategyExecuteResult;
@@ -98,6 +99,8 @@ public class AgentModeStrategy implements ChatModeStrategy {
     private final LlmClientRegistry llmRegistry;
     private final AgentDegradationStrategy degradationStrategy;
     private final ObjectProvider<MultiTurnModeStrategy> multiTurnProvider;
+    private final ChatMessagePublisher chatMessagePublisher;
+    private final ChatConversationHelper conversationHelper;
 
     public AgentModeStrategy(AdvisorInfrastructure infra,
                               IntentClassifier intentClassifier,
@@ -108,7 +111,9 @@ public class AgentModeStrategy implements ChatModeStrategy {
                               PromptLoaderService promptLoaderService,
                               LlmClientRegistry llmRegistry,
                               AgentDegradationStrategy degradationStrategy,
-                              ObjectProvider<MultiTurnModeStrategy> multiTurnProvider) {
+                              ObjectProvider<MultiTurnModeStrategy> multiTurnProvider,
+                              ChatMessagePublisher chatMessagePublisher,
+                              ChatConversationHelper conversationHelper) {
         this.infra = infra;
         this.intentClassifier = intentClassifier;
         this.workspaceFactory = workspaceFactory;
@@ -119,6 +124,8 @@ public class AgentModeStrategy implements ChatModeStrategy {
         this.llmRegistry = llmRegistry;
         this.degradationStrategy = degradationStrategy;
         this.multiTurnProvider = multiTurnProvider;
+        this.chatMessagePublisher = chatMessagePublisher;
+        this.conversationHelper = conversationHelper;
     }
 
     @Override
@@ -296,8 +303,40 @@ public class AgentModeStrategy implements ChatModeStrategy {
 
     @Override
     public StreamResult executeStream(StrategyExecutionContext ctx) {
-        throw new ClientException(ClientErrorCode.UNSUPPORTED_OPERATION,
-            "Agent mode does not support streaming in this version. Use blocking call instead.");
+        AdvisorChainContext chainCtx = new AdvisorChainContext(
+            ctx.conversationId(), ctx.request(), ctx.userId(),
+            ctx.cagContext(), ctx.candidateId());
+        ModeChainResult result = buildAdvisorChain(chainCtx);
+
+        // 同 execute：tokenCountingModel（design §0 #1），不用 ctx.chatClient()
+        ChatClient countingClient = ChatClient.builder(result.tokenCountingModel()).build();
+        ChatClient.ChatClientRequestSpec spec = countingClient.prompt()
+            .user(ctx.request().message())
+            .advisors(a -> a.advisors(result.chain())
+                .param(CONVERSATION_ID, ctx.conversationId()));
+
+        if (result.toolCallbacks() != null && result.toolCallbacks().length > 0) {
+            spec.options(ToolCallingChatOptions.builder()
+                .toolCallbacks(result.toolCallbacks())
+                .build());
+        }
+
+        StringBuilder collectedContent = new StringBuilder();
+        final int maxContentLength = 1 << 20;
+        // .call()→.stream()：ToolCallAdvisor.adviseStream 驱动流式 ReAct（Poc6 验证 streamCount=2）。
+        // 截断保护 + doFinally 落库（StreamCompletionHelper，与 SIMPLE/MULTI_TURN 逐字同语义）。
+        Flux<String> content = spec.stream()
+            .content()
+            .doOnNext(text -> {
+                if (text != null && collectedContent.length() < maxContentLength) {
+                    int remaining = maxContentLength - collectedContent.length();
+                    collectedContent.append(text, 0, Math.min(text.length(), remaining));
+                }
+            })
+            .doFinally(signal -> StreamCompletionHelper.onComplete(
+                ctx, collectedContent.toString(), signal, chatMessagePublisher, conversationHelper));
+
+        return new StreamResult(content, buildReferences(result.workspace().getRetrievedDocs()));
     }
 
     /** 从 workspace 检索文档构造引用映射（#n → chunkId/documentId/fileName/page），无检索时返回 null */

@@ -33,7 +33,7 @@ public class ProbeStreamHandler {
     /**
      * 为流添加首包探测超时
      */
-    public Flux<String> wrapWithProbe(String modelId, Flux<String> source) {
+    public <T> Flux<T> wrapWithProbe(String modelId, Flux<T> source) {
         if (!probeProps.effectiveEnabled()) {
             return source;
         }
@@ -41,7 +41,7 @@ public class ProbeStreamHandler {
         Duration timeout = Duration.ofMillis(probeProps.effectiveProbeTimeoutMs());
         AtomicBoolean gotFirst = new AtomicBoolean(false);
 
-        return Flux.create(sink -> {
+        return Flux.<T>create(sink -> {
             Disposable.Composite disposables = Disposables.composite();
 
             Disposable timer = Mono.delay(timeout)

@@ -80,18 +80,14 @@ public class ResilientChatClient extends AbstractResilientClient<ChatCapable>
         // 内部 .map(StreamChunk::text) 回 String 走弹性层，末端再 .map 回 StreamChunk。占位阶段无 tool delta，语义无损。
         return circuitBreaker.executeStream(() ->
             retryPolicy.retryStream(() -> {
-                // P0b：GenericChatClient 已发 text chunk + 轮末汇总包(text=null,带 toolCalls/finishReason/usage)。
-                // 弹性层仍 Flux<String>（P2 泛型化 ProbeHandler/retryStream 透传 StreamChunk），
-                // 占位 filter hasText 只透传 text（汇总包暂丢，P2 透传后恢复 toolCalls/usage）。
-                Flux<String> raw = delegate.chatStream(request)
-                    .filter(StreamChunk::hasText)
-                    .map(StreamChunk::text);
+                // P2：ProbeHandler/retryStream/executeStream 已泛型化，透传 Flux<StreamChunk>。
+                // text chunk + 轮末汇总包(toolCalls/finishReason/usage) 直达 ChatModelAdapter（P3 回灌）。
+                Flux<StreamChunk> raw = delegate.chatStream(request);
                 return probeHandler != null
                     ? probeHandler.wrap(candidateId(), raw, circuitBreaker::recordProbeSuccess)
                     : raw;
             })
-        ).map(s -> new StreamChunk(s, null, null, null))
-        .doOnComplete(() -> {
+        ).doOnComplete(() -> {
             if (metrics != null) metrics.recordChatLatency(candidateId(), start, "success");
         }).doOnError(e -> {
             if (metrics != null) metrics.recordChatLatency(candidateId(), start, "error");

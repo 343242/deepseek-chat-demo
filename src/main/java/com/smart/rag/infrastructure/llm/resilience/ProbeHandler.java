@@ -58,9 +58,9 @@ public class ProbeHandler {
      *                       为 null 时不添加回调
      * @return 带首包探测的 Flux
      */
-    public Flux<String> wrap(String candidateId, Flux<String> raw,
+    public <T> Flux<T> wrap(String candidateId, Flux<T> raw,
                               @Nullable Runnable onProbeSuccess) {
-        Flux<String> probed = wrapWithInFlightProbeOrDelegate(candidateId, raw);
+        Flux<T> probed = wrapWithInFlightProbeOrDelegate(candidateId, raw);
         if (onProbeSuccess == null) return probed;
         AtomicBoolean notified = new AtomicBoolean(false);
         return probed.doOnNext(first -> {
@@ -84,7 +84,7 @@ public class ProbeHandler {
      *   </li>
      * </ul>
      */
-    private Flux<String> wrapWithInFlightProbeOrDelegate(String candidateId, Flux<String> raw) {
+    private <T> Flux<T> wrapWithInFlightProbeOrDelegate(String candidateId, Flux<T> raw) {
         if (probeRegistry == null) {
             return delegate.wrapWithProbe(candidateId, raw);
         }

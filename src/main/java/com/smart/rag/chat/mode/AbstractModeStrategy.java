@@ -11,12 +11,11 @@ import com.smart.rag.chat.service.ChatRequestSpecFactory;
 import com.smart.rag.chat.service.ChatRetrievalService;
 import com.smart.rag.chat.service.ChatUsageTracker;
 import com.smart.rag.chat.service.ModeChainResult;
+import com.smart.rag.chat.service.StreamCompletionHelper;
 import com.smart.rag.chat.service.StrategyExecuteResult;
 import com.smart.rag.chat.service.StrategyExecutionContext;
 import com.smart.rag.chat.service.StreamResult;
 import com.smart.rag.infrastructure.advisor.RagContextAdvisor;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.advisor.api.Advisor;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.model.Generation;
@@ -36,8 +35,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * 动态尾注入；流式额外补齐 Redis 记忆（走 advisor 链）+ DB 落库（{@link #onStreamComplete}）。
  */
 public abstract class AbstractModeStrategy implements ChatModeStrategy {
-
-    private static final Logger log = LoggerFactory.getLogger(AbstractModeStrategy.class);
 
     protected final AdvisorInfrastructure infra;
     protected final ChatRequestSpecFactory requestSpecFactory;
@@ -156,17 +153,8 @@ public abstract class AbstractModeStrategy implements ChatModeStrategy {
      * 不含 <<REF>>（RagContextAdvisor 的动态 SystemMessage 不进 DB 落库路径）。
      */
     protected void onStreamComplete(StrategyExecutionContext ctx, String content, SignalType signal) {
-        switch (signal) {
-            case ON_COMPLETE -> chatMessagePublisher.publishMessageSave(ctx.conversationId(),
-                ctx.request().message(), content,
-                ctx.candidateId(), null, ctx.elapsed());
-            case ON_ERROR, CANCEL -> {
-                log.warn("Stream {} for conversation {}: collected {} chars",
-                    signal, ctx.conversationId(), content.length());
-                conversationHelper.savePartialResponse(ctx.conversationId(), content);
-            }
-            default -> { }
-        }
+        // P4-1：落库逻辑提取到 StreamCompletionHelper，AGENT 流式（不继承本类）复用同一语义
+        StreamCompletionHelper.onComplete(ctx, content, signal, chatMessagePublisher, conversationHelper);
     }
 
     public static String extractContent(ChatResponse response) {

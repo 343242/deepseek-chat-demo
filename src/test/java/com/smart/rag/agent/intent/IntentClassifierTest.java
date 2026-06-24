@@ -5,6 +5,7 @@ import com.smart.rag.agent.config.AgentRagProperties;
 import com.smart.rag.infrastructure.llm.ChatCapable;
 import com.smart.rag.infrastructure.llm.ChatRequest;
 import com.smart.rag.infrastructure.llm.LlmResponse;
+import com.smart.rag.infrastructure.llm.StreamChunk;
 import com.smart.rag.infrastructure.llm.registry.LlmClientRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -56,7 +57,8 @@ class IntentClassifierTest {
     void classifyStream_aggregatesChunksAndParsesIntent() {
         when(llmRegistry.get(INTENT_MODEL, ChatCapable.class)).thenReturn(capable);
         when(capable.chatStream(any(ChatRequest.class))).thenReturn(
-            Flux.just("{\"intent\":", " \"RETRIEVAL\", \"confidence\": 0.9}"));
+            Flux.<String>just("{\"intent\":", " \"RETRIEVAL\", \"confidence\": 0.9}")
+                .map(s -> new StreamChunk(s, null, null, null)));
 
         IntentResult result = classifier.classifyStream("Spring Boot 自动装配原理").block();
 
@@ -70,7 +72,8 @@ class IntentClassifierTest {
     void classifyStream_markdownWrappedJsonIsExtracted() {
         when(llmRegistry.get(INTENT_MODEL, ChatCapable.class)).thenReturn(capable);
         when(capable.chatStream(any(ChatRequest.class))).thenReturn(
-            Flux.just("```json\n", "{\"intent\":\"GENERAL_TOOL\",\"confidence\":0.8}", "\n```"));
+            Flux.<String>just("```json\n", "{\"intent\":\"GENERAL_TOOL\",\"confidence\":0.8}", "\n```")
+                .map(s -> new StreamChunk(s, null, null, null)));
 
         IntentResult result = classifier.classifyStream("123 * 456 等于多少").block();
 

@@ -3,6 +3,7 @@ package com.smart.rag.agent.poc;
 import com.smart.rag.infrastructure.llm.ChatCapable;
 import com.smart.rag.infrastructure.llm.ChatRequest;
 import com.smart.rag.infrastructure.llm.LlmResponse;
+import com.smart.rag.infrastructure.llm.StreamChunk;
 import com.smart.rag.infrastructure.llm.adapter.ChatModelAdapter;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -64,7 +65,8 @@ class Poc4_AgentModelAdapterToolTransparencyTest {
     @Test
     @DisplayName("STREAM chatStream text-only chunks")
     void streamIsTextOnly() {
-        when(delegate.chatStream(any())).thenReturn(Flux.just("a", "b", "c"));
+        when(delegate.chatStream(any())).thenReturn(
+            Flux.<String>just("a", "b", "c").map(s -> new StreamChunk(s, null, null, null)));
         List<ChatResponse> responses = adapter.stream(new Prompt(new UserMessage("hi"))).collectList().block();
         boolean anyToolCall = responses != null && responses.stream().anyMatch(r -> { var tc = r.getResult().getOutput().getToolCalls(); return tc != null && !tc.isEmpty(); });
         int size = responses == null ? 0 : responses.size();

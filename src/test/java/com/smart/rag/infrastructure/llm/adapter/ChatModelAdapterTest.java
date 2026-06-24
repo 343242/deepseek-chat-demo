@@ -4,6 +4,7 @@ import com.smart.rag.infrastructure.llm.ChatCapable;
 import com.smart.rag.infrastructure.llm.ChatRequest;
 import com.smart.rag.infrastructure.llm.LlmResponse;
 import com.smart.rag.infrastructure.llm.MessageInformation;
+import com.smart.rag.infrastructure.llm.StreamChunk;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -248,7 +249,9 @@ class ChatModelAdapterTest {
         @Test
         @DisplayName("each chunk emitted as separate ChatResponse")
         void chunksEmittedAsChatResponses() {
-            when(delegate.chatStream(any())).thenReturn(reactor.core.publisher.Flux.just("a", "b", "c"));
+            when(delegate.chatStream(any())).thenReturn(
+                reactor.core.publisher.Flux.<String>just("a", "b", "c")
+                    .map(s -> new StreamChunk(s, null, null, null)));
 
             ChatRequest[] captured = new ChatRequest[1];
             Prompt prompt = new Prompt(List.of(new UserMessage("hi")));

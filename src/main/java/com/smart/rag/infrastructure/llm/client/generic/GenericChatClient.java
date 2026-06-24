@@ -98,7 +98,7 @@ public class GenericChatClient extends AbstractChatClient {
     }
 
     @Override
-    public Flux<String> chatStream(ChatRequest request) {
+    public Flux<StreamChunk> chatStream(ChatRequest request) {
         Map<String, Object> body = buildRequestBody(request, true);
         String url = buildUrl();
 
@@ -144,7 +144,9 @@ public class GenericChatClient extends AbstractChatClient {
                     sink.error(HttpClientErrorHandler.translate("Chat Stream", url, e));
                 }
             }
-        }).subscribeOn(Schedulers.boundedElastic());
+        }).subscribeOn(Schedulers.boundedElastic())
+        // P0a 占位：String → StreamChunk（仅 text）。P0b 改 readSse 为 FluxSink<StreamChunk> + SSE 三态解析。
+        .map(s -> new StreamChunk(s, null, null, null));
     }
 
     private void readSse(BufferedSource source, Call call, FluxSink<String> sink) throws IOException {

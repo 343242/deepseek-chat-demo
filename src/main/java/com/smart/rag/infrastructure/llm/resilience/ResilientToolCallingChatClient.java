@@ -5,6 +5,7 @@ import com.smart.rag.infrastructure.llm.ChatRequest;
 import com.smart.rag.infrastructure.llm.LlmCapability;
 import com.smart.rag.infrastructure.llm.LlmResponse;
 import com.smart.rag.infrastructure.llm.ToolCallingCapable;
+import com.smart.rag.infrastructure.llm.StreamChunk;
 import reactor.core.publisher.Flux;
 
 import java.util.List;
@@ -37,7 +38,7 @@ public class ResilientToolCallingChatClient implements ChatCapable, ToolCallingC
     }
 
     @Override
-    public Flux<String> chatStream(ChatRequest request) {
+    public Flux<StreamChunk> chatStream(ChatRequest request) {
         return delegate.chatStream(request);
     }
 

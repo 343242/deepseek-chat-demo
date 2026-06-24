@@ -17,8 +17,8 @@ public interface ChatCapable extends CapabilityClient {
     /** 阻塞式对话 */
     LlmResponse chat(ChatRequest request);
 
-    /** 流式对话（SSE） */
-    Flux<String> chatStream(ChatRequest request);
+    /** 流式对话（SSE） — 返回 {@link StreamChunk}（text / toolDelta / finishReason / usage，design §2） */
+    Flux<StreamChunk> chatStream(ChatRequest request);
 
     /** 是否支持流式（由 ModelCandidate.supportsStreaming 声明） */
     boolean supportsStreaming();

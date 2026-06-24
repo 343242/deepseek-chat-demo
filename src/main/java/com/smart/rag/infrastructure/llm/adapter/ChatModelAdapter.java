@@ -5,6 +5,7 @@ import com.smart.rag.infrastructure.llm.ChatRequest;
 import com.smart.rag.infrastructure.llm.ChatTool;
 import com.smart.rag.infrastructure.llm.LlmResponse;
 import com.smart.rag.infrastructure.llm.MessageInformation;
+import com.smart.rag.infrastructure.llm.StreamChunk;
 import reactor.core.publisher.Flux;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.messages.SystemMessage;
@@ -60,9 +61,11 @@ public class ChatModelAdapter implements ChatModel {
     @Override
     public Flux<ChatResponse> stream(Prompt prompt) {
         ChatRequest request = extractChatRequest(prompt);
+        // P0a 占位：chunk 是 StreamChunk，仅取 text（P3 重写为轮末汇总包回灌 tool_calls/finishReason/usage）。
         return delegate.chatStream(request)
             .map(chunk -> new ChatResponse(
-                List.of(new Generation(new AssistantMessage(chunk)))));
+                List.of(new Generation(new AssistantMessage(
+                    chunk.hasText() ? chunk.text() : "")))));
     }
 
     private ChatResponse wrapAsChatResponse(LlmResponse llmResp) {

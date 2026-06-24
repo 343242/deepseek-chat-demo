@@ -46,5 +46,5 @@ public abstract class AbstractChatClient implements ChatCapable {
     public abstract LlmResponse chat(ChatRequest request);
 
     @Override
-    public abstract Flux<String> chatStream(ChatRequest request);
+    public abstract Flux<StreamChunk> chatStream(ChatRequest request);
 }

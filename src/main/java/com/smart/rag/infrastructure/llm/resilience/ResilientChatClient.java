@@ -4,6 +4,7 @@ import com.smart.rag.infrastructure.llm.ChatCapable;
 import com.smart.rag.infrastructure.llm.ChatRequest;
 import com.smart.rag.infrastructure.llm.LlmResponse;
 import com.smart.rag.infrastructure.llm.ToolCallingCapable;
+import com.smart.rag.infrastructure.llm.StreamChunk;
 import com.smart.rag.infrastructure.llm.metrics.LlmMetrics;
 import org.springframework.lang.Nullable;
 import reactor.core.publisher.Flux;
@@ -73,16 +74,19 @@ public class ResilientChatClient extends AbstractResilientClient<ChatCapable>
      * {@link #isAvailable()} before subscribing.
      */
     @Override
-    public Flux<String> chatStream(ChatRequest request) {
+    public Flux<StreamChunk> chatStream(ChatRequest request) {
         long start = metrics != null ? metrics.startNanos() : 0;
+        // P0a 占位：SPI 已改 Flux<StreamChunk>，但 ProbeHandler/retryStream 仍是 Flux<String>（P2 泛型化 ProbeHandler）。
+        // 内部 .map(StreamChunk::text) 回 String 走弹性层，末端再 .map 回 StreamChunk。占位阶段无 tool delta，语义无损。
         return circuitBreaker.executeStream(() ->
             retryPolicy.retryStream(() -> {
-                Flux<String> raw = delegate.chatStream(request);
+                Flux<String> raw = delegate.chatStream(request).map(StreamChunk::text);
                 return probeHandler != null
                     ? probeHandler.wrap(candidateId(), raw, circuitBreaker::recordProbeSuccess)
                     : raw;
             })
-        ).doOnComplete(() -> {
+        ).map(s -> new StreamChunk(s, null, null, null))
+        .doOnComplete(() -> {
             if (metrics != null) metrics.recordChatLatency(candidateId(), start, "success");
         }).doOnError(e -> {
             if (metrics != null) metrics.recordChatLatency(candidateId(), start, "error");

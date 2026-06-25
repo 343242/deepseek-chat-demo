@@ -23,6 +23,7 @@ import com.smart.rag.agent.advisor.AgentSystemPromptAdvisor;
 import com.smart.rag.agent.config.AgentRagProperties;
 import com.smart.rag.agent.guardrail.AgentDegradationStrategy;
 import com.smart.rag.agent.guardrail.AgentGuardrails;
+import com.smart.rag.agent.guardrail.GuardrailEnforcingToolCallAdvisor;
 import com.smart.rag.agent.guardrail.TokenCountingChatModel;
 import com.smart.rag.agent.intent.AgentIntent;
 import com.smart.rag.agent.intent.IntentClassifier;
@@ -157,16 +158,18 @@ public class AgentModeStrategy implements ChatModeStrategy {
         ToolCallback[] toolCallbacks = agentToolCallbackFactory.createToolCallbacks(
             intentResult.intent(), workspace);
 
-        // Step 6: 自建独立 ToolCallAdvisor（不复用全局单例）
+        // 提前创建 guardrails（Step 6 GuardrailEnforcingToolCallAdvisor 每轮 check 需要；Step 7 SystemPrompt 也用）
+        AgentGuardrails guardrails = createGuardrails(ctx.candidateId());
+
+        // Step 6: 自建护栏强制的 ToolCallAdvisor（每轮 doBeforeStream/doBeforeCall 调 guardrails.check，
+        // 到 STOP 抛 GuardrailHardStopException；不复用全局单例）。P4b 修复阻塞+流式 check no-op。
         if (toolCallbacks.length > 0) {
             DefaultToolCallingManager toolCallingManager = DefaultToolCallingManager.builder()
                 .toolCallbackResolver(new StaticToolCallbackResolver(List.of(toolCallbacks)))
                 .build();
 
-            ToolCallAdvisor agentToolCallAdvisor = ToolCallAdvisor.builder()
-                .toolCallingManager(toolCallingManager)
-                .advisorOrder(2)
-                .build();
+            ToolCallAdvisor agentToolCallAdvisor = new GuardrailEnforcingToolCallAdvisor(
+                toolCallingManager, 2, guardrails);
 
             chain.add(agentToolCallAdvisor);
             log.debug("Agent ToolCallAdvisor built: {} tools for intent {}",
@@ -176,7 +179,6 @@ public class AgentModeStrategy implements ChatModeStrategy {
         // Step 7: AgentSystemPromptAdvisor -- 静态基座+意图（首位）+ 动态尾 CAG/中间答案/护栏（末尾）
         String staticPrompt = resolveAgentPrompt(intentResult.intent());
         String cagSegment = contextPromptInjector.cagSegment(ctx.cagContext());
-        AgentGuardrails guardrails = createGuardrails(ctx.candidateId());
         chain.add(new AgentSystemPromptAdvisor(intentResult.intent(), staticPrompt, cagSegment, workspace, guardrails));
 
         // Step 8: 对话记忆

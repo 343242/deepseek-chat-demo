@@ -52,8 +52,11 @@ public class TokenCountingChatModel implements ChatModel {
 
     @Override
     public Flux<ChatResponse> stream(Prompt prompt) {
-        // Agent 模式当前为阻塞式，流式支持后续迭代
-        return delegate.stream(prompt);
+        // P4b：流式累计 usage（对齐阻塞 call() 的 accumulateUsage）。
+        // 仅轮末汇总包（ChatModelAdapter P3 buildResponseMetadata 带 usage）有真实 usage；
+        // 中间 text chunk 无 usage 跳过——不字符估算，避免流式片段重复累加。
+        return delegate.stream(prompt)
+            .doOnNext(this::accumulateStreamUsage);
     }
 
     @Override
@@ -86,6 +89,23 @@ public class TokenCountingChatModel implements ChatModel {
             estimationUsed = true;
             log.debug("TokenCountingChatModel: estimated input={}, output={}, total={} (estimation)",
                 estimatedInput, estimatedOutput, getTotalTokens());
+        }
+    }
+
+    /**
+     * 流式 usage 累计（P4b）-- 仅累计真实 usage（轮末汇总包），跳过无 usage 的中间 chunk。
+     * <p>
+     * 与阻塞 {@link #accumulateUsage} 不同：流式不字符估算（片段估算会重复累加），
+     * 只在模型返回真实 usage（{@code ChatModelAdapter} P3 轮末汇总包）时精确累计。
+     */
+    private void accumulateStreamUsage(ChatResponse response) {
+        if (response == null || response.getMetadata() == null) return;
+        Usage usage = response.getMetadata().getUsage();
+        if (usage != null && usage.getPromptTokens() != null && usage.getPromptTokens() > 0) {
+            totalPromptTokens += usage.getPromptTokens();
+            totalCompletionTokens += usage.getCompletionTokens() != null ? usage.getCompletionTokens() : 0;
+            log.debug("TokenCountingChatModel.stream: prompt={}, completion={}, total={}",
+                usage.getPromptTokens(), usage.getCompletionTokens(), getTotalTokens());
         }
     }
 

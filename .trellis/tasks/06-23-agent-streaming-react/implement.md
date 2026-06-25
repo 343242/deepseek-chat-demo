@@ -13,6 +13,30 @@ P0a SPI 签名 → P0b GenericChatClient SSE 三态 → P1 SSE 单测 → P2 全
 > （Poc9 铁证：模型跑 2 轮但 `BaseAdvisor.before()` 仅触发 1 次，阻塞/流式皆然）。P4b 改落 `ToolCallAdvisor.doBeforeStream`/`doBeforeCall`，
 > **`Poc10` 已确认每轮触发**（done 2026-06-24，GREEN）。连锁：阻塞态既有 `maxToolIterations` 硬上界当前是 no-op，P4b 一并修。其余 #1/#3/#4/#5/#6 见 design §0。
 
+---
+
+## ✅ 完成状态（2026-06-25，全 push origin/agentic-rag-dev）
+
+P0a–P4b 全部完成，流式 ReAct 真实模型验证可用。下方各阶段 checklist 保留为规划记录，实际进度以本块为准：
+
+| 阶段 | commit | 内容 |
+|---|---|---|
+| design v4.2+Poc6-10 | ca81b33 | §0 审查修正 + Poc6-10 实证 |
+| P0a | 545753b | StreamChunk SPI 单轨 Flux&lt;StreamChunk&gt; 迁移 |
+| P0b | e63db05 | readSse 三态 + 轮末汇总包 + ToolCallAccumulator |
+| P1 | 09c65cb | GenericChatClient SSE 三态单测（5 场景） |
+| P2 | c91b8d9 | 弹性层泛型化透传（ProbeHandler.wrap/wrapWithProbe `<T>`；retryStream/executeStream 本已泛型） |
+| P3 | 74c42b7 | ChatModelAdapter.stream 回灌 tool_calls/finishReason/usage |
+| P4-1 | 0d074f4 | 提取 StreamCompletionHelper（Abstract+Agent 统一落库） |
+| P4-2 | 3871831 | AgentModeStrategy.executeStream mirror execute `.call()`→`.stream()` |
+| P4b | 8bc4d6f | GuardrailEnforcingToolCallAdvisor + GuardrailHardStopException + TokenCountingChatModel.stream accumulateStreamUsage |
+
+**关键设计落地**：Agent 不继承 AbstractModeStrategy（`execute()` final 冲突）→ 落库走 StreamCompletionHelper static 工具类；ToolCallAdvisor 子类化用 protected `super(ToolCallingManager, int)`；check(null) doBefore 未知工具名。全量回归绿贯穿 P2–P4b。
+
+**P5（可选增强，未做）**：流式 ReAct 已真实模型验证可用（2026-06-25）。剩余可选：per-tool timeout（CompletableFuture.orTimeout 装饰 ToolCallback, §6 CRIT-2）/ reasoning_content 字段处理（§0 #6）/ 三层 timeout 实测。
+
+---
+
 ## P0a — StreamChunk SPI 签名变更（纯委托类）
 - [ ] 新建 `infrastructure/llm/StreamChunk.java`（record + `ToolCallDelta` + `FinishReason` enum + `TokenUsage usage` 字段 + hasText/hasToolCall）
 - [ ] `ChatCapable.chatStream` 返回类型 `Flux<String>` → `Flux<StreamChunk>`

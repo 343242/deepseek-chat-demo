@@ -13,6 +13,11 @@ public interface SysUserRoleMapper extends BaseMapper<SysUserRole> {
     List<Long> selectRoleIdsByUserId(Long userId);
 
     /**
+     * 直接返回用户 active 角色名（单次 JOIN），避免 caller 再用 roleIds 二次查询 sys_role。
+     */
+    List<String> selectRoleNamesByUserId(Long userId);
+
+    /**
      * 根据角色 ID 查询关联的用户 ID 列表
      */
     List<Long> selectUserIdsByRoleId(@Param("roleId") Long roleId);

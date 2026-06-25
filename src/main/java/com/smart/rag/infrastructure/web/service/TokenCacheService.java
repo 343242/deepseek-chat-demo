@@ -23,7 +23,7 @@ public class TokenCacheService {
     /**
      * 原子化限流检查+递增：GET 判断 → 超限返回 -1 → 否则 INCR+EXPIRE。
      */
-    private static final DefaultRedisScript<Long> CHECK_AND_INCREMENT_LOGIN_SCRIPT =
+    private static final DefaultRedisScript<Long> CHECK_AND_INCREMENT_SCRIPT =
             new DefaultRedisScript<>(
                     "local val = redis.call('GET', KEYS[1]) " +
                     "if val ~= false and tonumber(val) >= tonumber(ARGV[2]) then " +
@@ -202,15 +202,22 @@ public class TokenCacheService {
     }
 
     /**
-     * 合并限流检查+递增为单次原子 Redis 往返。
+     * 原子化限流检查+递增（per-IP 滑动窗口，单次 Redis 往返）。
+     * <p>
+     * 登录与注册共用本方法，通过 {@code keyPrefix} 区分计数器，互不消耗配额。
+     *
+     * @param ip 客户端 IP
+     * @param keyPrefix Redis key 前缀，与 ip 拼接（登录 {@code "ratelimit:login:"} / 注册 {@code "ratelimit:register:"}）
+     * @param limit 窗口最大次数；达到即拒绝（本次不递增）
+     * @param ttlSec 窗口 TTL（秒）
      * @return 递增后的计数（1..limit）；-1 表示已超限（本次不递增）
      */
-    public long checkAndIncrementLoginAttempts(String ip) {
-        String key = "ratelimit:login:" + ip;
-        Long result = redisTemplate.execute(CHECK_AND_INCREMENT_LOGIN_SCRIPT,
+    public long checkAndIncrementAttempts(String ip, String keyPrefix, int limit, int ttlSec) {
+        String key = keyPrefix + ip;
+        Long result = redisTemplate.execute(CHECK_AND_INCREMENT_SCRIPT,
                 List.of(key),
-                String.valueOf(300),   // TTL
-                String.valueOf(10));  // 限制次数
+                String.valueOf(ttlSec),
+                String.valueOf(limit));
         return result != null ? result : 0;
     }
 

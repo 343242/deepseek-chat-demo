@@ -7,6 +7,7 @@ import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;
 import com.smart.rag.infrastructure.exception.errorcode.ServiceErrorCode;
 import com.smart.rag.infrastructure.exception.RateLimitExceededException;
 import com.smart.rag.infrastructure.web.config.JwtProperties;
+import com.smart.rag.infrastructure.web.config.RateLimitProperties;
 import com.smart.rag.infrastructure.web.service.CaptchaService;
 import com.smart.rag.infrastructure.web.service.TokenCacheService;
 import com.smart.rag.infrastructure.web.util.JwtTokenProvider;
@@ -47,6 +48,10 @@ public class AuthServiceImpl implements AuthService {
     /** 注册时分配的默认角色名 */
     private static final String DEFAULT_ROLE_NAME = "USER";
 
+    /** 登录/注册限流 Redis key 前缀（独立计数，互不消耗配额） */
+    private static final String LOGIN_RATELIMIT_KEY = "ratelimit:login:";
+    private static final String REGISTER_RATELIMIT_KEY = "ratelimit:register:";
+
     private static final Logger log = LoggerFactory.getLogger(AuthServiceImpl.class);
 
     private final SysUserMapper sysUserMapper;
@@ -60,6 +65,7 @@ public class AuthServiceImpl implements AuthService {
     private final SnowflakeIdGenerator idGenerator;
     private final TransactionTemplate transactionTemplate;
     private final PasswordEncoder passwordEncoder;
+    private final RateLimitProperties rateLimitProperties;
     private final Executor permissionWarmupExecutor;
 
     public AuthServiceImpl(SysUserMapper sysUserMapper,
@@ -73,6 +79,7 @@ public class AuthServiceImpl implements AuthService {
                        SnowflakeIdGenerator idGenerator,
                        TransactionTemplate transactionTemplate,
                        PasswordEncoder passwordEncoder,
+                       RateLimitProperties rateLimitProperties,
                        @Qualifier("authPermissionWarmupExecutor") Executor permissionWarmupExecutor) {
         this.sysUserMapper = sysUserMapper;
         this.sysUserRoleMapper = sysUserRoleMapper;
@@ -85,6 +92,7 @@ public class AuthServiceImpl implements AuthService {
         this.idGenerator = idGenerator;
         this.transactionTemplate = transactionTemplate;
         this.passwordEncoder = passwordEncoder;
+        this.rateLimitProperties = rateLimitProperties;
         this.permissionWarmupExecutor = permissionWarmupExecutor;
     }
 
@@ -94,11 +102,13 @@ public class AuthServiceImpl implements AuthService {
         // 1. Captcha first — 错误验证码不应消耗 IP 登录次数（避免被用来恶意锁死账户）
         validateCaptcha(captchaId, captchaCode);
 
-        // 2. IP rate limit — 合并检查+递增为单次 Redis 往返
-        long attemptCount = tokenCacheService.checkAndIncrementLoginAttempts(ip);
+        // 2. IP rate limit — 登录/注册独立计数（独立 key + 独立阈值，互不消耗）
+        RateLimitProperties.Window loginWindow = rateLimitProperties.login();
+        long attemptCount = tokenCacheService.checkAndIncrementAttempts(
+                ip, LOGIN_RATELIMIT_KEY, loginWindow.limit(), loginWindow.ttlSec());
         if (attemptCount < 0) {
             log.warn("Login rate-limited: ip={}, username={}", ip, username);
-            throw new RateLimitExceededException("登录尝试过于频繁，请5分钟后再试");
+            throw new RateLimitExceededException("登录尝试过于频繁，请稍后再试");
         }
 
         // 3. Query user
@@ -119,20 +129,19 @@ public class AuthServiceImpl implements AuthService {
             throw new ClientException(ClientErrorCode.LOGIN_FAILED);
         }
 
-        // 6. Query roles & permissions（复用 roleIds，避免 loadUserPermissions 重复查询）
-        List<Long> roleIds = sysUserRoleMapper.selectRoleIdsByUserId(user.getId());
-        List<String> roleNames = getRoleNames(roleIds);
+        // 6. Query roles（单次 JOIN 直取 role_name，省去二次查询 sys_role）
+        List<String> roleNames = sysUserRoleMapper.selectRoleNamesByUserId(user.getId());
         // 权限预热：异步执行，不阻塞登录响应；best-effort，失败仅记日志（miss 由 getCurrentUser 兜底）
         warmupUserPermissions(user.getId());
 
-        // 7. Generate tokens
-        String accessToken = jwtTokenProvider.generateAccessToken(user.getId(), roleNames);
+        // 7. Generate tokens（jti 在签发前生成，避免签发后再解析 token 取 jti）
+        String jti = java.util.UUID.randomUUID().toString();
+        String accessToken = jwtTokenProvider.generateAccessToken(user.getId(), roleNames, jti);
         String refreshToken = jwtTokenProvider.generateRefreshToken(user.getId());
-        String tokenId = jwtTokenProvider.getJtiFromToken(accessToken);
 
         // 8. Pipeline 批量：用户状态检查 + Token 存储（3+ Redis → 1 Pipeline 往返）
         String redisStatus = tokenCacheService.batchStoreTokens(
-                user.getId(), tokenId, roleNames, refreshToken,
+                user.getId(), jti, roleNames, refreshToken,
                 jwtProperties.accessExpiration(), jwtProperties.refreshExpiration());
         if ("disabled".equals(redisStatus) || "deleted".equals(redisStatus)) {
             throw new ClientException(ClientErrorCode.LOGIN_FAILED);
@@ -155,10 +164,12 @@ public class AuthServiceImpl implements AuthService {
         validateCaptcha(captchaId, captchaCode);
 
         if (ip != null) {
-            long attemptCount = tokenCacheService.checkAndIncrementLoginAttempts(ip);
+            RateLimitProperties.Window registerWindow = rateLimitProperties.register();
+            long attemptCount = tokenCacheService.checkAndIncrementAttempts(
+                    ip, REGISTER_RATELIMIT_KEY, registerWindow.limit(), registerWindow.ttlSec());
             if (attemptCount < 0) {
                 log.warn("Register rate-limited: ip={}, username={}", ip, username);
-                throw new RateLimitExceededException("注册尝试过于频繁，请5分钟后再试");
+                throw new RateLimitExceededException("注册尝试过于频繁，请稍后再试");
             }
         }
 
@@ -228,16 +239,15 @@ public class AuthServiceImpl implements AuthService {
             throw new ClientException(ClientErrorCode.USER_STATUS_ABNORMAL);
         }
 
-        List<Long> roleIds = sysUserRoleMapper.selectRoleIdsByUserId(userId);
-        List<String> roleNames = getRoleNames(roleIds);
+        List<String> roleNames = sysUserRoleMapper.selectRoleNamesByUserId(userId);
 
-        String newAccessToken = jwtTokenProvider.generateAccessToken(userId, roleNames);
+        String jti = java.util.UUID.randomUUID().toString();
+        String newAccessToken = jwtTokenProvider.generateAccessToken(userId, roleNames, jti);
         String newRefreshToken = jwtTokenProvider.generateRefreshToken(userId);
 
         // Pipeline 批量：用户状态检查 + Token 存储（与 login 一致，1 次往返）
-        String tokenId = jwtTokenProvider.getJtiFromToken(newAccessToken);
         String redisStatus = tokenCacheService.batchStoreTokens(
-                userId, tokenId, roleNames, newRefreshToken,
+                userId, jti, roleNames, newRefreshToken,
                 jwtProperties.accessExpiration(), jwtProperties.refreshExpiration());
         if ("disabled".equals(redisStatus) || "deleted".equals(redisStatus)) {
             throw new ClientException(ClientErrorCode.USER_DISABLED);
@@ -267,8 +277,7 @@ public class AuthServiceImpl implements AuthService {
         SysUser user = sysUserMapper.selectActiveById(userId)
                 .orElseThrow(() -> new ServiceException(ServiceErrorCode.USER_NOT_FOUND));
 
-        List<Long> roleIds = sysUserRoleMapper.selectRoleIdsByUserId(userId);
-        List<String> roleNames = getRoleNames(roleIds);
+        List<String> roleNames = sysUserRoleMapper.selectRoleNamesByUserId(userId);
 
         Set<String> permissions = tokenCacheService.getUserPermissions(userId);
         if (permissions == null) {
@@ -351,17 +360,6 @@ public class AuthServiceImpl implements AuthService {
         } catch (Exception e) {
             log.debug("Permission warmup not scheduled for userId={}: {}", userId, e.getMessage());
         }
-    }
-
-    private List<String> getRoleNames(List<Long> roleIds) {
-        if (roleIds == null || roleIds.isEmpty()) {
-            return List.of();
-        }
-        List<SysRole> roles = sysRoleMapper.selectByIds(roleIds);
-        return roles.stream()
-                .filter(Objects::nonNull)
-                .map(SysRole::getRoleName)
-                .collect(Collectors.toList());
     }
 
     private void validateCaptcha(String captchaId, String captchaCode) {

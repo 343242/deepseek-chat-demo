@@ -10,6 +10,13 @@
         WHERE ur.user_id = #{userId} AND r.status = 1 AND r.deleted = 0
     </select>
 
+    <select id="selectRoleNamesByUserId" resultType="java.lang.String">
+        SELECT r.role_name
+        FROM sys_user_role ur
+        INNER JOIN sys_role r ON ur.role_id = r.id
+        WHERE ur.user_id = #{userId} AND r.status = 1 AND r.deleted = 0
+    </select>
+
     <select id="selectUserIdsByRoleId" resultType="java.lang.Long">
         SELECT user_id FROM sys_user_role WHERE role_id = #{roleId}
     </select>

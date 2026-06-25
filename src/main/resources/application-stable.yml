@@ -64,6 +64,13 @@ spring:
             initialize-schema: never
 
 app:
+  ratelimit:
+    login:
+      limit: 30        # 30 次 / 30 分钟
+      ttl-sec: 1800
+    register:
+      limit: 10        # 10 次 / 20 分钟
+      ttl-sec: 1200
   jwt:
     secret: ${JWT_SECRET}
     access-expiration: ${JWT_ACCESS_EXPIRATION:900}

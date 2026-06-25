@@ -55,16 +55,16 @@ class TokenCacheServiceTest {
     class LoginRateLimitTests {
 
         @Test
-        @DisplayName("checkAndIncrementLoginAttempts_underLimit: 未超限时返回递增后的计数")
+        @DisplayName("checkAndIncrementAttempts_underLimit: 未超限时返回递增后的计数")
         @SuppressWarnings("unchecked")
-        void checkAndIncrementLoginAttempts_underLimit() {
+        void checkAndIncrementAttempts_underLimit() {
             doReturn(5L).when(redisTemplate).execute(
                     any(org.springframework.data.redis.core.script.RedisScript.class),
                     anyList(),
                     any(Object[].class)
             );
 
-            long count = tokenCacheService.checkAndIncrementLoginAttempts("127.0.0.1");
+            long count = tokenCacheService.checkAndIncrementAttempts("127.0.0.1", "ratelimit:login:", 10, 300);
 
             assertEquals(5L, count);
             verify(redisTemplate).execute(
@@ -76,16 +76,16 @@ class TokenCacheServiceTest {
         }
 
         @Test
-        @DisplayName("checkAndIncrementLoginAttempts_atLimit: 超限时返回 -1（本次不递增）")
+        @DisplayName("checkAndIncrementAttempts_atLimit: 超限时返回 -1（本次不递增）")
         @SuppressWarnings("unchecked")
-        void checkAndIncrementLoginAttempts_atLimit() {
+        void checkAndIncrementAttempts_atLimit() {
             doReturn(-1L).when(redisTemplate).execute(
                     any(org.springframework.data.redis.core.script.RedisScript.class),
                     anyList(),
                     any(Object[].class)
             );
 
-            assertEquals(-1L, tokenCacheService.checkAndIncrementLoginAttempts("127.0.0.1"));
+            assertEquals(-1L, tokenCacheService.checkAndIncrementAttempts("127.0.0.1", "ratelimit:login:", 10, 300));
         }
     }
 

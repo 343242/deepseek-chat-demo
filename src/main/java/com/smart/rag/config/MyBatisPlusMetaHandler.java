@@ -11,7 +11,12 @@ public class MyBatisPlusMetaHandler implements MetaObjectHandler {
 
     @Override
     public void insertFill(MetaObject metaObject) {
-        this.strictInsertFill(metaObject, "createdAt", OffsetDateTime.class, OffsetDateTime.now());
+        // createdAt 与 updatedAt 同源，避免两次 now() 产生微小差异
+        OffsetDateTime now = OffsetDateTime.now();
+        this.strictInsertFill(metaObject, "createdAt", OffsetDateTime.class, now);
+        // updatedAt 标的是 FieldFill.INSERT_UPDATE，insert 时必须一并填充；
+        // 否则 MyBatis-Plus 会把该字段以 null 纳入 INSERT，覆盖 DB 的 DEFAULT now() 而触发 NOT NULL 违约
+        this.strictInsertFill(metaObject, "updatedAt", OffsetDateTime.class, now);
     }
 
     @Override

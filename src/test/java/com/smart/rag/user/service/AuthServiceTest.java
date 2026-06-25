@@ -5,6 +5,7 @@ import com.smart.rag.infrastructure.exception.ClientException;
 import com.smart.rag.infrastructure.exception.RateLimitExceededException;
 import com.smart.rag.infrastructure.exception.ServiceException;
 import com.smart.rag.infrastructure.web.config.JwtProperties;
+import com.smart.rag.infrastructure.web.config.RateLimitProperties;
 import com.smart.rag.infrastructure.web.auth.UserPermissionProvider;
 import com.smart.rag.infrastructure.web.service.CaptchaService;
 import com.smart.rag.infrastructure.web.service.TokenCacheService;
@@ -19,6 +20,7 @@ import com.smart.rag.user.mapper.SysUserRoleMapper;
 import com.smart.rag.common.snowflake.SnowflakeIdGenerator;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -59,6 +61,21 @@ class AuthServiceTest {
     @InjectMocks
     private AuthServiceImpl authService;
 
+    @BeforeEach
+    void injectRateLimitProperties() {
+        // AuthServiceImpl 构造含 RateLimitProperties（record，不可 mock）；@InjectMocks 会注入 null，
+        // 这里反射注入真实实例（与 TokenCacheServiceTest 注入 jwtProperties 同手法）
+        try {
+            var field = AuthServiceImpl.class.getDeclaredField("rateLimitProperties");
+            field.setAccessible(true);
+            field.set(authService, new RateLimitProperties(
+                    new RateLimitProperties.Window(30, 1800),
+                    new RateLimitProperties.Window(10, 1200)));
+        } catch (NoSuchFieldException | IllegalAccessException e) {
+            fail("Failed to inject RateLimitProperties: " + e.getMessage());
+        }
+    }
+
     private SysUser buildActiveUser() {
         SysUser user = new SysUser();
         user.setId(1L);
@@ -72,16 +89,13 @@ class AuthServiceTest {
     }
 
     private void setupLoginMocks(SysUser user) {
-        when(tokenCacheService.checkAndIncrementLoginAttempts(anyString())).thenReturn(5L);
+        when(tokenCacheService.checkAndIncrementAttempts(anyString(), anyString(), anyInt(), anyInt())).thenReturn(5L);
         when(captchaService.validate(anyString(), anyInt())).thenReturn(true);
         when(sysUserMapper.selectByUsername(anyString())).thenReturn(Optional.of(user));
         when(passwordEncoder.matches(eq("Password1!"), anyString())).thenReturn(true);
-        when(sysUserRoleMapper.selectRoleIdsByUserId(1L)).thenReturn(List.of(1L));
-        SysRole role = new SysRole(); role.setId(1L); role.setRoleName("USER");
-        when(sysRoleMapper.selectByIds(List.of(1L))).thenReturn(List.of(role));
-        when(jwtTokenProvider.generateAccessToken(eq(1L), anyList())).thenReturn("access-token");
+        when(sysUserRoleMapper.selectRoleNamesByUserId(1L)).thenReturn(List.of("USER"));
+        when(jwtTokenProvider.generateAccessToken(eq(1L), anyList(), anyString())).thenReturn("access-token");
         when(jwtTokenProvider.generateRefreshToken(1L)).thenReturn("refresh-token");
-        when(jwtTokenProvider.getJtiFromToken("access-token")).thenReturn("jti-123");
         when(tokenCacheService.batchStoreTokens(eq(1L), anyString(), anyList(), anyString(), anyLong(), anyLong()))
                 .thenReturn(null);
         when(tokenCacheService.getUserPermissions(1L)).thenReturn(null);
@@ -107,14 +121,14 @@ class AuthServiceTest {
             assertEquals("access-token", result.tokens().accessToken());
             assertEquals("refresh-token", result.tokens().refreshToken());
             assertEquals(1L, result.response().user().id());
-            verify(tokenCacheService).checkAndIncrementLoginAttempts("127.0.0.1");
+            verify(tokenCacheService).checkAndIncrementAttempts(eq("127.0.0.1"), anyString(), anyInt(), anyInt());
         }
 
         @Test
         @DisplayName("login_rateLimited: 限流时抛 RateLimitExceededException")
         void login_rateLimited() {
             when(captchaService.validate(anyString(), anyInt())).thenReturn(true);
-            when(tokenCacheService.checkAndIncrementLoginAttempts("127.0.0.1")).thenReturn(-1L);
+            when(tokenCacheService.checkAndIncrementAttempts(eq("127.0.0.1"), anyString(), anyInt(), anyInt())).thenReturn(-1L);
 
             assertThrows(RateLimitExceededException.class,
                     () -> authService.login("testuser", "Password1!", "127.0.0.1", "cap-id", "150"));
@@ -124,7 +138,7 @@ class AuthServiceTest {
         @Test
         @DisplayName("login_invalidCaptcha: 验证码错误时抛 ClientException")
         void login_invalidCaptcha() {
-            when(tokenCacheService.checkAndIncrementLoginAttempts(anyString())).thenReturn(5L);
+            when(tokenCacheService.checkAndIncrementAttempts(anyString(), anyString(), anyInt(), anyInt())).thenReturn(5L);
             when(captchaService.validate("cap-id", 150)).thenReturn(false);
 
             assertThrows(ClientException.class,
@@ -134,7 +148,7 @@ class AuthServiceTest {
         @Test
         @DisplayName("login_userNotFound: 用户不存在时抛 ClientException")
         void login_userNotFound() {
-            when(tokenCacheService.checkAndIncrementLoginAttempts(anyString())).thenReturn(5L);
+            when(tokenCacheService.checkAndIncrementAttempts(anyString(), anyString(), anyInt(), anyInt())).thenReturn(5L);
             when(captchaService.validate(anyString(), anyInt())).thenReturn(true);
             when(sysUserMapper.selectByUsername(anyString())).thenReturn(Optional.empty());
 
@@ -146,7 +160,7 @@ class AuthServiceTest {
         @DisplayName("login_wrongPassword: 密码错误时抛 ClientException")
         void login_wrongPassword() {
             SysUser user = buildActiveUser();
-            when(tokenCacheService.checkAndIncrementLoginAttempts(anyString())).thenReturn(5L);
+            when(tokenCacheService.checkAndIncrementAttempts(anyString(), anyString(), anyInt(), anyInt())).thenReturn(5L);
             when(captchaService.validate(anyString(), anyInt())).thenReturn(true);
             when(sysUserMapper.selectByUsername(anyString())).thenReturn(Optional.of(user));
             when(passwordEncoder.matches(eq("WrongPass1!"), anyString())).thenReturn(false);
@@ -160,7 +174,7 @@ class AuthServiceTest {
         void login_userDisabled_status0() {
             SysUser user = buildActiveUser();
             user.setStatus(0);
-            when(tokenCacheService.checkAndIncrementLoginAttempts(anyString())).thenReturn(5L);
+            when(tokenCacheService.checkAndIncrementAttempts(anyString(), anyString(), anyInt(), anyInt())).thenReturn(5L);
             when(captchaService.validate(anyString(), anyInt())).thenReturn(true);
             when(sysUserMapper.selectByUsername(anyString())).thenReturn(Optional.of(user));
             when(passwordEncoder.matches(anyString(), anyString())).thenReturn(true);
@@ -314,9 +328,7 @@ class AuthServiceTest {
             SysUser user = buildActiveUser();
             when(sysUserMapper.selectActiveById(1L)).thenReturn(Optional.of(user));
             when(sysUserMapper.updateById(any(SysUser.class))).thenReturn(1);
-            when(sysUserRoleMapper.selectRoleIdsByUserId(1L)).thenReturn(List.of(1L));
-            SysRole role = new SysRole(); role.setId(1L); role.setRoleName("USER");
-            when(sysRoleMapper.selectByIds(List.of(1L))).thenReturn(List.of(role));
+            when(sysUserRoleMapper.selectRoleNamesByUserId(1L)).thenReturn(List.of("USER"));
             when(tokenCacheService.getUserPermissions(1L)).thenReturn(null);
 
             assertDoesNotThrow(() -> authService.updateProfile(1L, new UserUpdateRequest("NewNick", null, null, null)));

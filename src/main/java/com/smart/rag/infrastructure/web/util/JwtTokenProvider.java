@@ -47,10 +47,9 @@ public class JwtTokenProvider {
         }
     }
 
-    public String generateAccessToken(Long userId, List<String> roles) {
+    public String generateAccessToken(Long userId, List<String> roles, String jti) {
         Date now = new Date();
         Date expiry = new Date(now.getTime() + jwtProperties.accessExpiration() * 1000);
-        String jti = UUID.randomUUID().toString();
 
         return Jwts.builder()
             .subject(String.valueOf(userId))

@@ -79,5 +79,9 @@ app:
       request-timeout: ${ROCKETMQ_REQUEST_TIMEOUT:3s}
       max-delivery-attempts: ${ROCKETMQ_MAX_DELIVERY_ATTEMPTS:16}
       max-message-size: ${ROCKETMQ_MAX_MESSAGE_SIZE:4194304}
-
+  llm:
+    byok:
+      # BYOK 总开关；基础默认 false（避免未配 LLM_MASTER_KEY 时 fail-fast 阻断启动，P0-3）。
+      # 启用：env LLM_BYOK_ENABLED=true 且 LLM_MASTER_KEY=<base64-32B>（design §10 / N4 可回滚）
+      enabled: ${LLM_BYOK_ENABLED:false}
 # Log4j 2 配置见 log4j2.xml，此处不再配置 logging.level

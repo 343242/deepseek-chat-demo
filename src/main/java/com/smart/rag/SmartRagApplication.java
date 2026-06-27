@@ -27,7 +27,8 @@ import org.springframework.scheduling.annotation.EnableAsync;
         "com.smart.rag.conversation.mapper",
         "com.smart.rag.rag.mapper",
         "com.smart.rag.agent.event",
-        "com.smart.rag.team.mapper"
+        "com.smart.rag.team.mapper",
+        "com.smart.rag.modelconfig.mapper"
 })
 public class SmartRagApplication {
 

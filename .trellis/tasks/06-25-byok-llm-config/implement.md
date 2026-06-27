@@ -64,22 +64,22 @@
 
 ### 阶段 B — SPI 动态化（依赖阶段 A）
 
-- [ ] **Step 7 · （取消 ProviderCache，核对 Mimo P2.8 更优解）**
+- [x] **Step 7 · （取消 ProviderCache，核对 Mimo P2.8 更优解）** ✅ ResolvedCandidate record（candidate+providerCode+baseUrl+apiKey+endpoints）；核对 HttpClientFactory 连接复用在工厂层，provider 无状态，缓存无意义
   - 不引入 `LlmProviderCache`（核对 `HttpClientFactory`：连接复用在工厂层，provider 无状态，缓存无意义）
   - `LlmClientFactory` 新增 `ResolvedCandidate` record + `buildSnapshot(List<ResolvedCandidate>)` 重载（内部直接 `new GenericOpenAiProvider`，无 cache 无锁）
   - 验证：单测（buildSnapshot 构建用户链、candidateId 命名空间隔离 `u:{userId}:{modelCode}`、熔断器按 id 隔离不污染系统级）
 
-- [ ] **Step 8 · `LlmConfigSource`**
+- [x] **Step 8 · `LlmConfigSource`** ✅ 三态（无行/全disabled+counter/有enabled）+ entity→ResolvedCandidate（解密key+命名空间candidateId `u:{userId}:{model}`）+ endpoints 防御解析；LlmMetrics.recordByokFallback（AC29），6 测试
   - `infrastructure/llm/config/LlmConfigSource.java`（design §5.4）
   - `userChain(userId, cap)` **三态（R1）**：无行→fallback yml；全 disabled→fallback yml + WARN + `llm.byok.fallback{reason=all_disabled}` 计数；有 enabled→BYOK 链；`toCandidates(rows, cap)`；**无 `systemChain`**（design §7）
   - 验证：单测（无行 fallback、**全 disabled fallback + counter**、有 enabled 用 BYOK）
 
-- [ ] **Step 9 · `LlmClientFactory` 构建重载**
+- [x] **Step 9 · `LlmClientFactory` 构建重载** ✅ buildSnapshot(List&lt;ResolvedCandidate&gt;) 重载（provider 直接 new 无 cache）+ 抽 buildChain/createRawClient(provider,candidate) 共用；impact=LOW/0 进程
   - 前置：`impact({target:"LlmClientFactory.buildSnapshot", direction:"upstream"})`
   - 抽出 `buildSnapshot(List<ModelCandidate>, Function<ModelCandidate,LlmProvider>)` 通用方法（保留旧 `buildSnapshot()` 调它）
   - 验证：`./mvnw -q test`（现有 `LlmClientFactoryTest` / `RegistrySnapshotTest` 全绿，证明未破坏现状）
 
-- [ ] **Step 10 · `LlmClientRegistry` per-user 快照（cache-aside，砍 eager reload）**
+- [x] **Step 10 · `LlmClientRegistry` per-user 快照（cache-aside，砍 eager reload）** ✅ userSnapshots(Caffeine 有界+removalListener)+getUser*/getUserDefault+invalidateUser+asyncClose 专用 ThreadPoolExecutor(core2/max4/queue100/CallerRunsPolicy，不复用 fork-join)+熔断器 evict(P1-6)+disabledSet 归一化 stripUserPrefix(P1-5)+@PreDestroy 排空；impact=MEDIUM/14 调用方零改动（旧 API 保留），8 测试
   - 前置：`impact({target:"LlmClientRegistry", direction:"upstream"})`（已知 MEDIUM，14 调用方）
   - 前置代码确认（P1-5）：`context({name:"RegistrySnapshot"})` 确认 `disabledSet` 存 candidateId 还是 modelCode → 落实合并归一化逻辑
   - 增 `userSnapshots`（Caffeine 有界）+ `getUserDefault/getUserChain`（**cache miss 时 lazy 从 DB 构建**，无行 delegate yml——主路径）+ `invalidateUser(userId)`（**配置变更后清旧快照**）；**无 `reloadUser`**（eager 已砍，§6）

@@ -18,6 +18,7 @@ import com.smart.rag.infrastructure.llm.config.ProviderConfig;
 import com.smart.rag.infrastructure.llm.config.ResilienceConfig;
 import com.smart.rag.infrastructure.llm.config.RetryConfig;
 import com.smart.rag.infrastructure.llm.metrics.LlmMetrics;
+import com.smart.rag.infrastructure.llm.provider.generic.GenericOpenAiProvider;
 import com.smart.rag.infrastructure.llm.resilience.CircuitBreaker;
 import com.smart.rag.infrastructure.llm.resilience.LlmCircuitBreakerAdapterRegistry;
 import com.smart.rag.infrastructure.llm.resilience.ProbeHandler;
@@ -41,6 +42,11 @@ import java.util.stream.Collectors;
  *   <li>包装 Resilient 装饰器（重试 + 熔断 + 探测）</li>
  *   <li>构建不可变快照（clientsById + fallbackChains + defaultClients）</li>
  * </ol>
+ * <p>
+ * <b>BYOK 重载（design §5.2）</b>：{@link #buildSnapshot(List)} 接受已解析的
+ * {@link ResolvedCandidate}（含 baseUrl/apiKey），对每个 candidate 直接 {@code new GenericOpenAiProvider}
+ * （无 cache、无锁，design §5.1），绕过 Spring 注入的 {@code providers} map（启动固化，BYOK 进不来）。
+ * candidateId 命名空间由 {@code LlmConfigSource} 在构造 candidate 时设为 {@code u:{userId}:{modelCode}}。
  */
 @Component
 public class LlmClientFactory {
@@ -89,7 +95,22 @@ public class LlmClientFactory {
     }
 
     /**
-     * 构建完整的注册表快照
+     * 已解析的 BYOK 候选（design §5.2）— 含连接信息，解耦 ModelCandidate 不带 url/key 的问题。
+     * <p>
+     * 由 {@code LlmConfigSource} 从 DB 行产生（含解密 key）；candidate.id 已由其设为
+     * {@code u:{userId}:{modelCode}} 命名空间形式（熔断器/snapshot key 隔离，design §5.2）。
+     */
+    public record ResolvedCandidate(ModelCandidate candidate, String providerCode,
+                                    String baseUrl, String apiKey, Map<String, String> endpoints) {
+    }
+
+    /** (candidate, provider) pair — buildChain 共用 */
+    private record CandidateProvider(ModelCandidate candidate, LlmProvider provider) {
+        LlmCapability capability() { return candidate.capability(); }
+    }
+
+    /**
+     * 构建完整的注册表快照（系统级 yml 链路，作 fallback 底座）。
      * <p>
      * 遍历所有能力 → 模型组 → 候选，创建并包装客户端，组装为不可变快照。
      */
@@ -101,34 +122,30 @@ public class LlmClientFactory {
         Map<LlmCapability, String> defaultClients = new EnumMap<>(LlmCapability.class);
         Map<LlmCapability, String> deepThinkingClients = new EnumMap<>(LlmCapability.class);
 
+        // 收集 yml candidates + 对应 provider
+        List<CandidateProvider> items = new ArrayList<>();
         for (LlmCapability cap : LlmCapability.values()) {
             ModelGroup group = llmConfig.getCapabilityGroup(cap);
             if (group == null) continue;
-
-            List<ModelCandidate> candidates = group.toModelCandidates(cap);
-            List<CapabilityClient> chain = new ArrayList<>();
-
-            for (ModelCandidate candidate : candidates) {
+            for (ModelCandidate candidate : group.toModelCandidates(cap)) {
                 if (!candidate.enabled()) continue;
-
-                CapabilityClient rawClient = createRawClient(candidate);
-                if (rawClient == null) continue;
-
-                RetryConfig retryConfig = resilience.resolveRetryConfig(cap);
-                CircuitBreakerProperties cbProps = resilience.resolveCircuitBreaker();
-                ProbeProperties probeProps = resilience.resolveProbe();
-
-                CapabilityClient wrapped = wrapWithResilience(rawClient, cap, retryConfig, cbProps, probeProps);
-
-                clientsById.put(candidate.id(), wrapped);
-                chain.add(wrapped);
+                LlmProvider provider = providers.get(candidate.provider());
+                if (provider == null) {
+                    log.warn("No provider '{}' registered for candidate '{}', skipping",
+                        candidate.provider(), candidate.id());
+                    continue;
+                }
+                items.add(new CandidateProvider(candidate, provider));
             }
+        }
+        buildChain(items, resilience, clientsById, fallbackChains);
 
-            if (!chain.isEmpty()) {
-                fallbackChains.put(cap, Collections.unmodifiableList(chain));
-            }
+        // 默认模型 / Deep-thinking（yml group 配置）
+        for (LlmCapability cap : LlmCapability.values()) {
+            ModelGroup group = llmConfig.getCapabilityGroup(cap);
+            if (group == null) continue;
+            List<CapabilityClient> chain = fallbackChains.getOrDefault(cap, List.of());
 
-            // 默认模型
             String defaultId = group.getDefaultModel();
             if (defaultId != null) {
                 if (!clientsById.containsKey(defaultId)) {
@@ -140,7 +157,6 @@ public class LlmClientFactory {
                 defaultClients.put(cap, chain.get(0).candidateId());
             }
 
-            // Deep-thinking 模型
             if (group.getDeepThinkingModel() != null) {
                 if (!clientsById.containsKey(group.getDeepThinkingModel())) {
                     throw new IllegalStateException(
@@ -164,18 +180,80 @@ public class LlmClientFactory {
         );
     }
 
-    /** 通过 Provider + Strategy 创建原始客户端 */
-    @Nullable
-    private CapabilityClient createRawClient(ModelCandidate candidate) {
-        LlmProvider provider = providers.get(candidate.provider());
-        if (provider == null) {
-            log.warn("No provider '{}' registered for candidate '{}', skipping",
-                candidate.provider(), candidate.id());
-            return null;
+    /**
+     * 构建 BYOK 用户级快照（design §5.1/§5.2）。
+     * <p>
+     * 对每个 {@link ResolvedCandidate} 直接 {@code new GenericOpenAiProvider}（无 cache、无锁、无 I/O），
+     * 绕过 Spring providers map；candidateId 已含 {@code u:{userId}:{modelCode}} 命名空间（熔断器隔离）。
+     * BYOK 无 yml 的 default-model/deep-thinking 概念，default = chain 第一个（priority 已排序，design §4）。
+     */
+    public RegistrySnapshot buildSnapshot(List<ResolvedCandidate> resolved) {
+        if (resolved.isEmpty()) {
+            return RegistrySnapshot.empty();
         }
+        ResilienceConfig resilience = llmConfig.resolveResilience();
+
+        Map<String, CapabilityClient> clientsById = new LinkedHashMap<>();
+        Map<LlmCapability, List<CapabilityClient>> fallbackChains = new EnumMap<>(LlmCapability.class);
+        Map<LlmCapability, String> defaultClients = new EnumMap<>(LlmCapability.class);
+
+        List<CandidateProvider> items = new ArrayList<>(resolved.size());
+        for (ResolvedCandidate rc : resolved) {
+            // provider 直接 new（无 cache，design §5.1）；弹性配置共享系统级 yml（design §5.2 ResilienceConfig 来源）
+            LlmProvider provider = new GenericOpenAiProvider(rc.providerCode(),
+                ProviderConfig.of(rc.baseUrl(), rc.apiKey(), rc.endpoints()), strategyRegistry);
+            items.add(new CandidateProvider(rc.candidate(), provider));
+        }
+        buildChain(items, resilience, clientsById, fallbackChains);
+
+        // BYOK default：按 priority 已排序，default = chain 第一个（design §4）
+        for (var entry : fallbackChains.entrySet()) {
+            defaultClients.put(entry.getKey(), entry.getValue().get(0).candidateId());
+        }
+
+        log.info("LlmClientFactory: built BYOK snapshot with {} clients across {} capabilities",
+            clientsById.size(), fallbackChains.size());
+
+        return new RegistrySnapshot(
+            clientsById,
+            fallbackChains,
+            defaultClients,
+            Map.of(),
+            Map.of(),
+            Set.of()
+        );
+    }
+
+    /**
+     * 通用：遍历 (candidate, provider) pairs → createRawClient → wrapWithResilience → 填充 clientsById / fallbackChains。
+     * <p>
+     * yml 与 BYOK buildSnapshot 共用（design §5.2 抽出 @96-@125 循环）。chains 末尾 freeze 为 unmodifiable。
+     */
+    private void buildChain(List<CandidateProvider> items, ResilienceConfig resilience,
+                            Map<String, CapabilityClient> clientsById,
+                            Map<LlmCapability, List<CapabilityClient>> fallbackChains) {
+        for (CandidateProvider item : items) {
+            LlmCapability cap = item.capability();
+            CapabilityClient raw = createRawClient(item.provider(), item.candidate());
+            if (raw == null) continue;
+
+            RetryConfig retryConfig = resilience.resolveRetryConfig(cap);
+            CircuitBreakerProperties cbProps = resilience.resolveCircuitBreaker();
+            ProbeProperties probeProps = resilience.resolveProbe();
+            CapabilityClient wrapped = wrapWithResilience(raw, cap, retryConfig, cbProps, probeProps);
+
+            clientsById.put(item.candidate().id(), wrapped);
+            fallbackChains.computeIfAbsent(cap, k -> new ArrayList<>()).add(wrapped);
+        }
+        fallbackChains.replaceAll((cap, chain) -> Collections.unmodifiableList(chain));
+    }
+
+    /** 通过 Provider 创建原始客户端（provider 由调用方传入：yml 从 map 取，BYOK new GenericOpenAiProvider） */
+    @Nullable
+    private CapabilityClient createRawClient(LlmProvider provider, ModelCandidate candidate) {
         if (!provider.config().isAvailable()) {
             log.warn("Provider '{}' not available (missing url/apiKey), skipping candidate '{}'",
-                candidate.provider(), candidate.id());
+                provider.id(), candidate.id());
             return null;
         }
         try {

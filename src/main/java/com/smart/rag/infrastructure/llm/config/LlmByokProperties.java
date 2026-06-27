@@ -24,6 +24,9 @@ public class LlmByokProperties {
     /** baseUrl 端口白名单（design §13.1）；默认 80/443，空/null 同默认 */
     private List<Integer> allowedPorts = List.of(80, 443);
 
+    /** per-user 快照缓存容量（design §5.3 / R2：有界防 OOM/连接耗尽）；默认 1000 */
+    private Integer userCacheSize = 1000;
+
     public boolean isEnabled() {
         return enabled;
     }
@@ -38,5 +41,13 @@ public class LlmByokProperties {
 
     public void setAllowedPorts(List<Integer> allowedPorts) {
         this.allowedPorts = allowedPorts;
+    }
+
+    public Integer getUserCacheSize() {
+        return userCacheSize;
+    }
+
+    public void setUserCacheSize(Integer userCacheSize) {
+        this.userCacheSize = userCacheSize;
     }
 }

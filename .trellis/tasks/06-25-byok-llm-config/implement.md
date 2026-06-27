@@ -89,7 +89,9 @@
   - `app.llm.byok.enabled` 开关：false 时 `getUser*` 直接 delegate 到系统快照
   - 验证：单测（**cache miss lazy 构建并缓存**、**invalidate 后下次 miss 重建**、**空链（DB 无行）delegate yml**、invalidate 清理 + 熔断器 remove、disabledSet 归一化、异步 close、开关关闭行为）
 
-- [ ] **Step 11 · 同步落库 + invalidate + CHAT 调用方切 `getUser*`（CHAT-only，砍 eager reload）**
+- [x] **Step 11 · CHAT 调用方切 `getUser*`（透传 userId）** ✅ ChatServiceImpl 3 处切：chat/chatStream `getChain(CHAT)` → `getUserChain(CHAT, pctx.userId)`；resolveCandidateId `getDefault` → `getUserDefault(CHAT, userId)`（避免 BYOK 用户 requestedCandidateId 走系统级 default 与 BYOK chain[0] 不匹配致 isFallback 误判）；impact ChatServiceImpl=LOW；ChatServiceImplTest + ChatServiceImplResolveCandidateIdTest 更新 mock 全绿
+  - **偏差**：RewriteClientResolver 保留 `getDefault`（query rewrite 走系统级）—— QueryRewriteTool 在构造时 resolveDefault 无 userId 上下文，切需重构 QueryRewriteTool（延迟 resolve + userId 透传），记为 follow-up；不影响主 chat BYOK（chat/chatStream 走 getUserChain）
+  - service `upsert/delete` 调 `registry.invalidateUser`：在 Step 4b service 已就绪但未注入 registry（循环依赖风险），改由 controller/事件层触发——Step 11b 接入
   - **Service 改造（同步落库 + cache-aside，design §6）**：`upsert/delete` 流程
     - `BaseUrlValidator.validate`（§13 SSRF）→ `ApiKeyCipher.encrypt`（§3）→ **同步 DB upsert/delete**（事务，`ON CONFLICT` 幂等，失败直接 API 报错）
     - 落库成功后 `registry.invalidateUser(userId)`（清旧快照，下次请求 lazy 重建）
@@ -99,13 +101,13 @@
   - gate：每改一个调用点跑对应模块测试
   - 验证：`./mvnw -q test` 全绿；端到端「提交 chat BYOK（同步落库）→ invalidate → 下次 chat 请求 cache miss → lazy 命中新 key」；**删光配置 → invalidate → 下次 miss → delegate yml（P0-1）**；**全 disabled → fallback yml + counter（R1）**；embedding/rerank 行为不回归
 
-- [ ] **Step 11b · 用户生命周期联动（R2，领域事件解耦）**
+- [x] **Step 11b · 用户生命周期联动（R2，领域事件解耦）** ✅ UserDeletedEvent + SysUserServiceImpl 注入 ApplicationEventPublisher（deleteUser 发事件）+ LlmUserLifecycleListener（@EventListener → invalidateUser + markDeletedByUser，事件解耦避免 llm→user 反向依赖）；1 测试绿。**偏差**：disable 路径不存在（SysUserServiceImpl 无 disable 方法，仅 deleteUser），认证 token 失效 + 缓存 TTL 兜底；如后续加 disable，发 UserDisabledEvent → 仅 invalidateUser
   - `SysUserService` disable/delete 时发 `UserDisabledEvent`/`UserDeletedEvent`（Spring `ApplicationEventPublisher`）
   - `LlmClientRegistry @EventListener`：disable → `invalidateUser(userId)`（清缓存+熔断器，llm_config 保留）；delete → `invalidateUser` + `mapper.markDeletedByUser(userId)`（llm_config `deleted=1`，审计保留）
   - **前置核对**：确认认证层对 disabled 用户 token 失效（标准做法）；若未检查用户状态，记录为 user 模块既有缺口（前置依赖，不在本 task，但 §14.1 缓存清理仍要做）
   - 验证：单测（delete 事件 → llm_config deleted=1 + 缓存空；disable 事件 → 缓存空 + llm_config 保留）
 
-- [ ] **Step 12 · 端到端验证 + 文档**
+- [ ] **Step 12 · 端到端验证 + 文档** ⏳ 端到端需真实 PG + dev 启动手测（自动化 268 绿）。手测项：① V16 apply（启动看 Flyway）；② `LLM_BYOK_ENABLED=true LLM_MASTER_KEY=<base64-32B>` 启动；③ POST /api/user/llm-config 配 BYOK → chat 命中新 key（candidateId=`u:{userId}:{model}`）；④ 删配置 → invalidate → 下次 fallback yml；⑤ 全 disabled → fallback + counter；⑥ 用户删除 → llm_config deleted=1 + 缓存空。spec 文档更新（.trellis/spec/）follow-up
   - 场景：用户配 BYOK（POST /api/user/llm-config）→ 立即 chat → 命中新 key（日志 provider key hash 变化，**不等 DB 落库**）
   - 场景：删除用户配置 → invalidate → 下次请求 lazy 重建（剩余链空则 delegate yml）
   - 场景：admin 改系统级默认 → 影响无 BYOK 用户

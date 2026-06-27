@@ -91,7 +91,7 @@ public class ChatServiceImpl implements ChatService {
     public ChatResponse chat(ChatRequest request) {
         PreparedContext pctx = prepare(request);
 
-        List<CapabilityClient> chain = llmRegistry.getChain(LlmCapability.CHAT);
+        List<CapabilityClient> chain = llmRegistry.getUserChain(LlmCapability.CHAT, pctx.userId);
 
         try {
             return fallbackExecutor.execute(chain, client -> {
@@ -118,7 +118,7 @@ public class ChatServiceImpl implements ChatService {
     @Override
     public SseEmitter chatStream(ChatRequest request) {
         PreparedContext pctx = prepare(request);
-        List<CapabilityClient> chain = llmRegistry.getChain(LlmCapability.CHAT);
+        List<CapabilityClient> chain = llmRegistry.getUserChain(LlmCapability.CHAT, pctx.userId);
         Map<String, String> parentMdc = MdcPropagator.capture();
 
         AtomicReference<List<Reference>> refsRef = new AtomicReference<>();
@@ -183,7 +183,9 @@ public class ChatServiceImpl implements ChatService {
             }
             return model;
         }
-        return llmRegistry.getDefault(LlmCapability.CHAT).candidateId();
+        // BYOK：用户未指定 model 时用其 BYOK 默认（无 BYOK → getUserDefault 内部 delegate 系统级 default）
+        Long userId = userContextProvider.getCurrentUserId();
+        return llmRegistry.getUserDefault(LlmCapability.CHAT, userId).candidateId();
     }
 
     private ChatResponse processResult(StrategyExecuteResult result,

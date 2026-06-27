@@ -37,6 +37,7 @@ class SysUserServiceTest {
     @Mock private TransactionTemplate transactionTemplate;
     @Mock private TokenCacheService tokenCacheService;
     @Mock private AuthService authService;
+    @Mock private org.springframework.context.ApplicationEventPublisher eventPublisher;
 
     @InjectMocks
     private SysUserServiceImpl sysUserService;

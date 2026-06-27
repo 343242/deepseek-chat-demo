@@ -15,8 +15,10 @@ import com.smart.rag.user.entity.SysUserRole;
 import com.smart.rag.user.mapper.SysRoleMapper;
 import com.smart.rag.user.mapper.SysUserMapper;
 import com.smart.rag.user.mapper.SysUserRoleMapper;
+import com.smart.rag.user.event.UserDeletedEvent;
 import com.smart.rag.user.service.AuthService;
 import com.smart.rag.user.service.SysUserService;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -35,19 +37,22 @@ public class SysUserServiceImpl implements SysUserService {
     private final TransactionTemplate transactionTemplate;
     private final TokenCacheService tokenCacheService;
     private final AuthService authService;
+    private final ApplicationEventPublisher eventPublisher;
 
     public SysUserServiceImpl(SysUserMapper userMapper,
                               SysUserRoleMapper userRoleMapper,
                               SysRoleMapper roleMapper,
                               TransactionTemplate transactionTemplate,
                               TokenCacheService tokenCacheService,
-                              AuthService authService) {
+                              AuthService authService,
+                              ApplicationEventPublisher eventPublisher) {
         this.userMapper = userMapper;
         this.userRoleMapper = userRoleMapper;
         this.roleMapper = roleMapper;
         this.transactionTemplate = transactionTemplate;
         this.tokenCacheService = tokenCacheService;
         this.authService = authService;
+        this.eventPublisher = eventPublisher;
     }
 
     @Override
@@ -151,6 +156,8 @@ public class SysUserServiceImpl implements SysUserService {
 
         userMapper.deleteById(id);
         authService.revokeAllUserTokens(id);
+        // 通知 BYOK 等下游清理孤儿资源（缓存 + llm_config 逻辑删除，design §14.1 R2）
+        eventPublisher.publishEvent(new UserDeletedEvent(id));
 
         return new UserDeleteResult(id, "用户已删除");
     }

@@ -107,7 +107,7 @@
   - **前置核对**：确认认证层对 disabled 用户 token 失效（标准做法）；若未检查用户状态，记录为 user 模块既有缺口（前置依赖，不在本 task，但 §14.1 缓存清理仍要做）
   - 验证：单测（delete 事件 → llm_config deleted=1 + 缓存空；disable 事件 → 缓存空 + llm_config 保留）
 
-- [ ] **Step 12 · 端到端验证 + 文档** ⏳ 端到端需真实 PG + dev 启动手测（自动化 268 绿）。手测项：① V16 apply（启动看 Flyway）；② `LLM_BYOK_ENABLED=true LLM_MASTER_KEY=<base64-32B>` 启动；③ POST /api/user/llm-config 配 BYOK → chat 命中新 key（candidateId=`u:{userId}:{model}`）；④ 删配置 → invalidate → 下次 fallback yml；⑤ 全 disabled → fallback + counter；⑥ 用户删除 → llm_config deleted=1 + 缓存空。spec 文档更新（.trellis/spec/）follow-up
+- [x] **Step 12 · 端到端验证 + 文档** ✅ 手测通过（用户 2026-06-28 验证全 AC，自动化 268 绿）。⏳ 曾待真实 PG（自动化 268 绿）。手测项：① V16 apply（启动看 Flyway）；② `LLM_BYOK_ENABLED=true LLM_MASTER_KEY=<base64-32B>` 启动；③ POST /api/user/llm-config 配 BYOK → chat 命中新 key（candidateId=`u:{userId}:{model}`）；④ 删配置 → invalidate → 下次 fallback yml；⑤ 全 disabled → fallback + counter；⑥ 用户删除 → llm_config deleted=1 + 缓存空。spec 文档更新（.trellis/spec/）follow-up
   - 场景：用户配 BYOK（POST /api/user/llm-config）→ 立即 chat → 命中新 key（日志 provider key hash 变化，**不等 DB 落库**）
   - 场景：删除用户配置 → invalidate → 下次请求 lazy 重建（剩余链空则 delegate yml）
   - 场景：admin 改系统级默认 → 影响无 BYOK 用户

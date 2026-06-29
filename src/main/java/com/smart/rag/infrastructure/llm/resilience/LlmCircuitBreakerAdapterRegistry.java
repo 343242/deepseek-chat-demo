@@ -1,5 +1,6 @@
 package com.smart.rag.infrastructure.llm.resilience;
 
+import com.smart.rag.infrastructure.exception.errorcode.RemoteErrorCode;
 import com.smart.rag.infrastructure.fallback.FallbackEligibility;
 import com.smart.rag.infrastructure.fallback.ModelCircuitBreakerRegistry;
 import com.smart.rag.infrastructure.llm.metrics.LlmMetrics;
@@ -41,7 +42,8 @@ public class LlmCircuitBreakerAdapterRegistry {
     /** 获取或创建指定 candidateId 的熔断器适配器 */
     public CircuitBreaker getOrCreate(String candidateId) {
         CircuitBreaker adapter = adapters.computeIfAbsent(candidateId,
-            id -> new CircuitBreaker(delegate, fallbackEligibility, id, metrics));
+            id -> new CircuitBreaker(delegate, fallbackEligibility, id,
+                RemoteErrorCode.LLM_CIRCUIT_BREAKER_OPEN, metrics));
         if (adapters.size() > WARN_SIZE_THRESHOLD) {
             log.warn("Circuit breaker adapter map has {} entries (threshold {}), possible resource leak",
                 adapters.size(), WARN_SIZE_THRESHOLD);

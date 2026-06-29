@@ -2,8 +2,9 @@ package com.smart.rag.infrastructure.llm.resilience;
 
 import com.smart.rag.infrastructure.fallback.CircuitBreakerState;
 import com.smart.rag.infrastructure.fallback.FallbackEligibility;
+import com.smart.rag.infrastructure.exception.errorcode.RemoteErrorCode;
+import com.smart.rag.infrastructure.fallback.CircuitOpenException;
 import com.smart.rag.infrastructure.fallback.ModelCircuitBreakerRegistry;
-import com.smart.rag.infrastructure.fallback.ModelCircuitOpenException;
 import com.smart.rag.infrastructure.fallback.ProbeTimeoutException;
 import com.smart.rag.infrastructure.llm.metrics.LlmMetrics;
 import org.junit.jupiter.api.BeforeEach;
@@ -56,7 +57,7 @@ class CircuitBreakerTest {
     @BeforeEach
     void setUp() {
         // Use the no-metrics constructor to avoid gauge registration interference
-        breaker = new CircuitBreaker(registry, eligibility, CANDIDATE_ID, null);
+        breaker = new CircuitBreaker(registry, eligibility, CANDIDATE_ID, RemoteErrorCode.LLM_CIRCUIT_BREAKER_OPEN, null);
     }
 
     // ==================== execute (blocking) ====================
@@ -66,7 +67,7 @@ class CircuitBreakerTest {
     class ExecuteBlockingTests {
 
         @Test
-        @DisplayName("OPEN state throws ModelCircuitOpenException, action NOT invoked")
+        @DisplayName("OPEN state throws CircuitOpenException, action NOT invoked")
         void openStateRejects() {
             when(registry.isCallAllowed(CANDIDATE_ID)).thenReturn(false);
 
@@ -74,7 +75,7 @@ class CircuitBreakerTest {
             assertThatThrownBy(() -> breaker.execute(() -> {
                 calls.incrementAndGet();
                 return "x";
-            })).isInstanceOf(ModelCircuitOpenException.class)
+            })).isInstanceOf(CircuitOpenException.class)
                 .hasMessageContaining(CANDIDATE_ID);
 
             assertThat(calls.get()).isEqualTo(0);
@@ -132,13 +133,13 @@ class CircuitBreakerTest {
     class ExecuteStreamTests {
 
         @Test
-        @DisplayName("OPEN state emits ModelCircuitOpenException error")
+        @DisplayName("OPEN state emits CircuitOpenException error")
         void openStateEmitsError() {
             when(registry.isCallAllowed(CANDIDATE_ID)).thenReturn(false);
 
             Throwable error = blockExpectError(breaker.executeStream(() -> Flux.just("x")));
 
-            assertThat(error).isInstanceOf(ModelCircuitOpenException.class);
+            assertThat(error).isInstanceOf(CircuitOpenException.class);
             verify(registry, never()).recordSuccess(any());
             verify(registry, never()).recordFailure(any());
         }
@@ -264,7 +265,7 @@ class CircuitBreakerTest {
     void constructorRegistersGauge() {
         // Constructor passes this::getState as Supplier without invoking it.
         // No stateOf stub needed — gauge is registered lazily and called on-demand.
-        new CircuitBreaker(registry, eligibility, "with-metrics", metrics);
+        new CircuitBreaker(registry, eligibility, "with-metrics", RemoteErrorCode.LLM_CIRCUIT_BREAKER_OPEN, metrics);
 
         verify(metrics, times(1)).registerCircuitBreakerGauge(
             eq("with-metrics"), any(Supplier.class));

@@ -2,7 +2,7 @@ package com.smart.rag.infrastructure.llm.resilience;
 
 import com.smart.rag.infrastructure.exception.RemoteException;
 import com.smart.rag.infrastructure.exception.errorcode.RemoteErrorCode;
-import com.smart.rag.infrastructure.fallback.ModelCircuitOpenException;
+import com.smart.rag.infrastructure.fallback.CircuitOpenException;
 import com.smart.rag.infrastructure.fallback.ProbeTimeoutException;
 import com.smart.rag.infrastructure.llm.config.RetryConfig;
 import reactor.core.publisher.Flux;
@@ -111,7 +111,7 @@ public class RetryPolicy {
      * <b>不可重试</b>：熔断器打开、认证失败、内容过滤、编程错误。
      */
     public boolean isRetryable(Throwable e) {
-        if (e instanceof ModelCircuitOpenException) {
+        if (e instanceof CircuitOpenException) {
             return false;
         }
         if (e instanceof UnsupportedOperationException) {

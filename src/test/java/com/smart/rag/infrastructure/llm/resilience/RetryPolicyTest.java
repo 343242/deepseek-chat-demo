@@ -2,7 +2,7 @@ package com.smart.rag.infrastructure.llm.resilience;
 
 import com.smart.rag.infrastructure.exception.RemoteException;
 import com.smart.rag.infrastructure.exception.errorcode.RemoteErrorCode;
-import com.smart.rag.infrastructure.fallback.ModelCircuitOpenException;
+import com.smart.rag.infrastructure.fallback.CircuitOpenException;
 import com.smart.rag.infrastructure.fallback.ProbeTimeoutException;
 import com.smart.rag.infrastructure.llm.config.RetryConfig;
 import org.junit.jupiter.api.BeforeEach;
@@ -40,9 +40,9 @@ class RetryPolicyTest {
     class IsRetryableTests {
 
         @Test
-        @DisplayName("ModelCircuitOpenException is NOT retryable (circuit open is a fallback trigger, not retry)")
+        @DisplayName("CircuitOpenException is NOT retryable (circuit open is a fallback trigger, not retry)")
         void circuitOpenIsNotRetryable() {
-            assertThat(policy.isRetryable(new ModelCircuitOpenException("c1"))).isFalse();
+            assertThat(policy.isRetryable(new CircuitOpenException(RemoteErrorCode.LLM_CIRCUIT_BREAKER_OPEN, "c1"))).isFalse();
         }
 
         @Test

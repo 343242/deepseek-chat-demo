@@ -1,147 +1,30 @@
 package com.smart.rag.infrastructure.fallback;
 
-import com.smart.rag.infrastructure.llm.config.CircuitBreakerProperties;
 import com.smart.rag.infrastructure.llm.config.LlmConfig;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.time.Clock;
-import java.time.Duration;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
 
+/**
+ * LLM 模型熔断器注册表 — 继承通用 {@link AbstractCircuitBreakerRegistry}，
+ * 从 {@link LlmConfig} 解析熔断配置（{@code app.llm.resilience.circuit-breaker}）。
+ * <p>
+ * 保留此类（类名 / {@code @Component} / 构造签名 / 公共方法）以维持 LLM 侧所有既有
+ * 调用方（{@code LlmClientFactory} / {@code LlmCircuitBreakerAdapterRegistry} /
+ * {@code ProbeStreamHandler} 及对应测试）零改动；状态机与 per-key 管理逻辑已上提到
+ * {@link AbstractCircuitBreakerRegistry} + {@link CircuitBreakerStateMachine}。
+ * MCP 等其它远程调用域可各自继承同一基类，注入各自的 {@link CircuitBreakerProperties}。
+ */
 @Component
-public class ModelCircuitBreakerRegistry {
-
-    private final CircuitBreakerProperties properties;
-    private final Clock clock;
-    private final ConcurrentMap<String, ModelCircuitBreaker> breakers = new ConcurrentHashMap<>();
+public class ModelCircuitBreakerRegistry extends AbstractCircuitBreakerRegistry {
 
     @Autowired
     public ModelCircuitBreakerRegistry(LlmConfig llmConfig) {
-        this(llmConfig.resolveResilience().resolveCircuitBreaker(), Clock.systemUTC());
+        super(llmConfig.resolveResilience().resolveCircuitBreaker(), Clock.systemUTC());
     }
 
     ModelCircuitBreakerRegistry(CircuitBreakerProperties properties, Clock clock) {
-        this.properties = properties;
-        this.clock = clock;
-    }
-
-    public boolean isCallAllowed(String modelId) {
-        return breaker(modelId).isCallAllowed(clock.millis());
-    }
-
-    public void recordSuccess(String modelId) {
-        breaker(modelId).recordSuccess();
-    }
-
-    public void recordFailure(String modelId) {
-        breaker(modelId).recordFailure(clock.millis());
-    }
-
-    public void releaseProbe(String modelId) {
-        ModelCircuitBreaker breaker = breakers.get(modelId);
-        if (breaker != null) {
-            breaker.releaseProbe();
-        }
-    }
-
-    public CircuitBreakerState stateOf(String modelId) {
-        return breaker(modelId).state(clock.millis());
-    }
-
-    public boolean tryRecoverFromHalfOpen(String modelId) {
-        return breaker(modelId).tryRecoverFromHalfOpen();
-    }
-
-    private ModelCircuitBreaker breaker(String modelId) {
-        return breakers.computeIfAbsent(modelId, ignored -> new ModelCircuitBreaker(
-                properties.effectiveFailureThreshold(),
-                Duration.ofMillis(properties.effectiveOpenDurationMs()),
-                properties.effectiveHalfOpenMaxCalls()));
-    }
-
-    private static final class ModelCircuitBreaker {
-        private final int failureThreshold;
-        private final Duration cooldown;
-        private final int halfOpenMaxProbes;
-
-        private CircuitBreakerState state = CircuitBreakerState.CLOSED;
-        private int failureCount;
-        private int activeHalfOpenProbes;
-        private long openedAtMs;
-
-        private ModelCircuitBreaker(int failureThreshold, Duration cooldown, int halfOpenMaxProbes) {
-            this.failureThreshold = failureThreshold;
-            this.cooldown = cooldown;
-            this.halfOpenMaxProbes = halfOpenMaxProbes;
-        }
-
-        synchronized boolean isCallAllowed(long nowMs) {
-            refreshState(nowMs);
-            if (state == CircuitBreakerState.OPEN) {
-                return false;
-            }
-            if (state == CircuitBreakerState.HALF_OPEN) {
-                if (activeHalfOpenProbes >= halfOpenMaxProbes) {
-                    return false;
-                }
-                activeHalfOpenProbes++;
-            }
-            return true;
-        }
-
-        synchronized void recordSuccess() {
-            failureCount = 0;
-            activeHalfOpenProbes = 0;
-            if (state == CircuitBreakerState.HALF_OPEN) {
-                state = CircuitBreakerState.CLOSED;
-            }
-        }
-
-        synchronized boolean tryRecoverFromHalfOpen() {
-            if (state != CircuitBreakerState.HALF_OPEN) return false;
-            state = CircuitBreakerState.CLOSED;
-            failureCount = 0;
-            activeHalfOpenProbes = 0;
-            return true;
-        }
-
-        synchronized void recordFailure(long nowMs) {
-            if (state == CircuitBreakerState.HALF_OPEN) {
-                open(nowMs);
-                return;
-            }
-            failureCount++;
-            if (failureCount >= failureThreshold) {
-                open(nowMs);
-            }
-        }
-
-        synchronized CircuitBreakerState state(long nowMs) {
-            refreshState(nowMs);
-            return state;
-        }
-
-        synchronized void releaseProbe() {
-            if (state == CircuitBreakerState.HALF_OPEN && activeHalfOpenProbes > 0) {
-                activeHalfOpenProbes--;
-            }
-        }
-
-        private void refreshState(long nowMs) {
-            if (state == CircuitBreakerState.OPEN
-                    && nowMs - openedAtMs >= cooldown.toMillis()) {
-                state = CircuitBreakerState.HALF_OPEN;
-                activeHalfOpenProbes = 0;
-            }
-        }
-
-        private void open(long nowMs) {
-            state = CircuitBreakerState.OPEN;
-            failureCount = failureThreshold;
-            activeHalfOpenProbes = 0;
-            openedAtMs = nowMs;
-        }
+        super(properties, clock);
     }
 }

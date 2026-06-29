@@ -1,7 +1,11 @@
-package com.smart.rag.infrastructure.llm.config;
+package com.smart.rag.infrastructure.fallback;
 
 /**
- * 熔断器配置 — 对应 YAML {@code app.llm.resilience.circuit-breaker}
+ * 熔断器配置 — 通用弹性配置 record。
+ * <p>
+ * LLM（{@code app.llm.resilience.circuit-breaker}）、MCP（{@code mcp.resilience.circuit-breaker}）
+ * 等所有远程调用域共用。2026-06-29 从 {@code infrastructure.llm.config} 迁至
+ * {@code infrastructure.fallback}（通用弹性包），使非 LLM 域可复用而无需依赖 {@code llm.config} 包。
  */
 public record CircuitBreakerProperties(
     /** 连续失败次数阈值，达到后熔断器打开 */

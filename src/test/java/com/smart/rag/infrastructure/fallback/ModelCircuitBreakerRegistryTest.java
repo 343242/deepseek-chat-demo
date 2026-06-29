@@ -1,6 +1,5 @@
 package com.smart.rag.infrastructure.fallback;
 
-import com.smart.rag.infrastructure.llm.config.CircuitBreakerProperties;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 

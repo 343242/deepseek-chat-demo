@@ -1,5 +1,6 @@
 package com.smart.rag.infrastructure.llm.config;
 
+import com.smart.rag.infrastructure.fallback.CircuitBreakerProperties;
 import com.smart.rag.infrastructure.llm.LlmCapability;
 import org.springframework.lang.Nullable;
 

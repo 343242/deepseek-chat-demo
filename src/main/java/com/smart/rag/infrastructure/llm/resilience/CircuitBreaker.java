@@ -2,8 +2,9 @@ package com.smart.rag.infrastructure.llm.resilience;
 
 import com.smart.rag.infrastructure.fallback.CircuitBreakerState;
 import com.smart.rag.infrastructure.fallback.FallbackEligibility;
-import com.smart.rag.infrastructure.fallback.ModelCircuitBreakerRegistry;
-import com.smart.rag.infrastructure.fallback.ModelCircuitOpenException;
+import com.smart.rag.infrastructure.exception.errorcode.IErrorCode;
+import com.smart.rag.infrastructure.fallback.AbstractCircuitBreakerRegistry;
+import com.smart.rag.infrastructure.fallback.CircuitOpenException;
 import com.smart.rag.infrastructure.fallback.ProbeTimeoutException;
 import com.smart.rag.infrastructure.llm.metrics.LlmMetrics;
 import org.slf4j.Logger;
@@ -29,17 +30,20 @@ public class CircuitBreaker {
 
     private static final Logger log = LoggerFactory.getLogger(CircuitBreaker.class);
 
-    private final ModelCircuitBreakerRegistry registry;
+    private final AbstractCircuitBreakerRegistry registry;
     private final FallbackEligibility fallbackEligibility;
     private final String candidateId;
+    private final IErrorCode openErrorCode;
 
-    public CircuitBreaker(ModelCircuitBreakerRegistry registry,
+    public CircuitBreaker(AbstractCircuitBreakerRegistry registry,
                           FallbackEligibility fallbackEligibility,
                           String candidateId,
+                          IErrorCode openErrorCode,
                           @Nullable LlmMetrics metrics) {
         this.registry = registry;
         this.fallbackEligibility = fallbackEligibility;
         this.candidateId = candidateId;
+        this.openErrorCode = openErrorCode;
         if (metrics != null) {
             metrics.registerCircuitBreakerGauge(candidateId, this::getState);
         }
@@ -48,7 +52,7 @@ public class CircuitBreaker {
     /**
      * 阻塞式执行（带熔断保护）
      * <p>
-     * OPEN → 抛出 {@link ModelCircuitOpenException}
+     * OPEN → 抛出 {@link CircuitOpenException}
      * HALF_OPEN → 放行（由已有 halfOpenMaxProbes 控制并发数）
      * <p>
      * <b>recordSuccess 在非 CLOSED 状态下为 no-op</b>：{@code registry.recordSuccess(candidateId)}
@@ -59,7 +63,7 @@ public class CircuitBreaker {
      */
     public <T> T execute(RetryPolicy.CheckedSupplier<T> action) throws Exception {
         if (!registry.isCallAllowed(candidateId)) {
-            throw new ModelCircuitOpenException(candidateId);
+            throw new CircuitOpenException(openErrorCode, candidateId);
         }
         try {
             T result = action.get();
@@ -88,7 +92,7 @@ public class CircuitBreaker {
      */
     public <T> Flux<T> executeStream(Supplier<Flux<T>> streamSupplier) {
         if (!registry.isCallAllowed(candidateId)) {
-            return Flux.error(new ModelCircuitOpenException(candidateId));
+            return Flux.error(new CircuitOpenException(openErrorCode, candidateId));
         }
         AtomicReference<Throwable> lastError = new AtomicReference<>();
         return Flux.defer(streamSupplier)

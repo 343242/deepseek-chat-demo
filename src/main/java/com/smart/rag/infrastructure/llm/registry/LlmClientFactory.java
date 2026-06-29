@@ -10,7 +10,7 @@ import com.smart.rag.infrastructure.llm.CapabilityClient;
 import com.smart.rag.infrastructure.llm.LlmCapability;
 import com.smart.rag.infrastructure.llm.LlmProvider;
 import com.smart.rag.infrastructure.llm.ModelCandidate;
-import com.smart.rag.infrastructure.llm.config.CircuitBreakerProperties;
+import com.smart.rag.infrastructure.fallback.CircuitBreakerProperties;
 import com.smart.rag.infrastructure.llm.config.LlmConfig;
 import com.smart.rag.infrastructure.llm.config.ModelGroup;
 import com.smart.rag.infrastructure.llm.config.ProbeProperties;

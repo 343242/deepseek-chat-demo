@@ -2,6 +2,8 @@ package com.smart.rag.mcp.adapter;
 
 import com.smart.rag.mcp.core.McpArgs;
 import com.smart.rag.mcp.core.McpIntent;
+import com.smart.rag.mcp.core.McpServer;
+import com.smart.rag.mcp.core.McpServerRegistry;
 import com.smart.rag.mcp.core.McpTool;
 import com.smart.rag.mcp.core.McpToolResult;
 import com.smart.rag.mcp.core.McpTools;
@@ -11,6 +13,8 @@ import org.springframework.ai.tool.function.FunctionToolCallback;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
@@ -29,10 +33,20 @@ import java.util.Map;
  * {@code subj} 由消费侧（per-request）传入并闭包捕获；{@code intent} 本 adapter 取 {@link McpIntent}（core），
  * {@code AgentIntent→McpIntent} 映射由消费侧完成（保持 adapter 只依赖 core + tool..）。
  * <p>
- * <b>本轮实现 + 自测，不注入 {@code AgentToolCallbackFactory}</b>（延后切片）。
+ * <b>出口① 已接线</b>：{@code AgentToolCallbackFactory} per-request 调 {@link #toCallbacksForAllServers}
+ * 聚合所有 MCP server 的可见工具。
  */
 @Component
 public class McpToolCallbackAdapter {
+
+    private final McpServerRegistry registry;
+
+    /**
+     * @param registry MCP server 注册表；{@link #toCallbacksForAllServers} 遍历它聚合多 server（空载→空数组）
+     */
+    public McpToolCallbackAdapter(McpServerRegistry registry) {
+        this.registry = registry;
+    }
 
     /**
      * 把 {@code tools} 对 {@code subj} 可见、且匹配 {@code intent} 的工具转成 {@link ToolCallback[]}。
@@ -59,6 +73,31 @@ public class McpToolCallbackAdapter {
                     .build();
         }
         return callbacks;
+    }
+
+    /**
+     * 聚合<b>所有</b> MCP server 对 {@code (intent, subj)} 可见的工具 → {@link ToolCallback[]}（出口① 多 server 拼合）。
+     * <p>
+     * 遍历 {@link McpServerRegistry#list()}，逐 server 委托 {@link #toCallbacks}；{@code McpServerImpl.visibleTo}
+     * 已 fail-soft（down/熔断/未认证/provider 缺失/发现失败 → 空集），故<b>无需 try/catch</b>。registry 空载
+     * （无 connections 或 {@code enabled=false}）→ 空数组（接线后默认零行为变更）。
+     *
+     * @param intent 本次请求意图（{@code AgentIntent→McpIntent} 映射由消费侧完成）
+     * @param subj   调用方主体；未认证 → 各 server visibleTo 均空集 → 空数组
+     */
+    public ToolCallback[] toCallbacksForAllServers(McpIntent intent, Subject subj) {
+        List<McpServer> servers = registry.list();
+        if (servers.isEmpty()) {
+            return new ToolCallback[0];
+        }
+        List<ToolCallback> all = new ArrayList<>();
+        for (McpServer server : servers) {
+            ToolCallback[] part = toCallbacks(server.tools(), intent, subj);
+            if (part.length > 0) {
+                Collections.addAll(all, part);
+            }
+        }
+        return all.toArray(ToolCallback[]::new);
     }
 
     /**

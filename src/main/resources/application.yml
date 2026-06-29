@@ -93,7 +93,8 @@ app:
       # 启用：env LLM_BYOK_ENABLED=true 且 LLM_MASTER_KEY=<base64-32B>（design §10 / N4 可回滚）
       enabled: ${LLM_BYOK_ENABLED:false}
 
-# MCP client（Phase 1：模块已就绪，未接 Agent 链；见 .trellis/tasks/06-28-mcp-client-phase1）
+# MCP client（出口① 已接 Agent 链：AgentToolCallbackFactory per-request 追加 MCP 工具；
+# 见 .trellis/tasks/06-29-mcp-agent-wiring；无 connections/空 allowlist 时默认 0 MCP 工具）
 mcp:
   policy:
     # DENY（默认）= 显式允许制，空 tools 表 = 全拒（AC4 安全默认）；接 Agent 链前由部署填充 tools。

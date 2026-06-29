@@ -18,7 +18,7 @@ import static com.tngtech.archunit.lang.syntax.ArchRuleDefinition.noClasses;
  *   <li>6.2 仅 {@code adapter}+{@code runtime} 可 import {@code org.springframework.ai.tool..}
  *       （放宽自"adapter 唯一"——§9.1 发现面 runtime 需读 {@code ToolCallback}，见 design D-8）</li>
  *   <li>6.3 仅 {@code runtime}+{@code config} 可 import {@code org.springframework.ai.mcp..}/{@code io.modelcontextprotocol..}</li>
- *   <li>6.4 消费者（agent/chat）只依赖 {@code mcp.core}，不碰实现包</li>
+ *   <li>6.4 消费者（agent/chat）只依赖 {@code mcp.core} + {@code mcp.adapter}（出口① 类型转换接缝），不碰 runtime/config/health/policy 实现包</li>
  *   <li>D-4 {@code mcp.*} 不依赖 {@code infrastructure.llm..}（复用通用 {@code infrastructure.fallback}）</li>
  *   <li>{@code policy} 是下层：不依赖 runtime/adapter/config/health</li>
  * </ul>
@@ -67,6 +67,9 @@ class McpDependencyRulesTest {
     static final ArchRule consumers_only_dependOn_core = noClasses()
             .that().resideInAnyPackage("..com.smart.rag.agent..", "..com.smart.rag.chat..")
             .should().dependOnClassesThat().resideInAnyPackage(
-                    "..mcp.runtime..", "..mcp.adapter..", "..mcp.config..", "..mcp.health..", "..mcp.policy..")
-            .because("消费者（agent/chat/业务）只依赖 mcp/core，禁止直注实现/装配类（§4.3 6.4）");
+                    "..mcp.runtime..", "..mcp.config..", "..mcp.health..", "..mcp.policy..")
+            .because("消费者（agent/chat/业务）只依赖 mcp/core + mcp/adapter（出口① 接缝：AgentToolCallbackFactory 调 "
+                    + "McpToolCallbackAdapter 产 ToolCallback[]）；mcp.adapter 公共面 = core 类型 + ToolCallback，"
+                    + "不泄露 starter 类型（6.3 独立守住），等同 D-8 为 runtime 放宽 tool.. 导入。"
+                    + "禁止直注 runtime/config/health/policy 实现类（§4.3 6.4，Phase 2 出口① 接线放宽）");
 }

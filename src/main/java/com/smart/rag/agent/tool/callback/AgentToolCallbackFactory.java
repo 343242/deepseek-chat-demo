@@ -8,6 +8,9 @@ import com.smart.rag.agent.tool.dto.DocDetailRequest;
 import com.smart.rag.agent.tool.dto.NoInput;
 import com.smart.rag.agent.tool.dto.QueryRequest;
 import com.smart.rag.agent.workspace.ToolWorkspace;
+import com.smart.rag.mcp.adapter.McpToolCallbackAdapter;
+import com.smart.rag.mcp.core.McpIntent;
+import com.smart.rag.mcp.core.Subject;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.tool.ToolCallback;
@@ -49,6 +52,7 @@ public class AgentToolCallbackFactory {
     private final KnowledgeBaseInfoTool knowledgeBaseInfoTool;
     private final AgentEventLookupTool agentEventLookupTool;
     private final ToolCallback[] generalToolCallbacks;
+    private final McpToolCallbackAdapter mcpToolCallbackAdapter;
 
     public AgentToolCallbackFactory(HybridSearchTool hybridSearchTool,
                                     VectorSearchTool vectorSearchTool,
@@ -59,7 +63,8 @@ public class AgentToolCallbackFactory {
                                     DocDetailTool docDetailTool,
                                     KnowledgeBaseInfoTool knowledgeBaseInfoTool,
                                     AgentEventLookupTool agentEventLookupTool,
-                                    ToolRegistry toolRegistry) {
+                                    ToolRegistry toolRegistry,
+                                    McpToolCallbackAdapter mcpToolCallbackAdapter) {
         this.hybridSearchTool = hybridSearchTool;
         this.vectorSearchTool = vectorSearchTool;
         this.bm25SearchTool = bm25SearchTool;
@@ -70,6 +75,7 @@ public class AgentToolCallbackFactory {
         this.knowledgeBaseInfoTool = knowledgeBaseInfoTool;
         this.agentEventLookupTool = agentEventLookupTool;
         this.generalToolCallbacks = toolRegistry.getToolCallbacks();
+        this.mcpToolCallbackAdapter = mcpToolCallbackAdapter;
     }
 
     /**
@@ -82,15 +88,43 @@ public class AgentToolCallbackFactory {
      * @return 按意图过滤后的 ToolCallback 数组
      */
     public ToolCallback[] createToolCallbacks(AgentIntent intent, ToolWorkspace workspace) {
-        ToolCallback[] callbacks = switch (intent) {
+        ToolCallback[] local = switch (intent) {
             case RETRIEVAL -> buildRetrievalToolSet(workspace);
             case DEEP_RETRIEVAL -> buildDeepRetrievalToolSet(workspace);
             case GENERAL_TOOL -> buildGeneralToolSet();
             case DIRECT_ANSWER -> new ToolCallback[]{};
         };
 
-        log.debug("Created {} tool callbacks for intent {}", callbacks.length, intent);
-        return callbacks;
+        // 出口①：per-request 追加 MCP 远端工具（对调用方可见、且匹配本次意图）。
+        // AgentIntent→McpIntent 映射 + Subject 构造在消费侧（design D-5：mcp.core 禁 import agent..）；
+        // 多 server 聚合在 adapter（工厂不感知 server 数量）。默认（无 connections / 空 allowlist）→ 空数组 → 返回 local。
+        ToolCallback[] mcp = mcpToolCallbackAdapter.toCallbacksForAllServers(
+                toMcpIntent(intent),
+                new Subject(workspace.getUserId(), workspace.getTeamId()));
+        if (mcp.length == 0) {
+            log.debug("Created {} tool callbacks for intent {}", local.length, intent);
+            return local;
+        }
+        ToolCallback[] all = Arrays.copyOf(local, local.length + mcp.length);
+        System.arraycopy(mcp, 0, all, local.length, mcp.length);
+        log.debug("Created {} tool callbacks for intent {} (local={}, mcp={})",
+                all.length, intent, local.length, mcp.length);
+        return all;
+    }
+
+    /**
+     * {@code AgentIntent→McpIntent} 类型桥接（出口① 接线）。
+     * <p>
+     * 两枚举值集 1:1；映射是<b>类型桥接</b>（{@code mcp.core} 禁 import {@code agent.intent}，design D-5），非语义变换。
+     * MCP 工具可见性按 {@link McpIntent} <b>精确匹配</b> yaml {@code intent}（与本地工具"DEEP 含 RETRIEVAL"子集语义不同）。
+     */
+    static McpIntent toMcpIntent(AgentIntent intent) {
+        return switch (intent) {
+            case DIRECT_ANSWER -> McpIntent.DIRECT_ANSWER;
+            case RETRIEVAL -> McpIntent.RETRIEVAL;
+            case DEEP_RETRIEVAL -> McpIntent.DEEP_RETRIEVAL;
+            case GENERAL_TOOL -> McpIntent.GENERAL_TOOL;
+        };
     }
 
     // === RETRIEVAL 工具集 ===

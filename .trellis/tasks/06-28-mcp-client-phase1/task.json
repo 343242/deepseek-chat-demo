@@ -18,7 +18,9 @@
   "commit": null,
   "pr_url": null,
   "subtasks": [],
-  "children": [],
+  "children": [
+    "06-29-mcp-agent-wiring"
+  ],
   "parent": null,
   "relatedFiles": [],
   "notes": "",

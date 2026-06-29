@@ -21,7 +21,13 @@ public enum RemoteErrorCode implements IErrorCode {
     LLM_RESPONSE_TRUNCATED(301007, "模型响应被截断"),
     LLM_STREAM_ERROR(301008, "模型流式调用失败"),
     LLM_TRANSIENT_ERROR(301009, "模型调用瞬态失败（重试耗尽）"),
-    LLM_RESPONSE_PARSE_ERROR(301010, "模型响应解析失败");
+    LLM_RESPONSE_PARSE_ERROR(301010, "模型响应解析失败"),
+
+    // ==================== MCP 弹性层 302001–302999 ====================
+    MCP_SERVER_UNREACHABLE(302001, "MCP server 不可达"),
+    MCP_TOOL_TIMEOUT(302002, "MCP 工具调用超时"),
+    MCP_RATE_LIMITED(302003, "MCP server 限流"),
+    MCP_CIRCUIT_BREAKER_OPEN(302004, "MCP server 熔断器已打开，请稍后重试");
 
     private final int code;
     private final String message;

@@ -259,6 +259,12 @@
             <artifactId>spring-ai-starter-model-zhipuai</artifactId>
         </dependency>
 
+        <!-- Spring AI MCP Client Boot Starter — 作为 MCP client 接入外部 MCP server（见 docs/MCP-CLIENT-INTEGRATION.md）；版本由 spring-ai-bom 管 -->
+        <dependency>
+            <groupId>org.springframework.ai</groupId>
+            <artifactId>spring-ai-starter-mcp-client</artifactId>
+        </dependency>
+
         <!-- MinIO Object Storage -->
         <dependency>
             <groupId>io.minio</groupId>
@@ -347,6 +353,14 @@
         <dependency>
             <groupId>org.awaitility</groupId>
             <artifactId>awaitility</artifactId>
+            <scope>test</scope>
+        </dependency>
+
+        <!-- ArchUnit — 包级依赖方向治理（MCP mcp/core 内聚纪律，docs/MCP-CLIENT-INTEGRATION.md §4.3） -->
+        <dependency>
+            <groupId>com.tngtech.archunit</groupId>
+            <artifactId>archunit-junit5</artifactId>
+            <version>1.3.0</version>
             <scope>test</scope>
         </dependency>
 

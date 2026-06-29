@@ -6,6 +6,8 @@
 
 > 实锤来源：本地 `javap` 核实 `spring-ai-mcp-1.1.6.jar` / `mcp-core-0.18.2.jar`（依赖树已确认：`spring-ai-starter-mcp-client:1.1.6` → `spring-ai-mcp:1.1.6` → `io.modelcontextprotocol.sdk:mcp:0.18.2`）、`javap` 核实 `ToolCallingManager` / `ToolCallbackResolver`、现有 `ToolAutoConfiguration` / `AgentModeStrategy` 源码。
 
+> **⚠️ 实现校准（2026-06-29，Phase 1 落地后）**：本文档部分"实锤"经实现前核实需修正，权威结论见 [任务 design.md 现实校准段](../.trellis/tasks/06-28-mcp-client-phase1/design.md) D-1~D-10。要点：① **不新建 `McpCircuitOpenException`**（§11.1）——0.18.2+ 已有通用 `infrastructure.fallback.CircuitOpenException`（IErrorCode 注入），MCP 传 `MCP_CIRCUIT_BREAKER_OPEN` 复用；② **Phase 1 不做 per-call retry**（§11.3）——`RetryPolicy`/`RetryConfig` 在 `infrastructure.llm.*` 且硬编码 LLM 错误码，不可干净复用；三态熔断器 OPEN cool-down 已提供 server 级退避；retry 通用化留后续切片；③ **adapter 取 `McpIntent` 非 `AgentIntent`**（§6.1）——`core` 禁 import `agent..`，core 自建 `McpIntent`，消费侧做映射；④ **ArchUnit 6.2 放宽**为"仅 adapter+runtime 可 import `tool..`"（§9.1 发现面 runtime 需读 ToolCallback）；⑤ MCP SDK 实际解析版本 = **0.18.2**（1.1.2 jar 为未解析残留）。
+
 ### 版本核对
 
 - `v1.1.6` release note：确认 MCP auto-config 增加 `@ConditionalOnMissingBean`，并升级 MCP SDK / MCP annotations。

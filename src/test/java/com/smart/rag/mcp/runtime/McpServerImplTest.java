@@ -2,6 +2,7 @@ package com.smart.rag.mcp.runtime;
 
 import com.smart.rag.infrastructure.exception.ClientException;
 import com.smart.rag.infrastructure.fallback.CircuitBreakerProperties;
+import com.smart.rag.infrastructure.fallback.CircuitBreakerState;
 import com.smart.rag.infrastructure.fallback.FallbackEligibility;
 import com.smart.rag.mcp.core.McpArgs;
 import com.smart.rag.mcp.core.McpIntent;
@@ -24,6 +25,10 @@ import org.springframework.ai.mcp.SyncMcpToolCallbackProvider;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.tool.definition.ToolDefinition;
 
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -177,5 +182,55 @@ class McpServerImplTest {
                 new McpAuthorizer(new McpToolPolicy()), registry, new FallbackEligibility(), provider,
                 "connect refused");
         assertEquals(McpServerHealth.Status.DOWN, down.health().status());
+    }
+
+    @Test
+    @DisplayName("call：HALF_OPEN 下非 eligible 异常释放探测槽，不卡死熔断器（H1）")
+    void call_halfOpen_ineligibleException_releasesProbe() {
+        // failureThreshold=1 / cooldown=1ms / halfOpenMaxCalls=1 + 可控时钟
+        MutableClock clock = new MutableClock(0);
+        McpCircuitBreakerRegistry reg = new McpCircuitBreakerRegistry(
+                new CircuitBreakerProperties(1, 1L, 1), clock);
+        McpToolPolicy policy = new McpToolPolicy();
+        McpToolPolicy.ToolRule rule = new McpToolPolicy.ToolRule();
+        rule.setIntent(McpIntent.RETRIEVAL);
+        policy.getTools().put("knowledge_search", rule);
+        McpServerImpl s = new McpServerImpl(KNOWLEDGE, client, new McpAuthorizer(policy), reg,
+                new FallbackEligibility(), provider, null);
+
+        // ① eligible 失败 → recordFailure → OPEN（threshold=1）
+        // ② 过 cooldown → HALF_OPEN；探测抛非 eligible（IAE）→ 必须 releaseProbe，不计熔断
+        // ③ 槽释放后下一次探测可再次放行打到 client（未修复则会 [circuit open] 不打 client）
+        when(client.callTool(any()))
+                .thenThrow(new RuntimeException("net down"))
+                .thenThrow(new IllegalArgumentException("bad arg"))
+                .thenReturn(new McpSchema.CallToolResult(
+                        List.of(new McpSchema.TextContent("ok")), false, java.util.Map.of()));
+
+        s.tools().call("knowledge_search", McpArgs.empty(), AUTHED); // ① → OPEN
+        assertEquals(CircuitBreakerState.OPEN, reg.stateOf(KNOWLEDGE.value()));
+        clock.advance(5); // > cooldown(1ms) → HALF_OPEN
+        assertEquals(CircuitBreakerState.HALF_OPEN, reg.stateOf(KNOWLEDGE.value()));
+
+        McpToolResult probe = s.tools().call("knowledge_search", McpArgs.empty(), AUTHED); // ② IAE
+        assertTrue(probe.isError());
+        assertEquals(CircuitBreakerState.HALF_OPEN, reg.stateOf(KNOWLEDGE.value()),
+                "非 eligible 异常不应计熔断（仍 HALF_OPEN，未回 OPEN）");
+
+        McpToolResult ok = s.tools().call("knowledge_search", McpArgs.empty(), AUTHED); // ③ 槽已释放 → 放行
+        assertFalse(ok.isError());
+        assertEquals("ok", ok.text());
+        verify(client, times(3)).callTool(any()); // 3 次都打到 client（HALF_OPEN 未卡死）
+    }
+
+    /** 可控时钟（镜像 McpCircuitBreakerRegistryTest），推进 cooldown 进入 HALF_OPEN。 */
+    private static final class MutableClock extends Clock {
+        long millis;
+        MutableClock(long start) { this.millis = start; }
+        void advance(long ms) { millis += ms; }
+        @Override public long millis() { return millis; }
+        @Override public Instant instant() { return Instant.ofEpochMilli(millis); }
+        @Override public ZoneId getZone() { return ZoneOffset.UTC; }
+        @Override public Clock withZone(ZoneId zone) { return this; }
     }
 }

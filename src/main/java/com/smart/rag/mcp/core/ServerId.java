@@ -1,5 +1,8 @@
 package com.smart.rag.mcp.core;
 
+import com.smart.rag.infrastructure.exception.ClientException;
+import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;
+
 import java.util.Objects;
 
 /**
@@ -14,9 +17,11 @@ import java.util.Objects;
 public record ServerId(String value) {
 
     public ServerId {
+        // null → requireNonNull（§4 明文允许的前置校验，与 McpTool/McpArgs 一致）；
+        // blank → ClientException（§7：禁止 IllegalArgumentException，统一异常体系）
         Objects.requireNonNull(value, "value");
         if (value.isBlank()) {
-            throw new IllegalArgumentException("ServerId value must not be blank");
+            throw new ClientException(ClientErrorCode.BAD_REQUEST, "ServerId value 不能为空");
         }
     }
 

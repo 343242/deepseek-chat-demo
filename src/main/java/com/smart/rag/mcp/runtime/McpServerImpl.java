@@ -2,8 +2,10 @@ package com.smart.rag.mcp.runtime;
 
 import com.smart.rag.infrastructure.exception.ClientException;
 import com.smart.rag.infrastructure.exception.RemoteException;
+import com.smart.rag.infrastructure.exception.ServiceException;
 import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;
 import com.smart.rag.infrastructure.exception.errorcode.RemoteErrorCode;
+import com.smart.rag.infrastructure.exception.errorcode.ServiceErrorCode;
 import com.smart.rag.infrastructure.fallback.CircuitBreakerState;
 import com.smart.rag.infrastructure.fallback.FallbackEligibility;
 import com.smart.rag.mcp.core.McpArgs;
@@ -68,7 +70,11 @@ final class McpServerImpl implements McpServer {
     @Nullable
     private final SyncMcpToolCallbackProvider provider;
 
-    /** 启动期 initialize 失败信息（null=已就绪）；非空时 health=down、visibleTo 返回空（design D-6）。 */
+    /**
+     * 启动期 initialize 失败信息（null=已就绪）；非空时 health=down、visibleTo 返回空（design D-6）。
+     * <p>调用成功时置 null（best-effort 恢复信号，M5）：{@code volatile} 仅保证可见性、不保证"读-判定-写"原子；
+     * 瞬时抖动（health 读到旧值后另一线程清空）无副作用——至多多观察一次 down。
+     */
     @Nullable
     private volatile String initError;
 
@@ -141,7 +147,7 @@ final class McpServerImpl implements McpServer {
                 callbacks = provider.getToolCallbacks();
             } catch (Exception e) {
                 // 发现失败（server 不可达等）→ 空集，不击穿；不计熔断（listTools 非调用面，不反映 server 健康）
-                log.debug("MCP server [{}] 工具发现失败，返回空集: {}", id.value(), e.toString());
+                log.debug("MCP server [{}] 工具发现失败，返回空集", id.value(), e);
                 return List.of();
             }
             List<McpTool> visible = new ArrayList<>();
@@ -184,9 +190,14 @@ final class McpServerImpl implements McpServer {
             } catch (Exception e) {
                 if (fallbackEligibility.isEligible(e)) {
                     circuitRegistry.recordFailure(key); // 仅 C 类计熔断（A/B 经 FallbackEligibility 排除）
+                } else {
+                    // 非 eligible（NPE/ISE 编程错误）不计熔断，但必须释放 HALF_OPEN 探测槽——
+                    // isCallAllowed 在 HALF_OPEN 态占 activeHalfOpenProbes，不释放会累计卡死
+                    // （H1；对照 LLM CircuitBreaker:102 doFinally→releaseProbe 兜底）
+                    circuitRegistry.releaseProbe(key);
                 }
-                log.debug("MCP 工具 [{}] 调用失败，降级为 tool error: {}", name, e.toString());
-                return McpToolResult.error("[tool call failed] " + rootMessage(e));
+                log.warn("MCP 工具 [{}] 调用失败，降级为 tool error", name, e);
+                return McpToolResult.error("[tool call failed] " + McpErrors.rootMessage(e));
             }
         }
     }
@@ -249,9 +260,14 @@ final class McpServerImpl implements McpServer {
             return mapper.apply(result);
         } catch (Exception e) {
             if (fallbackEligibility.isEligible(e)) {
+                // C 类（远端故障/网络）→ 计熔断 + 抛 RemoteException（业务出口）
                 circuitRegistry.recordFailure(key);
+                throw new RemoteException(RemoteErrorCode.MCP_SERVER_UNREACHABLE, failureDetail, e);
             }
-            throw new RemoteException(RemoteErrorCode.MCP_SERVER_UNREACHABLE, failureDetail, e);
+            // 非 eligible（NPE/ISE 编程错误）→ 非"远端不可达"，不误标 RemoteException（M1）也不计熔断；
+            // 释放 HALF_OPEN 探测槽（H1），原异常经 ServiceException 让 GlobalExceptionHandler 归类
+            circuitRegistry.releaseProbe(key);
+            throw new ServiceException(ServiceErrorCode.INTERNAL_ERROR, "MCP " + desc + " 内部错误", e);
         }
     }
 
@@ -308,14 +324,5 @@ final class McpServerImpl implements McpServer {
             throw new ClientException(ClientErrorCode.BAD_REQUEST,
                     "MCP resource URI scheme 被禁: " + scheme);
         }
-    }
-
-    private static String rootMessage(Throwable e) {
-        Throwable c = e;
-        while (c.getCause() != null && c.getCause() != c) {
-            c = c.getCause();
-        }
-        String msg = c.getMessage();
-        return c.getClass().getSimpleName() + (msg == null ? "" : ": " + msg);
     }
 }

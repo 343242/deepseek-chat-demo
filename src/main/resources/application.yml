@@ -5,6 +5,14 @@ spring:
       max-file-size: 55MB
   profiles:
     active: ${SPRING_PROFILES_ACTIVE:dev}
+  ai:
+    mcp:
+      client:
+        # enabled 默认 true（用户偏好）；initialized 必须 false（design R-8）——
+        # 默认 true 会 eager initialize，单个 server 不可达阻塞整个启动；
+        # false 让 McpServerRegistryImpl per-client init + try/catch 实现 server 间隔离。
+        enabled: ${MCP_ENABLED:true}
+        initialized: ${MCP_INITIALIZED:false}
 
 app:
   cors:
@@ -84,4 +92,16 @@ app:
       # BYOK 总开关；基础默认 false（避免未配 LLM_MASTER_KEY 时 fail-fast 阻断启动，P0-3）。
       # 启用：env LLM_BYOK_ENABLED=true 且 LLM_MASTER_KEY=<base64-32B>（design §10 / N4 可回滚）
       enabled: ${LLM_BYOK_ENABLED:false}
+
+# MCP client（Phase 1：模块已就绪，未接 Agent 链；见 .trellis/tasks/06-28-mcp-client-phase1）
+mcp:
+  policy:
+    # DENY（默认）= 显式允许制，空 tools 表 = 全拒（AC4 安全默认）；接 Agent 链前由部署填充 tools。
+    default-mode: ${MCP_POLICY_DEFAULT_MODE:DENY}
+    tools: {}
+  resilience:
+    circuit-breaker:
+      failure-threshold: ${MCP_CB_FAILURE_THRESHOLD:5}
+      open-duration-ms: ${MCP_CB_OPEN_DURATION_MS:30000}
+      half-open-max-calls: ${MCP_CB_HALF_OPEN_MAX_CALLS:2}
 # Log4j 2 配置见 log4j2.xml，此处不再配置 logging.level

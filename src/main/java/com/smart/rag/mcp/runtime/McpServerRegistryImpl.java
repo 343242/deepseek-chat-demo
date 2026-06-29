@@ -85,8 +85,8 @@ public class McpServerRegistryImpl implements McpServerRegistry {
                     id = new ServerId(McpToolUtils.format(ir.serverInfo().name()));
                 }
             } catch (Exception e) {
-                initError = rootMessage(e);
-                log.warn("MCP client #{} initialize 失败，标记 down（不影响其他 server）: {}", i, initError);
+                initError = McpErrors.rootMessage(e);
+                log.warn("MCP client #{} initialize 失败，标记 down（不影响其他 server）", i, e);
             }
             if (id == null) {
                 // 握手未完成 → 无 serverInfo.name，用合成 id（health=down；真实名待恢复后由调用成功无法反查，已知局限）
@@ -113,14 +113,5 @@ public class McpServerRegistryImpl implements McpServerRegistry {
     public Optional<McpServer> find(ServerId id) {
         Objects.requireNonNull(id, "id");
         return Optional.ofNullable(servers.get(id));
-    }
-
-    private static String rootMessage(Throwable e) {
-        Throwable c = e;
-        while (c.getCause() != null && c.getCause() != c) {
-            c = c.getCause();
-        }
-        String msg = c.getMessage();
-        return c.getClass().getSimpleName() + (msg == null ? "" : ": " + msg);
     }
 }

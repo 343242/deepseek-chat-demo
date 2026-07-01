@@ -10,6 +10,9 @@ import com.smart.rag.mcp.core.McpTool;
 import com.smart.rag.mcp.core.McpToolResult;
 import com.smart.rag.mcp.core.McpTools;
 import com.smart.rag.mcp.core.Subject;
+import com.smart.rag.mcp.policy.McpSecurityGuard;
+import com.smart.rag.mcp.policy.McpSecurityProperties;
+import com.smart.rag.mcp.policy.McpToolPolicy;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -40,12 +43,15 @@ class McpToolCallbackAdapterTest {
 
     private final Subject subj = new Subject(1L, 1L);
 
+    private final McpSecurityGuard securityGuard =
+            new McpSecurityGuard(new McpToolPolicy(), new McpSecurityProperties());
+
     private McpToolCallbackAdapter adapter;
 
     @BeforeEach
     void setUp() {
         // registry 由 MockitoExtension 在 @BeforeEach 前注入；adapter 现需持 registry 聚合多 server
-        adapter = new McpToolCallbackAdapter(registry);
+        adapter = new McpToolCallbackAdapter(registry, securityGuard);
     }
 
     private void stubOneVisibleTool() {

@@ -7,6 +7,7 @@ import com.smart.rag.mcp.core.McpServer;
 import com.smart.rag.mcp.core.McpServerRegistry;
 import com.smart.rag.mcp.core.ServerId;
 import com.smart.rag.mcp.policy.McpAuthorizer;
+import com.smart.rag.mcp.policy.McpDescriptionSanitizer;
 import io.modelcontextprotocol.client.McpSyncClient;
 import io.modelcontextprotocol.spec.McpSchema;
 import jakarta.annotation.PostConstruct;
@@ -46,6 +47,7 @@ public class McpServerRegistryImpl implements McpServerRegistry {
     private final McpAuthorizer authorizer;
     private final McpCircuitBreakerRegistry circuitRegistry;
     private final FallbackEligibility fallbackEligibility;
+    private final McpDescriptionSanitizer descriptionSanitizer;
 
     private final Map<ServerId, McpServer> servers = new LinkedHashMap<>();
 
@@ -53,12 +55,14 @@ public class McpServerRegistryImpl implements McpServerRegistry {
                                  ObjectProvider<SyncMcpToolCallbackProvider> providerProvider,
                                  McpAuthorizer authorizer,
                                  McpCircuitBreakerRegistry circuitRegistry,
-                                 FallbackEligibility fallbackEligibility) {
+                                 FallbackEligibility fallbackEligibility,
+                                 McpDescriptionSanitizer descriptionSanitizer) {
         this.clientsProvider = clientsProvider;
         this.providerProvider = providerProvider;
         this.authorizer = authorizer;
         this.circuitRegistry = circuitRegistry;
         this.fallbackEligibility = fallbackEligibility;
+        this.descriptionSanitizer = descriptionSanitizer;
     }
 
     @PostConstruct
@@ -97,7 +101,7 @@ public class McpServerRegistryImpl implements McpServerRegistry {
                                 + "；请检查 spring.ai.mcp.client.*.connections 配置");
             }
             McpServerImpl server = new McpServerImpl(id, client, authorizer, circuitRegistry,
-                    fallbackEligibility, provider, initError);
+                    fallbackEligibility, provider, initError, descriptionSanitizer);
             servers.put(id, server);
             log.info("MCP server 已注册: id={} health={}", id.value(),
                     initError != null ? "down(initialize 失败)" : "alive");

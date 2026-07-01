@@ -8,6 +8,7 @@ import com.smart.rag.mcp.core.McpTool;
 import com.smart.rag.mcp.core.McpToolResult;
 import com.smart.rag.mcp.core.McpTools;
 import com.smart.rag.mcp.core.Subject;
+import com.smart.rag.mcp.policy.McpSecurityGuard;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.tool.function.FunctionToolCallback;
 import org.springframework.core.ParameterizedTypeReference;
@@ -40,12 +41,15 @@ import java.util.Map;
 public class McpToolCallbackAdapter {
 
     private final McpServerRegistry registry;
+    private final McpSecurityGuard securityGuard;
 
     /**
-     * @param registry MCP server 注册表；{@link #toCallbacksForAllServers} 遍历它聚合多 server（空载→空数组）
+     * @param registry      MCP server 注册表；{@link #toCallbacksForAllServers} 遍历它聚合多 server（空载→空数组）
+     * @param securityGuard 执行时语义门（Phase 2：审计/敏感参数/risk 封顶/输出不可信标记），BiFunction 内调用
      */
-    public McpToolCallbackAdapter(McpServerRegistry registry) {
+    public McpToolCallbackAdapter(McpServerRegistry registry, McpSecurityGuard securityGuard) {
         this.registry = registry;
+        this.securityGuard = securityGuard;
     }
 
     /**
@@ -66,7 +70,8 @@ public class McpToolCallbackAdapter {
             final String inputSchema = t.inputSchema();
             callbacks[i++] = FunctionToolCallback
                     .<Map<String, Object>, String>builder(name,
-                            (args, ctx) -> render(tools.call(name, McpArgs.of(args != null ? args : Map.of()), subj)))
+                            (args, ctx) -> render(securityGuard.guard(tools, name,
+                                    McpArgs.of(args != null ? args : Map.of()), subj)))
                     .description(description)
                     .inputSchema(inputSchema)
                     .inputType(new ParameterizedTypeReference<Map<String, Object>>() {})

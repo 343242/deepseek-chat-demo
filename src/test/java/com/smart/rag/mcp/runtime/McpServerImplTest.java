@@ -12,6 +12,8 @@ import com.smart.rag.mcp.core.McpToolResult;
 import com.smart.rag.mcp.core.ServerId;
 import com.smart.rag.mcp.core.Subject;
 import com.smart.rag.mcp.policy.McpAuthorizer;
+import com.smart.rag.mcp.policy.McpDescriptionSanitizer;
+import com.smart.rag.mcp.policy.McpSecurityProperties;
 import com.smart.rag.mcp.policy.McpToolPolicy;
 import io.modelcontextprotocol.client.McpSyncClient;
 import io.modelcontextprotocol.spec.McpSchema;
@@ -52,6 +54,8 @@ class McpServerImplTest {
 
     private McpServerImpl server;
     private McpCircuitBreakerRegistry registry;
+    private final McpDescriptionSanitizer descriptionSanitizer =
+            new McpDescriptionSanitizer(new McpToolPolicy(), new McpSecurityProperties());
 
     /** policy 允许 knowledge_search(intent=RETRIEVAL)，failureThreshold=1 便于熔断测试。 */
     @BeforeEach
@@ -65,7 +69,7 @@ class McpServerImplTest {
         registry = new McpCircuitBreakerRegistry(new CircuitBreakerProperties(1, 30000L, 1),
                 java.time.Clock.systemUTC());
         server = new McpServerImpl(KNOWLEDGE, client, authorizer, registry,
-                new FallbackEligibility(), provider, null);
+                new FallbackEligibility(), provider, null, descriptionSanitizer);
     }
 
     private void stubDiscovery() {
@@ -145,7 +149,7 @@ class McpServerImplTest {
         r.setIntent(McpIntent.RETRIEVAL);
         policy.getTools().put("ops_search", r); // 允许 ops_search，但 server id=knowledge → 前缀不符
         McpServerImpl s = new McpServerImpl(KNOWLEDGE, client, new McpAuthorizer(policy), registry,
-                new FallbackEligibility(), provider, null);
+                new FallbackEligibility(), provider, null, descriptionSanitizer);
         assertThrows(ClientException.class,
                 () -> s.tools().call("ops_search", McpArgs.empty(), AUTHED));
         verifyNoInteractions(client);
@@ -180,7 +184,7 @@ class McpServerImplTest {
 
         McpServerImpl down = new McpServerImpl(new ServerId("dead"), client,
                 new McpAuthorizer(new McpToolPolicy()), registry, new FallbackEligibility(), provider,
-                "connect refused");
+                "connect refused", descriptionSanitizer);
         assertEquals(McpServerHealth.Status.DOWN, down.health().status());
     }
 
@@ -196,7 +200,7 @@ class McpServerImplTest {
         rule.setIntent(McpIntent.RETRIEVAL);
         policy.getTools().put("knowledge_search", rule);
         McpServerImpl s = new McpServerImpl(KNOWLEDGE, client, new McpAuthorizer(policy), reg,
-                new FallbackEligibility(), provider, null);
+                new FallbackEligibility(), provider, null, descriptionSanitizer);
 
         // ① eligible 失败 → recordFailure → OPEN（threshold=1）
         // ② 过 cooldown → HALF_OPEN；探测抛非 eligible（IAE）→ 必须 releaseProbe，不计熔断

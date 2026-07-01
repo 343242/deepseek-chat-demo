@@ -93,13 +93,23 @@ app:
       # 启用：env LLM_BYOK_ENABLED=true 且 LLM_MASTER_KEY=<base64-32B>（design §10 / N4 可回滚）
       enabled: ${LLM_BYOK_ENABLED:false}
 
-# MCP client（出口① 已接 Agent 链：AgentToolCallbackFactory per-request 追加 MCP 工具；
-# 见 .trellis/tasks/06-29-mcp-agent-wiring；无 connections/空 allowlist 时默认 0 MCP 工具）
+# MCP client（出口① 已接 Agent 链；Phase 2 安全闭环：McpSecurityGuard 执行时语义门 + McpDescriptionSanitizer；
+# 见 .trellis/tasks/07-01-mcp-security-loop；无 connections/空 allowlist 时默认 0 MCP 工具）
 mcp:
   policy:
-    # DENY（默认）= 显式允许制，空 tools 表 = 全拒（AC4 安全默认）；接 Agent 链前由部署填充 tools。
+    # DENY（默认）= 显式允许制，空 tools 表 = 全拒（安全默认）；由部署填充 tools。
+    # ToolRule 字段：intent（路由）/ risk（low|high，admin 声明，缺省 low）/ description（可信覆盖，替代远端不可信 desc）。
+    # roles/quota 已移除（无干净 role source / 与 AgentGuardrails 重复）。
+    # 示例：
+    #   "knowledge_search":  { intent: RETRIEVAL, risk: low }
+    #   "ops_ticket_create": { intent: GENERAL_TOOL, risk: high, description: "创建运维工单" }
     default-mode: ${MCP_POLICY_DEFAULT_MODE:DENY}
     tools: {}
+  security:
+    sensitive-arg-patterns: []       # regex，扫参数值，命中 DENY 不发包远端；默认空 = 不筛查
+    default-output-cap-chars: 4000   # risk=low/缺省 输出上限
+    high-risk-output-cap-chars: 2000 # risk=high 输出上限
+    description-cap-chars: 500       # 工具描述上限（防 prompt-bombing）
   resilience:
     circuit-breaker:
       failure-threshold: ${MCP_CB_FAILURE_THRESHOLD:5}

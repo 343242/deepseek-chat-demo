@@ -22,6 +22,7 @@ import com.smart.rag.mcp.core.McpToolResult;
 import com.smart.rag.mcp.core.ServerId;
 import com.smart.rag.mcp.core.Subject;
 import com.smart.rag.mcp.policy.McpAuthorizer;
+import com.smart.rag.mcp.policy.McpDescriptionSanitizer;
 import io.modelcontextprotocol.client.McpSyncClient;
 import io.modelcontextprotocol.spec.McpSchema;
 import org.slf4j.Logger;
@@ -65,6 +66,7 @@ final class McpServerImpl implements McpServer {
     private final McpAuthorizer authorizer;
     private final McpCircuitBreakerRegistry circuitRegistry;
     private final FallbackEligibility fallbackEligibility;
+    private final McpDescriptionSanitizer descriptionSanitizer;
 
     /** 聚合 provider（nullable：无 connections / starter 未建时）；tools 发现面委托它按前缀过滤。 */
     @Nullable
@@ -88,7 +90,8 @@ final class McpServerImpl implements McpServer {
                   McpCircuitBreakerRegistry circuitRegistry,
                   FallbackEligibility fallbackEligibility,
                   @Nullable SyncMcpToolCallbackProvider provider,
-                  @Nullable String initError) {
+                  @Nullable String initError,
+                  McpDescriptionSanitizer descriptionSanitizer) {
         this.id = id;
         this.client = client;
         this.authorizer = authorizer;
@@ -96,6 +99,7 @@ final class McpServerImpl implements McpServer {
         this.fallbackEligibility = fallbackEligibility;
         this.provider = provider;
         this.initError = initError;
+        this.descriptionSanitizer = descriptionSanitizer;
     }
 
     @Override
@@ -160,7 +164,8 @@ final class McpServerImpl implements McpServer {
                 if (!authorizer.canSee(subj, name, intent)) {
                     continue;
                 }
-                visible.add(new McpTool(name, def.description(), def.inputSchema()));
+                visible.add(new McpTool(name, descriptionSanitizer.sanitize(name, def.description()),
+                        def.inputSchema()));
             }
             return visible;
         }

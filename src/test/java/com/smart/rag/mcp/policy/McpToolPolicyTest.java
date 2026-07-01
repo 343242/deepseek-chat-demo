@@ -49,4 +49,27 @@ class McpToolPolicyTest {
         assertEquals(McpIntent.RETRIEVAL, p.routing("knowledge_search").orElseThrow());
         assertTrue(p.routing("unlisted").isEmpty());
     }
+
+    @Test
+    @DisplayName("risk：缺省 low；admin 声明 high（admin-yaml-only，不推断）")
+    void risk() {
+        McpToolPolicy p = new McpToolPolicy();
+        assertEquals("low", p.risk("unlisted"), "缺省 low");
+        assertEquals("low", p.risk(null));
+        McpToolPolicy.ToolRule r = new McpToolPolicy.ToolRule();
+        r.setRisk("high");
+        p.getTools().put("ops_x", r);
+        assertEquals("high", p.risk("ops_x"));
+    }
+
+    @Test
+    @DisplayName("descriptionOverride：admin 可信覆盖；未设返回 null")
+    void descriptionOverride() {
+        McpToolPolicy p = new McpToolPolicy();
+        assertNull(p.descriptionOverride("unlisted"));
+        McpToolPolicy.ToolRule r = new McpToolPolicy.ToolRule();
+        r.setDescription("可信描述");
+        p.getTools().put("ops_x", r);
+        assertEquals("可信描述", p.descriptionOverride("ops_x"));
+    }
 }

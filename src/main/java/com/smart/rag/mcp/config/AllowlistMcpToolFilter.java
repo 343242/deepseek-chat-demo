@@ -2,9 +2,9 @@ package com.smart.rag.mcp.config;
 
 import com.smart.rag.mcp.policy.McpToolPolicy;
 import io.modelcontextprotocol.spec.McpSchema;
-import org.springframework.ai.mcp.McpConnectionInfo;
-import org.springframework.ai.mcp.McpToolFilter;
-import org.springframework.ai.mcp.McpToolNamePrefixGenerator;
+import com.smart.rag.mcp.mcpclient.McpConnectionInfo;
+import com.smart.rag.mcp.mcpclient.McpToolFilter;
+import com.smart.rag.mcp.mcpclient.McpToolNamePrefixGenerator;
 import org.springframework.stereotype.Component;
 
 import java.util.Objects;

@@ -7,9 +7,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.ai.mcp.McpConnectionInfo;
-import org.springframework.ai.mcp.McpToolNamePrefixGenerator;
-import org.springframework.ai.mcp.McpToolUtils;
+import com.smart.rag.mcp.mcpclient.McpConnectionInfo;
+import com.smart.rag.mcp.mcpclient.McpToolNamePrefixGenerator;
+import com.smart.rag.mcp.mcpclient.McpToolUtils;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.when;

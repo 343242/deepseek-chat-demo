@@ -21,6 +21,7 @@
         <java.version>21</java.version>
         <spring-ai.version>1.1.6</spring-ai.version>
         <redisson.version>3.52.0</redisson.version>
+        <mcp.sdk.version>2.0.0</mcp.sdk.version>
         <argLine></argLine>
     </properties>
 
@@ -259,10 +260,18 @@
             <artifactId>spring-ai-starter-model-zhipuai</artifactId>
         </dependency>
 
-        <!-- Spring AI MCP Client Boot Starter — 作为 MCP client 接入外部 MCP server（见 docs/MCP-CLIENT-INTEGRATION.md）；版本由 spring-ai-bom 管 -->
+        <!-- MCP Java SDK 2.0.0（直接依赖，不经 Spring AI MCP starter — starter 锁死 0.18.2 有 #773 405 bug）。
+             用 mcp-core + mcp-json-jackson2（跳过 mcp aggregator 避免 jackson3 冲突）。
+             胶水层（SyncMcpToolCallbackProvider 等）参照 Spring AI 2.0.0 自实现于 mcp/mcpclient 包。 -->
         <dependency>
-            <groupId>org.springframework.ai</groupId>
-            <artifactId>spring-ai-starter-mcp-client</artifactId>
+            <groupId>io.modelcontextprotocol.sdk</groupId>
+            <artifactId>mcp-core</artifactId>
+            <version>${mcp.sdk.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>io.modelcontextprotocol.sdk</groupId>
+            <artifactId>mcp-json-jackson2</artifactId>
+            <version>${mcp.sdk.version}</version>
         </dependency>
 
         <!-- MinIO Object Storage -->

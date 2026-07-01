@@ -13,8 +13,8 @@ import io.modelcontextprotocol.spec.McpSchema;
 import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.ai.mcp.McpToolUtils;
-import org.springframework.ai.mcp.SyncMcpToolCallbackProvider;
+import com.smart.rag.mcp.mcpclient.McpToolUtils;
+import com.smart.rag.mcp.mcpclient.SyncMcpToolCallbackProvider;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
 

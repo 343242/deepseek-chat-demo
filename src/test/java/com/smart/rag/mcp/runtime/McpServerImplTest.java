@@ -23,7 +23,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.ai.mcp.SyncMcpToolCallbackProvider;
+import com.smart.rag.mcp.mcpclient.SyncMcpToolCallbackProvider;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.tool.definition.ToolDefinition;
 
@@ -110,7 +110,7 @@ class McpServerImplTest {
     @DisplayName("call：剥前缀 → 委托 client.callTool(rawName)，isError 透传")
     void call_stripsPrefix_andDelegates() throws Exception {
         when(client.callTool(any())).thenReturn(
-                new McpSchema.CallToolResult(List.of(new McpSchema.TextContent("hello")), false, java.util.Map.of()));
+                McpSchema.CallToolResult.builder().content(List.of(new McpSchema.TextContent("hello"))).isError(false).build());
 
         McpToolResult result = server.tools().call("knowledge_search", McpArgs.empty(), AUTHED);
 
@@ -126,7 +126,7 @@ class McpServerImplTest {
     @DisplayName("call：CallToolResult.isError=true → McpToolResult.isError=true（C5 不抹平）")
     void call_isErrorNotFlattened() {
         when(client.callTool(any())).thenReturn(
-                new McpSchema.CallToolResult(List.of(new McpSchema.TextContent("boom")), true, java.util.Map.of()));
+                McpSchema.CallToolResult.builder().content(List.of(new McpSchema.TextContent("boom"))).isError(true).build());
         McpToolResult result = server.tools().call("knowledge_search", McpArgs.empty(), AUTHED);
         assertTrue(result.isError());
         assertEquals("boom", result.text());
@@ -208,8 +208,8 @@ class McpServerImplTest {
         when(client.callTool(any()))
                 .thenThrow(new RuntimeException("net down"))
                 .thenThrow(new IllegalArgumentException("bad arg"))
-                .thenReturn(new McpSchema.CallToolResult(
-                        List.of(new McpSchema.TextContent("ok")), false, java.util.Map.of()));
+                .thenReturn(McpSchema.CallToolResult.builder()
+                        .content(List.of(new McpSchema.TextContent("ok"))).isError(false).build());
 
         s.tools().call("knowledge_search", McpArgs.empty(), AUTHED); // ① → OPEN
         assertEquals(CircuitBreakerState.OPEN, reg.stateOf(KNOWLEDGE.value()));

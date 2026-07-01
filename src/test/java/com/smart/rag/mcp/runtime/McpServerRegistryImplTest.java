@@ -16,7 +16,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.ai.mcp.SyncMcpToolCallbackProvider;
+import com.smart.rag.mcp.mcpclient.SyncMcpToolCallbackProvider;
 import org.springframework.beans.factory.ObjectProvider;
 
 import java.time.Clock;

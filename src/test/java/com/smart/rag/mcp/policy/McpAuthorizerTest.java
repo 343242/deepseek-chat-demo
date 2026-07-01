@@ -19,6 +19,12 @@ class McpAuthorizerTest {
         return new McpAuthorizer(p);
     }
 
+    private static McpAuthorizer authorizerAllowMode() {
+        McpToolPolicy p = new McpToolPolicy();
+        p.setDefaultMode(McpToolPolicy.DefaultMode.ALLOW);
+        return new McpAuthorizer(p);
+    }
+
     private static final Subject AUTHED = new Subject(1L, 1L);
     private static final Subject ANON = new Subject(0L, null);
 
@@ -45,6 +51,31 @@ class McpAuthorizerTest {
     @DisplayName("canSee：subject + allowlist + intent 全过 → 可见")
     void canSee_allMatch_true() {
         assertTrue(authorizerWith("t", McpIntent.RETRIEVAL).canSee(AUTHED, "t", McpIntent.RETRIEVAL));
+    }
+
+    @Test
+    @DisplayName("canSee：ALLOW 模式未知工具 + GENERAL_TOOL → 可见（缺省兜底，支持未知工具接入）")
+    void canSee_allowMode_unknownTool_generalIntent_visible() {
+        assertTrue(authorizerAllowMode().canSee(AUTHED, "any_unknown_tool", McpIntent.GENERAL_TOOL));
+    }
+
+    @Test
+    @DisplayName("canSee：ALLOW 模式未知工具 + RETRIEVAL → 不可见（不污染检索意图）")
+    void canSee_allowMode_unknownTool_retrieval_notVisible() {
+        assertFalse(authorizerAllowMode().canSee(AUTHED, "any_unknown_tool", McpIntent.RETRIEVAL));
+    }
+
+    @Test
+    @DisplayName("canSee：ALLOW 模式工具配了 intent → 精确匹配（map 覆盖 GENERAL_TOOL 缺省）")
+    void canSee_allowMode_configuredIntent_preciseMatch() {
+        McpToolPolicy p = new McpToolPolicy();
+        p.setDefaultMode(McpToolPolicy.DefaultMode.ALLOW);
+        McpToolPolicy.ToolRule r = new McpToolPolicy.ToolRule();
+        r.setIntent(McpIntent.RETRIEVAL);
+        p.getTools().put("t", r);
+        McpAuthorizer a = new McpAuthorizer(p);
+        assertTrue(a.canSee(AUTHED, "t", McpIntent.RETRIEVAL));
+        assertFalse(a.canSee(AUTHED, "t", McpIntent.GENERAL_TOOL));
     }
 
     @Test

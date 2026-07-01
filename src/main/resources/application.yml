@@ -13,6 +13,15 @@ spring:
         # false 让 McpServerRegistryImpl per-client init + try/catch 实现 server 间隔离。
         enabled: ${MCP_ENABLED:true}
         initialized: ${MCP_INITIALIZED:false}
+        type: SYNC
+        request-timeout: ${MCP_REQUEST_TIMEOUT:30s}
+        # Tavily 远程 MCP（Streamable-HTTP）。鉴权经 Bearer header 注入（见 mcp.security.bearer-tokens），
+        # 不走 URL query——MCP SDK streamable-http transport 会跑 OAuth 协商层盖过 query param。
+        # 配合 MCP_POLICY_DEFAULT_MODE=ALLOW，未知工具默认在 GENERAL_TOOL intent 下可见（不必预知工具名）。
+        streamable-http:
+          connections:
+            tavily:
+              url: https://mcp.tavily.com/mcp
 
 app:
   cors:
@@ -110,6 +119,10 @@ mcp:
     default-output-cap-chars: 4000   # risk=low/缺省 输出上限
     high-risk-output-cap-chars: 2000 # risk=high 输出上限
     description-cap-chars: 500       # 工具描述上限（防 prompt-bombing）
+    # 远端 server 出站 Bearer 鉴权：键 = 连接 URL 的 host，值 = token（design D-9）。
+    # token 经环境变量注入，勿硬编码。未配置的 host 不加头（走 server 默认鉴权）。
+    # 示例：bearer-tokens: { "mcp.tavily.com": "${TAVILY_API_KEY:}" }
+    bearer-tokens: {}
   resilience:
     circuit-breaker:
       failure-threshold: ${MCP_CB_FAILURE_THRESHOLD:5}

@@ -3,7 +3,9 @@ package com.smart.rag.mcp.policy;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
 
-import java.util.List;
+import java.util.HashMap;
+ import java.util.List;
+import java.util.Map;
 
 /**
  * MCP 安全策略配置（{@code mcp.security}）—— Phase 2 语义层的可调参数。
@@ -26,6 +28,17 @@ public class McpSecurityProperties {
 
     /** 工具描述字符上限（防 prompt-bombing）。 */
     private int descriptionCapChars = 500;
+
+    /**
+     * 远端 MCP server 出站 Bearer 鉴权令牌（host → token）。
+     * <p>
+     * 键 = 连接 URL 的 host（如 {@code mcp.tavily.com}），由 {@code McpClientConfiguration} 的 HTTP 请求 customizer
+     * 按 {@code uri.getHost()} 匹配后注入 {@code Authorization: Bearer <token>} 头。
+     * <p>
+     * 用于绕过 MCP SDK 自动 OAuth 协商（部分 server 如 Tavily 的 OAuth 令牌会被拒，design D-9 兑现）。
+     * 未配置的 host 不加头（走 server 默认鉴权）。token 值应经环境变量注入，勿硬编码进 yaml。
+     */
+    private Map<String, String> bearerTokens = new HashMap<>();
 
     public List<String> getSensitiveArgPatterns() {
         return sensitiveArgPatterns;
@@ -57,5 +70,13 @@ public class McpSecurityProperties {
 
     public void setDescriptionCapChars(int descriptionCapChars) {
         this.descriptionCapChars = descriptionCapChars;
+    }
+
+    public Map<String, String> getBearerTokens() {
+        return bearerTokens;
+    }
+
+    public void setBearerTokens(Map<String, String> bearerTokens) {
+        this.bearerTokens = bearerTokens == null ? new HashMap<>() : bearerTokens;
     }
 }

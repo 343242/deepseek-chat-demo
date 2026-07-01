@@ -33,7 +33,8 @@ public class McpAuthorizer {
      * {@code visibleTo} 过滤判定：工具对调用方是否可见。
      * <p>
      * 三层全过才可见：① subject 已认证；② 在 allowlist（{@link McpToolPolicy#explicitlyAllowed}）；
-     * ③ intent 路由匹配（{@link McpToolPolicy#routing} == {@code intent}）。
+     * ③ intent 路由匹配（{@link McpToolPolicy#routing} == {@code intent}）；routing 缺省 {@link McpIntent#GENERAL_TOOL}
+     *    （未配 intent 的工具默认只在 GENERAL_TOOL 可见——支持"接入未知工具的 server"，{@code default-mode: ALLOW} 生效）。
      *
      * @return 可见 true；任一层不过返回 false（不抛——visibleTo 是过滤语义）
      */
@@ -44,9 +45,10 @@ public class McpAuthorizer {
         if (!policy.explicitlyAllowed(prefixedName)) {
             return false;
         }
-        return policy.routing(prefixedName)
-                .map(toolIntent -> toolIntent == intent)
-                .orElse(false);
+        // routing 缺省 GENERAL_TOOL：未配 intent 的工具默认只在 GENERAL_TOOL 可见，不污染
+        // RETRIEVAL/DEEP_RETRIEVAL/DIRECT_ANSWER；DENY 下工具必在 map（routing 非 empty），不受影响。
+        McpIntent effectiveIntent = policy.routing(prefixedName).orElse(McpIntent.GENERAL_TOOL);
+        return effectiveIntent == intent;
     }
 
     /**

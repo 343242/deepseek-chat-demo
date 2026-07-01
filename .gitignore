@@ -27,3 +27,6 @@ AGENTS.md
 
 # Sandbox / mirror directory (local platform experimentation, not source)
 bin/
+
+# Local skill lock file (not source)
+skills-lock.json

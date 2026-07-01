@@ -19,7 +19,8 @@
   "pr_url": null,
   "subtasks": [],
   "children": [
-    "06-29-mcp-agent-wiring"
+    "06-29-mcp-agent-wiring",
+    "07-01-mcp-security-loop"
   ],
   "parent": null,
   "relatedFiles": [],

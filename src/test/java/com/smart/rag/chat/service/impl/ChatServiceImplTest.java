@@ -22,6 +22,7 @@ import com.smart.rag.chat.service.ChatUsageTracker;
 import com.smart.rag.chat.service.StrategyExecuteResult;
 import com.smart.rag.chat.service.StrategyExecutionContext;
 import com.smart.rag.common.util.ConversationIdUtil;
+import com.smart.rag.team.service.TeamMembershipVerifier;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -53,6 +54,7 @@ class ChatServiceImplTest {
     @Mock private RequestContextManager cagContextManager;
     @Mock private CagProperties cagProperties;
     @Mock private UserContextProvider userContextProvider;
+    @Mock private TeamMembershipVerifier teamMembershipVerifier;
     @Mock private ChatModeStrategy modeStrategy;
     @Mock private ChatModel chatModel;
 
@@ -67,7 +69,7 @@ class ChatServiceImplTest {
         return new ChatServiceImpl(
                 llmRegistry, fallbackEligibility, modeRouter, usageTracker,
                 conversationHelper, chatMessagePublisher, sseStreamBridge, cagContextManager,
-                cagProperties, userContextProvider);
+                cagProperties, userContextProvider, teamMembershipVerifier);
     }
 
     private ChatRequest buildRequest() {

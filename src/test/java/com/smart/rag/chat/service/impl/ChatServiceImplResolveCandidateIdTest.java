@@ -13,6 +13,7 @@ import com.smart.rag.chat.service.ChatMessagePublisher;
 import com.smart.rag.chat.service.ChatUsageTracker;
 import com.smart.rag.chat.service.SseStreamBridge;
 import com.smart.rag.chat.service.UserContextProvider;
+import com.smart.rag.team.service.TeamMembershipVerifier;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -47,6 +48,7 @@ class ChatServiceImplResolveCandidateIdTest {
     @Mock private RequestContextManager cagContextManager;
     @Mock private CagProperties cagProperties;
     @Mock private UserContextProvider userContextProvider;
+    @Mock private TeamMembershipVerifier teamMembershipVerifier;
     @Mock private CapabilityClient defaultClient;
 
     private static final String VALID_CANDIDATE_ID = "deepseek-v4-flash";
@@ -56,7 +58,7 @@ class ChatServiceImplResolveCandidateIdTest {
         return new ChatServiceImpl(
                 llmRegistry, fallbackEligibility, modeRouter, usageTracker,
                 conversationHelper, chatMessagePublisher, sseStreamBridge, cagContextManager,
-                cagProperties, userContextProvider);
+                cagProperties, userContextProvider, teamMembershipVerifier);
     }
 
     private ChatRequest requestWithModel(String model) {

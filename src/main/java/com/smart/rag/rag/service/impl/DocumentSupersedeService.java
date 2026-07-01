@@ -11,6 +11,10 @@ import com.smart.rag.rag.mapper.RagDocumentMapper;
 import com.smart.rag.rag.mapper.VectorStoreMapper;
 import com.smart.rag.rag.entity.RagDocument;
 import com.smart.rag.rag.service.FileStorageService;
+import com.smart.rag.infrastructure.exception.ServiceException;
+import com.smart.rag.team.entity.TeamMember;
+import com.smart.rag.team.enums.TeamMemberRole;
+import com.smart.rag.team.service.TeamMembershipVerifier;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -52,6 +56,7 @@ public class DocumentSupersedeService {
     private final Loader vectorStoreLoader;
     private final FileStorageService fileStorageService;
     private final TransactionTemplate transactionTemplate;
+    private final TeamMembershipVerifier teamMembershipVerifier;
 
     /** 待替换关系：newDocId → oldDocId（ETL 完成后执行替换）— 内存加速层 */
     private final ConcurrentHashMap<Long, Long> pendingSupersede = new ConcurrentHashMap<>();
@@ -60,12 +65,14 @@ public class DocumentSupersedeService {
                                     VectorStoreMapper vectorStoreMapper,
                                     Loader vectorStoreLoader,
                                     FileStorageService fileStorageService,
-                                    TransactionTemplate transactionTemplate) {
+                                    TransactionTemplate transactionTemplate,
+                                    TeamMembershipVerifier teamMembershipVerifier) {
         this.ragDocumentMapper = ragDocumentMapper;
         this.vectorStoreMapper = vectorStoreMapper;
         this.vectorStoreLoader = vectorStoreLoader;
         this.fileStorageService = fileStorageService;
         this.transactionTemplate = transactionTemplate;
+        this.teamMembershipVerifier = teamMembershipVerifier;
     }
 
     /**
@@ -217,7 +224,19 @@ public class DocumentSupersedeService {
 
     private boolean isOwner(RagDocument doc, Long userId, @Nullable Long teamId) {
         if (teamId != null) {
-            return teamId.equals(doc.getTeamId());
+            // 团队文档：必须是活跃成员，且为 CREATOR/ADMIN 或被替换文档的原上传者
+            // （与 DocumentOwnershipChecker 的团队文档规则一致）
+            if (!teamId.equals(doc.getTeamId())) {
+                return false;
+            }
+            try {
+                TeamMember member = teamMembershipVerifier.verifyMember(teamId, userId);
+                return member.getRole() == TeamMemberRole.CREATOR
+                        || member.getRole() == TeamMemberRole.ADMIN
+                        || userId.equals(doc.getUserId());
+            } catch (ServiceException e) {
+                return false;
+            }
         }
         return userId.equals(doc.getUserId());
     }

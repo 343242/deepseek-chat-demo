@@ -4,6 +4,9 @@ import com.smart.rag.rag.entity.RagDocument;
 import com.smart.rag.rag.etl.EtlStatus;
 import com.smart.rag.rag.etl.Loader;
 import com.smart.rag.rag.event.DocumentCreatedEvent;
+import com.smart.rag.team.entity.TeamMember;
+import com.smart.rag.team.enums.TeamMemberRole;
+import com.smart.rag.team.service.TeamMembershipVerifier;
 import com.smart.rag.rag.event.DocumentDeletedEvent;
 import com.smart.rag.rag.event.EtlCompletedEvent;
 import com.smart.rag.rag.event.EtlFailedEvent;
@@ -51,6 +54,8 @@ class DocumentSupersedeServiceTest {
 
     @Mock
     private TransactionTemplate transactionTemplate;
+    @Mock
+    private TeamMembershipVerifier teamMembershipVerifier;
 
     @InjectMocks
     private DocumentSupersedeService service;
@@ -236,6 +241,9 @@ class DocumentSupersedeServiceTest {
         void linkVersion_sameOwner_team() {
             RagDocument oldDoc = buildDoc(50L, "group-abc", 1, 1L, 777L);
             when(ragDocumentMapper.selectById(50L)).thenReturn(oldDoc);
+            TeamMember adminMember = new TeamMember();
+            adminMember.setRole(TeamMemberRole.ADMIN);
+            when(teamMembershipVerifier.verifyMember(777L, 2L)).thenReturn(adminMember);
 
             DocumentCreatedEvent event = new DocumentCreatedEvent(100L, 50L, 2L, 777L);
 

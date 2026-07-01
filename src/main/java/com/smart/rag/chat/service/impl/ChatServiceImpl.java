@@ -29,6 +29,7 @@ import com.smart.rag.chat.service.StrategyExecuteResult;
 import com.smart.rag.chat.service.StrategyExecutionContext;
 import com.smart.rag.common.util.UuidGeneratorUtil;
 import com.smart.rag.common.util.ConversationIdUtil;
+import com.smart.rag.team.service.TeamMembershipVerifier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
@@ -62,6 +63,7 @@ public class ChatServiceImpl implements ChatService {
     private final RequestContextManager cagContextManager;
     private final CagProperties cagProperties;
     private final UserContextProvider userContextProvider;
+    private final TeamMembershipVerifier teamMembershipVerifier;
 
     public ChatServiceImpl(LlmClientRegistry llmRegistry,
                            FallbackEligibility fallbackEligibility,
@@ -72,7 +74,8 @@ public class ChatServiceImpl implements ChatService {
                            SseStreamBridge sseStreamBridge,
                            RequestContextManager cagContextManager,
                            CagProperties cagProperties,
-                           UserContextProvider userContextProvider) {
+                           UserContextProvider userContextProvider,
+                           TeamMembershipVerifier teamMembershipVerifier) {
         this.llmRegistry = llmRegistry;
         this.fallbackExecutor = new FallbackExecutor(fallbackEligibility);
         this.modeRouter = modeRouter;
@@ -83,6 +86,7 @@ public class ChatServiceImpl implements ChatService {
         this.cagContextManager = cagContextManager;
         this.cagProperties = cagProperties;
         this.userContextProvider = userContextProvider;
+        this.teamMembershipVerifier = teamMembershipVerifier;
     }
 
     // ==================== 阻塞式聊天（跨模型 Fallback） ====================
@@ -149,6 +153,10 @@ public class ChatServiceImpl implements ChatService {
     private PreparedContext prepare(ChatRequest request) {
         String candidateId = resolveCandidateId(request);
         Long userId = userContextProvider.getCurrentUserId();
+        if (request.teamId() != null) {
+            // teamId 是受保护的租户边界：检索前必须确认调用方是该团队活跃成员
+            teamMembershipVerifier.verifyMember(request.teamId(), userId);
+        }
         ChatModeStrategy modeStrategy = modeRouter.route(request.mode());
 
         String rawConversationId = request.conversationId();

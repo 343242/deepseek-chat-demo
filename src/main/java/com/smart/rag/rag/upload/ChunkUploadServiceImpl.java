@@ -244,15 +244,19 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
 
     @Override
     public Long complete(String uploadId, String fileMd5) {
+        return complete(uploadId, fileMd5, null);
+    }
+
+    @Override
+    public Long complete(String uploadId, String fileMd5, @Nullable Long expectedTeamId) {
         Long userId = SecurityUtils.getCurrentUserId();
 
         String sessionKey = UploadRedisConstants.sessionKey(uploadId);
         Map<Object, Object> rawSession = redisTemplate.opsForHash().entries(sessionKey);
 
         if (rawSession.isEmpty()) {
-            // Session already cleaned — merge was done. Look up by userId without teamId
-            // since we no longer have session data to determine the team scope.
-            RagDocument doc = findExistingForQuickUpload(fileMd5, userId, null);
+            // Session already cleaned — merge was done. 用路径 teamId 做幂等回查，保留团队维度
+            RagDocument doc = findExistingForQuickUpload(fileMd5, userId, expectedTeamId);
             if (doc != null) {
                 log.info("Complete idempotent: uploadId={} already merged as docId={}", uploadId, doc.getId());
                 return doc.getId();
@@ -262,6 +266,8 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
 
         Map<String, String> session = toStringMap(rawSession);
         validateOwner(session, userId);
+        // 团队端点：校验会话 teamId 与路径 teamId 一致，避免同用户跨团队会话混用
+        validateTeamScope(session, expectedTeamId);
 
         // Extract teamId from session for team-scoped quick-upload lookup
         Long teamId = parseNullableLong(session.get("teamId"), "teamId");
@@ -600,6 +606,34 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
             log.warn("Upload owner mismatch: expected={}, actual={}", owner, userId);
             throw new ClientException(ClientErrorCode.FORBIDDEN);
         }
+    }
+    /**
+     * 校验会话 teamId 与期望 teamId 一致（团队端点专用）。
+     * <p>
+     * teamId 是会话的强约束字段，而非仅由 controller 门禁保证：服务层主动发现并拒绝不一致。
+     */
+    private void validateTeamScope(Map<String, String> session, @Nullable Long expectedTeamId) {
+        String sessionTeamIdStr = session.get("teamId");
+        Long sessionTeamId = sessionTeamIdStr != null ? parseNullableLong(sessionTeamIdStr, "teamId") : null;
+        boolean mismatch;
+        if (expectedTeamId == null) {
+            // 个人端点访问了团队会话 → 拒绝
+            mismatch = sessionTeamId != null;
+        } else {
+            mismatch = sessionTeamId == null || !expectedTeamId.equals(sessionTeamId);
+        }
+        if (mismatch) {
+            log.warn("Upload team-scope mismatch: expected={}, session={}, uploadId={}",
+                    expectedTeamId, sessionTeamId, session.get("userId"));
+            throw new ClientException(ClientErrorCode.FORBIDDEN, "上传会话与请求的团队不匹配");
+        }
+    }
+
+    @Override
+    public void validateTeamScope(String uploadId, Long expectedTeamId) {
+        Long userId = SecurityUtils.getCurrentUserId();
+        Map<String, String> session = validateSession(uploadId, userId);
+        validateTeamScope(session, expectedTeamId);
     }
 
     // ==================== MinIO 操作 ====================

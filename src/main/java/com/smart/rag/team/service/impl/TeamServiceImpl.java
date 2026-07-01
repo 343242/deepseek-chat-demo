@@ -19,6 +19,7 @@ import com.smart.rag.team.enums.TeamStatus;
 import com.smart.rag.team.mapper.TeamMapper;
 import com.smart.rag.team.mapper.TeamMemberMapper;
 import com.smart.rag.team.service.TeamService;
+import com.smart.rag.team.service.TeamMembershipVerifier;
 import com.smart.rag.rag.service.FileStorageService;
 import com.smart.rag.rag.upload.BucketResolver;
 import com.smart.rag.user.entity.SysUser;
@@ -52,6 +53,7 @@ public class TeamServiceImpl implements TeamService {
     private final TransactionTemplate txTemplate;
     private final FileStorageService fileStorageService;
     private final BucketResolver bucketResolver;
+    private final TeamMembershipVerifier teamMembershipVerifier;
 
     public TeamServiceImpl(TeamMapper teamMapper,
                            TeamMemberMapper teamMemberMapper,
@@ -59,7 +61,8 @@ public class TeamServiceImpl implements TeamService {
                            TeamProperties teamProperties,
                            TransactionTemplate txTemplate,
                            FileStorageService fileStorageService,
-                           BucketResolver bucketResolver) {
+                           BucketResolver bucketResolver,
+                           TeamMembershipVerifier teamMembershipVerifier) {
         this.teamMapper = teamMapper;
         this.teamMemberMapper = teamMemberMapper;
         this.sysUserMapper = sysUserMapper;
@@ -67,6 +70,7 @@ public class TeamServiceImpl implements TeamService {
         this.txTemplate = txTemplate;
         this.fileStorageService = fileStorageService;
         this.bucketResolver = bucketResolver;
+        this.teamMembershipVerifier = teamMembershipVerifier;
     }
 
     @Override
@@ -270,10 +274,8 @@ public class TeamServiceImpl implements TeamService {
         Long userId = SecurityUtils.getCurrentUserId();
         Team team = getActiveTeam(teamId);
 
-        // Service 层权限校验：仅创建者可设置
-        if (!userId.equals(team.getCreatorId())) {
-            throw new ServiceException(ServiceErrorCode.NOT_TEAM_CREATOR);
-        }
+        // 权限校验：与 @PreAuthorize('team:manage') 对齐 —— 团队 CREATOR 或 ADMIN 成员可设置
+        teamMembershipVerifier.verifyAdmin(teamId, userId);
 
         txTemplate.executeWithoutResult(status -> {
             team.setCreatorUploadLimitMb(maxUploadMb);

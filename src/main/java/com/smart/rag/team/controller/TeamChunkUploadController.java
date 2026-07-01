@@ -102,6 +102,7 @@ public class TeamChunkUploadController {
             @PathVariable Long teamId,
             @PathVariable String uploadId) {
         verifyTeamAccess(teamId);
+        chunkUploadService.validateTeamScope(uploadId, teamId);
         return GlobalResponse.ok(chunkUploadService.status(uploadId));
     }
 
@@ -114,7 +115,7 @@ public class TeamChunkUploadController {
             @PathVariable String uploadId,
             @Valid @RequestBody ChunkUploadCompleteRequest request) {
         verifyTeamAccess(teamId);
-        Long docId = chunkUploadService.complete(uploadId, request.fileMd5());
+        Long docId = chunkUploadService.complete(uploadId, request.fileMd5(), teamId);
         return GlobalResponse.ok(new ChunkUploadCompleteResult(docId), "文件合并完成");
     }
 
@@ -126,6 +127,7 @@ public class TeamChunkUploadController {
             @PathVariable Long teamId,
             @PathVariable String uploadId) {
         verifyTeamAccess(teamId);
+        chunkUploadService.validateTeamScope(uploadId, teamId);
         chunkUploadService.abort(uploadId);
         return GlobalResponse.ok("上传已取消");
     }

@@ -2,6 +2,7 @@ package com.smart.rag.team.service.impl;
 
 import com.smart.rag.common.team.TeamStatusService;
 import com.smart.rag.team.entity.Team;
+import com.smart.rag.team.enums.TeamStatus;
 import com.smart.rag.team.entity.TeamMember;
 import com.smart.rag.team.mapper.TeamMapper;
 import com.smart.rag.team.mapper.TeamMemberMapper;
@@ -27,7 +28,8 @@ public class TeamStatusServiceImpl implements TeamStatusService {
     @Override
     public boolean isTeamActive(Long teamId) {
         Team team = teamMapper.selectById(teamId);
-        return team != null && team.getDeleted() == 0;
+        // deleted 负责软删除/解散，status 负责启用/禁用：二者都满足才算活跃
+        return team != null && team.getDeleted() == 0 && team.getStatus() == TeamStatus.ACTIVE;
     }
 
     @Override

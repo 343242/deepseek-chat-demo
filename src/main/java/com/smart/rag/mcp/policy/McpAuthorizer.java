@@ -42,13 +42,15 @@ public class McpAuthorizer {
         if (subj == null || !subj.isAuthenticated()) {
             return false;
         }
-        if (!policy.explicitlyAllowed(prefixedName)) {
-            return false;
-        }
-        // routing 缺省 GENERAL_TOOL：未配 intent 的工具默认只在 GENERAL_TOOL 可见，不污染
-        // RETRIEVAL/DEEP_RETRIEVAL/DIRECT_ANSWER；DENY 下工具必在 map（routing 非 empty），不受影响。
-        McpIntent effectiveIntent = policy.routing(prefixedName).orElse(McpIntent.GENERAL_TOOL);
-        return effectiveIntent == intent;
+        // [临时] mcp.policy 关闭——所有 MCP 工具对所有 intent 全放行
+        // if (!policy.explicitlyAllowed(prefixedName)) {
+        //     return false;
+        // }
+        // // routing 缺省 GENERAL_TOOL：未配 intent 的工具默认只在 GENERAL_TOOL 可见，不污染
+        // // RETRIEVAL/DEEP_RETRIEVAL/DIRECT_ANSWER；DENY 下工具必在 map（routing 非 empty），不受影响。
+        // McpIntent effectiveIntent = policy.routing(prefixedName).orElse(McpIntent.GENERAL_TOOL);
+        // return effectiveIntent == intent;
+        return true;
     }
 
     /**
@@ -61,10 +63,11 @@ public class McpAuthorizer {
             throw new ClientException(ClientErrorCode.FORBIDDEN,
                     "MCP 调用被拒：调用方主体未认证");
         }
-        if (!policy.explicitlyAllowed(prefixedName)) {
-            throw new ClientException(ClientErrorCode.FORBIDDEN,
-                    "MCP 工具未授权: " + prefixedName);
-        }
+        // [临时] mcp.policy 关闭——所有 MCP 工具放行
+        // if (!policy.explicitlyAllowed(prefixedName)) {
+        //     throw new ClientException(ClientErrorCode.FORBIDDEN,
+        //             "MCP 工具未授权: " + prefixedName);
+        // }
         // roles/risk/quota — Phase 2 guardrail 语义层（design R-7：本期无 role source，不强制）
     }
 }

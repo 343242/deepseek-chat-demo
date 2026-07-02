@@ -105,15 +105,15 @@ app:
 # MCP client（出口① 已接 Agent 链；Phase 2 安全闭环：McpSecurityGuard 执行时语义门 + McpDescriptionSanitizer；
 # 见 .trellis/tasks/07-01-mcp-security-loop；无 connections/空 allowlist 时默认 0 MCP 工具）
 mcp:
-  policy:
-    # DENY（默认）= 显式允许制，空 tools 表 = 全拒（安全默认）；由部署填充 tools。
-    # ToolRule 字段：intent（路由）/ risk（low|high，admin 声明，缺省 low）/ description（可信覆盖，替代远端不可信 desc）。
-    # roles/quota 已移除（无干净 role source / 与 AgentGuardrails 重复）。
-    # 示例：
-    #   "knowledge_search":  { intent: RETRIEVAL, risk: low }
-    #   "ops_ticket_create": { intent: GENERAL_TOOL, risk: high, description: "创建运维工单" }
-    default-mode: ${MCP_POLICY_DEFAULT_MODE:ALLOW}
-    tools: {}
+#  policy:                                  # [临时] mcp.policy 关闭——所有 MCP 工具对 Agent 全放行
+#    # DENY（默认）= 显式允许制，空 tools 表 = 全拒（安全默认）；由部署填充 tools。
+#    # ToolRule 字段：intent（路由）/ risk（low|high，admin 声明，缺省 low）/ description（可信覆盖，替代远端不可信 desc）。
+#    # roles/quota 已移除（无干净 role source / 与 AgentGuardrails 重复）。
+#    # 示例：
+#    #   "knowledge_search":  { intent: RETRIEVAL, risk: low }
+#    #   "ops_ticket_create": { intent: GENERAL_TOOL, risk: high, description: "创建运维工单" }
+#    default-mode: ${MCP_POLICY_DEFAULT_MODE:ALLOW}
+#    tools: {}
   security:
     sensitive-arg-patterns: []       # regex，扫参数值，命中 DENY 不发包远端；默认空 = 不筛查
     default-output-cap-chars: 4000   # risk=low/缺省 输出上限

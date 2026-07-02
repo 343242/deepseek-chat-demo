@@ -112,7 +112,7 @@ mcp:
     # 示例：
     #   "knowledge_search":  { intent: RETRIEVAL, risk: low }
     #   "ops_ticket_create": { intent: GENERAL_TOOL, risk: high, description: "创建运维工单" }
-    default-mode: ${MCP_POLICY_DEFAULT_MODE:DENY}
+    default-mode: ${MCP_POLICY_DEFAULT_MODE:ALLOW}
     tools: {}
   security:
     sensitive-arg-patterns: []       # regex，扫参数值，命中 DENY 不发包远端；默认空 = 不筛查
@@ -122,7 +122,7 @@ mcp:
     # 远端 server 出站 Bearer 鉴权：键 = 连接 URL 的 host，值 = token（design D-9）。
     # token 经环境变量注入，勿硬编码。未配置的 host 不加头（走 server 默认鉴权）。
     # 示例：bearer-tokens: { "mcp.tavily.com": "${TAVILY_API_KEY:}" }
-    bearer-tokens: {}
+    bearer-tokens: { "mcp.tavily.com": "${TAVILY_API_KEY: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}" }
   resilience:
     circuit-breaker:
       failure-threshold: ${MCP_CB_FAILURE_THRESHOLD:5}

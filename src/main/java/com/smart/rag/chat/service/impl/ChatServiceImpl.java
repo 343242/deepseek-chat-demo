@@ -37,6 +37,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import reactor.core.publisher.Flux;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.Map;
@@ -95,7 +96,7 @@ public class ChatServiceImpl implements ChatService {
     public ChatResponse chat(ChatRequest request) {
         PreparedContext pctx = prepare(request);
 
-        List<CapabilityClient> chain = llmRegistry.getUserChain(LlmCapability.CHAT, pctx.userId);
+        List<CapabilityClient> chain = buildChain(pctx);
 
         try {
             return fallbackExecutor.execute(chain, client -> {
@@ -122,7 +123,7 @@ public class ChatServiceImpl implements ChatService {
     @Override
     public SseEmitter chatStream(ChatRequest request) {
         PreparedContext pctx = prepare(request);
-        List<CapabilityClient> chain = llmRegistry.getUserChain(LlmCapability.CHAT, pctx.userId);
+        List<CapabilityClient> chain = buildChain(pctx);
         Map<String, String> parentMdc = MdcPropagator.capture();
 
         AtomicReference<List<Reference>> refsRef = new AtomicReference<>();
@@ -149,6 +150,42 @@ public class ChatServiceImpl implements ChatService {
     }
 
     // ==================== 内部辅助 ====================
+
+    /**
+     * 构建 fallback 链：用户请求的模型优先（链首），其余按 BYOK/系统配置顺序。
+     * <p>
+     * 修复：原 getUserChain 不考虑 ChatRequest.model，用户指定的模型可能不在链中。
+     * 现在：如果用户指定的模型在 registry 中存在，放到链首；不在链中的从 registry 补入。
+     * 如果指定模型不存在（无效 ID），跳过，用原始链兜底。
+     */
+    private List<CapabilityClient> buildChain(PreparedContext pctx) {
+        List<CapabilityClient> baseChain = llmRegistry.getUserChain(LlmCapability.CHAT, pctx.userId);
+        String requestedId = pctx.requestedCandidateId;
+
+        // 用户指定模型已在链首 → 直接返回
+        if (!baseChain.isEmpty() && baseChain.get(0).candidateId().equals(requestedId)) {
+            return baseChain;
+        }
+
+        // 尝试从 registry 获取用户指定的模型
+        CapabilityClient requestedClient = llmRegistry.find(requestedId);
+        if (requestedClient == null) {
+            // 指定模型不在 registry 中（无效 ID），用原始链兜底
+            log.warn("Requested model '{}' not found in registry, using default fallback chain", requestedId);
+            return baseChain;
+        }
+
+        // 把用户指定模型放到链首，其余去重追加
+        List<CapabilityClient> prioritized = new ArrayList<>(baseChain.size() + 1);
+        prioritized.add(requestedClient);
+        for (CapabilityClient c : baseChain) {
+            if (!c.candidateId().equals(requestedId)) {
+                prioritized.add(c);
+            }
+        }
+        log.debug("Prioritized requested model '{}' at chain head (chain size={})", requestedId, prioritized.size());
+        return prioritized;
+    }
 
     private PreparedContext prepare(ChatRequest request) {
         String candidateId = resolveCandidateId(request);

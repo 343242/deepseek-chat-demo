@@ -3,7 +3,7 @@
   "name": "mcp-agent-wiring",
   "title": "MCP client 出口① 接线 — Agent 工具链接入",
   "description": "把 Phase 1 孤立的 MCP 模块接入 AgentToolCallbackFactory（出口①）：per-request 追加 MCP 工具子集，AgentIntent→McpIntent 映射 + Subject 构造在工厂侧，多 server 聚合在 adapter。不接 guardrail（Phase 2 安全闭环另起）。",
-  "status": "in_progress",
+  "status": "done",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -11,7 +11,7 @@
   "creator": "instant",
   "assignee": "instant",
   "createdAt": "2026-06-29",
-  "completedAt": null,
+  "completedAt": "2026-07-02",
   "branch": null,
   "base_branch": "agentic-rag-dev",
   "worktree_path": null,
@@ -21,6 +21,6 @@
   "children": [],
   "parent": "06-28-mcp-client-phase1",
   "relatedFiles": [],
-  "notes": "",
+  "notes": "commit: ebd6ff5",
   "meta": {}
 }

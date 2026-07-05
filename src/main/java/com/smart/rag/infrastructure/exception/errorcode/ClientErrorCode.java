@@ -14,6 +14,8 @@ public enum ClientErrorCode implements IErrorCode {
     FORBIDDEN(100004, "权限不足"),
     RATE_LIMITED(100005, "请求过于频繁"),
     CONTENT_FILTERED(100006, "内容包含敏感词"),
+    CONFLICT(100013, "资源已被修改，请刷新重试"),
+    OPTIMISTIC_LOCK_CONFLICT(100014, "资源版本冲突，请刷新重试"),
 
     // ==================== 认证 101001–101999 ====================
     CAPTCHA_PARAM_MISSING(101001, "验证码参数缺失"),

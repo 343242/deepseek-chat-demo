@@ -5,7 +5,7 @@ import com.smart.rag.infrastructure.exception.ClientException;
 import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;
 import com.smart.rag.infrastructure.llm.LlmCapability;
 import com.smart.rag.infrastructure.llm.crypto.ApiKeyCipher;
-import com.smart.rag.infrastructure.llm.config.BaseUrlValidator;
+import com.smart.rag.infrastructure.security.HostSafetyValidator;
 import com.smart.rag.modelconfig.dto.UpsertLlmConfigRequest;
 import com.smart.rag.modelconfig.entity.LlmModelConfig;
 import com.smart.rag.modelconfig.mapper.LlmModelConfigMapper;
@@ -20,7 +20,7 @@ import java.util.List;
 /**
  * BYOK 模型配置服务实现（design §4 / §6 / §12）。
  * <p>
- * <b>同步落库（阶段 A）</b>：upsert = BaseUrlValidator → ApiKeyCipher.encrypt → DB upsert（事务）；
+ * <b>同步落库（阶段 A）</b>：upsert = HostSafetyValidator → ApiKeyCipher.encrypt → DB upsert（事务）；
  * 不调 registry.invalidateUser（Step 11 接入 per-user 快照 cache-aside）。
  * <p>
  * <b>is_default 互斥</b>：写前 {@code clearOtherDefaults} 清旧（快速路径），
@@ -33,12 +33,12 @@ public class LlmModelConfigServiceImpl implements LlmModelConfigService {
 
     private final LlmModelConfigMapper mapper;
     private final ApiKeyCipher apiKeyCipher;
-    private final BaseUrlValidator baseUrlValidator;
+    private final HostSafetyValidator baseUrlValidator;
     private final SnowflakeIdGenerator idGenerator;
 
     public LlmModelConfigServiceImpl(LlmModelConfigMapper mapper,
                                      ApiKeyCipher apiKeyCipher,
-                                     BaseUrlValidator baseUrlValidator,
+                                     HostSafetyValidator baseUrlValidator,
                                      SnowflakeIdGenerator idGenerator) {
         this.mapper = mapper;
         this.apiKeyCipher = apiKeyCipher;

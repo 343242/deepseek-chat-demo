@@ -27,7 +27,13 @@ import io.modelcontextprotocol.client.McpSyncClient;
 import io.modelcontextprotocol.spec.McpSchema;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import com.smart.rag.mcp.mcpclient.McpConnectionInfo;
+import com.smart.rag.mcp.mcpclient.McpServerToolCallbacksAdapter;
+import com.smart.rag.mcp.mcpclient.McpToolFilter;
+import com.smart.rag.mcp.mcpclient.McpToolNamePrefixGenerator;
+import com.smart.rag.mcp.mcpclient.SyncMcpToolCallback;
 import com.smart.rag.mcp.mcpclient.SyncMcpToolCallbackProvider;
+import com.smart.rag.mcp.mcpclient.ToolContextToMcpMetaConverter;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.ai.tool.definition.ToolDefinition;
 import org.springframework.lang.Nullable;
@@ -54,7 +60,7 @@ import java.util.stream.Collectors;
  * §11.4）；{@code read()}/{@code get()}（路径 C，业务出口）抛 {@link RemoteException}（业务自处理）。
  * authz 拒绝（A 类）一律抛 {@link ClientException} 传播（AC3，不降级）。
  */
-final class McpServerImpl implements McpServer {
+final class McpServerImpl implements McpServer, McpServerToolCallbacksAdapter {
 
     private static final Logger log = LoggerFactory.getLogger(McpServerImpl.class);
 
@@ -176,9 +182,13 @@ final class McpServerImpl implements McpServer {
             authorizer.requireAuthorized(subj, name); // A 类硬 authz 兜底，propagate（AC3）
             String prefix = id.value() + "_";
             if (name == null || !name.startsWith(prefix)) {
-                // R-11：防跨 server 误调（前缀不符 = 别家的工具，剥错前缀会静默 misroute）
                 throw new ClientException(ClientErrorCode.BAD_REQUEST,
                         "工具名不属于本 MCP server（前缀不符）: " + name);
+            }
+            // 占位 server（握手失败）的友好错误（v4 修复 1.5）
+            if (client == null) {
+                String err = initError != null ? initError : "MCP server 未连接";
+                return McpToolResult.error("[mcp disconnected] " + err);
             }
             String rawName = name.substring(prefix.length());
             String key = id.value();
@@ -329,5 +339,55 @@ final class McpServerImpl implements McpServer {
             throw new ClientException(ClientErrorCode.BAD_REQUEST,
                     "MCP resource URI scheme 被禁: " + scheme);
         }
+    }
+
+    // ==================== 占位 / 资源管理（v4 B2 + 1.5）====================
+
+    /** 是否持有真实 MCP client（false = 占位 server，无需 close） */
+    boolean hasClient() {
+        return client != null;
+    }
+
+    /** 安全关闭 client（try/catch，不抛） */
+    void closeQuietly() {
+        if (client != null) {
+            try {
+                client.close();
+            } catch (Exception e) {
+                log.debug("MCP client close ignored: {}", e.getMessage());
+            }
+        }
+    }
+
+    /** 占位 server 的 initError 暴露（用于 health indicator / registry log） */
+    @Nullable
+    String initError() {
+        return initError;
+    }
+
+    // ==================== McpServerToolCallbacksAdapter（v4 B2）====================
+
+    @Override
+    public List<ToolCallback> toolCallbacks(McpServer server,
+                                            McpToolFilter filter,
+                                            McpToolNamePrefixGenerator prefixGen,
+                                            ToolContextToMcpMetaConverter metaConverter) {
+        if (client == null || initError != null) {
+            return List.of();
+        }
+        McpConnectionInfo connInfo = McpConnectionInfo.builder()
+                .clientCapabilities(client.getClientCapabilities())
+                .clientInfo(client.getClientInfo())
+                .initializeResult(client.getCurrentInitializationResult())
+                .build();
+        return client.listTools().tools().stream()
+                .filter(tool -> filter.test(connInfo, tool))
+                .<ToolCallback>map(tool -> SyncMcpToolCallback.builder()
+                        .mcpClient(client)
+                        .tool(tool)
+                        .prefixedToolName(prefixGen.prefixedToolName(connInfo, tool))
+                        .toolContextToMcpMetaConverter(metaConverter)
+                        .build())
+                .toList();
     }
 }

@@ -1,121 +1,198 @@
 package com.smart.rag.mcp.runtime;
 
-import com.smart.rag.infrastructure.exception.ServiceException;
-import com.smart.rag.infrastructure.exception.errorcode.ServiceErrorCode;
+import com.google.common.collect.ImmutableMap;
 import com.smart.rag.infrastructure.fallback.FallbackEligibility;
+import com.smart.rag.mcp.admin.entity.McpServerConfig;
 import com.smart.rag.mcp.core.McpServer;
 import com.smart.rag.mcp.core.McpServerRegistry;
 import com.smart.rag.mcp.core.ServerId;
+import com.smart.rag.mcp.mcpclient.SyncMcpToolCallbackProvider;
 import com.smart.rag.mcp.policy.McpAuthorizer;
 import com.smart.rag.mcp.policy.McpDescriptionSanitizer;
 import io.modelcontextprotocol.client.McpSyncClient;
-import io.modelcontextprotocol.spec.McpSchema;
-import jakarta.annotation.PostConstruct;
+import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import com.smart.rag.mcp.mcpclient.McpToolUtils;
-import com.smart.rag.mcp.mcpclient.SyncMcpToolCallbackProvider;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Component;
 
-import java.util.LinkedHashMap;
 import java.util.List;
-import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
- * {@link McpServerRegistry} 实现——per {@code McpSyncClient} 建 {@link McpServerImpl}（A1 拼合：调用面绑各自 client）。
+ * {@link McpServerRegistry} + {@link McpServerRegistryAdmin} 双实现。
  * <p>
- * 注入 {@code ObjectProvider<List<McpSyncClient>>} + provider + authz + 熔断器 + FallbackEligibility
- * （全可选/可解析：无 connections 空载不抛）。因 {@code spring.ai.mcp.client.initialized=false}，client 交付
- * 时<b>未握手</b> → 建期对每个 client {@code initialize()} + try/catch：
- * <ul>
- *   <li>成功 → 取 {@code serverInfo.name()} 作 {@link ServerId}，建 {@link McpServerImpl}(alive)</li>
- *   <li>失败（不可达/握手失败）→ 合成 id {@code unreachable-<i>} + {@code initError}（health=down），<b>不影响其他 client</b>（§11.4 隔离）</li>
- *   <li>多个 client 同 {@code serverInfo.name()} → 抛 {@link ServiceException}（配置错误，R-10）</li>
- * </ul>
+ * <b>读写分离</b>：读用 volatile {@link AtomicReference} 快照；写经 CAS 切换整个 ImmutableMap。
+ * 对齐 {@code LlmClientRegistry.snapshotRef} 模式，避免 v3 缺陷 1.1（{@code ConcurrentHashMap} mutate 期间
+ * 请求可能拿到正在异步关闭的旧 client）。
+ * <p>
+ * <b>初始化挪到 McpAdminService.run()</b>（v4 修复 1.2 打破循环依赖）：本类<b>无</b> {@code @PostConstruct}，
+ * 启动后 registry 为空（snapshot=空 ImmutableMap），直到 {@code McpAdminService.run()}（ApplicationRunner）
+ * 装配完毕调 {@link #addServer} 填充。
+ * <p>
+ * <b>占位 server</b>（v4 修复 1.5）：握手失败时 {@code addServer(config, null, errMsg)}，
+ * registry 保留带 initError 的 server（不 remove），调用方工具调用返回友好错误。
+ * <p>
+ * <b>异步关闭旧 client</b>：单线程 + bounded queue + CallerRunsPolicy，
+ * 避免旧 client 关闭阻塞 registry mutate。
  */
 @Component
-public class McpServerRegistryImpl implements McpServerRegistry {
+public class McpServerRegistryImpl implements McpServerRegistry, McpServerRegistryAdmin {
 
     private static final Logger log = LoggerFactory.getLogger(McpServerRegistryImpl.class);
 
-    private final ObjectProvider<List<McpSyncClient>> clientsProvider;
-    private final ObjectProvider<SyncMcpToolCallbackProvider> providerProvider;
     private final McpAuthorizer authorizer;
     private final McpCircuitBreakerRegistry circuitRegistry;
     private final FallbackEligibility fallbackEligibility;
     private final McpDescriptionSanitizer descriptionSanitizer;
+    private final ObjectProvider<SyncMcpToolCallbackProvider> providerProvider;
 
-    private final Map<ServerId, McpServer> servers = new LinkedHashMap<>();
+    private final AtomicReference<ImmutableMap<ServerId, McpServer>> snapshotRef =
+            new AtomicReference<>(ImmutableMap.of());
 
-    public McpServerRegistryImpl(ObjectProvider<List<McpSyncClient>> clientsProvider,
-                                 ObjectProvider<SyncMcpToolCallbackProvider> providerProvider,
-                                 McpAuthorizer authorizer,
-                                 McpCircuitBreakerRegistry circuitRegistry,
-                                 FallbackEligibility fallbackEligibility,
-                                 McpDescriptionSanitizer descriptionSanitizer) {
-        this.clientsProvider = clientsProvider;
-        this.providerProvider = providerProvider;
+    private final AtomicLong version = new AtomicLong(0L);
+
+    private final ExecutorService asyncCloseExecutor = new ThreadPoolExecutor(
+            1, 1, 60L, TimeUnit.SECONDS,
+            new LinkedBlockingQueue<>(100),
+            r -> {
+                Thread t = new Thread(r, "mcp-async-close");
+                t.setDaemon(true);
+                return t;
+            },
+            new ThreadPoolExecutor.CallerRunsPolicy()
+    );
+
+    public McpServerRegistryImpl(McpAuthorizer authorizer,
+                                  McpCircuitBreakerRegistry circuitRegistry,
+                                  FallbackEligibility fallbackEligibility,
+                                  McpDescriptionSanitizer descriptionSanitizer,
+                                  ObjectProvider<SyncMcpToolCallbackProvider> providerProvider) {
         this.authorizer = authorizer;
         this.circuitRegistry = circuitRegistry;
         this.fallbackEligibility = fallbackEligibility;
         this.descriptionSanitizer = descriptionSanitizer;
+        this.providerProvider = providerProvider;
     }
 
-    @PostConstruct
-    void init() {
-        List<McpSyncClient> clients = clientsProvider.getIfAvailable(List::of);
-        if (clients.isEmpty()) {
-            log.info("MCP: 无配置连接，McpServerRegistry 空载（enabled=true 但无 server）");
-            return;
-        }
-        SyncMcpToolCallbackProvider provider = providerProvider.getIfAvailable();
-        Set<String> seenNames = new java.util.HashSet<>();
-        for (int i = 0; i < clients.size(); i++) {
-            McpSyncClient client = clients.get(i);
-            String initError = null;
-            ServerId id = null;
-            try {
-                if (!client.isInitialized()) {
-                    client.initialize();
-                }
-                McpSchema.InitializeResult ir = client.getCurrentInitializationResult();
-                if (ir != null && ir.serverInfo() != null && ir.serverInfo().name() != null
-                        && !ir.serverInfo().name().isBlank()) {
-                    // format 与 prefixGen 的 serverName 组件同源（均 McpToolUtils.format）→ id↔前缀↔yaml键 1:1
-                    id = new ServerId(McpToolUtils.format(ir.serverInfo().name()));
-                }
-            } catch (Exception e) {
-                initError = McpErrors.rootMessage(e);
-                log.warn("MCP client #{} initialize 失败，标记 down（不影响其他 server）", i, e);
-            }
-            if (id == null) {
-                // 握手未完成 → 无 serverInfo.name，用合成 id（health=down；真实名待恢复后由调用成功无法反查，已知局限）
-                id = new ServerId("unreachable-" + i);
-            } else if (!seenNames.add(id.value())) {
-                throw new ServiceException(ServiceErrorCode.INTERNAL_ERROR,
-                        "MCP 同名 server 配置冲突（serverInfo.name 重复）: " + id.value()
-                                + "；请检查 spring.ai.mcp.client.*.connections 配置");
-            }
-            McpServerImpl server = new McpServerImpl(id, client, authorizer, circuitRegistry,
-                    fallbackEligibility, provider, initError, descriptionSanitizer);
-            servers.put(id, server);
-            log.info("MCP server 已注册: id={} health={}", id.value(),
-                    initError != null ? "down(initialize 失败)" : "alive");
-        }
-    }
+    // === McpServerRegistry（只读）===
 
     @Override
     public List<McpServer> list() {
-        return List.copyOf(servers.values());
+        return List.copyOf(snapshotRef.get().values());
     }
 
     @Override
     public Optional<McpServer> find(ServerId id) {
         Objects.requireNonNull(id, "id");
-        return Optional.ofNullable(servers.get(id));
+        return Optional.ofNullable(snapshotRef.get().get(id));
+    }
+
+    // === McpServerRegistryAdmin（写，原子快照切换）===
+
+    @Override
+    public void addServer(McpServerConfig config,
+                          @Nullable McpSyncClient client,
+                          @Nullable String initError) {
+        String sid = config.getServerId();
+        if (sid == null || sid.isBlank()) {
+            sid = "unreachable-" + (config.getId() != null ? config.getId() : System.nanoTime());
+        }
+        ServerId id = new ServerId(sid);
+        McpServerImpl server = new McpServerImpl(id, client, authorizer, circuitRegistry,
+                fallbackEligibility, providerProvider.getIfAvailable(), initError, descriptionSanitizer);
+
+        ImmutableMap<ServerId, McpServer> oldSnapshot;
+        ImmutableMap<ServerId, McpServer> newSnapshot;
+        do {
+            oldSnapshot = snapshotRef.get();
+            ImmutableMap.Builder<ServerId, McpServer> b = ImmutableMap.builder();
+            oldSnapshot.forEach((k, v) -> {
+                if (!k.equals(id)) {
+                    b.put(k, v);
+                }
+            });
+            b.put(id, server);
+            newSnapshot = b.build();
+        } while (!snapshotRef.compareAndSet(oldSnapshot, newSnapshot));
+
+        McpServer previous = oldSnapshot.get(id);
+        if (previous instanceof McpServerImpl oldImpl && oldImpl.hasClient()) {
+            asyncCloseQuietly(oldImpl);
+        }
+        version.incrementAndGet();
+        log.info("MCP server registered: id={} client={} initError={}",
+                id.value(), client != null ? "present" : "null",
+                initError != null ? "present" : "null");
+    }
+
+    @Override
+    public void removeServer(ServerId id) {
+        ImmutableMap<ServerId, McpServer> oldSnapshot;
+        ImmutableMap<ServerId, McpServer> newSnapshot;
+        do {
+            oldSnapshot = snapshotRef.get();
+            if (!oldSnapshot.containsKey(id)) {
+                return;
+            }
+            ImmutableMap.Builder<ServerId, McpServer> b = ImmutableMap.builder();
+            oldSnapshot.forEach((k, v) -> {
+                if (!k.equals(id)) {
+                    b.put(k, v);
+                }
+            });
+            newSnapshot = b.build();
+        } while (!snapshotRef.compareAndSet(oldSnapshot, newSnapshot));
+
+        McpServer removed = oldSnapshot.get(id);
+        if (removed instanceof McpServerImpl oldImpl && oldImpl.hasClient()) {
+            asyncCloseQuietly(oldImpl);
+        }
+        circuitRegistry.evict(id.value());
+        version.incrementAndGet();
+        log.info("MCP server removed: id={}", id.value());
+    }
+
+    @Override
+    public void replaceServer(McpServerConfig config, McpSyncClient newClient) {
+        addServer(config, newClient, null);
+    }
+
+    @Override
+    public long currentVersion() {
+        return version.get();
+    }
+
+    @PreDestroy
+    void destroy() {
+        ImmutableMap<ServerId, McpServer> snapshot = snapshotRef.getAndSet(ImmutableMap.of());
+        snapshot.values().forEach(s -> {
+            if (s instanceof McpServerImpl impl && impl.hasClient()) {
+                try {
+                    impl.closeQuietly();
+                } catch (Exception e) {
+                    log.debug("MCP server close failed during destroy: {}", e.getMessage());
+                }
+            }
+        });
+        asyncCloseExecutor.shutdown();
+    }
+
+    private void asyncCloseQuietly(McpServerImpl server) {
+        asyncCloseExecutor.submit(() -> {
+            try {
+                server.closeQuietly();
+            } catch (Exception e) {
+                log.warn("async close MCP server {} failed: {}", server.id().value(), e.getMessage());
+            }
+        });
     }
 }

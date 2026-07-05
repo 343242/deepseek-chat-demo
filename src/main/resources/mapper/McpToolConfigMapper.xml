@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.smart.rag.mcp.admin.mapper.McpToolConfigMapper">
+
+    <resultMap id="BaseResultMap" type="com.smart.rag.mcp.admin.entity.McpToolConfig">
+        <id column="id" property="id"/>
+        <result column="server_id" property="serverId"/>
+        <result column="tool_name" property="toolName"/>
+        <result column="prefixed_tool_name" property="prefixedToolName"/>
+        <result column="description" property="description"/>
+        <result column="enabled" property="enabled"/>
+        <result column="intent" property="intent"/>
+        <result column="risk" property="risk"/>
+        <result column="description_override" property="descriptionOverride"/>
+        <result column="version" property="version"/>
+        <result column="created_at" property="createdAt"/>
+        <result column="updated_at" property="updatedAt"/>
+    </resultMap>
+
+    <sql id="Base_Column_List">
+        id, server_id, tool_name, prefixed_tool_name, description, enabled,
+        intent, risk, description_override, version, created_at, updated_at
+    </sql>
+
+    <select id="selectByServerId" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM mcp_tool_config
+        WHERE server_id = #{serverId}
+        ORDER BY prefixed_tool_name
+    </select>
+
+    <select id="selectAllEnabled" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM mcp_tool_config
+        WHERE enabled = TRUE
+    </select>
+
+    <select id="selectByPrefixedName" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM mcp_tool_config
+        WHERE prefixed_tool_name = #{prefixedToolName}
+    </select>
+
+    <update id="updateEnabledByServerId">
+        UPDATE mcp_tool_config
+        SET enabled = #{enabled},
+            version = version + 1,
+            updated_at = NOW()
+        WHERE server_id = #{serverId}
+    </update>
+
+    <update id="batchUpdateEnabled">
+        UPDATE mcp_tool_config
+        SET enabled = #{enabled},
+            version = version + 1,
+            updated_at = NOW()
+        WHERE id IN
+        <foreach collection="ids" item="id" open="(" separator="," close=")">
+            #{id}
+        </foreach>
+    </update>
+
+    <delete id="deleteByServerId">
+        DELETE FROM mcp_tool_config
+        WHERE server_id = #{serverId}
+    </delete>
+
+</mapper>

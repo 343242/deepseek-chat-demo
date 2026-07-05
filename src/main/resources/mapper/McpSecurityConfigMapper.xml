@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.smart.rag.mcp.admin.mapper.McpSecurityConfigMapper">
+
+    <resultMap id="BaseResultMap" type="com.smart.rag.mcp.admin.entity.McpSecurityConfig">
+        <id column="id" property="id"/>
+        <result column="config_json" property="configJson"/>
+        <result column="updated_at" property="updatedAt"/>
+    </resultMap>
+
+    <select id="selectSingleton" resultMap="BaseResultMap">
+        SELECT id, config_json, updated_at
+        FROM mcp_security_config
+        WHERE id = 1
+    </select>
+
+    <update id="updateConfigJson">
+        UPDATE mcp_security_config
+        SET config_json = CAST(#{configJson} AS jsonb),
+            updated_at = NOW()
+        WHERE id = 1
+    </update>
+
+</mapper>

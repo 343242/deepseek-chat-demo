@@ -98,13 +98,31 @@ app:
       max-message-size: ${ROCKETMQ_MAX_MESSAGE_SIZE:4194304}
   llm:
     byok:
-      # BYOK 总开关；基础默认 false（避免未配 LLM_MASTER_KEY 时 fail-fast 阻断启动，P0-3）。
-      # 启用：env LLM_BYOK_ENABLED=true 且 LLM_MASTER_KEY=<base64-32B>（design §10 / N4 可回滚）
+      # BYOK 总开关；基础默认 false（避免未配 master-key 时 fail-fast 阻断启动，P0-3）。
+      # 启用：env LLM_BYOK_ENABLED=true 且 SECURITY_CRYPTO_MASTER_KEY=<base64-32B>
+      # （v4：env 名从 LLM_MASTER_KEY 改为 SECURITY_CRYPTO_MASTER_KEY，统一管理多模块加密）
       enabled: ${LLM_BYOK_ENABLED:false}
 
-# MCP client（出口① 已接 Agent 链；Phase 2 安全闭环：McpSecurityGuard 执行时语义门 + McpDescriptionSanitizer；
-# 见 .trellis/tasks/07-01-mcp-security-loop；无 connections/空 allowlist 时默认 0 MCP 工具）
+  # v4：通用安全原语（infrastructure/security/），LLM BYOK + MCP admin 共用
+  security:
+    ssrf:
+      # SSRF 防护端口白名单（HostSafetyValidator 用）；默认 80/443
+      allowed-ports: [80, 443]
+    crypto:
+      # AES/GCM master-key（base64 编码 32B = 256-bit），env 注入；不入库不入 git
+      # 由 SecretCipher 用，LLM ApiKeyCipher + MCP Bearer Token 共享
+      # 缺失时 SecretCipher 不可用，BYOK enabled=true 会 fail-fast，MCP Bearer Token 加密会运行时失败
+      master-key: ${SECURITY_CRYPTO_MASTER_KEY:}
+
+# MCP（v4：DB 驱动 ADMIN 管理；yaml 仅 bootstrap 首次启动导入）
 mcp:
+  # v4：strict-tool-filter（DatabaseToolFilter 单 Bean）
+  # true（默认）：未入库工具 deny（安全默认，避免远端新增危险工具自动放行）
+  # false：dev 调试，未入库工具允许（app.mcp.strict-tool-filter=false）
+  strict-tool-filter: ${MCP_STRICT_TOOL_FILTER:true}
+  # v4：legacy allowlist filter（旧 yaml 驱动）；默认 false（DatabaseToolFilter 接管）
+  legacy-allowlist-filter: ${MCP_LEGACY_ALLOWLIST_FILTER:false}
+  # policy/security 仅供 bootstrap 用（首次启动导入 DB）；运行时无 Bean 注入
 #  policy:                                  # [临时] mcp.policy 关闭——所有 MCP 工具对 Agent 全放行
 #    # DENY（默认）= 显式允许制，空 tools 表 = 全拒（安全默认）；由部署填充 tools。
 #    # ToolRule 字段：intent（路由）/ risk（low|high，admin 声明，缺省 low）/ description（可信覆盖，替代远端不可信 desc）。

@@ -184,6 +184,52 @@ public class McpAdminService implements ApplicationRunner {
 
     // ==================== Server CRUD（全部 @AdminAudit）====================
 
+    public List<McpServerConfig> listServers() {
+        return serverConfigMapper.selectList(null);
+    }
+
+    public McpServerConfig getServer(Long id) {
+        McpServerConfig c = serverConfigMapper.selectById(id);
+        if (c == null) {
+            throw new ClientException(ClientErrorCode.BAD_REQUEST, "server not found: " + id);
+        }
+        return c;
+    }
+
+    public String serverHealth(String serverId) {
+        return registryRead.find(new ServerId(serverId))
+                .map(McpServer::health)
+                .map(h -> h.status().name())
+                .orElse("UNKNOWN");
+    }
+
+    @AdminAudit(resourceType = "mcp_server", action = "update", resourceIdExpr = "#id")
+    public void updateServer(Long id, com.smart.rag.mcp.admin.dto.UpdateServerRequest request) {
+        McpServerConfig config = serverConfigMapper.selectById(id);
+        if (config == null) {
+            throw new ClientException(ClientErrorCode.BAD_REQUEST, "server not found: " + id);
+        }
+        if (request.version() != null && !request.version().equals(config.getVersion())) {
+            throw new ClientException(ClientErrorCode.OPTIMISTIC_LOCK_CONFLICT,
+                    "concurrent modification of server: " + id);
+        }
+        if (request.url() != null && !request.url().isBlank()) {
+            urlValidator.validate(request.url());
+            config.setUrl(request.url());
+        }
+        if (request.name() != null) {
+            config.setName(request.name());
+        }
+        if (request.description() != null) {
+            config.setDescription(request.description());
+        }
+        int rows = serverConfigMapper.updateById(config);
+        if (rows == 0) {
+            throw new ClientException(ClientErrorCode.OPTIMISTIC_LOCK_CONFLICT,
+                    "concurrent modification of server: " + id);
+        }
+    }
+
     @AdminAudit(resourceType = "mcp_server", action = "create",
             resourceIdExpr = "#result.id", sensitiveFields = {"bearerToken"})
     public McpServerConfig createServer(CreateServerRequest request) {
@@ -362,6 +408,37 @@ public class McpAdminService implements ApplicationRunner {
     @AdminAudit(resourceType = "mcp_tool", action = "disable", resourceIdExpr = "#toolConfigId")
     public void disableTool(Long toolConfigId) {
         setToolEnabled(toolConfigId, false);
+    }
+
+    @AdminAudit(resourceType = "mcp_tool", action = "update", resourceIdExpr = "#toolConfigId")
+    public void updateTool(Long toolConfigId, com.smart.rag.mcp.admin.dto.UpdateToolRequest request) {
+        McpToolConfig tool = toolConfigMapper.selectById(toolConfigId);
+        if (tool == null) {
+            throw new ClientException(ClientErrorCode.BAD_REQUEST, "tool not found: " + toolConfigId);
+        }
+        if (request.version() != null && !request.version().equals(tool.getVersion())) {
+            throw new ClientException(ClientErrorCode.OPTIMISTIC_LOCK_CONFLICT,
+                    "concurrent modification of tool: " + toolConfigId);
+        }
+        if (request.enabled() != null) {
+            tool.setEnabled(request.enabled());
+        }
+        if (request.intent() != null) {
+            tool.setIntent(request.intent());
+        }
+        if (request.risk() != null) {
+            tool.setRisk(request.risk());
+        }
+        if (request.descriptionOverride() != null) {
+            tool.setDescriptionOverride(request.descriptionOverride());
+        }
+        int rows = toolConfigMapper.updateById(tool);
+        if (rows == 0) {
+            throw new ClientException(ClientErrorCode.OPTIMISTIC_LOCK_CONFLICT,
+                    "concurrent modification of tool: " + toolConfigId);
+        }
+        toolEnabledCache.invalidateAll();
+        toolCallbackProvider.invalidateCache();
     }
 
     @AdminAudit(resourceType = "mcp_tool", action = "batch_enable")

@@ -3,12 +3,12 @@ package com.smart.rag.mcp.runtime;
 import com.smart.rag.infrastructure.fallback.CircuitBreakerProperties;
 import com.smart.rag.infrastructure.fallback.FallbackEligibility;
 import com.smart.rag.mcp.admin.entity.McpServerConfig;
+import com.smart.rag.mcp.admin.service.McpSecurityConfigAccessor;
 import com.smart.rag.mcp.core.McpServerHealth;
 import com.smart.rag.mcp.core.ServerId;
 import com.smart.rag.mcp.mcpclient.SyncMcpToolCallbackProvider;
 import com.smart.rag.mcp.policy.McpAuthorizer;
 import com.smart.rag.mcp.policy.McpDescriptionSanitizer;
-import com.smart.rag.mcp.policy.McpSecurityProperties;
 import com.smart.rag.mcp.policy.McpToolPolicy;
 import io.modelcontextprotocol.client.McpSyncClient;
 import org.junit.jupiter.api.DisplayName;
@@ -35,7 +35,7 @@ class McpServerRegistryImplTest {
             new McpCircuitBreakerRegistry(new CircuitBreakerProperties(null, null, null), Clock.systemUTC());
     private final FallbackEligibility eligibility = new FallbackEligibility();
     private final McpDescriptionSanitizer descriptionSanitizer =
-            new McpDescriptionSanitizer(new McpToolPolicy(), new McpSecurityProperties());
+            new McpDescriptionSanitizer(new McpToolPolicy(), mock(McpSecurityConfigAccessor.class));
 
     private McpServerRegistryImpl newRegistry() {
         return new McpServerRegistryImpl(authorizer, registry, eligibility, descriptionSanitizer, providerProvider);

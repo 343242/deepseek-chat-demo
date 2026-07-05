@@ -13,7 +13,7 @@ import com.smart.rag.mcp.core.ServerId;
 import com.smart.rag.mcp.core.Subject;
 import com.smart.rag.mcp.policy.McpAuthorizer;
 import com.smart.rag.mcp.policy.McpDescriptionSanitizer;
-import com.smart.rag.mcp.policy.McpSecurityProperties;
+import com.smart.rag.mcp.admin.service.McpSecurityConfigAccessor;
 import com.smart.rag.mcp.policy.McpToolPolicy;
 import io.modelcontextprotocol.client.McpSyncClient;
 import io.modelcontextprotocol.spec.McpSchema;
@@ -55,7 +55,7 @@ class McpServerImplTest {
     private McpServerImpl server;
     private McpCircuitBreakerRegistry registry;
     private final McpDescriptionSanitizer descriptionSanitizer =
-            new McpDescriptionSanitizer(new McpToolPolicy(), new McpSecurityProperties());
+            new McpDescriptionSanitizer(new McpToolPolicy(), mock(McpSecurityConfigAccessor.class));
 
     /** policy 允许 knowledge_search(intent=RETRIEVAL)，failureThreshold=1 便于熔断测试。 */
     @BeforeEach

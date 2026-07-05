@@ -12,6 +12,7 @@ import com.smart.rag.mcp.core.McpTools;
 import com.smart.rag.mcp.core.Subject;
 import com.smart.rag.mcp.policy.McpSecurityGuard;
 import com.smart.rag.mcp.policy.McpSecurityProperties;
+import com.smart.rag.mcp.admin.service.McpSecurityConfigAccessor;
 import com.smart.rag.mcp.policy.McpToolPolicy;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -43,8 +44,14 @@ class McpToolCallbackAdapterTest {
 
     private final Subject subj = new Subject(1L, 1L);
 
-    private final McpSecurityGuard securityGuard =
-            new McpSecurityGuard(new McpToolPolicy(), new McpSecurityProperties());
+    private final McpSecurityGuard securityGuard = buildGuard();
+
+    private static McpSecurityGuard buildGuard() {
+        McpSecurityConfigAccessor accessor = mock(McpSecurityConfigAccessor.class);
+        when(accessor.patterns()).thenReturn(java.util.List.of());
+        when(accessor.get()).thenReturn(com.smart.rag.mcp.admin.entity.McpSecurityConfigView.defaults());
+        return new McpSecurityGuard(new McpToolPolicy(), accessor);
+    }
 
     private McpToolCallbackAdapter adapter;
 

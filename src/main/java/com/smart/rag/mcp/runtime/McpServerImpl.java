@@ -60,7 +60,7 @@ import java.util.stream.Collectors;
  * §11.4）；{@code read()}/{@code get()}（路径 C，业务出口）抛 {@link RemoteException}（业务自处理）。
  * authz 拒绝（A 类）一律抛 {@link ClientException} 传播（AC3，不降级）。
  */
-final class McpServerImpl implements McpServer, McpServerToolCallbacksAdapter {
+public final class McpServerImpl implements McpServer, McpServerToolCallbacksAdapter {
 
     private static final Logger log = LoggerFactory.getLogger(McpServerImpl.class);
 
@@ -344,12 +344,12 @@ final class McpServerImpl implements McpServer, McpServerToolCallbacksAdapter {
     // ==================== 占位 / 资源管理（v4 B2 + 1.5）====================
 
     /** 是否持有真实 MCP client（false = 占位 server，无需 close） */
-    boolean hasClient() {
+    public boolean hasClient() {
         return client != null;
     }
 
     /** 安全关闭 client（try/catch，不抛） */
-    void closeQuietly() {
+    public void closeQuietly() {
         if (client != null) {
             try {
                 client.close();
@@ -360,9 +360,21 @@ final class McpServerImpl implements McpServer, McpServerToolCallbacksAdapter {
     }
 
     /** 占位 server 的 initError 暴露（用于 health indicator / registry log） */
-    @Nullable
-    String initError() {
+    public @Nullable String initError() {
         return initError;
+    }
+
+    /** McpAdminService.refreshTools 调用：从远端 MCP server 拉取工具列表 */
+    public java.util.List<io.modelcontextprotocol.spec.McpSchema.Tool> listToolsFromRemote() {
+        if (client == null) {
+            return java.util.List.of();
+        }
+        try {
+            return client.listTools().tools();
+        } catch (Exception e) {
+            log.debug("listToolsFromRemote failed for {}: {}", id.value(), e.getMessage());
+            return java.util.List.of();
+        }
     }
 
     // ==================== McpServerToolCallbacksAdapter（v4 B2）====================

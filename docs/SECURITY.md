@@ -151,3 +151,48 @@ TeamMember member = teamMemberMapper.selectByTeamAndUser(teamId, currentUserId);
 
 - `team:manage` 默认不包含解散权限——解散操作在业务层单独校验 CREATOR 身份
 - 未来扩展 `team:delete` 等权限码时，按最小权限原则逐项拆分
+
+---
+
+## MCP Bearer Token 加密存储（v4）
+
+MCP server 出站 Bearer Token 由 ADMIN 经 REST API 管理，AES/GCM 加密后存 `mcp_server_config.bearer_token_encrypted` 字段。
+
+### 加密原语
+
+- **算法**：AES/GCM/NoPadding（256-bit key + 12B 随机 IV + 128-bit auth tag）
+- **加密器**：`infrastructure/security/SecretCipher`（通用，LLM BYOK + MCP 共用）
+- **master-key**：env `SECURITY_CRYPTO_MASTER_KEY`（base64 编码 32B），不入库不入 git
+- **缺失行为**：master-key 缺失时 `SecretCipher.isAvailable()=false`；`McpAdminService.createServer`/`updateBearerToken` 拒绝服务（提示 `SecretCipher 不可用`）
+
+### 操作流程
+
+```
+ADMIN POST /api/admin/mcp/servers/{serverId}/update-bearer-token
+  body: {"bearerToken": "sk-xxx"}
+    ↓
+  1. SecretCipher.encrypt(plainToken) → 密文
+  2. UPDATE mcp_server_config SET bearer_token_encrypted = ?, version = version + 1
+       WHERE server_id = ? AND version = ?
+  3. tx 外：McpClientFactory.createClient（解密 → 注入 transport customizer → handshake）
+  4. registryAdmin.replaceServer（atomic snapshot swap）
+```
+
+### 安全保证
+
+- **per-server 粒度**：每个 server 独立 token，更新一个不影响其他
+- **加密 + 12B 随机 IV**：每次加密即使同一明文产生不同密文
+- **auth tag**：密文/IV 篡改可检测（解密时抛 `AEADBadTagException`）
+- **审计**：`@AdminAudit(action="update_bearer_token", sensitiveFields={"bearerToken"})` 自动脱敏 `requestPayload` 中的 token 字段为 `"***"`
+
+### master-key 轮换
+
+当前不支持自动轮换（密文无版本标记）。手动轮换流程：
+1. 生成新 master-key：`openssl rand -base64 32`
+2. 解密所有 `bearer_token_encrypted`（旧 key）→ 重新加密（新 key）→ UPDATE
+3. 更新 env `SECURITY_CRYPTO_MASTER_KEY`
+4. 重启应用
+
+### Bootstrap（首次启动）
+
+`mcp.security.bearer-tokens` yaml 配置（`Map<host, token>`）在 DB 为空时由 `McpAdminService.bootstrapFromYaml()` 导入。**已知限制**：同 host 多 path 共享同一 token，bootstrap 后 ADMIN 经 REST API per-server 覆盖可解决。

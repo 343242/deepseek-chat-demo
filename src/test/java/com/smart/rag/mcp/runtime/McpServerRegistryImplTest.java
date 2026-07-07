@@ -4,12 +4,12 @@ import com.smart.rag.infrastructure.fallback.CircuitBreakerProperties;
 import com.smart.rag.infrastructure.fallback.FallbackEligibility;
 import com.smart.rag.mcp.admin.entity.McpServerConfig;
 import com.smart.rag.mcp.admin.service.McpSecurityConfigAccessor;
+import com.smart.rag.mcp.admin.service.McpToolConfigAccessor;
 import com.smart.rag.mcp.core.McpServerHealth;
 import com.smart.rag.mcp.core.ServerId;
 import com.smart.rag.mcp.mcpclient.SyncMcpToolCallbackProvider;
 import com.smart.rag.mcp.policy.McpAuthorizer;
 import com.smart.rag.mcp.policy.McpDescriptionSanitizer;
-import com.smart.rag.mcp.policy.McpToolPolicy;
 import io.modelcontextprotocol.client.McpSyncClient;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -30,12 +30,12 @@ class McpServerRegistryImplTest {
 
     @Mock private ObjectProvider<SyncMcpToolCallbackProvider> providerProvider;
 
-    private final McpAuthorizer authorizer = new McpAuthorizer(new McpToolPolicy());
+    private final McpAuthorizer authorizer = new McpAuthorizer();
     private final McpCircuitBreakerRegistry registry =
             new McpCircuitBreakerRegistry(new CircuitBreakerProperties(null, null, null), Clock.systemUTC());
     private final FallbackEligibility eligibility = new FallbackEligibility();
     private final McpDescriptionSanitizer descriptionSanitizer =
-            new McpDescriptionSanitizer(new McpToolPolicy(), mock(McpSecurityConfigAccessor.class));
+            new McpDescriptionSanitizer(mock(McpToolConfigAccessor.class), mock(McpSecurityConfigAccessor.class));
 
     private McpServerRegistryImpl newRegistry() {
         return new McpServerRegistryImpl(authorizer, registry, eligibility, descriptionSanitizer, providerProvider);

@@ -1,6 +1,8 @@
 package com.smart.rag.mcp.policy;
 
+import com.smart.rag.mcp.admin.entity.McpToolConfig;
 import com.smart.rag.mcp.admin.service.McpSecurityConfigAccessor;
+import com.smart.rag.mcp.admin.service.McpToolConfigAccessor;
 import com.smart.rag.mcp.core.McpArgs;
 import com.smart.rag.mcp.core.McpToolResult;
 import com.smart.rag.mcp.core.McpTools;
@@ -43,16 +45,16 @@ public class McpSecurityGuard {
     private static final String BLOCKED_SENSITIVE =
             "[blocked: sensitive argument — not sent to remote]";
 
-    private final McpToolPolicy policy;
+    private final McpToolConfigAccessor toolConfigAccessor;
     private final McpSecurityConfigAccessor accessor;
 
-    public McpSecurityGuard(McpToolPolicy policy, McpSecurityConfigAccessor accessor) {
-        this.policy = policy;
+    public McpSecurityGuard(McpToolConfigAccessor toolConfigAccessor, McpSecurityConfigAccessor accessor) {
+        this.toolConfigAccessor = toolConfigAccessor;
         this.accessor = accessor;
     }
 
     public McpToolResult guard(McpTools tools, String name, McpArgs args, Subject subj) {
-        String risk = policy.risk(name);
+        String risk = resolveRisk(name);
         if (sensitiveArgHit(args)) {
             audit.warn("deny subject={} tool={} risk={} reason=sensitive-arg", subj.userId(), name, risk);
             return McpToolResult.error(BLOCKED_SENSITIVE);
@@ -60,6 +62,11 @@ public class McpSecurityGuard {
         McpToolResult r = tools.call(name, args, subj);
         audit.info("allow subject={} tool={} risk={}", subj.userId(), name, risk);
         return capAndMark(r, risk);
+    }
+
+    private String resolveRisk(String prefixedName) {
+        McpToolConfig config = toolConfigAccessor.get(prefixedName);
+        return config != null && config.getRisk() != null ? config.getRisk() : "low";
     }
 
     private boolean sensitiveArgHit(McpArgs args) {

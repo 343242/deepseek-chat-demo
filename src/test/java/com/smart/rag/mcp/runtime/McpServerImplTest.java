@@ -14,7 +14,7 @@ import com.smart.rag.mcp.core.Subject;
 import com.smart.rag.mcp.policy.McpAuthorizer;
 import com.smart.rag.mcp.policy.McpDescriptionSanitizer;
 import com.smart.rag.mcp.admin.service.McpSecurityConfigAccessor;
-import com.smart.rag.mcp.policy.McpToolPolicy;
+import com.smart.rag.mcp.admin.service.McpToolConfigAccessor;
 import io.modelcontextprotocol.client.McpSyncClient;
 import io.modelcontextprotocol.spec.McpSchema;
 import org.junit.jupiter.api.BeforeEach;
@@ -55,16 +55,12 @@ class McpServerImplTest {
     private McpServerImpl server;
     private McpCircuitBreakerRegistry registry;
     private final McpDescriptionSanitizer descriptionSanitizer =
-            new McpDescriptionSanitizer(new McpToolPolicy(), mock(McpSecurityConfigAccessor.class));
+            new McpDescriptionSanitizer(mock(McpToolConfigAccessor.class), mock(McpSecurityConfigAccessor.class));
 
     /** policy 允许 knowledge_search(intent=RETRIEVAL)，failureThreshold=1 便于熔断测试。 */
     @BeforeEach
     void setUp() {
-        McpToolPolicy policy = new McpToolPolicy();
-        McpToolPolicy.ToolRule rule = new McpToolPolicy.ToolRule();
-        rule.setIntent(McpIntent.RETRIEVAL);
-        policy.getTools().put("knowledge_search", rule);
-        McpAuthorizer authorizer = new McpAuthorizer(policy);
+        McpAuthorizer authorizer = new McpAuthorizer();
 
         registry = new McpCircuitBreakerRegistry(new CircuitBreakerProperties(1, 30000L, 1),
                 java.time.Clock.systemUTC());
@@ -146,11 +142,7 @@ class McpServerImplTest {
     @DisplayName("call：前缀不符（跨 server 误调）→ 抛 ClientException（R-11）")
     void call_prefixMismatch_throws() {
         // policy 允许 knowledge_search，但传入前缀不符的名字（即便 allowlist 想绕过也拒）
-        McpToolPolicy policy = new McpToolPolicy();
-        McpToolPolicy.ToolRule r = new McpToolPolicy.ToolRule();
-        r.setIntent(McpIntent.RETRIEVAL);
-        policy.getTools().put("ops_search", r); // 允许 ops_search，但 server id=knowledge → 前缀不符
-        McpServerImpl s = new McpServerImpl(KNOWLEDGE, client, new McpAuthorizer(policy), registry,
+        McpServerImpl s = new McpServerImpl(KNOWLEDGE, client, new McpAuthorizer(), registry,
                 new FallbackEligibility(), provider, null, descriptionSanitizer);
         assertThrows(ClientException.class,
                 () -> s.tools().call("ops_search", McpArgs.empty(), AUTHED));
@@ -185,7 +177,7 @@ class McpServerImplTest {
         assertEquals(McpServerHealth.Status.ALIVE, server.health().status());
 
         McpServerImpl down = new McpServerImpl(new ServerId("dead"), client,
-                new McpAuthorizer(new McpToolPolicy()), registry, new FallbackEligibility(), provider,
+                new McpAuthorizer(), registry, new FallbackEligibility(), provider,
                 "connect refused", descriptionSanitizer);
         assertEquals(McpServerHealth.Status.DOWN, down.health().status());
     }
@@ -197,11 +189,7 @@ class McpServerImplTest {
         MutableClock clock = new MutableClock(0);
         McpCircuitBreakerRegistry reg = new McpCircuitBreakerRegistry(
                 new CircuitBreakerProperties(1, 1L, 1), clock);
-        McpToolPolicy policy = new McpToolPolicy();
-        McpToolPolicy.ToolRule rule = new McpToolPolicy.ToolRule();
-        rule.setIntent(McpIntent.RETRIEVAL);
-        policy.getTools().put("knowledge_search", rule);
-        McpServerImpl s = new McpServerImpl(KNOWLEDGE, client, new McpAuthorizer(policy), reg,
+        McpServerImpl s = new McpServerImpl(KNOWLEDGE, client, new McpAuthorizer(), reg,
                 new FallbackEligibility(), provider, null, descriptionSanitizer);
 
         // ① eligible 失败 → recordFailure → OPEN（threshold=1）

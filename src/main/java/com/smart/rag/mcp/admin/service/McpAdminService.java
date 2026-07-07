@@ -22,7 +22,6 @@ import com.smart.rag.mcp.core.McpServer;
 import com.smart.rag.mcp.core.ServerId;
 import com.smart.rag.mcp.mcpclient.McpToolUtils;
 import com.smart.rag.mcp.mcpclient.SyncMcpToolCallbackProvider;
-import com.smart.rag.mcp.policy.McpSecurityProperties;
 import com.smart.rag.mcp.runtime.McpClientFactory;
 import com.smart.rag.mcp.runtime.McpErrors;
 import com.smart.rag.mcp.runtime.McpServerRegistryAdmin;
@@ -76,10 +75,10 @@ public class McpAdminService implements ApplicationRunner {
     private final HostSafetyValidator urlValidator;
     private final SecretCipher secretCipher;
     private final SyncMcpToolCallbackProvider toolCallbackProvider;
+    private final McpToolConfigAccessor toolConfigAccessor;
     private final McpSecurityConfigAccessor securityConfigAccessor;
     private final ObjectMapper objectMapper;
     private final McpClientTransportProperties transportProps;
-    private final McpSecurityProperties securityProps;
 
     private final Cache<String, List<McpToolConfig>> toolListCache = Caffeine.newBuilder()
             .expireAfterWrite(Duration.ofMinutes(10)).maximumSize(100).build();
@@ -98,10 +97,10 @@ public class McpAdminService implements ApplicationRunner {
                            HostSafetyValidator urlValidator,
                            SecretCipher secretCipher,
                            SyncMcpToolCallbackProvider toolCallbackProvider,
+                           McpToolConfigAccessor toolConfigAccessor,
                            McpSecurityConfigAccessor securityConfigAccessor,
                            ObjectMapper objectMapper,
-                           McpClientTransportProperties transportProps,
-                           McpSecurityProperties securityProps) {
+                           McpClientTransportProperties transportProps) {
         this.serverConfigMapper = serverConfigMapper;
         this.toolConfigMapper = toolConfigMapper;
         this.securityConfigMapper = securityConfigMapper;
@@ -112,10 +111,10 @@ public class McpAdminService implements ApplicationRunner {
         this.urlValidator = urlValidator;
         this.secretCipher = secretCipher;
         this.toolCallbackProvider = toolCallbackProvider;
+        this.toolConfigAccessor = toolConfigAccessor;
         this.securityConfigAccessor = securityConfigAccessor;
         this.objectMapper = objectMapper;
         this.transportProps = transportProps;
-        this.securityProps = securityProps;
     }
 
     // ==================== ApplicationRunner：启动 bootstrap + init ====================
@@ -135,9 +134,6 @@ public class McpAdminService implements ApplicationRunner {
             log.info("MCP bootstrap: 无 yaml connections，跳过");
             return;
         }
-        Map<String, String> bearerByHost = securityProps.getBearerTokens() != null
-                ? securityProps.getBearerTokens() : Map.of();
-        long rowId = 1;
         for (Map.Entry<String, McpClientTransportProperties.ConnectionParameters> entry
                 : streamable.getConnections().entrySet()) {
             McpClientTransportProperties.ConnectionParameters conn = entry.getValue();
@@ -150,15 +146,9 @@ public class McpAdminService implements ApplicationRunner {
             row.setName(entry.getKey());
             row.setEnabled(true);
             row.setAutoConnect(true);
-            String host = safeHost(conn.getUrl());
-            String token = host != null ? bearerByHost.get(host) : null;
-            if (token != null && !token.isBlank() && secretCipher.isAvailable()) {
-                row.setBearerTokenEncrypted(encryptToken(token));
-            }
             serverConfigMapper.insert(row);
-            rowId++;
         }
-        log.info("MCP bootstrap: imported {} server(s) from yaml", rowId - 1);
+        log.info("MCP bootstrap: imported {} server(s) from yaml", streamable.getConnections().size());
     }
 
     /** 从 DB 加载所有 enabled server，逐个 createClient + addServer（fail-soft） */
@@ -438,6 +428,7 @@ public class McpAdminService implements ApplicationRunner {
                     "concurrent modification of tool: " + toolConfigId);
         }
         toolEnabledCache.invalidateAll();
+        toolConfigAccessor.invalidateAll();
         toolCallbackProvider.invalidateCache();
     }
 
@@ -446,6 +437,7 @@ public class McpAdminService implements ApplicationRunner {
         txTemplate.executeWithoutResult(status ->
                 toolConfigMapper.batchUpdateEnabled(ids, true));
         toolEnabledCache.invalidateAll();
+        toolConfigAccessor.invalidateAll();
         toolCallbackProvider.invalidateCache();
     }
 
@@ -454,6 +446,7 @@ public class McpAdminService implements ApplicationRunner {
         txTemplate.executeWithoutResult(status ->
                 toolConfigMapper.batchUpdateEnabled(ids, false));
         toolEnabledCache.invalidateAll();
+        toolConfigAccessor.invalidateAll();
         toolCallbackProvider.invalidateCache();
     }
 
@@ -469,6 +462,7 @@ public class McpAdminService implements ApplicationRunner {
                     "concurrent modification of tool: " + toolConfigId);
         }
         toolEnabledCache.invalidateAll();
+        toolConfigAccessor.invalidateAll();
         toolCallbackProvider.invalidateCache();
     }
 
@@ -543,6 +537,7 @@ public class McpAdminService implements ApplicationRunner {
     private void invalidateToolCache(String serverId) {
         toolListCache.invalidate(serverId);
         toolEnabledCache.invalidateAll();
+        toolConfigAccessor.invalidateAll();
     }
 
     private static String safeHost(String url) {

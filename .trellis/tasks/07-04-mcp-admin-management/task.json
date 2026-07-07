@@ -16,7 +16,7 @@
   "base_branch": "agentic-rag-dev",
   "worktree_path": ".trellis/worktrees/mcp-admin-management",
   "commit": "05d9055",
-  "pr_url": null,
+  "pr_url": "https://github.com/343242/smart-rag/pull/2",
   "subtasks": [],
   "children": [],
   "parent": null,

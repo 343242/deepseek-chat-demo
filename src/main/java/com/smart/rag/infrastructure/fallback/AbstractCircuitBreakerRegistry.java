@@ -56,6 +56,15 @@ public abstract class AbstractCircuitBreakerRegistry {
         return breaker(key).tryRecoverFromHalfOpen();
     }
 
+    /**
+     * 移除某 key 的熔断器状态（v4 McpServerRegistryAdmin.removeServer 用，防泄漏）。
+     * <p>
+     * 注意：被移除后再次访问该 key 会 lazy 重建（视为全新状态）。LLM 侧暂无调用方（model 配置不会动态删除）。
+     */
+    public void evict(String key) {
+        breakers.remove(key);
+    }
+
     private CircuitBreakerStateMachine breaker(String key) {
         return breakers.computeIfAbsent(key, ignored -> new CircuitBreakerStateMachine(
                 properties.effectiveFailureThreshold(),

@@ -23,7 +23,7 @@ public class UpsertLlmConfigRequest {
     /** 供应商代码（bailian / deepseek / 用户自定义） */
     private String providerCode;
 
-    /** 经 BaseUrlValidator SSRF 校验 */
+    /** 经 HostSafetyValidator SSRF 校验 */
     private String baseUrl;
 
     /** 明文 api_key（落库前 AES/GCM 加密） */

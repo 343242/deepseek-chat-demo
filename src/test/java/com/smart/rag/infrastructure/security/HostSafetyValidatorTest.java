@@ -1,4 +1,4 @@
-package com.smart.rag.infrastructure.llm.config;
+package com.smart.rag.infrastructure.security;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -16,23 +16,23 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 /**
- * BaseUrlValidator 单元测试 — SSRF 防护全覆盖（design §13 / AC25–AC28）。
+ * HostSafetyValidator 单元测试 — SSRF 防护全覆盖。
  * <p>
  * DnsResolver 用 Mockito mock（避免真实联网）；IP 字面量经 {@link InetAddress#getByName(String)}
  * 解析不触发 DNS，安全用于测试构造。十进制 IP 用例走真实 {@link DefaultDnsResolver}（字面量不联网）。
  */
-class BaseUrlValidatorTest {
+class HostSafetyValidatorTest {
 
-    private LlmByokProperties props;
+    private SecuritySsrProperties props;
     private DnsResolver dnsResolver;
-    private BaseUrlValidator validator;
+    private HostSafetyValidator validator;
 
     @BeforeEach
     void setUp() {
-        props = new LlmByokProperties();
+        props = new SecuritySsrProperties();
         props.setAllowedPorts(List.of(80, 443));
         dnsResolver = mock(DnsResolver.class);
-        validator = new BaseUrlValidator(props, dnsResolver);
+        validator = new HostSafetyValidator(props, dnsResolver);
     }
 
     private void dnsReturns(InetAddress... addrs) throws UnknownHostException {
@@ -104,7 +104,7 @@ class BaseUrlValidatorTest {
     @Test
     void url_encoded_internal_ip_decoded_before_check() {
         // %31%32%37%2e%30%2e%30%2e%31 → 127.0.0.1；走真实 DnsResolver（字面量不联网）
-        BaseUrlValidator realDns = new BaseUrlValidator(props, new DefaultDnsResolver());
+        HostSafetyValidator realDns = new HostSafetyValidator(props, new DefaultDnsResolver());
         assertThatThrownBy(() -> realDns.validate("http://%31%32%37%2e%30%2e%30%2e%31"))
             .isInstanceOf(IllegalArgumentException.class)
             .hasMessageContaining("内网");
@@ -164,7 +164,7 @@ class BaseUrlValidatorTest {
 
     @Test
     void decimal_ip_resolved_to_internal_and_rejected() {
-        BaseUrlValidator realDns = new BaseUrlValidator(props, new DefaultDnsResolver());
+        HostSafetyValidator realDns = new HostSafetyValidator(props, new DefaultDnsResolver());
         // 2130706433 = 127.0.0.1；InetAddress.getAllByName 能解析十进制 IP 字面量
         assertThatThrownBy(() -> realDns.validate("http://2130706433"))
             .isInstanceOf(IllegalArgumentException.class)

@@ -18,7 +18,7 @@ import java.util.List;
 public interface LlmModelConfigService {
 
     /**
-     * 幂等 upsert：BaseUrlValidator → ApiKeyCipher.encrypt → DB upsert（ON CONFLICT）。
+     * 幂等 upsert：HostSafetyValidator → ApiKeyCipher.encrypt → DB upsert（ON CONFLICT）。
      * <p>
      * P1-8：仅 {@code CHAT}，EMBEDDING/RERANKING → {@code ClientException}（UNSUPPORTED_OPERATION）。
      *

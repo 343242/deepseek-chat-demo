@@ -41,7 +41,7 @@ public class LlmModelConfig {
     /** 供应商代码（bailian / deepseek / 用户自定义） */
     private String providerCode;
 
-    /** 经 BaseUrlValidator SSRF 校验（design §13） */
+    /** 经 HostSafetyValidator SSRF 校验（design §13） */
     private String baseUrl;
 
     /** AES/GCM/NoPadding 密文（含 16B auth tag） */

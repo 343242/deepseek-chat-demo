@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.smart.rag.mcp.admin.mapper.McpServerConfigMapper">
+
+    <resultMap id="BaseResultMap" type="com.smart.rag.mcp.admin.entity.McpServerConfig">
+        <id column="id" property="id"/>
+        <result column="server_id" property="serverId"/>
+        <result column="url" property="url"/>
+        <result column="name" property="name"/>
+        <result column="description" property="description"/>
+        <result column="enabled" property="enabled"/>
+        <result column="auto_connect" property="autoConnect"/>
+        <result column="bearer_token_encrypted" property="bearerTokenEncrypted"/>
+        <result column="init_error" property="initError"/>
+        <result column="last_connected_at" property="lastConnectedAt"/>
+        <result column="version" property="version"/>
+        <result column="created_at" property="createdAt"/>
+        <result column="updated_at" property="updatedAt"/>
+    </resultMap>
+
+    <sql id="Base_Column_List">
+        id, server_id, url, name, description, enabled, auto_connect,
+        bearer_token_encrypted, init_error, last_connected_at, version,
+        created_at, updated_at
+    </sql>
+
+    <select id="selectByServerId" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM mcp_server_config
+        WHERE server_id = #{serverId}
+    </select>
+
+    <select id="selectAllEnabled" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM mcp_server_config
+        WHERE enabled = TRUE
+    </select>
+
+    <update id="updateInitError">
+        UPDATE mcp_server_config
+        SET init_error = #{initError},
+            updated_at = NOW()
+        WHERE server_id = #{serverId}
+    </update>
+
+    <update id="updateBearerToken">
+        UPDATE mcp_server_config
+        SET bearer_token_encrypted = #{bearerTokenEncrypted},
+            version = version + 1,
+            updated_at = NOW()
+        WHERE server_id = #{serverId} AND version = #{version}
+    </update>
+
+    <update id="updateEnabled">
+        UPDATE mcp_server_config
+        SET enabled = #{enabled},
+            version = version + 1,
+            updated_at = NOW()
+        WHERE server_id = #{serverId}
+    </update>
+
+</mapper>

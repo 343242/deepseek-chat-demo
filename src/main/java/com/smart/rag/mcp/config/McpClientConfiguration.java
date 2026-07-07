@@ -14,7 +14,7 @@ import org.springframework.context.annotation.Configuration;
  * 自实现的 {@link DefaultMcpToolNamePrefixGenerator}（mcpclient 包）<b>不加 server 前缀</b>（仅去重），
  * 多 server 命名空间会冲突 → 本 bean 是<b>必须的</b>。组件均经 {@link McpToolUtils#format} 清洗。
  * <p>
- * <b>同一 bean 共享</b>（§7 C1）：{@link AllowlistMcpToolFilter} 注入本 bean 反算前缀键，
+ * <b>同一 bean 共享</b>（§7 C1）：{@link com.smart.rag.mcp.config.DatabaseToolFilter} 注入本 bean 反算前缀键，
  * {@code McpClientTransportConfiguration} 的 provider 也注入本 bean 命名 callback——
  * 保证 yaml 键 / callback 名 / 内核 id 三者 1:1 同源。
  * <p>

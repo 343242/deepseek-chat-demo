@@ -1875,3 +1875,249 @@ Token 用量明细（必须指定 `model` 或 `conversation` 参数）。
 取消上传，清理 Redis session 和 MinIO 临时分片。
 
 **Response：** 204 No Content
+
+---
+
+## MCP Admin 管理（v4）
+
+> 所有端点需要 **ADMIN 角色**（类级 `@PreAuthorize("hasRole('ADMIN')")`），仅 `GET` / `POST` 方法。
+> 异常统一返回 HTTP 200 + 业务码（`code != 0` 表示错误）。
+> 所有写操作经 `@AdminAudit` AOP 异步记录到 `admin_audit_log` 表。
+
+### GET /api/admin/mcp/servers
+
+列出所有 MCP server 配置（含健康状态）。
+
+**Response：**
+
+```json
+{
+  "code": 0,
+  "data": [
+    {
+      "id": 1,
+      "serverId": "weather",
+      "url": "https://mcp.weather.com",
+      "name": "Weather",
+      "description": "Weather lookup",
+      "enabled": true,
+      "autoConnect": true,
+      "hasBearerToken": true,
+      "initError": null,
+      "lastConnectedAt": "2026-07-07T10:30:00",
+      "version": 3,
+      "createdAt": "2026-07-04T12:00:00",
+      "updatedAt": "2026-07-07T10:30:00",
+      "health": "ALIVE"
+    }
+  ]
+}
+```
+
+`health` 取自 `McpServerRegistry.find().health().status()`：`ALIVE` / `DEGRADED` / `DOWN` / `UNKNOWN`（未注册）。
+`initError` 非空 = 上次握手失败的软失败记录。
+
+### GET /api/admin/mcp/servers/{id}
+
+按 DB 主键查询单个 server 配置。
+
+**Path 参数：**
+- `id` — DB 主键（BIGINT）
+
+**Response：** 同上单个对象。
+
+**错误：** `100001 BAD_REQUEST` — server not found。
+
+### POST /api/admin/mcp/servers
+
+创建 MCP server 连接（`serverId` 系统派生，请求时不传）。
+
+**Request body：**
+
+```json
+{
+  "url": "https://mcp.weather.com",
+  "name": "Weather",
+  "description": "Weather lookup",
+  "autoConnect": true,
+  "bearerToken": "sk-xxx"
+}
+```
+
+`bearerToken` 可选，提供时经 `SecretCipher` AES/GCM 加密存储。
+
+**Response：** 创建后的 server 配置（`serverId` 握手成功后回填，失败则 `unreachable-<id>` + `initError`）。
+
+**错误：** 
+- `100001 BAD_REQUEST` — URL 格式非法 / SSRF 校验失败（端口不在白名单、内网 IP、危险 scheme）
+
+### POST /api/admin/mcp/servers/{id}/update
+
+更新 server 配置（`url` / `name` / `description`）。乐观锁校验。
+
+**Request body：**
+
+```json
+{
+  "url": "https://mcp.new-url.com",
+  "name": "New Name",
+  "description": "Updated desc",
+  "version": 3
+}
+```
+
+`version` 必传，与 DB 当前 `version` 不匹配则冲突。
+
+**错误：** `100014 OPTIMISTIC_LOCK_CONFLICT` — 资源版本冲突，请刷新重试。
+
+### POST /api/admin/mcp/servers/{id}/delete
+
+删除 server（级联删除工具配置）。运行时移除 registry + 熔断器状态。
+
+### POST /api/admin/mcp/servers/{serverId}/enable
+
+启用 server：DB UPDATE enabled=true → createClient + handshake → registryAdmin.addServer。
+失败时软失败（UPDATE `init_error` + 占位 server），不抛异常。
+
+### POST /api/admin/mcp/servers/{serverId}/disable
+
+禁用 server：DB UPDATE enabled=false（级联禁用 tools）→ registryAdmin.removeServer。
+
+### POST /api/admin/mcp/servers/{serverId}/reconnect
+
+强制重连（销毁旧 client，创建新 client + 握手）。per-serverId 30 秒限流。
+
+**错误：**
+- `100005 RATE_LIMITED` — 30 秒内重复 reconnect
+- `302001 MCP_SERVER_UNREACHABLE` — 重连失败（保留占位 server + 更新 init_error）
+
+### POST /api/admin/mcp/servers/{serverId}/update-bearer-token
+
+更新该 server 的 Bearer Token（加密存储，触发 client 重建）。
+
+**Request body：**
+
+```json
+{
+  "bearerToken": "sk-new-token"
+}
+```
+
+**错误：**
+- `100014 OPTIMISTIC_LOCK_CONFLICT` — 版本冲突
+- `302001 MCP_SERVER_UNREACHABLE` — client 重建失败
+
+### GET /api/admin/mcp/servers/{serverId}/tools
+
+列出该 server 的所有工具配置（含启用状态）。
+
+**Response：**
+
+```json
+{
+  "code": 0,
+  "data": [
+    {
+      "id": 10,
+      "serverId": "weather",
+      "toolName": "get_forecast",
+      "prefixedToolName": "weather_get_forecast",
+      "description": "Get weather forecast",
+      "enabled": true,
+      "intent": "GENERAL_TOOL",
+      "risk": "low",
+      "descriptionOverride": null,
+      "version": 0
+    }
+  ]
+}
+```
+
+### POST /api/admin/mcp/servers/{serverId}/refresh-tools
+
+从远端 MCP server 拉取最新工具列表，UPSERT 到 `mcp_tool_config` 表（新工具默认 `enabled=false`，需 ADMIN 显式启用）。
+
+**错误：**
+- `100001 BAD_REQUEST` — server 不在 registry
+- `302001 MCP_SERVER_UNREACHABLE` — server down，无法拉取
+
+### POST /api/admin/mcp/tools/{id}/enable
+
+启用单个工具（立即生效，callback cache 失效）。
+
+### POST /api/admin/mcp/tools/{id}/disable
+
+禁用单个工具。
+
+### POST /api/admin/mcp/tools/{id}/update
+
+更新工具配置（`enabled` / `intent` / `risk` / `descriptionOverride`）。乐观锁校验。
+
+**Request body：**
+
+```json
+{
+  "enabled": true,
+  "intent": "RETRIEVAL",
+  "risk": "high",
+  "descriptionOverride": "可信描述",
+  "version": 1
+}
+```
+
+### POST /api/admin/mcp/tools/batch-enable
+
+批量启用工具。
+
+**Request body：**
+
+```json
+{
+  "ids": [10, 11, 12]
+}
+```
+
+### POST /api/admin/mcp/tools/batch-disable
+
+批量禁用工具。
+
+### GET /api/admin/mcp/security
+
+查询 MCP 安全配置（jsonb 单行表）。
+
+**Response：**
+
+```json
+{
+  "code": 0,
+  "data": {
+    "sensitiveArgPatterns": ["(?i)sk-[a-z0-9]+"],
+    "defaultOutputCapChars": 4000,
+    "highRiskOutputCapChars": 2000,
+    "toolDescCharLimit": 500
+  }
+}
+```
+
+### POST /api/admin/mcp/security/update
+
+更新 MCP 安全配置（整体替换 jsonb）。
+
+**Request body：** 同上结构，所有字段可选（缺省回退默认值）。
+
+### GET /api/admin/mcp/health
+
+聚合各 server 健康状态。
+
+**Response：**
+
+```json
+{
+  "code": 0,
+  "data": {
+    "weather": "ALIVE",
+    "tavily": "DOWN",
+    "unreachable-3": "DOWN"
+  }
+}
+```

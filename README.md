@@ -121,6 +121,9 @@ docker compose up -d
 #   V12 评估状态 CHECK 约束 + 权限
 #   V13 HNSW 参数调优 + iterative scan
 #   V14 文档增量更新（version/superseded_by/document_group_id）
+#   V15 agent_session_event 表
+#   V16 llm_config 表（BYOK）
+#   V17 MCP Admin 配置表（mcp_server_config/mcp_tool_config/mcp_security_config）+ admin_audit_log
 # 初始管理员：admin / admin123（生产环境请立即修改）
 ```
 

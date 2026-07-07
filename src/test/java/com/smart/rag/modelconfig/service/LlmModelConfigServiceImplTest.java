@@ -4,7 +4,7 @@ import com.smart.rag.common.snowflake.SnowflakeIdGenerator;
 import com.smart.rag.infrastructure.exception.ClientException;
 import com.smart.rag.infrastructure.llm.LlmCapability;
 import com.smart.rag.infrastructure.llm.crypto.ApiKeyCipher;
-import com.smart.rag.infrastructure.llm.config.BaseUrlValidator;
+import com.smart.rag.infrastructure.security.HostSafetyValidator;
 import com.smart.rag.modelconfig.dto.UpsertLlmConfigRequest;
 import com.smart.rag.modelconfig.entity.LlmModelConfig;
 import com.smart.rag.modelconfig.mapper.LlmModelConfigMapper;
@@ -37,7 +37,7 @@ class LlmModelConfigServiceImplTest {
 
     @Mock private LlmModelConfigMapper mapper;
     @Mock private ApiKeyCipher apiKeyCipher;
-    @Mock private BaseUrlValidator baseUrlValidator;
+    @Mock private HostSafetyValidator baseUrlValidator;
     @Mock private SnowflakeIdGenerator idGenerator;
 
     @InjectMocks private LlmModelConfigServiceImpl service;

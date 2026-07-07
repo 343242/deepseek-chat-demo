@@ -38,6 +38,12 @@
             </exclusions>
         </dependency>
 
+        <!-- Spring Boot AOP（@AdminAudit 切面；aspectjweaver + spring-aop） -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-aop</artifactId>
+        </dependency>
+
         <!-- MyBatis-Plus -->
         <dependency>
             <groupId>com.baomidou</groupId>

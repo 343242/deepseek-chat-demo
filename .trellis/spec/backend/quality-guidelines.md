@@ -176,6 +176,7 @@ public void process() {
 - **`defaultTimeout` 必须 > 0**（默认 `Duration.ofSeconds(30)`）— `ZERO` 不再表示"无限等待"，构造时拦截。需要"无限等待"时显式传 `ScopeOptions.NO_TIMEOUT`，并明确文档化理由（避免隐式死锁）
 - **`Cleaner` 必须真正清理**，不能只 log warning——`ScopeCleanupState` 在 scope 泄漏（未 close 即被 GC）时必须：owned executor → `shutdownNow()` + cancel 所有未终止 subtask；SHARED executor → 只 cancel subtask + 警告（保护共享资源）
 - **scope 关闭必须遵守 LIFO**——`scopeOpened()` 返回 `scopeId`，`scopeClosed(expectedScopeId)` 校验栈顶匹配，违例抛 `ScopeViolationException`
+- **先注册唤醒信号，再 drain completion**——join loop 若先 drain、再过滤 terminal task 构造等待集合，会在两步之间形成 lost-wakeup 窗口；完成事件必须被策略处理，或保留为本轮等待信号
 
 ### 错误速查
 
@@ -194,6 +195,7 @@ public void process() {
 - partial-success 链路：全成功、左失败右成功、左成功右失败、全失败
 - MDC 子任务可见 + owner 线程不污染
 - 共享 executor 关闭等待亚秒 `closeTimeout`，不关闭调用方 executor
+- 首个成功策略必须覆盖 completion 恰好发生在 drain/signal snapshot 边界的竞态，不能等待到默认超时
 
 ### Wrong vs Correct
 

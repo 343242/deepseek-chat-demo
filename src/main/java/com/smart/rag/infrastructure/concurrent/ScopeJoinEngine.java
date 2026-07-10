@@ -91,6 +91,9 @@ final class ScopeJoinEngine {
                 : System.nanoTime() + timeout.toNanos();
         try {
             while (!ctx.state.allTerminal()) {
+                // Snapshot before draining so a completion racing with the drain is
+                // either observed by the policy or retained as a wake-up signal.
+                List<CompletableFuture<DefaultSubtask<?>>> activeSignals = activeCompletionSignals();
                 drainCompletedSignalsOnOwnerThread();
                 if (ctx.policyHandler.shouldStop(ctx.state)) {
                     executorLifecycle.cancelUnfinished();
@@ -99,7 +102,6 @@ final class ScopeJoinEngine {
                     break;
                 }
 
-                List<CompletableFuture<DefaultSubtask<?>>> activeSignals = activeCompletionSignals();
                 if (activeSignals.isEmpty()) {
                     break;
                 }

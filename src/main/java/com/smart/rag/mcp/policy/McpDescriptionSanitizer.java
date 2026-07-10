@@ -8,7 +8,7 @@ import org.springframework.stereotype.Component;
 /**
  * 规范化远端 MCP 工具描述（防 T2 元数据注入）。
  * <p>
- * <b>v4 改造</b>：从 {@link McpSecurityProperties}（yaml）改为 {@link McpSecurityConfigAccessor}（DB 驱动）。
+ * 描述覆盖和长度上限由 DB 配置 accessor 提供。
  * {@code toolDescCharLimit} 经 accessor 缓存（10min TTL），admin 更新触发 {@code invalidate()} 后下次取新值。
  * <p>
  * 远端 description 不可信（server 提供、攻击者可控，可藏 prompt 注入）。{@code McpServerImpl.visibleTo}

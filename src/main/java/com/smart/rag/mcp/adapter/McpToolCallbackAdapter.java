@@ -23,7 +23,7 @@ import java.util.Map;
  * 对外出口①：{@code core.McpTools} → Spring AI {@link ToolCallback}（mcp/adapter 是<b>唯一</b>可 import
  * {@code org.springframework.ai.tool..} 的包，ArchUnit 6.2）。
  * <p>
- * <b>B1（已单测坐实）</b>：必须 {@code .inputSchema(MCP 真实 schema)} <b>且</b> {@code inputType(Map<String,Object>)}。
+ * 必须同时传递 MCP 真实 schema 和 {@code inputType(Map<String,Object>)}。
  * {@code inputType(String.class)} 会让框架 {@code readValue} 遇 JSON object 抛 {@code MismatchedInputException}
  * （{@code FunctionToolCallback.call()} {@code :103} {@code JsonParser.fromJson}→{@code readValue}）。
  * <p>
@@ -45,7 +45,7 @@ public class McpToolCallbackAdapter {
 
     /**
      * @param registry      MCP server 注册表；{@link #toCallbacksForAllServers} 遍历它聚合多 server（空载→空数组）
-     * @param securityGuard 执行时语义门（Phase 2：审计/敏感参数/risk 封顶/输出不可信标记），BiFunction 内调用
+     * @param securityGuard 执行时语义门（审计、敏感参数、risk 封顶和不可信输出标记）
      */
     public McpToolCallbackAdapter(McpServerRegistry registry, McpSecurityGuard securityGuard) {
         this.registry = registry;
@@ -70,8 +70,8 @@ public class McpToolCallbackAdapter {
             final String inputSchema = t.inputSchema();
             callbacks[i++] = FunctionToolCallback
                     .<Map<String, Object>, String>builder(name,
-                            (args, ctx) -> render(securityGuard.guard(tools, name,
-                                    McpArgs.of(args != null ? args : Map.of()), subj)))
+                            (args, ctx) -> render(securityGuard.guard(new McpSecurityGuard.Invocation(
+                                    tools, name, McpArgs.of(args != null ? args : Map.of()), subj))))
                     .description(description)
                     .inputSchema(inputSchema)
                     .inputType(new ParameterizedTypeReference<Map<String, Object>>() {})
@@ -106,8 +106,7 @@ public class McpToolCallbackAdapter {
     }
 
     /**
-     * 结果渲染：<b>isError 不抹平（C5）</b>——{@code true} 前缀 {@code [TOOL_ERROR]} 回流 LLM，避免把工具业务错误当正常结果。
-     * 返回值经 Spring AI 默认 {@code ToolCallResultConverter} 再 JSON 序列化喂 LLM（Phase 1 可接受）。
+     * 结果渲染不抹平 {@code isError}：错误结果带 {@code [TOOL_ERROR]} 前缀回流 LLM。
      */
     private static String render(McpToolResult r) {
         String text = r.text() == null ? "" : r.text();

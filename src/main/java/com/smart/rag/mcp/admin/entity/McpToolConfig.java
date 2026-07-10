@@ -5,7 +5,7 @@ import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import com.baomidou.mybatisplus.annotation.Version;
 
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 
 /**
  * MCP 工具配置实体 — 对应 {@code mcp_tool_config} 表（V17 迁移）。
@@ -13,7 +13,7 @@ import java.time.LocalDateTime;
  * <b>prefixedToolName</b>：由 {@code McpToolNamePrefixGenerator.prefixedToolName(connInfo, tool)} 派生
  * （基于 {@code serverInfo.name}），与系统派生的 serverId 同源。{@code DatabaseToolFilter} 主查键。
  * <p>
- * <b>enabled</b>：默认 false（v4 修复 1.4：DB-driven 默认 deny，避免远端新增危险工具自动放行）。
+ * <b>enabled</b>：默认 false（DB-driven 默认 deny，避免远端新增危险工具自动放行）。
  * <b>version</b>：MyBatis-Plus {@code @Version} 乐观锁。
  */
 @TableName("mcp_tool_config")
@@ -47,9 +47,9 @@ public class McpToolConfig {
     @Version
     private Long version;
 
-    private LocalDateTime createdAt;
+    private OffsetDateTime createdAt;
 
-    private LocalDateTime updatedAt;
+    private OffsetDateTime updatedAt;
 
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
@@ -81,9 +81,9 @@ public class McpToolConfig {
     public Long getVersion() { return version; }
     public void setVersion(Long version) { this.version = version; }
 
-    public LocalDateTime getCreatedAt() { return createdAt; }
-    public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
+    public OffsetDateTime getCreatedAt() { return createdAt; }
+    public void setCreatedAt(OffsetDateTime createdAt) { this.createdAt = createdAt; }
 
-    public LocalDateTime getUpdatedAt() { return updatedAt; }
-    public void setUpdatedAt(LocalDateTime updatedAt) { this.updatedAt = updatedAt; }
+    public OffsetDateTime getUpdatedAt() { return updatedAt; }
+    public void setUpdatedAt(OffsetDateTime updatedAt) { this.updatedAt = updatedAt; }
 }

@@ -2,6 +2,8 @@ package com.smart.rag.mcp.policy;
 
 import com.smart.rag.infrastructure.exception.ClientException;
 import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;
+import com.smart.rag.mcp.admin.entity.McpToolConfig;
+import com.smart.rag.mcp.admin.service.McpToolConfigAccessor;
 import com.smart.rag.mcp.core.McpIntent;
 import com.smart.rag.mcp.core.Subject;
 import org.springframework.stereotype.Component;
@@ -9,26 +11,58 @@ import org.springframework.stereotype.Component;
 /**
  * MCP 内核授权器（硬 authz，作用于 core 三能力）。
  * <p>
- * <b>v4 C1 改造</b>：移除 {@code McpToolPolicy} 依赖（已删除）。authz 逻辑当前注释状态
- * （等 role source 接入后激活）。本类保留为占位。
+ * 授权边界为“已认证主体 + ADMIN 管理的全局工具 allowlist + intent”。
+ * 当前产品没有 per-user MCP RBAC 数据模型，本类不虚构角色映射。
  */
 @Component
 public class McpAuthorizer {
 
-    public McpAuthorizer() {
+    private final McpToolConfigAccessor toolConfigAccessor;
+
+    public McpAuthorizer(McpToolConfigAccessor toolConfigAccessor) {
+        this.toolConfigAccessor = toolConfigAccessor;
     }
 
     public boolean canSee(Subject subj, String prefixedName, McpIntent intent) {
-        if (subj == null || !subj.isAuthenticated()) {
+        if (!isAuthenticated(subj) || prefixedName == null || prefixedName.isBlank()) {
             return false;
         }
-        return true;
+        McpToolConfig config = toolConfigAccessor.get(prefixedName);
+        if (config == null || !Boolean.TRUE.equals(config.getEnabled())) {
+            return false;
+        }
+        return configuredIntent(config) == effectiveIntent(intent);
     }
 
-    public void requireAuthorized(Subject subj, String prefixedName) {
-        if (subj == null || !subj.isAuthenticated()) {
+    public McpToolConfig requireAuthorized(Subject subj, String prefixedName) {
+        if (!isAuthenticated(subj) || prefixedName == null || prefixedName.isBlank()) {
             throw new ClientException(ClientErrorCode.FORBIDDEN,
-                    "MCP 调用被拒：调用方主体未认证");
+                    "MCP 工具调用未获授权");
         }
+        McpToolConfig config = toolConfigAccessor.get(prefixedName);
+        if (config == null || !Boolean.TRUE.equals(config.getEnabled())) {
+            throw new ClientException(ClientErrorCode.FORBIDDEN, "MCP 工具调用未获授权");
+        }
+        return config;
+    }
+
+    private static boolean isAuthenticated(Subject subject) {
+        return subject != null && subject.isAuthenticated();
+    }
+
+    private static McpIntent configuredIntent(McpToolConfig config) {
+        String value = config.getIntent();
+        if (value == null || value.isBlank()) {
+            return McpIntent.GENERAL_TOOL;
+        }
+        try {
+            return McpIntent.valueOf(value);
+        } catch (RuntimeException ignored) {
+            return null;
+        }
+    }
+
+    private static McpIntent effectiveIntent(McpIntent intent) {
+        return intent == null ? McpIntent.GENERAL_TOOL : intent;
     }
 }

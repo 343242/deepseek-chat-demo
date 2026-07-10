@@ -30,10 +30,10 @@
         WHERE server_id = #{serverId}
     </select>
 
-    <select id="selectAllEnabled" resultMap="BaseResultMap">
+    <select id="selectAutoConnectEnabled" resultMap="BaseResultMap">
         SELECT <include refid="Base_Column_List"/>
         FROM mcp_server_config
-        WHERE enabled = TRUE
+        WHERE enabled = TRUE AND auto_connect = TRUE
     </select>
 
     <update id="updateInitError">
@@ -55,6 +55,14 @@
         UPDATE mcp_server_config
         SET enabled = #{enabled},
             version = version + 1,
+            updated_at = NOW()
+        WHERE server_id = #{serverId}
+    </update>
+
+    <update id="markConnected">
+        UPDATE mcp_server_config
+        SET init_error = NULL,
+            last_connected_at = NOW(),
             updated_at = NOW()
         WHERE server_id = #{serverId}
     </update>

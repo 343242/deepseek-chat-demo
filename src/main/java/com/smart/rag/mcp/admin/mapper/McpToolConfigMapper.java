@@ -12,8 +12,6 @@ public interface McpToolConfigMapper extends BaseMapper<McpToolConfig> {
 
     List<McpToolConfig> selectByServerId(@Param("serverId") String serverId);
 
-    List<McpToolConfig> selectAllEnabled();
-
     int updateEnabledByServerId(@Param("serverId") String serverId, @Param("enabled") boolean enabled);
 
     int batchUpdateEnabled(@Param("ids") List<Long> ids, @Param("enabled") boolean enabled);
@@ -22,4 +20,6 @@ public interface McpToolConfigMapper extends BaseMapper<McpToolConfig> {
 
     /** DatabaseToolFilter 主查：按前缀全名查启用状态（三态：null=未入库） */
     McpToolConfig selectByPrefixedName(@Param("prefixedToolName") String prefixedToolName);
+
+    int batchUpsert(@Param("tools") List<McpToolConfig> tools);
 }

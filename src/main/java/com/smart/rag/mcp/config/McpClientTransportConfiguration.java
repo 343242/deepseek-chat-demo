@@ -6,8 +6,6 @@ import com.smart.rag.mcp.mcpclient.McpToolFilter;
 import com.smart.rag.mcp.mcpclient.McpToolNamePrefixGenerator;
 import com.smart.rag.mcp.mcpclient.SyncMcpToolCallbackProvider;
 import com.smart.rag.mcp.mcpclient.ToolContextToMcpMetaConverter;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -20,41 +18,19 @@ import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-/**
- * MCP client transport 装配层（v4 C8 改造：降级为 bootstrap）。
- * <p>
- * <b>v3 → v4 关键变更</b>：
- * <ul>
- *   <li>{@code mcpSyncClients()} Bean <b>已删除</b>——动态 client 由 {@code McpClientFactory.createClient()} 创建</li>
- *   <li>{@code mcpBearerAuthRequestCustomizer()} Bean <b>已删除</b>——Bearer Token 改在 McpClientFactory.buildTransport 内注入</li>
- *   <li>{@code McpClientTransportProperties} Bean <b>保留</b>，仅 {@code McpAdminService.bootstrapFromYaml()} 启动时读一次</li>
- *   <li>{@code SyncMcpToolCallbackProvider} Bean 改注入 {@link McpServerRegistry} + {@link McpServerToolCallbacksAdapter}</li>
- * </ul>
- * <p>
- * <b>对称降级（v4 C8）</b>：与 {@code McpSecurityProperties} 一样，
- * 运行时<b>无</b> Bean 注入本 Properties；仅 {@code McpAdminService.bootstrapFromYaml()} 启动期读。
- */
+/** Configures MCP bootstrap properties and registry-backed tool callback discovery. */
 @Configuration
 @ConditionalOnProperty(prefix = "spring.ai.mcp.client", name = "enabled", havingValue = "true", matchIfMissing = true)
 public class McpClientTransportConfiguration {
 
-    private static final Logger log = LoggerFactory.getLogger(McpClientTransportConfiguration.class);
-
-    /**
-     * 读 yaml 连接配置（仅 bootstrap 用，运行时不被任何 Bean 注入）。
-     */
+    /** Shared transport timeout plus optional YAML connections used for first bootstrap. */
     @Bean
     @ConfigurationProperties(prefix = "spring.ai.mcp.client")
     public McpClientTransportProperties mcpClientTransportProperties() {
         return new McpClientTransportProperties();
     }
 
-    /**
-     * 工具发现 provider——v4 改为 registry + adapter 驱动（替代 v3 的 List&lt;McpSyncClient&gt;）。
-     * <p>
-     * 注册为 {@link SyncMcpToolCallbackProvider} bean，注入 {@link McpServerRegistry}（只读）+
-     * {@link McpServerToolCallbacksAdapter}（runtime 层 adapter，由 {@code McpServerImpl} 实现）。
-     */
+    /** Registry-backed provider; each server discovery failure is isolated by the provider. */
     @Bean
     @ConditionalOnMissingBean(SyncMcpToolCallbackProvider.class)
     public SyncMcpToolCallbackProvider syncMcpToolCallbackProvider(

@@ -1,5 +1,7 @@
 package com.smart.rag.mcp.policy;
 
+import com.smart.rag.infrastructure.exception.ClientException;
+import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;
 import com.smart.rag.mcp.admin.entity.McpToolConfig;
 import com.smart.rag.mcp.admin.service.McpSecurityConfigAccessor;
 import com.smart.rag.mcp.admin.service.McpToolConfigAccessor;
@@ -16,9 +18,9 @@ import java.util.Map;
 import java.util.regex.Pattern;
 
 /**
- * 执行时语义门（出口① adapter BiFunction 内调）——补 Phase 1「发牌层」看不到的<b>内容</b>安全。
+ * 执行时语义门（adapter BiFunction 内调），补足工具发现层看不到的内容安全。
  * <p>
- * <b>v4 改造</b>：从 {@link McpSecurityProperties}（yaml）改为 {@link McpSecurityConfigAccessor}（DB 驱动）。
+ * 安全配置由 {@link McpSecurityConfigAccessor} 从 DB 提供并缓存。
  * 编译产物经 accessor 缓存（DCL），chat 热路径 O(1) 命中，admin 更新触发 {@code invalidate()} 后下次重新编译。
  * <p>
  * MCP 工具跨"不可信远端"信任边界：参数要发出去（外泄面）、结果要收回来（注入面）。发牌层
@@ -30,8 +32,7 @@ import java.util.regex.Pattern;
  *   <li>按 {@code risk} 封顶 + 包不可信标记框（防 T2 间接注入）</li>
  * </ol>
  * <p>
- * <b>fail-soft</b>：本门只做策略判定 + 包装，不抛（{@code tools.call} 的异常已在内核被降级为
- * {@code McpToolResult.error}；敏感命中也返回 error 而非抛）。
+ * <b>fail-soft</b>：敏感命中返回 error；认证和硬授权错误仍按内核契约抛出分类异常。
  */
 @Component
 public class McpSecurityGuard {
@@ -53,7 +54,14 @@ public class McpSecurityGuard {
         this.accessor = accessor;
     }
 
-    public McpToolResult guard(McpTools tools, String name, McpArgs args, Subject subj) {
+    public McpToolResult guard(Invocation invocation) {
+        McpTools tools = invocation.tools();
+        String name = invocation.name();
+        McpArgs args = invocation.args();
+        Subject subj = invocation.subject();
+        if (subj == null || !subj.isAuthenticated()) {
+            throw new ClientException(ClientErrorCode.FORBIDDEN, "MCP 工具调用未获授权");
+        }
         String risk = resolveRisk(name);
         if (sensitiveArgHit(args)) {
             audit.warn("deny subject={} tool={} risk={} reason=sensitive-arg", subj.userId(), name, risk);
@@ -63,6 +71,8 @@ public class McpSecurityGuard {
         audit.info("allow subject={} tool={} risk={}", subj.userId(), name, risk);
         return capAndMark(r, risk);
     }
+
+    public record Invocation(McpTools tools, String name, McpArgs args, Subject subject) {}
 
     private String resolveRisk(String prefixedName) {
         McpToolConfig config = toolConfigAccessor.get(prefixedName);

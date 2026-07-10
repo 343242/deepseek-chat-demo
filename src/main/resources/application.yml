@@ -8,16 +8,14 @@ spring:
   ai:
     mcp:
       client:
-        # enabled 默认 true（用户偏好）；initialized 必须 false（design R-8）——
-        # 默认 true 会 eager initialize，单个 server 不可达阻塞整个启动；
-        # false 让 McpServerRegistryImpl per-client init + try/catch 实现 server 间隔离。
+        # SDK 自动初始化保持关闭；连接由 DB 驱动的 MCP bootstrap 逐 Server 隔离初始化。
         enabled: ${MCP_ENABLED:true}
         initialized: ${MCP_INITIALIZED:false}
         type: SYNC
         request-timeout: ${MCP_REQUEST_TIMEOUT:30s}
-        # Tavily 远程 MCP（Streamable-HTTP）。鉴权经 Bearer header 注入（见 mcp.security.bearer-tokens），
+        # Tavily 远程 MCP（Streamable-HTTP）。Bearer Token 由 Admin API 加密保存并注入 header，
         # 不走 URL query——MCP SDK streamable-http transport 会跑 OAuth 协商层盖过 query param。
-        # 配合 MCP_POLICY_DEFAULT_MODE=ALLOW，未知工具默认在 GENERAL_TOOL intent 下可见（不必预知工具名）。
+        # 未入库工具默认拒绝；需先刷新并由 ADMIN 显式启用。
         streamable-http:
           connections:
             tavily:
@@ -114,7 +112,7 @@ app:
       # 缺失时 SecretCipher 不可用，BYOK enabled=true 会 fail-fast，MCP Bearer Token 加密会运行时失败
       master-key: ${SECURITY_CRYPTO_MASTER_KEY:}
 
-# MCP（v4 C1：DB 唯一事实源；yaml 仅保留 connections 供 bootstrap）
+# MCP：DB 是运行时事实源，YAML connections 仅用于首次 bootstrap。
 mcp:
   strict-tool-filter: ${MCP_STRICT_TOOL_FILTER:true}
   resilience:

@@ -22,6 +22,7 @@ Spring Boot 3.5 + MyBatis-Plus + PostgreSQL + Redis 的 DeepSeek 聊天助手后
 - [ ] [Logging Guidelines](./logging-guidelines.md) — 日志级别和规范
 - [ ] [LLM SPI](./llm-spi.md) — 基础设施层 LLM 客户端契约（禁止注入 `ChatClient.Builder`）
 - [ ] [RAG 引用与上下文工程](./rag-citation-context.md) — RetrievedDocument 契约、检索段 SystemMessage 注入、静态/动态 prompt 拆分（改 RAG 检索/prompt/DTO 前必读）
+- [ ] [MCP Integration](./mcp-integration.md) — DB 驱动的工具身份、token、迁移与 client 所有权契约（改 MCP 前必读）
 
 ---
 
@@ -37,6 +38,7 @@ Spring Boot 3.5 + MyBatis-Plus + PostgreSQL + Redis 的 DeepSeek 聊天助手后
 | [Logging Guidelines](./logging-guidelines.md) | 日志级别、Profile 差异 | ✅ Filled |
 | [LLM SPI](./llm-spi.md) | LLM 客户端契约、Resolver 模式、fail-fast | ✅ Filled |
 | [RAG 引用与上下文工程](./rag-citation-context.md) | RetrievedDocument 契约、Reference DTO、`<<REF>>` SystemMessage 注入、静态/动态 prompt 拆分 | ✅ Filled |
+| [MCP Integration](./mcp-integration.md) | DB 驱动的 MCP 工具身份、token、迁移、缓存和 client 所有权 | ✅ Filled |
 
 ---
 

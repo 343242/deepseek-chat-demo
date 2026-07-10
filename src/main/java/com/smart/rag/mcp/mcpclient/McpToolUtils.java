@@ -2,11 +2,19 @@ package com.smart.rag.mcp.mcpclient;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.smart.rag.infrastructure.exception.ClientException;
+import com.smart.rag.infrastructure.exception.ServiceException;
+import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;
+import com.smart.rag.infrastructure.exception.errorcode.ServiceErrorCode;
 import io.modelcontextprotocol.spec.McpSchema;
-import io.micrometer.common.util.StringUtils;
 import org.springframework.ai.tool.definition.DefaultToolDefinition;
 import org.springframework.ai.tool.definition.ToolDefinition;
 import org.springframework.ai.util.json.schema.JsonSchemaUtils;
+
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.util.HexFormat;
 
 /**
  * MCP 工具工具类——工具名清洗 + ToolDefinition 组装。
@@ -27,6 +35,9 @@ public final class McpToolUtils {
     public static final String TOOL_CONTEXT_MCP_EXCHANGE_KEY = "exchange";
 
     private static final ObjectMapper objectMapper = new ObjectMapper();
+    private static final int MAX_TOOL_NAME_LENGTH = 64;
+    private static final int MAX_SERVER_ID_LENGTH = 48;
+    private static final int HASH_LENGTH = 12;
 
     private McpToolUtils() {
     }
@@ -40,44 +51,74 @@ public final class McpToolUtils {
      * @return 前缀全名（≤64 字符）
      */
     public static String prefixedToolName(String prefix, String title, String toolName) {
-        if (StringUtils.isEmpty(prefix) || StringUtils.isEmpty(toolName)) {
-            throw new IllegalArgumentException("Prefix or toolName cannot be null or empty");
-        }
-        String input = shorten(format(prefix));
-        if (!StringUtils.isEmpty(title)) {
-            input = input + "_" + format(title);
-        }
-        input = input + "_" + format(toolName);
-        if (input.length() > 64) {
-            input = input.substring(input.length() - 64);
-        }
-        return input;
+        String serverSegment = canonicalServerId(prefix);
+        String toolSegment = requireSegment(toolName, "MCP 工具名称");
+        String titleSegment = title == null || title.isBlank() ? null : requireSegment(title, "MCP 连接名称");
+        String fullName = titleSegment == null
+                ? serverSegment + "_" + toolSegment
+                : serverSegment + "_" + titleSegment + "_" + toolSegment;
+        return boundName(fullName);
     }
 
     public static String prefixedToolName(String prefix, String toolName) {
         return prefixedToolName(prefix, null, toolName);
     }
 
+    public static String prefixedToolName(McpConnectionInfo connectionInfo, McpSchema.Tool tool) {
+        if (connectionInfo == null || connectionInfo.initializeResult() == null
+                || connectionInfo.initializeResult().serverInfo() == null || tool == null) {
+            throw new ServiceException(ServiceErrorCode.INTERNAL_ERROR,
+                    "MCP 工具命名缺少 Server 初始化信息");
+        }
+        return prefixedToolName(connectionInfo.initializeResult().serverInfo().name(), tool.name());
+    }
+
     /**
      * 清洗工具名为合法集 {@code [a-zA-Z0-9_-]}（含 CJK 块），替换 {@code -} 为 {@code _}。
      */
     public static String format(String input) {
-        String formatted = input.replaceAll(
-                "[^\\p{IsHan}\\p{InCJK_Unified_Ideographs}\\p{InCJK_Compatibility_Ideographs}a-zA-Z0-9_-]", "");
-        return formatted.replaceAll("-", "_");
-    }
-
-    /**
-     * 缩短：按下划线分词取首字母（如 {@code "my_cool_server" → "m_c_s"}）。
-     */
-    private static String shorten(String input) {
-        if (input == null || input.isEmpty()) {
+        if (input == null) {
             return "";
         }
-        return java.util.stream.Stream.of(input.toLowerCase().split("_"))
-                .filter(word -> !word.isEmpty())
-                .map(word -> String.valueOf(word.charAt(0)))
-                .collect(java.util.stream.Collectors.joining("_"));
+        String formatted = input.trim()
+                .replaceAll("[^\\p{IsHan}\\p{InCJK_Unified_Ideographs}\\p{InCJK_Compatibility_Ideographs}a-zA-Z0-9_-]+", "_")
+                .replace('-', '_')
+                .replaceAll("_+", "_");
+        return formatted.replaceAll("^_+|_+$", "");
+    }
+
+    public static String canonicalServerId(String serverName) {
+        return bound(requireSegment(serverName, "MCP Server 名称"), MAX_SERVER_ID_LENGTH);
+    }
+
+    private static String requireSegment(String value, String label) {
+        String segment = format(value);
+        if (segment.isEmpty()) {
+            throw new ClientException(ClientErrorCode.BAD_REQUEST, label + "清洗后不能为空");
+        }
+        return segment;
+    }
+
+    private static String boundName(String fullName) {
+        return bound(fullName, MAX_TOOL_NAME_LENGTH);
+    }
+
+    private static String bound(String value, int maxLength) {
+        if (value.length() <= maxLength) {
+            return value;
+        }
+        String suffix = "_" + sha256Prefix(value);
+        return value.substring(0, maxLength - suffix.length()) + suffix;
+    }
+
+    private static String sha256Prefix(String value) {
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256")
+                    .digest(value.getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(digest, 0, HASH_LENGTH / 2);
+        } catch (NoSuchAlgorithmException e) {
+            throw new ServiceException(ServiceErrorCode.INTERNAL_ERROR, "MCP 工具名称摘要生成失败", e);
+        }
     }
 
     /**
@@ -102,7 +143,8 @@ public final class McpToolUtils {
         try {
             return objectMapper.writeValueAsString(value);
         } catch (JsonProcessingException e) {
-            throw new IllegalArgumentException("Failed to serialize input schema: " + value, e);
+            throw new ServiceException(ServiceErrorCode.SERIALIZATION_FAILED,
+                    "MCP 工具输入结构序列化失败", e);
         }
     }
 }

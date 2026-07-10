@@ -12,7 +12,7 @@ public interface McpServerConfigMapper extends BaseMapper<McpServerConfig> {
 
     McpServerConfig selectByServerId(@Param("serverId") String serverId);
 
-    List<McpServerConfig> selectAllEnabled();
+    List<McpServerConfig> selectAutoConnectEnabled();
 
     int updateInitError(@Param("serverId") String serverId, @Param("initError") String initError);
 
@@ -21,4 +21,6 @@ public interface McpServerConfigMapper extends BaseMapper<McpServerConfig> {
                           @Param("version") Long version);
 
     int updateEnabled(@Param("serverId") String serverId, @Param("enabled") boolean enabled);
+
+    int markConnected(@Param("serverId") String serverId);
 }

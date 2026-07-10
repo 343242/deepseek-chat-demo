@@ -30,7 +30,7 @@ class McpServerRegistryImplTest {
 
     @Mock private ObjectProvider<SyncMcpToolCallbackProvider> providerProvider;
 
-    private final McpAuthorizer authorizer = new McpAuthorizer();
+    private final McpAuthorizer authorizer = new McpAuthorizer(mock(McpToolConfigAccessor.class));
     private final McpCircuitBreakerRegistry registry =
             new McpCircuitBreakerRegistry(new CircuitBreakerProperties(null, null, null), Clock.systemUTC());
     private final FallbackEligibility eligibility = new FallbackEligibility();

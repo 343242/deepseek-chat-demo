@@ -19,6 +19,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
+import jakarta.validation.Valid;
 
 import java.util.List;
 import java.util.Map;
@@ -58,14 +59,14 @@ public class McpAdminController {
     }
 
     @PostMapping("/servers")
-    public GlobalResponse<ServerConfigResponse> createServer(@RequestBody CreateServerRequest request) {
+    public GlobalResponse<ServerConfigResponse> createServer(@Valid @RequestBody CreateServerRequest request) {
         McpServerConfig c = service.createServer(request);
         return GlobalResponse.ok(ServerConfigResponse.from(c,
                 c.getServerId() != null ? service.serverHealth(c.getServerId()) : "UNKNOWN"));
     }
 
     @PostMapping("/servers/{id}/update")
-    public GlobalResponse<Void> updateServer(@PathVariable Long id, @RequestBody UpdateServerRequest request) {
+    public GlobalResponse<Void> updateServer(@PathVariable Long id, @Valid @RequestBody UpdateServerRequest request) {
         service.updateServer(id, request);
         return GlobalResponse.ok(null);
     }
@@ -96,7 +97,7 @@ public class McpAdminController {
 
     @PostMapping("/servers/{serverId}/update-bearer-token")
     public GlobalResponse<Void> updateBearerToken(@PathVariable String serverId,
-                                                   @RequestBody UpdateBearerTokenRequest request) {
+                                                   @Valid @RequestBody UpdateBearerTokenRequest request) {
         service.updateBearerToken(serverId, request.bearerToken());
         return GlobalResponse.ok(null);
     }
@@ -129,19 +130,19 @@ public class McpAdminController {
     }
 
     @PostMapping("/tools/batch-enable")
-    public GlobalResponse<Void> batchEnableTools(@RequestBody BatchToolUpdateRequest request) {
+    public GlobalResponse<Void> batchEnableTools(@Valid @RequestBody BatchToolUpdateRequest request) {
         service.batchEnableTools(request.ids());
         return GlobalResponse.ok(null);
     }
 
     @PostMapping("/tools/batch-disable")
-    public GlobalResponse<Void> batchDisableTools(@RequestBody BatchToolUpdateRequest request) {
+    public GlobalResponse<Void> batchDisableTools(@Valid @RequestBody BatchToolUpdateRequest request) {
         service.batchDisableTools(request.ids());
         return GlobalResponse.ok(null);
     }
 
     @PostMapping("/tools/{id}/update")
-    public GlobalResponse<Void> updateTool(@PathVariable Long id, @RequestBody UpdateToolRequest request) {
+    public GlobalResponse<Void> updateTool(@PathVariable Long id, @Valid @RequestBody UpdateToolRequest request) {
         service.updateTool(id, request);
         return GlobalResponse.ok(null);
     }
@@ -159,7 +160,7 @@ public class McpAdminController {
     }
 
     @PostMapping("/security/update")
-    public GlobalResponse<Void> updateSecurityConfig(@RequestBody UpdateSecurityConfigRequest request) {
+    public GlobalResponse<Void> updateSecurityConfig(@Valid @RequestBody UpdateSecurityConfigRequest request) {
         service.updateSecurityConfig(request.toView());
         return GlobalResponse.ok(null);
     }

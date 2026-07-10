@@ -9,7 +9,7 @@ import org.springframework.lang.Nullable;
 /**
  * MCP server 注册表管理员写契约——{@link McpServerRegistryImpl} 同时实现读/写双接口。
  * <p>
- * 调用方：仅 {@code McpAdminService}（Phase 3 引入）。其他组件注入只读 {@link com.smart.rag.mcp.core.McpServerRegistry}。
+ * 写操作由 Admin runtime boundary 调用；其他组件注入只读 {@link com.smart.rag.mcp.core.McpServerRegistry}。
  * <p>
  * <b>原子快照切换</b>（对齐 {@code LlmClientRegistry.snapshotRef}）：
  * 每次 mutate 构建 ImmutableMap → CAS → 旧 snapshot 中不再存在的 client 异步关闭。
@@ -29,7 +29,7 @@ public interface McpServerRegistryAdmin {
     void addServer(McpServerConfig config, @Nullable McpSyncClient client, @Nullable String initError);
 
     /**
-     * 仅移除 server 注册（不销毁 client，client 由调用方管理）。
+     * 移除 server 注册；实现负责异步关闭被移除的 client。
      */
     void removeServer(ServerId id);
 

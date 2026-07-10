@@ -1,6 +1,7 @@
 package com.smart.rag.mcp.runtime;
 
 import com.smart.rag.infrastructure.exception.ClientException;
+import com.smart.rag.infrastructure.exception.RemoteException;
 import com.smart.rag.infrastructure.fallback.CircuitBreakerProperties;
 import com.smart.rag.infrastructure.fallback.CircuitBreakerState;
 import com.smart.rag.infrastructure.fallback.FallbackEligibility;
@@ -31,6 +32,7 @@ import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
+import java.net.URI;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -54,13 +56,19 @@ class McpServerImplTest {
 
     private McpServerImpl server;
     private McpCircuitBreakerRegistry registry;
-    private final McpDescriptionSanitizer descriptionSanitizer =
-            new McpDescriptionSanitizer(mock(McpToolConfigAccessor.class), mock(McpSecurityConfigAccessor.class));
+    private McpToolConfigAccessor toolConfigAccessor;
+    private McpDescriptionSanitizer descriptionSanitizer;
 
     /** policy 允许 knowledge_search(intent=RETRIEVAL)，failureThreshold=1 便于熔断测试。 */
     @BeforeEach
     void setUp() {
-        McpAuthorizer authorizer = new McpAuthorizer();
+        toolConfigAccessor = mock(McpToolConfigAccessor.class);
+        lenient().when(toolConfigAccessor.get(any())).thenAnswer(invocation -> enabledTool(invocation.getArgument(0)));
+        McpSecurityConfigAccessor securityConfigAccessor = mock(McpSecurityConfigAccessor.class);
+        lenient().when(securityConfigAccessor.get())
+                .thenReturn(com.smart.rag.mcp.admin.entity.McpSecurityConfigView.defaults());
+        descriptionSanitizer = new McpDescriptionSanitizer(toolConfigAccessor, securityConfigAccessor);
+        McpAuthorizer authorizer = new McpAuthorizer(toolConfigAccessor);
 
         registry = new McpCircuitBreakerRegistry(new CircuitBreakerProperties(1, 30000L, 1),
                 java.time.Clock.systemUTC());
@@ -82,7 +90,6 @@ class McpServerImplTest {
     }
 
     @Test
-    @org.junit.jupiter.api.Disabled("[临时] mcp.policy 关闭——intent 路由测试暂停")
     @DisplayName("visibleTo：按前缀过滤 + authz + intent（AC5）")
     void visibleTo_filtersByPrefixAuthzIntent() {
         stubDiscovery();
@@ -120,6 +127,22 @@ class McpServerImplTest {
     }
 
     @Test
+    void callUsesPersistedRawNameWhenCanonicalNameDiffers() {
+        com.smart.rag.mcp.admin.entity.McpToolConfig config = enabledTool("knowledge_search_docs");
+        config.setToolName("search-docs");
+        when(toolConfigAccessor.get("knowledge_search_docs")).thenReturn(config);
+        when(client.callTool(any())).thenReturn(McpSchema.CallToolResult.builder()
+                .content(List.of(new McpSchema.TextContent("ok"))).isError(false).build());
+
+        server.tools().call("knowledge_search_docs", McpArgs.empty(), AUTHED);
+
+        org.mockito.ArgumentCaptor<McpSchema.CallToolRequest> request =
+                org.mockito.ArgumentCaptor.forClass(McpSchema.CallToolRequest.class);
+        verify(client).callTool(request.capture());
+        assertEquals("search-docs", request.getValue().name());
+    }
+
+    @Test
     @DisplayName("call：CallToolResult.isError=true → McpToolResult.isError=true（C5 不抹平）")
     void call_isErrorNotFlattened() {
         when(client.callTool(any())).thenReturn(
@@ -131,7 +154,6 @@ class McpServerImplTest {
 
     @Test
     @DisplayName("call：未授权工具 → 抛 ClientException（authz 硬兜底，AC3）")
-    @org.junit.jupiter.api.Disabled("[临时] mcp.policy 关闭——authz 拒绝测试暂停")
     void call_unauthorized_throws() {
         assertThrows(ClientException.class,
                 () -> server.tools().call("knowledge_secret", McpArgs.empty(), AUTHED));
@@ -142,7 +164,7 @@ class McpServerImplTest {
     @DisplayName("call：前缀不符（跨 server 误调）→ 抛 ClientException（R-11）")
     void call_prefixMismatch_throws() {
         // policy 允许 knowledge_search，但传入前缀不符的名字（即便 allowlist 想绕过也拒）
-        McpServerImpl s = new McpServerImpl(KNOWLEDGE, client, new McpAuthorizer(), registry,
+        McpServerImpl s = new McpServerImpl(KNOWLEDGE, client, new McpAuthorizer(toolConfigAccessor), registry,
                 new FallbackEligibility(), provider, null, descriptionSanitizer);
         assertThrows(ClientException.class,
                 () -> s.tools().call("ops_search", McpArgs.empty(), AUTHED));
@@ -155,7 +177,8 @@ class McpServerImplTest {
         when(client.callTool(any())).thenThrow(new RuntimeException("connection reset"));
         McpToolResult result = server.tools().call("knowledge_search", McpArgs.empty(), AUTHED);
         assertTrue(result.isError());
-        assertTrue(result.text().contains("tool call failed"));
+        assertEquals("MCP 工具调用失败，请稍后重试", result.text());
+        assertFalse(result.text().contains("connection reset"));
     }
 
     @Test
@@ -177,7 +200,7 @@ class McpServerImplTest {
         assertEquals(McpServerHealth.Status.ALIVE, server.health().status());
 
         McpServerImpl down = new McpServerImpl(new ServerId("dead"), client,
-                new McpAuthorizer(), registry, new FallbackEligibility(), provider,
+                new McpAuthorizer(toolConfigAccessor), registry, new FallbackEligibility(), provider,
                 "connect refused", descriptionSanitizer);
         assertEquals(McpServerHealth.Status.DOWN, down.health().status());
     }
@@ -189,7 +212,7 @@ class McpServerImplTest {
         MutableClock clock = new MutableClock(0);
         McpCircuitBreakerRegistry reg = new McpCircuitBreakerRegistry(
                 new CircuitBreakerProperties(1, 1L, 1), clock);
-        McpServerImpl s = new McpServerImpl(KNOWLEDGE, client, new McpAuthorizer(), reg,
+        McpServerImpl s = new McpServerImpl(KNOWLEDGE, client, new McpAuthorizer(toolConfigAccessor), reg,
                 new FallbackEligibility(), provider, null, descriptionSanitizer);
 
         // ① eligible 失败 → recordFailure → OPEN（threshold=1）
@@ -217,6 +240,33 @@ class McpServerImplTest {
         verify(client, times(3)).callTool(any()); // 3 次都打到 client（HALF_OPEN 未卡死）
     }
 
+    @Test
+    void listToolsFromRemotePropagatesClassifiedFailure() {
+        when(client.listTools()).thenThrow(new RuntimeException("connection refused"));
+
+        assertThrows(com.smart.rag.infrastructure.exception.RemoteException.class,
+                () -> server.listToolsFromRemote());
+    }
+
+    @Test
+    void resourceReadRejectsBlockedUriSchemeBeforeRemoteCall() {
+        assertThrows(ClientException.class,
+                () -> server.resources().read(URI.create("ldap://internal/secret"), AUTHED));
+        verifyNoInteractions(client);
+    }
+
+    @Test
+    void placeholderResourcesAndPromptsFailAsRemoteUnavailable() {
+        McpServerImpl placeholder = new McpServerImpl(new ServerId("unreachable-1"), null,
+                new McpAuthorizer(toolConfigAccessor), registry, new FallbackEligibility(), provider,
+                "MCP Server 连接或协议交互失败", descriptionSanitizer);
+
+        assertThrows(RemoteException.class,
+                () -> placeholder.resources().read(URI.create("https://remote/resource"), AUTHED));
+        assertThrows(RemoteException.class,
+                () -> placeholder.prompts().get("summary", McpArgs.empty(), AUTHED));
+    }
+
     /** 可控时钟（镜像 McpCircuitBreakerRegistryTest），推进 cooldown 进入 HALF_OPEN。 */
     private static final class MutableClock extends Clock {
         long millis;
@@ -226,5 +276,18 @@ class McpServerImplTest {
         @Override public Instant instant() { return Instant.ofEpochMilli(millis); }
         @Override public ZoneId getZone() { return ZoneOffset.UTC; }
         @Override public Clock withZone(ZoneId zone) { return this; }
+    }
+
+    private static com.smart.rag.mcp.admin.entity.McpToolConfig enabledTool(String name) {
+        if (name.endsWith("secret")) {
+            return null;
+        }
+        com.smart.rag.mcp.admin.entity.McpToolConfig config =
+                new com.smart.rag.mcp.admin.entity.McpToolConfig();
+        config.setPrefixedToolName(name);
+        config.setToolName(name.substring(name.indexOf('_') + 1));
+        config.setEnabled(true);
+        config.setIntent(name.endsWith("search") ? "RETRIEVAL" : "GENERAL_TOOL");
+        return config;
     }
 }

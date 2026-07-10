@@ -29,12 +29,6 @@
         ORDER BY prefixed_tool_name
     </select>
 
-    <select id="selectAllEnabled" resultMap="BaseResultMap">
-        SELECT <include refid="Base_Column_List"/>
-        FROM mcp_tool_config
-        WHERE enabled = TRUE
-    </select>
-
     <select id="selectByPrefixedName" resultMap="BaseResultMap">
         SELECT <include refid="Base_Column_List"/>
         FROM mcp_tool_config
@@ -64,5 +58,22 @@
         DELETE FROM mcp_tool_config
         WHERE server_id = #{serverId}
     </delete>
+
+    <insert id="batchUpsert">
+        INSERT INTO mcp_tool_config (
+            server_id, tool_name, prefixed_tool_name, description,
+            enabled, intent, risk, version, created_at, updated_at
+        ) VALUES
+        <foreach collection="tools" item="tool" separator=",">
+            (
+                #{tool.serverId}, #{tool.toolName}, #{tool.prefixedToolName}, #{tool.description},
+                #{tool.enabled}, #{tool.intent}, #{tool.risk}, 0, NOW(), NOW()
+            )
+        </foreach>
+        ON CONFLICT (server_id, tool_name) DO UPDATE SET
+            prefixed_tool_name = EXCLUDED.prefixed_tool_name,
+            description = EXCLUDED.description,
+            updated_at = NOW()
+    </insert>
 
 </mapper>

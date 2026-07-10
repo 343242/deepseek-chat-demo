@@ -20,6 +20,7 @@ import java.util.List;
 
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -134,5 +135,56 @@ class McpAdminControllerTest {
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.data.weather").value("ALIVE"))
                 .andExpect(jsonPath("$.data.tavily").value("DOWN"));
+    }
+
+    @Test
+    void createServerRejectsBlankUrlBeforeService() throws Exception {
+        mockMvc.perform(post("/api/admin/mcp/servers")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"url\":\"   \",\"name\":\"test\"}"))
+                .andExpect(status().isBadRequest());
+
+        verifyNoInteractions(service);
+    }
+
+    @Test
+    void updateBearerTokenRejectsBlankValueBeforeService() throws Exception {
+        mockMvc.perform(post("/api/admin/mcp/servers/knowledge/update-bearer-token")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"bearerToken\":\"\"}"))
+                .andExpect(status().isBadRequest());
+
+        verifyNoInteractions(service);
+    }
+
+    @Test
+    void batchUpdateRejectsEmptyIdsBeforeService() throws Exception {
+        mockMvc.perform(post("/api/admin/mcp/tools/batch-enable")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"ids\":[]}"))
+                .andExpect(status().isBadRequest());
+
+        verifyNoInteractions(service);
+    }
+
+    @Test
+    void toolUpdateRejectsUnknownIntentAndRiskBeforeService() throws Exception {
+        mockMvc.perform(post("/api/admin/mcp/tools/1/update")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"intent\":\"UNKNOWN\",\"risk\":\"critical\"}"))
+                .andExpect(status().isBadRequest());
+
+        verifyNoInteractions(service);
+    }
+
+    @Test
+    void securityUpdateRejectsNonPositiveCapBeforeService() throws Exception {
+        mockMvc.perform(post("/api/admin/mcp/security/update")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("{\"sensitiveArgPatterns\":[],\"defaultOutputCapChars\":0,"
+                                + "\"highRiskOutputCapChars\":1,\"toolDescCharLimit\":1}"))
+                .andExpect(status().isBadRequest());
+
+        verifyNoInteractions(service);
     }
 }

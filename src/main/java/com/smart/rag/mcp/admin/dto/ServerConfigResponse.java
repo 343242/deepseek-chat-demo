@@ -33,7 +33,7 @@ public record ServerConfigResponse(
                 c.getEnabled(),
                 c.getAutoConnect(),
                 c.getBearerTokenEncrypted() != null && !c.getBearerTokenEncrypted().isBlank(),
-                c.getInitError(),
+                c.getInitError() == null ? null : "MCP Server 连接失败，请检查配置",
                 c.getLastConnectedAt() != null ? c.getLastConnectedAt().toString() : null,
                 c.getVersion(),
                 c.getCreatedAt() != null ? c.getCreatedAt().toString() : null,

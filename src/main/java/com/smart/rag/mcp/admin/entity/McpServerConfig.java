@@ -5,17 +5,17 @@ import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import com.baomidou.mybatisplus.annotation.Version;
 
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 
 /**
  * MCP Server 配置实体 — 对应 {@code mcp_server_config} 表（V17 迁移）。
  * <p>
- * <b>serverId</b>：系统派生（{@code McpToolUtils.format(initializeResult.serverInfo().name())}），
+ * <b>serverId</b>：系统通过 canonical naming contract 从远端身份派生，
  * ADMIN 不可改——这与 {@code McpToolNamePrefixGenerator} 派生的工具前缀同源，
  * 保证 {@code DatabaseToolFilter} 按 {@code prefixed_tool_name} 查询命中。
  * INSERT 时可为 NULL（握手未完成），UPDATE 回填后非 NULL。
  * <p>
- * <b>bearerTokenEncrypted</b>：SecretCipher AES/GCM 密文（per-server 粒度），更新触发 client 重建。
+ * <b>bearerTokenEncrypted</b>：版本化 AES/GCM cipher/IV envelope，更新触发 client 重建。
  * <b>initError</b>：软失败语义——client 创建/握手失败时记录原因，registry 中保留占位 server。
  * <b>version</b>：MyBatis-Plus {@code @Version} 乐观锁，{@code OptimisticLockerInnerInterceptor} 拦截。
  *
@@ -46,14 +46,14 @@ public class McpServerConfig {
     /** 软失败：client 创建/握手失败原因；非空时 health=down，工具调用返回友好错误 */
     private String initError;
 
-    private LocalDateTime lastConnectedAt;
+    private OffsetDateTime lastConnectedAt;
 
     @Version
     private Long version;
 
-    private LocalDateTime createdAt;
+    private OffsetDateTime createdAt;
 
-    private LocalDateTime updatedAt;
+    private OffsetDateTime updatedAt;
 
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
@@ -82,15 +82,15 @@ public class McpServerConfig {
     public String getInitError() { return initError; }
     public void setInitError(String initError) { this.initError = initError; }
 
-    public LocalDateTime getLastConnectedAt() { return lastConnectedAt; }
-    public void setLastConnectedAt(LocalDateTime lastConnectedAt) { this.lastConnectedAt = lastConnectedAt; }
+    public OffsetDateTime getLastConnectedAt() { return lastConnectedAt; }
+    public void setLastConnectedAt(OffsetDateTime lastConnectedAt) { this.lastConnectedAt = lastConnectedAt; }
 
     public Long getVersion() { return version; }
     public void setVersion(Long version) { this.version = version; }
 
-    public LocalDateTime getCreatedAt() { return createdAt; }
-    public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
+    public OffsetDateTime getCreatedAt() { return createdAt; }
+    public void setCreatedAt(OffsetDateTime createdAt) { this.createdAt = createdAt; }
 
-    public LocalDateTime getUpdatedAt() { return updatedAt; }
-    public void setUpdatedAt(LocalDateTime updatedAt) { this.updatedAt = updatedAt; }
+    public OffsetDateTime getUpdatedAt() { return updatedAt; }
+    public void setUpdatedAt(OffsetDateTime updatedAt) { this.updatedAt = updatedAt; }
 }

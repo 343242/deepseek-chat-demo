@@ -6,12 +6,8 @@ import java.util.Optional;
 /**
  * MCP server 注册表（内核接口）。
  * <p>
- * per {@code McpSyncClient} 建 {@link McpServer}（逻辑一一对应：调用面绑各自 client）；tools 发现面
- * 共享聚合 provider（A1 拼合）。实现（runtime）注入 {@code ObjectProvider<List<McpSyncClient>>} +
- * provider + prefixGen（全可选，无 connections 时空载不抛）；因 {@code spring.ai.mcp.client.initialized=false}
- * 建期对每个 client per-client {@code initialize()} + try/catch（不可达→down 跳过，不影响其他 client）。
- * <p>
- * 多个 client 同 {@code serverInfo.name()} → 显式抛配置错误（不静默合并，R-10）。
+ * runtime 通过原子快照发布已连接和占位 {@link McpServer}；同一 id 的显式替换会原子切换并关闭旧 client。
+ * DB 的 {@code server_id} 唯一约束阻止两个配置持有同一远端身份。
  */
 public interface McpServerRegistry {
 

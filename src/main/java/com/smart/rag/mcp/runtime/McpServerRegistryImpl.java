@@ -24,26 +24,11 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
-/**
- * {@link McpServerRegistry} + {@link McpServerRegistryAdmin} 双实现。
- * <p>
- * <b>读写分离</b>：读用 volatile {@link AtomicReference} 快照；写经 CAS 切换整个 ImmutableMap。
- * 对齐 {@code LlmClientRegistry.snapshotRef} 模式，避免 v3 缺陷 1.1（{@code ConcurrentHashMap} mutate 期间
- * 请求可能拿到正在异步关闭的旧 client）。
- * <p>
- * <b>初始化挪到 McpAdminService.run()</b>（v4 修复 1.2 打破循环依赖）：本类<b>无</b> {@code @PostConstruct}，
- * 启动后 registry 为空（snapshot=空 ImmutableMap），直到 {@code McpAdminService.run()}（ApplicationRunner）
- * 装配完毕调 {@link #addServer} 填充。
- * <p>
- * <b>占位 server</b>（v4 修复 1.5）：握手失败时 {@code addServer(config, null, errMsg)}，
- * registry 保留带 initError 的 server（不 remove），调用方工具调用返回友好错误。
- * <p>
- * <b>异步关闭旧 client</b>：单线程 + bounded queue + CallerRunsPolicy，
- * 避免旧 client 关闭阻塞 registry mutate。
- */
+/** Atomic snapshot registry with bounded asynchronous close of replaced clients. */
 @Component
 public class McpServerRegistryImpl implements McpServerRegistry, McpServerRegistryAdmin {
 
@@ -60,14 +45,15 @@ public class McpServerRegistryImpl implements McpServerRegistry, McpServerRegist
 
     private final AtomicLong version = new AtomicLong(0L);
 
+    private static final ThreadFactory CLOSE_THREAD_FACTORY = Thread.ofPlatform()
+            .name("mcp-async-close-", 0)
+            .daemon(true)
+            .factory();
+
     private final ExecutorService asyncCloseExecutor = new ThreadPoolExecutor(
             1, 1, 60L, TimeUnit.SECONDS,
             new LinkedBlockingQueue<>(100),
-            r -> {
-                Thread t = new Thread(r, "mcp-async-close");
-                t.setDaemon(true);
-                return t;
-            },
+            CLOSE_THREAD_FACTORY,
             new ThreadPoolExecutor.CallerRunsPolicy()
     );
 
@@ -176,23 +162,21 @@ public class McpServerRegistryImpl implements McpServerRegistry, McpServerRegist
         ImmutableMap<ServerId, McpServer> snapshot = snapshotRef.getAndSet(ImmutableMap.of());
         snapshot.values().forEach(s -> {
             if (s instanceof McpServerImpl impl && impl.hasClient()) {
-                try {
-                    impl.closeQuietly();
-                } catch (Exception e) {
-                    log.debug("MCP server close failed during destroy: {}", e.getMessage());
-                }
+                impl.closeQuietly();
             }
         });
         asyncCloseExecutor.shutdown();
+        try {
+            if (!asyncCloseExecutor.awaitTermination(5, TimeUnit.SECONDS)) {
+                asyncCloseExecutor.shutdownNow();
+            }
+        } catch (InterruptedException e) {
+            asyncCloseExecutor.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
     }
 
     private void asyncCloseQuietly(McpServerImpl server) {
-        asyncCloseExecutor.submit(() -> {
-            try {
-                server.closeQuietly();
-            } catch (Exception e) {
-                log.warn("async close MCP server {} failed: {}", server.id().value(), e.getMessage());
-            }
-        });
+        asyncCloseExecutor.submit(server::closeQuietly);
     }
 }

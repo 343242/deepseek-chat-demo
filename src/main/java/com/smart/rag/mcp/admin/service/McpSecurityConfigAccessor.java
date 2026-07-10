@@ -15,14 +15,14 @@ import java.util.List;
 import java.util.regex.Pattern;
 
 /**
- * MCP 安全配置 accessor——独立 Bean，无业务依赖，避免 McpAdminService 注入到 McpSecurityGuard/Sanitizer 形成循环。
+ * MCP 安全配置 accessor——独立只读 Bean，供安全热路径复用并避免业务 facade 反向依赖。
  * <p>
- * <b>双重缓存</b>（v4 B5）：
+ * <b>双重缓存</b>：
  * <ul>
  *   <li>{@code viewCache}：反序列化视图（10min TTL，key=singleton）</li>
  *   <li>{@code patternsCache}：编译产物（volatile + DCL），admin 更新触发 {@link #invalidate()} 重置</li>
  * </ul>
- * chat 热路径（{@code McpSecurityGuard.guard()}）调 {@link #patterns()} 命中缓存 O(1)，
+ * chat 热路径经 {@code McpSecurityGuard} 调 {@link #patterns()} 命中缓存 O(1)，
  * 不会每次调 {@code Pattern.compile}。
  * <p>
  * <b>失败回退</b>：DB 为空 / 反序列化失败 → {@link McpSecurityConfigView#defaults()}。
@@ -35,15 +35,19 @@ public class McpSecurityConfigAccessor {
 
     private final McpSecurityConfigMapper mapper;
     private final ObjectMapper objectMapper;
+    private final McpSecurityConfigValidator validator;
 
     private final Cache<String, McpSecurityConfigView> viewCache = Caffeine.newBuilder()
             .expireAfterWrite(TTL).maximumSize(1).build();
 
     private volatile List<Pattern> patternsCache;
 
-    public McpSecurityConfigAccessor(McpSecurityConfigMapper mapper, ObjectMapper objectMapper) {
+    public McpSecurityConfigAccessor(McpSecurityConfigMapper mapper,
+                                     ObjectMapper objectMapper,
+                                     McpSecurityConfigValidator validator) {
         this.mapper = mapper;
         this.objectMapper = objectMapper;
+        this.validator = validator;
     }
 
     /** 反序列化视图（10min TTL，DB 空/失败回退 defaults） */
@@ -72,8 +76,10 @@ public class McpSecurityConfigAccessor {
 
     /** admin 更新后调，清两层缓存 */
     public void invalidate() {
-        viewCache.invalidate("singleton");
-        patternsCache = null;
+        synchronized (this) {
+            viewCache.invalidate("singleton");
+            patternsCache = null;
+        }
     }
 
     private McpSecurityConfigView loadFromDb() {
@@ -82,9 +88,10 @@ public class McpSecurityConfigAccessor {
             if (row == null || row.getConfigJson() == null) {
                 return McpSecurityConfigView.defaults();
             }
-            return objectMapper.readValue(row.getConfigJson(), McpSecurityConfigView.class);
+            McpSecurityConfigView view = objectMapper.readValue(row.getConfigJson(), McpSecurityConfigView.class);
+            return validator.validate(view);
         } catch (Exception e) {
-            log.warn("McpSecurityConfig load failed, fallback to defaults: {}", e.getMessage());
+            log.warn("MCP 安全配置无效，已回退默认值，errorType={}", e.getClass().getSimpleName());
             return McpSecurityConfigView.defaults();
         }
     }

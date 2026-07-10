@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 15
-- **Last Active**: 2026-06-18
+- **Total Sessions**: 16
+- **Last Active**: 2026-07-10
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~511 | Active |
+| `journal-1.md` | ~545 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 16 | 2026-07-10 | 完成 MCP 代码审查修复与并发竞态修复 | `3eb3734`, `9c89c0a` | `agentic-rag-dev` |
 | 15 | 2026-06-18 | Phase D 消息总线收尾（legacy DLQ 退役 + 迁移补全） | `c53783a`, `b5868cb`, `58cad50`, `1edd16a`, `747bcf2`, `3734e65` | `agentic-rag-dev` |
 | 14 | 2026-06-18 | 登录路径 review 修复 + token 存储竞态消除 | `cf51035` | `agentic-rag-dev` |
 | 13 | 2026-06-15 | Unify model ID format to registry candidate ID (BREAKING) | `a98fa9b`, `3e537d7` | `agentic-rag-dev` |

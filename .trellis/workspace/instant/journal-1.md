@@ -509,3 +509,45 @@ BREAKING: all model IDs must be registry candidate ID format (deepseek-v4-flash,
 ### Next Steps
 
 - None - task complete
+
+
+## Session 16: 完成 MCP 代码审查修复与并发竞态修复
+
+**Date**: 2026-07-10
+**Task**: 完成 MCP 代码审查修复与并发竞态修复
+**Branch**: `agentic-rag-dev`
+
+### Summary
+
+修复 MCP DB 驱动授权、命名、Bearer Token、生命周期、迁移与缓存边界；修复 ScopeJoinEngine completion lost-wakeup；全量 1226 测试通过。
+
+### Main Changes
+
+- Enforced PostgreSQL-backed MCP visibility and direct-call authorization with canonical policy keys and raw remote tool names.
+- Added fail-closed Bearer Token envelopes, explicit client ownership transfer, per-server discovery isolation, V18 forward migration, Admin validation, batch I/O, and bounded caches.
+- Split MCP Admin/runtime responsibilities into focused services and recorded the executable cross-layer contracts in the backend spec.
+- Fixed `ScopeJoinEngine` completion lost-wakeup by snapshotting completion signals before draining terminal tasks.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `3eb3734` | (see git log) |
+| `9c89c0a` | (see git log) |
+
+### Testing
+
+- [OK] `mvn test`: 1226 passed, 0 failed/errors/skipped.
+- [OK] MCP suite: 118 passed; Bean graph, ArchUnit, migration, authorization, token, lifecycle, cache, and schema contracts covered.
+- [OK] Concurrent regression suite: 93 tests repeated 5 times; P1-12 group repeated 30 times.
+- [OK] PostgreSQL 18.4: empty V1-V18 and V17-V18 upgrade, invalid policy normalization, duplicate repair, constraints, and repeatability.
+- [OK] GitNexus staged impact reviewed for both commits; MCP CRITICAL scope matched the intended 84 Admin/runtime flows.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- Validate live third-party MCP Server interoperability before production rollout.
+- Audit the pre-existing `DefaultSubtask` terminal-state/payload publication ordering separately.

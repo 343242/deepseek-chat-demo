@@ -23,11 +23,17 @@ class DatabaseToolFilterTest {
 
     @Test
     void knownToolUsesPersistedEnabledState() {
-        when(accessor.get("knowledge_search")).thenReturn(config(true), config(false));
+        when(accessor.get("knowledge_search")).thenReturn(config(true));
         DatabaseToolFilter filter = new DatabaseToolFilter(accessor, prefixGenerator, true);
 
         assertThat(filter.test(connection, tool)).isTrue();
-        accessor.invalidate("knowledge_search");
+    }
+
+    @Test
+    void disabledToolIsDenied() {
+        when(accessor.get("knowledge_search")).thenReturn(config(false));
+        DatabaseToolFilter filter = new DatabaseToolFilter(accessor, prefixGenerator, true);
+
         assertThat(filter.test(connection, tool)).isFalse();
     }
 

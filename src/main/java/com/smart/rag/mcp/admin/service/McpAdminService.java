@@ -66,7 +66,8 @@ public class McpAdminService {
     }
 
     public void refreshTools(String serverId) {
-        toolService.refreshTools(serverId);
+        // Phase D/E: catalog sync handled by reconciler via scheduler.wake()
+        serverService.reconnectServer(serverId);
     }
 
     public List<McpToolConfig> listTools(String serverId) {

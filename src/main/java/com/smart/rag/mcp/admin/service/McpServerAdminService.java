@@ -169,7 +169,7 @@ public class McpServerAdminService {
         });
         if (serverId != null) {
             runtime.remove(serverId);
-            toolAdminService.invalidate(serverId);
+            ;
         }
     }
 
@@ -179,7 +179,7 @@ public class McpServerAdminService {
         serverConfigMapper.updateEnabled(serverId, true);
         McpServerConfig refreshed = requireServer(serverId);
         connectAndAdd(refreshed);
-        toolAdminService.invalidate(serverId);
+        ;
     }
 
     @AdminAudit(resourceType = "mcp_server", action = "disable", resourceIdExpr = "#serverId")
@@ -189,7 +189,7 @@ public class McpServerAdminService {
             toolConfigMapper.updateEnabledByServerId(serverId, false);
         });
         runtime.remove(serverId);
-        toolAdminService.invalidate(serverId);
+        ;
     }
 
     @AdminAudit(resourceType = "mcp_server", action = "reconnect", resourceIdExpr = "#serverId")
@@ -205,7 +205,7 @@ public class McpServerAdminService {
             client = runtime.connect(config);
             runtime.replace(config, client);
             handedOff = true;
-            toolAdminService.invalidate(serverId);
+            ;
         } catch (RuntimeException e) {
             releaseFailedClient(serverId, client, handedOff);
             throw new RemoteException(RemoteErrorCode.MCP_SERVER_UNREACHABLE,

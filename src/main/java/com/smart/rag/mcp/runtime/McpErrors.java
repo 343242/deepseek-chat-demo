@@ -27,9 +27,21 @@ public final class McpErrors {
      * Stable allowlisted error code for persistence.
      */
     public static String safeCode(Throwable error) {
-        if (error instanceof AbstractException exception) {
-            return exception.getClass().getSimpleName().replace("Exception", "")
-                    + "_" + exception.getErrorCode().getCode();
+        if (error instanceof com.smart.rag.infrastructure.exception.RemoteException re) {
+            var code = re.getErrorCode();
+            if (code == com.smart.rag.infrastructure.exception.errorcode.RemoteErrorCode.MCP_SERVER_UNREACHABLE) {
+                return "MCP_CONNECT_FAILED";
+            }
+            if (code == com.smart.rag.infrastructure.exception.errorcode.RemoteErrorCode.MCP_CIRCUIT_BREAKER_OPEN) {
+                return "MCP_CIRCUIT_OPEN";
+            }
+            return "MCP_REMOTE_ERROR";
+        }
+        if (error instanceof com.smart.rag.infrastructure.exception.ServiceException) {
+            return "MCP_SERVICE_ERROR";
+        }
+        if (error instanceof com.smart.rag.infrastructure.exception.ClientException) {
+            return "MCP_CLIENT_ERROR";
         }
         return "MCP_CONNECT_FAILED";
     }

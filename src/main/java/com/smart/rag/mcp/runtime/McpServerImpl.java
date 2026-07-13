@@ -56,13 +56,6 @@ public final class McpServerImpl implements McpServer {
     @Nullable
     private final SyncMcpToolCallbackProvider provider;
 
-    /**
-     * 启动期 initialize 失败信息（null=已就绪）；非空时 health=down、visibleTo 返回空。
-     * <p>调用成功时置 null（best-effort 恢复信号）：{@code volatile} 仅保证可见性、不保证"读-判定-写"原子；
-     * 瞬时抖动（health 读到旧值后另一线程清空）无副作用——至多多观察一次 down。
-     */
-    @Nullable
-    private volatile String initError;
     /** Instance-local active flag: false after withdraw; callbacks captured before withdraw fail fast. */
     private volatile boolean active = true;
 
@@ -76,7 +69,6 @@ public final class McpServerImpl implements McpServer {
                   McpCircuitBreakerRegistry circuitRegistry,
                   FallbackEligibility fallbackEligibility,
                   @Nullable SyncMcpToolCallbackProvider provider,
-                  @Nullable String initError,
                   McpDescriptionSanitizer descriptionSanitizer) {
         this.id = id;
         this.client = client;
@@ -85,7 +77,6 @@ public final class McpServerImpl implements McpServer {
         this.fallbackEligibility = fallbackEligibility;
         this.remoteCallExecutor = new McpRemoteCallExecutor(id, circuitRegistry, fallbackEligibility);
         this.provider = provider;
-        this.initError = initError;
         this.descriptionSanitizer = descriptionSanitizer;
     }
 
@@ -96,10 +87,6 @@ public final class McpServerImpl implements McpServer {
 
     @Override
     public McpServerHealth health() {
-        String err = initError;
-        if (err != null) {
-            return McpServerHealth.down("MCP Server 初始化失败");
-        }
         CircuitBreakerState state = circuitRegistry.stateOf(id.value());
         return switch (state) {
             case CLOSED -> McpServerHealth.alive();
@@ -127,7 +114,7 @@ public final class McpServerImpl implements McpServer {
 
         @Override
         public List<McpTool> visibleTo(Subject subj, McpIntent intent) {
-            if (!active || initError != null || subj == null || !subj.isAuthenticated() || provider == null) {
+            if (!active || subj == null || !subj.isAuthenticated() || provider == null) {
                 return List.of();
             }
             String prefix = id.value() + "_";
@@ -182,7 +169,6 @@ public final class McpServerImpl implements McpServer {
                 McpSchema.CallToolResult result = client.callTool(
                         new McpSchema.CallToolRequest(rawName, args.asMap()));
                 circuitRegistry.recordSuccess(key);
-                initError = null; // 调用成功 → 视为恢复
                 return McpSchemaMapper.toToolResult(result);
             } catch (Exception e) {
                 if (fallbackEligibility.isEligible(e)) {
@@ -215,7 +201,7 @@ public final class McpServerImpl implements McpServer {
                     () -> connected.readResource(new McpSchema.ReadResourceRequest(uri.toString())),
                     result -> McpSchemaMapper.toResource(uri, result),
                     "MCP Resource 读取失败，请稍后重试",
-                    () -> initError = null));
+                    () -> {}));
         }
     }
 
@@ -234,12 +220,18 @@ public final class McpServerImpl implements McpServer {
                     () -> connected.getPrompt(new McpSchema.GetPromptRequest(name, args.asMap())),
                     result -> McpSchemaMapper.toPrompt(name, result),
                     "MCP Prompt 获取失败，请稍后重试",
-                    () -> initError = null));
+                    () -> {}));
         }
     }
 
     public boolean hasClient() {
         return client != null;
+    }
+
+    /** Returns the underlying client, or null if this is a placeholder server. */
+    @Nullable
+    public McpSyncClient getClient() {
+        return client;
     }
 
     public void closeQuietly() {
@@ -252,9 +244,6 @@ public final class McpServerImpl implements McpServer {
         }
     }
 
-    public @Nullable String initError() {
-        return initError;
-    }
     public boolean isActive() {
         return active;
     }
@@ -286,7 +275,7 @@ public final class McpServerImpl implements McpServer {
     }
 
     public List<ToolCallback> toolCallbacks(McpServerToolCallbacksAdapter.DiscoveryOptions options) {
-        if (client == null || initError != null) {
+        if (client == null) {
             return List.of();
         }
         McpConnectionInfo connInfo = McpConnectionInfo.builder()

@@ -39,7 +39,7 @@ class McpServerAdminServiceTest {
     @BeforeEach
     void setUp() {
         service = new McpServerAdminService(serverMapper, toolMapper, transactionTemplate,
-                runtime, urlValidator, tokenCodec, desiredStateHasher, toolService, scheduler);
+                runtime, urlValidator, tokenCodec, desiredStateHasher, scheduler);
         lenient().doAnswer(invocation -> {
             java.util.function.Consumer<TransactionStatus> action = invocation.getArgument(0);
             action.accept(mock(TransactionStatus.class));
@@ -64,7 +64,7 @@ class McpServerAdminServiceTest {
         assertThat(created.getServerId()).isEqualTo("mcp_42");
         assertThat(created.getDesiredStateHash()).isNotNull();
         verify(runtime, never()).connect(any());
-        verify(runtime, never()).add(any(), any(), any());
+        verify(runtime, never()).add(any(), any());
     }
 
     @Test

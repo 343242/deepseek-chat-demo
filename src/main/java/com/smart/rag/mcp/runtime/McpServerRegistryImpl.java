@@ -86,15 +86,14 @@ public class McpServerRegistryImpl implements McpServerRegistry, McpServerRegist
 
     @Override
     public void addServer(McpServerConfig config,
-                          @Nullable McpSyncClient client,
-                          @Nullable String initError) {
+                          @Nullable McpSyncClient client) {
         String sid = config.getServerId();
         if (sid == null || sid.isBlank()) {
-            sid = "unreachable-" + (config.getId() != null ? config.getId() : System.nanoTime());
+            throw new IllegalArgumentException("serverId must not be blank");
         }
         ServerId id = new ServerId(sid);
         McpServerImpl server = new McpServerImpl(id, client, authorizer, circuitRegistry,
-                fallbackEligibility, providerProvider.getIfAvailable(), initError, descriptionSanitizer);
+                fallbackEligibility, providerProvider.getIfAvailable(), descriptionSanitizer);
 
         ImmutableMap<ServerId, McpServer> oldSnapshot;
         ImmutableMap<ServerId, McpServer> newSnapshot;
@@ -115,9 +114,8 @@ public class McpServerRegistryImpl implements McpServerRegistry, McpServerRegist
             asyncCloseQuietly(oldImpl);
         }
         version.incrementAndGet();
-        log.info("MCP server registered: id={} client={} initError={}",
-                id.value(), client != null ? "present" : "null",
-                initError != null ? "present" : "null");
+        log.info("MCP server registered: id={} client={}",
+                id.value(), client != null ? "present" : "null");
     }
 
     @Override
@@ -149,7 +147,7 @@ public class McpServerRegistryImpl implements McpServerRegistry, McpServerRegist
 
     @Override
     public void replaceServer(McpServerConfig config, McpSyncClient newClient) {
-        addServer(config, newClient, null);
+        addServer(config, newClient);
     }
 
     @Override

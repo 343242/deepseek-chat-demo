@@ -68,17 +68,21 @@
         </foreach>
     </update>
 
-    <!-- Mark absent tools (complete-set reconciliation) -->
+    <!-- Mark absent tools (complete-set reconciliation). Empty seenNames = all absent. -->
     <update id="markAbsentExcept">
         UPDATE mcp_tool_config
         SET present = FALSE,
             updated_at = NOW()
         WHERE server_id = #{serverId}
           AND present = TRUE
-          AND tool_name NOT IN
-        <foreach collection="seenNames" item="name" open="(" separator="," close=")">
-            #{name}
-        </foreach>
+        <choose>
+            <when test="seenNames != null and seenNames.size() > 0">
+            AND tool_name NOT IN
+            <foreach collection="seenNames" item="name" open="(" separator="," close=")">
+                #{name}
+            </foreach>
+            </when>
+        </choose>
     </update>
 
     <delete id="deleteByServerId">

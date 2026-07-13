@@ -51,8 +51,8 @@ public class McpServerRuntime {
         return clientFactory.createClient(config);
     }
 
-    public void add(McpServerConfig config, @Nullable McpSyncClient client, @Nullable String initError) {
-        registryAdmin.addServer(config, client, initError);
+    public void add(McpServerConfig config, @Nullable McpSyncClient client) {
+        registryAdmin.addServer(config, client);
     }
 
     public void replace(McpServerConfig config, McpSyncClient client) {

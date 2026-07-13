@@ -22,11 +22,10 @@ public interface McpServerRegistryAdmin {
     /**
      * 新增或替换 server（原子快照切换）。若该 serverId 已存在，旧 client 异步关闭。
      *
-     * @param config    DB 配置（含 serverId / url / bearerTokenEncrypted 等）
-     * @param client    MCP 同步客户端；{@code null} 表示占位（initError 必须非空）
-     * @param initError 握手失败原因；非空时 client 应为 null（占位）
+     * @param config DB 配置（含 serverId / url / bearerTokenEncrypted 等）
+     * @param client MCP 同步客户端
      */
-    void addServer(McpServerConfig config, @Nullable McpSyncClient client, @Nullable String initError);
+    void addServer(McpServerConfig config, @Nullable McpSyncClient client);
 
     /**
      * 移除 server 注册；实现负责异步关闭被移除的 client。

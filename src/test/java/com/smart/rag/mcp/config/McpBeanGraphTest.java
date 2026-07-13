@@ -39,6 +39,7 @@ class McpBeanGraphTest {
             .withBean(HostSafetyValidator.class, () -> mock(HostSafetyValidator.class))
             .withBean(McpBearerTokenCodec.class, () -> mock(McpBearerTokenCodec.class))
             .withBean(McpDesiredStateHasher.class, () -> mock(McpDesiredStateHasher.class))
+            .withBean(com.smart.rag.mcp.runtime.McpConnectionStateProjector.class, () -> mock(com.smart.rag.mcp.runtime.McpConnectionStateProjector.class))
             .withBean(com.smart.rag.mcp.runtime.McpConnectionReconciler.class, () -> mock(com.smart.rag.mcp.runtime.McpConnectionReconciler.class))
             .withBean(com.smart.rag.mcp.runtime.McpConnectionRecoveryScheduler.class, () -> mock(com.smart.rag.mcp.runtime.McpConnectionRecoveryScheduler.class))
             .withBean(McpServerRuntime.class, () -> mock(McpServerRuntime.class))

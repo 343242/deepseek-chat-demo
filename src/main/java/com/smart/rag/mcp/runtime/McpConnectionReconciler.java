@@ -14,6 +14,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Duration;
 import java.time.OffsetDateTime;
@@ -42,17 +43,20 @@ public class McpConnectionReconciler {
     private final McpServerRuntime runtime;
     private final McpClientFactory clientFactory;
     private final McpDesiredStateHasher hasher;
+    private final TransactionTemplate txTemplate;
 
     public McpConnectionReconciler(McpServerConfigMapper serverMapper,
                                    McpToolConfigMapper toolMapper,
                                    McpServerRuntime runtime,
                                    McpClientFactory clientFactory,
-                                   McpDesiredStateHasher hasher) {
+                                   McpDesiredStateHasher hasher,
+                                   TransactionTemplate txTemplate) {
         this.serverMapper = serverMapper;
         this.toolMapper = toolMapper;
         this.runtime = runtime;
         this.clientFactory = clientFactory;
         this.hasher = hasher;
+        this.txTemplate = txTemplate;
     }
 
     /**
@@ -69,7 +73,27 @@ public class McpConnectionReconciler {
             return;
         }
 
-        // Connect outside transaction/guard
+        // P2-10: Catalog-only path — live client exists with matching observed hash, just sync catalog
+        boolean catalogOnly = config.getObservedStateHash() != null
+                && config.getObservedStateHash().equals(capturedHash)
+                && Boolean.FALSE.equals(config.getCatalogSynced())
+                && runtime.find(serverId).isPresent();
+
+        if (catalogOnly) {
+            try {
+                var existingClient = ((com.smart.rag.mcp.runtime.McpServerImpl)
+                        runtime.find(serverId).get()).getClient();
+                if (existingClient != null) {
+                    syncCatalog(config, capturedHash, existingClient);
+                    return;
+                }
+            } catch (Exception e) {
+                log.debug("Catalog-only path failed, falling through to full reconnect: {}", e.getMessage());
+            }
+            // Fall through to full reconnect if catalog-only fails
+        }
+
+        // Full reconnect path
         McpSyncClient client;
         try {
             client = runtime.connect(config);
@@ -80,21 +104,20 @@ public class McpConnectionReconciler {
 
         // Conditional observed success under guard
         String remoteName = extractRemoteName(client);
-        String observedHash = capturedHash; // same hash means desired state was applied
+        String observedHash = capturedHash;
 
         int affected = runtime.withMutationGuard(() ->
                 serverMapper.updateObservedSuccess(
                         config.getId(), capturedHash, observedHash, remoteName));
 
         if (affected == 0) {
-            // Stale: desired state changed or disabled; close unowned client
             clientFactory.destroyClient(client);
             return;
         }
 
         // Publish the client into registry
         try {
-            runtime.add(config, client, null);
+            runtime.add(config, client);
         } catch (RuntimeException e) {
             log.warn("Registry publish failed, cleaning up: serverId={}", serverId, e);
             runtime.removeIfSame(serverId, null);
@@ -107,7 +130,6 @@ public class McpConnectionReconciler {
             syncCatalog(config, capturedHash, client);
         } catch (RuntimeException e) {
             log.warn("Catalog sync failed for serverId={}: {}", serverId, e.getMessage());
-            // Persist safe error so projector reports DEGRADED; keep the live client
             int failures = config.getConsecutiveFailures() != null ? config.getConsecutiveFailures() : 0;
             serverMapper.updateObservedFailure(
                     config.getId(), capturedHash,
@@ -128,8 +150,8 @@ public class McpConnectionReconciler {
         }
 
         if (remoteTools == null || remoteTools.isEmpty()) {
-            // Empty catalog is valid — mark synced
-            serverMapper.markCatalogSynced(config.getId(), capturedHash);
+            txTemplate.executeWithoutResult(status ->
+                    serverMapper.markCatalogSynced(config.getId(), capturedHash));
             return;
         }
 
@@ -142,14 +164,12 @@ public class McpConnectionReconciler {
                 .map(McpSchema.Tool::name)
                 .collect(Collectors.toSet());
 
-        // Upsert seen tools + mark absent tools
-        toolMapper.batchUpsert(toolConfigs);
-        if (!seenNames.isEmpty()) {
+        // Transactional: upsert + mark absent + mark synced (all-or-nothing)
+        txTemplate.executeWithoutResult(status -> {
+            toolMapper.batchUpsert(toolConfigs);
             toolMapper.markAbsentExcept(serverId, List.copyOf(seenNames));
-        }
-
-        // Mark catalog as synced for the currently observed desired state
-        serverMapper.markCatalogSynced(config.getId(), capturedHash);
+            serverMapper.markCatalogSynced(config.getId(), capturedHash);
+        });
     }
 
     private McpToolConfig toToolConfig(String serverId, McpSchema.Tool tool) {
@@ -198,11 +218,14 @@ public class McpConnectionReconciler {
         }
     }
 
+    private static final com.fasterxml.jackson.databind.ObjectMapper OBJECT_MAPPER =
+            new com.fasterxml.jackson.databind.ObjectMapper();
+
     private static String toJsonString(Object schema) {
         if (schema == null) return "{}";
         if (schema instanceof String s) return s;
         try {
-            return new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(schema);
+            return OBJECT_MAPPER.writeValueAsString(schema);
         } catch (Exception e) {
             return "{}";
         }

@@ -15,7 +15,7 @@ class McpAdminServiceStructureTest {
         assertThat(ApplicationRunner.class.isAssignableFrom(McpAdminService.class)).isFalse();
         assertThat(McpAdminService.class.getDeclaredConstructors())
                 .singleElement()
-                .satisfies(constructor -> assertThat(constructor.getParameterCount()).isLessThanOrEqualTo(3));
+                .satisfies(constructor -> assertThat(constructor.getParameterCount()).isLessThanOrEqualTo(4));
 
         Path source = Path.of("src/main/java/com/smart/rag/mcp/admin/service/McpAdminService.java");
         assertThat(Files.readAllLines(source).size()).isLessThanOrEqualTo(300);

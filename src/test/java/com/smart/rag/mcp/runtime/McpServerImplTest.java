@@ -73,7 +73,7 @@ class McpServerImplTest {
         registry = new McpCircuitBreakerRegistry(new CircuitBreakerProperties(1, 30000L, 1),
                 java.time.Clock.systemUTC());
         server = new McpServerImpl(KNOWLEDGE, client, authorizer, registry,
-                new FallbackEligibility(), provider, null, descriptionSanitizer);
+                new FallbackEligibility(), provider, descriptionSanitizer);
     }
 
     private void stubDiscovery() {
@@ -164,8 +164,7 @@ class McpServerImplTest {
     @DisplayName("call：前缀不符（跨 server 误调）→ 抛 ClientException（R-11）")
     void call_prefixMismatch_throws() {
         // policy 允许 knowledge_search，但传入前缀不符的名字（即便 allowlist 想绕过也拒）
-        McpServerImpl s = new McpServerImpl(KNOWLEDGE, client, new McpAuthorizer(toolConfigAccessor), registry,
-                new FallbackEligibility(), provider, null, descriptionSanitizer);
+        McpServerImpl s = new McpServerImpl(KNOWLEDGE, client, new McpAuthorizer(toolConfigAccessor), registry, new FallbackEligibility(), provider, descriptionSanitizer);
         assertThrows(ClientException.class,
                 () -> s.tools().call("ops_search", McpArgs.empty(), AUTHED));
         verifyNoInteractions(client);
@@ -195,14 +194,9 @@ class McpServerImplTest {
     }
 
     @Test
-    @DisplayName("health：CLOSED=alive / initError=down（熔断器只读投影，D-6/D-7）")
+    @DisplayName("health：CLOSED=alive")
     void health_projection() {
         assertEquals(McpServerHealth.Status.ALIVE, server.health().status());
-
-        McpServerImpl down = new McpServerImpl(new ServerId("dead"), client,
-                new McpAuthorizer(toolConfigAccessor), registry, new FallbackEligibility(), provider,
-                "connect refused", descriptionSanitizer);
-        assertEquals(McpServerHealth.Status.DOWN, down.health().status());
     }
 
     @Test
@@ -212,8 +206,7 @@ class McpServerImplTest {
         MutableClock clock = new MutableClock(0);
         McpCircuitBreakerRegistry reg = new McpCircuitBreakerRegistry(
                 new CircuitBreakerProperties(1, 1L, 1), clock);
-        McpServerImpl s = new McpServerImpl(KNOWLEDGE, client, new McpAuthorizer(toolConfigAccessor), reg,
-                new FallbackEligibility(), provider, null, descriptionSanitizer);
+        McpServerImpl s = new McpServerImpl(KNOWLEDGE, client, new McpAuthorizer(toolConfigAccessor), reg, new FallbackEligibility(), provider, descriptionSanitizer);
 
         // ① eligible 失败 → recordFailure → OPEN（threshold=1）
         // ② 过 cooldown → HALF_OPEN；探测抛非 eligible（IAE）→ 必须 releaseProbe，不计熔断
@@ -256,17 +249,16 @@ class McpServerImplTest {
     }
 
     @Test
-    void placeholderResourcesAndPromptsFailAsRemoteUnavailable() {
-        McpServerImpl placeholder = new McpServerImpl(new ServerId("unreachable-1"), null,
+    void nullClientResourcesAndPromptsFailAsRemoteUnavailable() {
+        McpServerImpl noClient = new McpServerImpl(new ServerId("dead"), null,
                 new McpAuthorizer(toolConfigAccessor), registry, new FallbackEligibility(), provider,
-                "MCP Server 连接或协议交互失败", descriptionSanitizer);
+                descriptionSanitizer);
 
         assertThrows(RemoteException.class,
-                () -> placeholder.resources().read(URI.create("https://remote/resource"), AUTHED));
+                () -> noClient.resources().read(URI.create("https://remote/resource"), AUTHED));
         assertThrows(RemoteException.class,
-                () -> placeholder.prompts().get("summary", McpArgs.empty(), AUTHED));
+                () -> noClient.prompts().get("summary", McpArgs.empty(), AUTHED));
     }
-
     /** 可控时钟（镜像 McpCircuitBreakerRegistryTest），推进 cooldown 进入 HALF_OPEN。 */
     private static final class MutableClock extends Clock {
         long millis;

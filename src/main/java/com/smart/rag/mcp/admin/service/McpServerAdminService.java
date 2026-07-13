@@ -31,7 +31,7 @@ public class McpServerAdminService {
     private final HostSafetyValidator urlValidator;
     private final McpBearerTokenCodec tokenCodec;
     private final McpDesiredStateHasher desiredStateHasher;
-    private final McpToolAdminService toolAdminService;
+
     private final McpConnectionRecoveryScheduler scheduler;
 
     public McpServerAdminService(McpServerConfigMapper serverConfigMapper,
@@ -41,7 +41,6 @@ public class McpServerAdminService {
                                  HostSafetyValidator urlValidator,
                                  McpBearerTokenCodec tokenCodec,
                                  McpDesiredStateHasher desiredStateHasher,
-                                 McpToolAdminService toolAdminService,
                                  McpConnectionRecoveryScheduler scheduler) {
         this.serverConfigMapper = serverConfigMapper;
         this.toolConfigMapper = toolConfigMapper;
@@ -50,7 +49,6 @@ public class McpServerAdminService {
         this.urlValidator = urlValidator;
         this.tokenCodec = tokenCodec;
         this.desiredStateHasher = desiredStateHasher;
-        this.toolAdminService = toolAdminService;
         this.scheduler = scheduler;
     }
 
@@ -71,7 +69,7 @@ public class McpServerAdminService {
     }
 
     @AdminAudit(resourceType = "mcp_server", action = "update", resourceIdExpr = "#id")
-    public void updateServer(Long id, UpdateServerRequest request) {
+    public McpServerConfig updateServer(Long id, UpdateServerRequest request) {
         McpServerConfig config = getServer(id);
         verifyVersion(request.version(), config.getVersion());
 
@@ -89,6 +87,7 @@ public class McpServerAdminService {
             }
             runtime.remove(config.getServerId());
             scheduler.wake(config.getServerId());
+            return serverConfigMapper.selectById(id);
         } else {
             if (request.name() != null) {
                 config.setName(request.name().trim());
@@ -99,6 +98,7 @@ public class McpServerAdminService {
             if (serverConfigMapper.updateById(config) == 0) {
                 throw optimisticConflict();
             }
+            return config;
         }
     }
 
@@ -173,40 +173,40 @@ public class McpServerAdminService {
             runtime.remove(serverId);
         }
     }
-
-    @AdminAudit(resourceType = "mcp_server", action = "enable", resourceIdExpr = "#serverId")
-    public void enableServer(String serverId) {
+    public McpServerConfig enableServer(String serverId) {
         McpServerConfig config = requireServer(serverId);
         if (serverConfigMapper.enableAndScheduleReconcile(serverId, config.getVersion()) == 0) {
             throw optimisticConflict();
         }
         runtime.remove(serverId);
         scheduler.wake(serverId);
+        return serverConfigMapper.selectByServerId(serverId);
     }
 
     @AdminAudit(resourceType = "mcp_server", action = "disable", resourceIdExpr = "#serverId")
-    public void disableServer(String serverId) {
+    public McpServerConfig disableServer(String serverId) {
         McpServerConfig config = requireServer(serverId);
         if (serverConfigMapper.disableAndClearReconcile(serverId, config.getVersion()) == 0) {
             throw optimisticConflict();
         }
         toolConfigMapper.updateEnabledByServerId(serverId, false);
         runtime.remove(serverId);
+        return serverConfigMapper.selectByServerId(serverId);
     }
 
-    @AdminAudit(resourceType = "mcp_server", action = "reconnect", resourceIdExpr = "#serverId")
-    public void reconnectServer(String serverId) {
+    public McpServerConfig reconnectServer(String serverId) {
         McpServerConfig config = requireServer(serverId);
         if (serverConfigMapper.clearObservation(serverId, config.getVersion()) == 0) {
             throw optimisticConflict();
         }
         runtime.remove(serverId);
         scheduler.wake(serverId);
+        return serverConfigMapper.selectByServerId(serverId);
     }
 
     @AdminAudit(resourceType = "mcp_server", action = "update_bearer_token",
             resourceIdExpr = "#serverId", sensitiveFields = {"bearerToken"})
-    public void updateBearerToken(String serverId, String bearerToken) {
+    public McpServerConfig updateBearerToken(String serverId, String bearerToken) {
         McpServerConfig config = requireServer(serverId);
         String encrypted = bearerToken != null && !bearerToken.isBlank()
                 ? tokenCodec.encode(bearerToken) : null;
@@ -218,6 +218,7 @@ public class McpServerAdminService {
         }
         runtime.remove(serverId);
         scheduler.wake(serverId);
+        return serverConfigMapper.selectByServerId(serverId);
     }
 
     @AdminAudit(resourceType = "mcp_server", action = "refresh_tools", resourceIdExpr = "#serverId")

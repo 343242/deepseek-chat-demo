@@ -1,14 +1,8 @@
 package com.smart.rag.mcp.admin.service;
 
-import com.github.benmanes.caffeine.cache.Cache;
-import com.github.benmanes.caffeine.cache.Caffeine;
 import com.smart.rag.infrastructure.audit.AdminAudit;
 import com.smart.rag.infrastructure.exception.ClientException;
-import com.smart.rag.infrastructure.exception.RemoteException;
-import com.smart.rag.infrastructure.exception.ServiceException;
 import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;
-import com.smart.rag.infrastructure.exception.errorcode.RemoteErrorCode;
-import com.smart.rag.infrastructure.exception.errorcode.ServiceErrorCode;
 import com.smart.rag.infrastructure.security.HostSafetyValidator;
 import com.smart.rag.mcp.admin.dto.UpdateServerRequest;
 import com.smart.rag.mcp.admin.entity.McpServerConfig;
@@ -16,31 +10,31 @@ import com.smart.rag.mcp.admin.mapper.McpServerConfigMapper;
 import com.smart.rag.mcp.admin.mapper.McpToolConfigMapper;
 import com.smart.rag.mcp.mcpclient.McpToolUtils;
 import com.smart.rag.mcp.runtime.McpBearerTokenCodec;
-import com.smart.rag.mcp.runtime.McpErrors;
-import io.modelcontextprotocol.client.McpSyncClient;
-import io.modelcontextprotocol.spec.McpSchema;
+import com.smart.rag.mcp.runtime.McpBearerTokenValidator;
+import com.smart.rag.mcp.runtime.McpConnectionRecoveryScheduler;
+import com.smart.rag.mcp.runtime.McpDesiredStateHasher;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
-import java.time.Duration;
 import java.util.List;
 
 @Service
 public class McpServerAdminService {
 
     private static final Logger log = LoggerFactory.getLogger(McpServerAdminService.class);
-    private static final Duration RECONNECT_COOLDOWN = Duration.ofSeconds(30);
+
     private final McpServerConfigMapper serverConfigMapper;
     private final McpToolConfigMapper toolConfigMapper;
     private final TransactionTemplate txTemplate;
     private final McpServerRuntime runtime;
     private final HostSafetyValidator urlValidator;
     private final McpBearerTokenCodec tokenCodec;
-    private final McpToolAdminService toolAdminService;
-    private final Cache<String, Long> reconnectCooldown = Caffeine.newBuilder()
-            .expireAfterWrite(RECONNECT_COOLDOWN).maximumSize(100).build();
+    private final McpBearerTokenValidator tokenValidator;
+    private final McpDesiredStateHasher desiredStateHasher;
+
+    private final McpConnectionRecoveryScheduler scheduler;
 
     public McpServerAdminService(McpServerConfigMapper serverConfigMapper,
                                  McpToolConfigMapper toolConfigMapper,
@@ -48,14 +42,18 @@ public class McpServerAdminService {
                                  McpServerRuntime runtime,
                                  HostSafetyValidator urlValidator,
                                  McpBearerTokenCodec tokenCodec,
-                                 McpToolAdminService toolAdminService) {
+                                 McpBearerTokenValidator tokenValidator,
+                                 McpDesiredStateHasher desiredStateHasher,
+                                 McpConnectionRecoveryScheduler scheduler) {
         this.serverConfigMapper = serverConfigMapper;
         this.toolConfigMapper = toolConfigMapper;
         this.txTemplate = txTemplate;
         this.runtime = runtime;
         this.urlValidator = urlValidator;
         this.tokenCodec = tokenCodec;
-        this.toolAdminService = toolAdminService;
+        this.tokenValidator = tokenValidator;
+        this.desiredStateHasher = desiredStateHasher;
+        this.scheduler = scheduler;
     }
 
     public List<McpServerConfig> listServers() {
@@ -75,64 +73,91 @@ public class McpServerAdminService {
     }
 
     @AdminAudit(resourceType = "mcp_server", action = "update", resourceIdExpr = "#id")
-    public void updateServer(Long id, UpdateServerRequest request) {
+    public McpServerConfig updateServer(Long id, UpdateServerRequest request) {
         McpServerConfig config = getServer(id);
         verifyVersion(request.version(), config.getVersion());
-        if (request.url() != null && !request.url().isBlank()) {
+
+        boolean urlChanged = request.url() != null && !request.url().isBlank()
+                && !request.url().trim().equals(config.getUrl());
+
+        if (urlChanged) {
             String url = request.url().trim();
             urlValidator.validate(url);
-            config.setUrl(url);
-        }
-        if (request.name() != null) {
-            config.setName(request.name().trim());
-        }
-        if (request.description() != null) {
-            config.setDescription(request.description().trim());
-        }
-        if (serverConfigMapper.updateById(config) == 0) {
-            throw optimisticConflict();
+            String newHash = desiredStateHasher.hash(url, config.getBearerTokenEncrypted(),
+                    Boolean.TRUE.equals(config.getEnabled()));
+            if (serverConfigMapper.updateDesiredUrl(config.getServerId(), url, newHash,
+                    config.getVersion()) == 0) {
+                throw optimisticConflict();
+            }
+            runtime.remove(config.getServerId());
+            scheduler.wake(config.getServerId());
+            return serverConfigMapper.selectById(id);
+        } else {
+            if (request.name() != null) {
+                config.setName(request.name().trim());
+            }
+            if (request.description() != null) {
+                config.setDescription(request.description().trim());
+            }
+            if (serverConfigMapper.updateById(config) == 0) {
+                throw optimisticConflict();
+            }
+            return config;
         }
     }
 
     @AdminAudit(resourceType = "mcp_server", action = "create",
-            resourceIdExpr = "#result.id", sensitiveFields = {"bearerToken"})
-    public McpServerConfig createServer(CreateServerRequest request) {
+            resourceIdExpr = "#result.serverId", sensitiveFields = {"bearerToken"})
+    public McpServerConfig createServer(CreateServerRequest request, String idempotencyKey) {
+        if (idempotencyKey == null || idempotencyKey.isBlank()
+                || idempotencyKey.length() > 128
+                || !idempotencyKey.matches("[\\x20-\\x7E]+")) {
+            throw new ClientException(ClientErrorCode.VALIDATION_ERROR,
+                    "Idempotency-Key 必须为 1-128 个可打印 ASCII 字符");
+        }
         String url = request.url().trim();
         urlValidator.validate(url);
+        tokenValidator.validate(request.bearerToken());
+
+        // Idempotency: check existing key first
+        McpServerConfig existing = serverConfigMapper.selectByCreateRequestKey(idempotencyKey);
+        if (existing != null) {
+            if (sameCreatePayload(existing, request)) {
+                return existing;
+            }
+            throw new ClientException(ClientErrorCode.CONFLICT,
+                    "Idempotency-Key 已用于不同的 Server 配置");
+        }
+
         McpServerConfig config = new McpServerConfig();
         config.setUrl(url);
         config.setName(trimToNull(request.name()));
         config.setDescription(trimToNull(request.description()));
         config.setAutoConnect(request.autoConnect() == null || request.autoConnect());
         config.setEnabled(true);
+        config.setCreateRequestKey(idempotencyKey);
+        config.setCatalogSynced(false);
+        config.setConsecutiveFailures(0);
         if (request.bearerToken() != null && !request.bearerToken().isBlank()) {
             config.setBearerTokenEncrypted(tokenCodec.encode(request.bearerToken()));
         }
-        txTemplate.executeWithoutResult(status -> serverConfigMapper.insert(config));
 
-        McpSyncClient client = null;
-        boolean handedOff = false;
-        try {
-            client = runtime.connect(config);
-            config.setServerId(deriveServerId(client));
-            if (serverConfigMapper.updateById(config) == 0) {
-                throw optimisticConflict();
-            }
-            runtime.add(config, client, null);
-            handedOff = true;
-            serverConfigMapper.markConnected(config.getServerId());
-            toolAdminService.invalidate(config.getServerId());
-        } catch (RemoteException e) {
-            releaseFailedClient(config.getServerId(), client, handedOff);
-            persistPlaceholder(config, e);
-        } catch (ClientException | ServiceException e) {
-            releaseFailedClient(config.getServerId(), client, handedOff);
-            throw e;
-        } catch (RuntimeException e) {
-            releaseFailedClient(config.getServerId(), client, handedOff);
-            throw new ServiceException(ServiceErrorCode.INTERNAL_ERROR,
-                    "MCP Server 注册失败，请稍后重试", e);
-        }
+        // Two local writes in one transaction: insert -> assign mcp_<id> + hash -> update
+        txTemplate.executeWithoutResult(status -> {
+            config.setDesiredStateHash("0".repeat(64)); // passes CHECK ^[0-9a-f]{64}$ until real hash assigned
+            serverConfigMapper.insert(config);
+            config.setServerId(McpToolUtils.serverId(config.getId()));
+            config.setDesiredStateHash(desiredStateHasher.hash(
+                    url, config.getBearerTokenEncrypted(), true));
+            config.setNextReconcileAt(java.time.OffsetDateTime.now());
+            serverConfigMapper.updateById(config);
+        });
+
+        // Best-effort wake; DB due time ensures it is picked up even if rejected
+        scheduler.wake(config.getServerId());
+
+        log.info("MCP Server created (desired state committed): id={} serverId={}",
+                config.getId(), config.getServerId());
         return config;
     }
 
@@ -151,125 +176,87 @@ public class McpServerAdminService {
         });
         if (serverId != null) {
             runtime.remove(serverId);
-            toolAdminService.invalidate(serverId);
         }
     }
-
-    @AdminAudit(resourceType = "mcp_server", action = "enable", resourceIdExpr = "#serverId")
-    public void enableServer(String serverId) {
-        requireServer(serverId);
-        serverConfigMapper.updateEnabled(serverId, true);
-        McpServerConfig refreshed = requireServer(serverId);
-        connectAndAdd(refreshed);
-        toolAdminService.invalidate(serverId);
+    public McpServerConfig enableServer(String serverId) {
+        McpServerConfig config = requireServer(serverId);
+        if (serverConfigMapper.enableAndScheduleReconcile(serverId, config.getVersion()) == 0) {
+            throw optimisticConflict();
+        }
+        runtime.remove(serverId);
+        scheduler.wake(serverId);
+        return serverConfigMapper.selectByServerId(serverId);
     }
 
     @AdminAudit(resourceType = "mcp_server", action = "disable", resourceIdExpr = "#serverId")
-    public void disableServer(String serverId) {
-        txTemplate.executeWithoutResult(status -> {
-            serverConfigMapper.updateEnabled(serverId, false);
-            toolConfigMapper.updateEnabledByServerId(serverId, false);
-        });
+    public McpServerConfig disableServer(String serverId) {
+        McpServerConfig config = requireServer(serverId);
+        if (serverConfigMapper.disableAndClearReconcile(serverId, config.getVersion()) == 0) {
+            throw optimisticConflict();
+        }
+        toolConfigMapper.updateEnabledByServerId(serverId, false);
         runtime.remove(serverId);
-        toolAdminService.invalidate(serverId);
+        return serverConfigMapper.selectByServerId(serverId);
     }
 
-    @AdminAudit(resourceType = "mcp_server", action = "reconnect", resourceIdExpr = "#serverId")
-    public void reconnectServer(String serverId) {
-        if (reconnectCooldown.getIfPresent(serverId) != null) {
-            throw new ClientException(ClientErrorCode.RATE_LIMITED, "MCP Server 重连过于频繁，请稍后重试");
-        }
-        reconnectCooldown.put(serverId, System.currentTimeMillis());
+    public McpServerConfig reconnectServer(String serverId) {
         McpServerConfig config = requireServer(serverId);
-        McpSyncClient client = null;
-        boolean handedOff = false;
-        try {
-            client = runtime.connect(config);
-            runtime.replace(config, client);
-            handedOff = true;
-            serverConfigMapper.markConnected(serverId);
-            toolAdminService.invalidate(serverId);
-        } catch (RuntimeException e) {
-            releaseFailedClient(serverId, client, handedOff);
-            serverConfigMapper.updateInitError(serverId, McpErrors.safeSummary(e));
-            throw new RemoteException(RemoteErrorCode.MCP_SERVER_UNREACHABLE,
-                    "MCP Server 重连失败，请检查远端服务", e);
+        if (serverConfigMapper.clearObservation(serverId, config.getVersion()) == 0) {
+            throw optimisticConflict();
         }
+        runtime.remove(serverId);
+        scheduler.wake(serverId);
+        return serverConfigMapper.selectByServerId(serverId);
     }
 
     @AdminAudit(resourceType = "mcp_server", action = "update_bearer_token",
             resourceIdExpr = "#serverId", sensitiveFields = {"bearerToken"})
-    public void updateBearerToken(String serverId, String bearerToken) {
+    public McpServerConfig updateBearerToken(String serverId, String bearerToken) {
+        tokenValidator.validate(bearerToken);
         McpServerConfig config = requireServer(serverId);
-        String encrypted = tokenCodec.encode(bearerToken);
-        txTemplate.executeWithoutResult(status -> {
-            if (serverConfigMapper.updateBearerToken(serverId, encrypted, config.getVersion()) == 0) {
-                throw optimisticConflict();
-            }
-        });
-        McpServerConfig refreshed = requireServer(serverId);
-        McpSyncClient client = null;
-        boolean handedOff = false;
-        try {
-            client = runtime.connect(refreshed);
-            runtime.replace(refreshed, client);
-            handedOff = true;
-            serverConfigMapper.markConnected(serverId);
-        } catch (RuntimeException e) {
-            releaseFailedClient(serverId, client, handedOff);
-            serverConfigMapper.updateInitError(serverId, McpErrors.safeSummary(e));
-            throw new RemoteException(RemoteErrorCode.MCP_SERVER_UNREACHABLE,
-                    "Bearer Token 更新后重连失败，请检查远端服务", e);
+        String encrypted = bearerToken != null && !bearerToken.isBlank()
+                ? tokenCodec.encode(bearerToken) : null;
+        String newHash = desiredStateHasher.hash(config.getUrl(), encrypted,
+                Boolean.TRUE.equals(config.getEnabled()));
+        if (serverConfigMapper.updateDesiredToken(serverId, encrypted, newHash,
+                config.getVersion()) == 0) {
+            throw optimisticConflict();
         }
-    }
-    void initializeAtStartup(McpServerConfig config) {
-        connectAndAdd(config);
+        runtime.remove(serverId);
+        scheduler.wake(serverId);
+        return serverConfigMapper.selectByServerId(serverId);
     }
 
-    private void connectAndAdd(McpServerConfig config) {
-        McpSyncClient client = null;
-        boolean handedOff = false;
-        try {
-            client = runtime.connect(config);
-            runtime.add(config, client, null);
-            handedOff = true;
-            serverConfigMapper.markConnected(config.getServerId());
-        } catch (RuntimeException e) {
-            releaseFailedClient(config.getServerId(), client, handedOff);
-            String message = McpErrors.safeSummary(e);
-            serverConfigMapper.updateInitError(config.getServerId(), message);
-            runtime.add(config, null, message);
+    @AdminAudit(resourceType = "mcp_server", action = "refresh_tools", resourceIdExpr = "#serverId")
+    public void refreshTools(String serverId) {
+        McpServerConfig config = requireServer(serverId);
+        if (serverConfigMapper.clearCatalogSynced(serverId, config.getVersion()) == 0) {
+            throw optimisticConflict();
         }
+        scheduler.wake(serverId);
     }
-    private void persistPlaceholder(McpServerConfig config, RuntimeException failure) {
-        String syntheticId = "unreachable-" + config.getId();
-        String message = McpErrors.safeSummary(failure);
-        config.setServerId(syntheticId);
-        config.setInitError(message);
-        serverConfigMapper.updateById(config);
-        serverConfigMapper.updateInitError(syntheticId, message);
-        runtime.add(config, null, message);
-        log.warn("MCP Server 创建后初始化失败，id={}", config.getId());
+
+    /**
+     * Idempotency payload comparison: URL equality + token presence (not value).
+     * <p>
+     * Token value is encrypted with a random IV, so byte-level comparison is not feasible
+     * without decryption. A retry with a different token value but same Idempotency-Key will
+     * return the existing row, keeping the original token. This is an accepted limitation:
+     * operators who need to rotate the token must use the dedicated update-bearer-token endpoint.
+     */
+    private boolean sameCreatePayload(McpServerConfig existing, CreateServerRequest request) {
+        if (!existing.getUrl().equals(request.url().trim())) return false;
+        boolean existingToken = existing.getBearerTokenEncrypted() != null && !existing.getBearerTokenEncrypted().isBlank();
+        boolean requestToken = request.bearerToken() != null && !request.bearerToken().isBlank();
+        return existingToken == requestToken;
     }
+
     private McpServerConfig requireServer(String serverId) {
         McpServerConfig config = serverConfigMapper.selectByServerId(serverId);
         if (config == null) {
             throw new ClientException(ClientErrorCode.BAD_REQUEST, "MCP Server 不存在");
         }
         return config;
-    }
-
-    private static String deriveServerId(McpSyncClient client) {
-        McpSchema.InitializeResult result = client.getCurrentInitializationResult();
-        if (result == null || result.serverInfo() == null) {
-            throw new RemoteException(RemoteErrorCode.MCP_SERVER_UNREACHABLE,
-                    "MCP Server 未返回有效身份信息");
-        }
-        try {
-            return McpToolUtils.canonicalServerId(result.serverInfo().name());
-        } catch (ClientException e) {
-            throw new RemoteException(RemoteErrorCode.MCP_SERVER_UNREACHABLE, "MCP Server 未返回有效身份信息", e);
-        }
     }
 
     private static void verifyVersion(Long requested, Long current) {
@@ -282,13 +269,6 @@ public class McpServerAdminService {
         return new ClientException(ClientErrorCode.OPTIMISTIC_LOCK_CONFLICT, "MCP 配置已被修改，请刷新后重试");
     }
 
-    private void releaseFailedClient(String serverId, McpSyncClient client, boolean handedOff) {
-        if (handedOff && serverId != null) {
-            runtime.remove(serverId);
-        } else {
-            runtime.close(client);
-        }
-    }
     private static String trimToNull(String value) {
         if (value == null) {
             return null;

@@ -1,54 +1,27 @@
 package com.smart.rag.mcp.config;
 
-import com.smart.rag.mcp.core.McpServerRegistry;
-import com.smart.rag.mcp.mcpclient.McpServerToolCallbacksAdapter;
-import com.smart.rag.mcp.mcpclient.McpToolFilter;
-import com.smart.rag.mcp.mcpclient.McpToolNamePrefixGenerator;
-import com.smart.rag.mcp.mcpclient.SyncMcpToolCallbackProvider;
-import com.smart.rag.mcp.mcpclient.ToolContextToMcpMetaConverter;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.lang.Nullable;
 
-import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-/** Configures MCP bootstrap properties and registry-backed tool callback discovery. */
+/** Configures MCP bootstrap properties. */
 @Configuration
 @ConditionalOnProperty(prefix = "spring.ai.mcp.client", name = "enabled", havingValue = "true", matchIfMissing = true)
 public class McpClientTransportConfiguration {
 
-    /** Shared transport timeout plus optional YAML connections used for first bootstrap. */
+    /** Shared transport timeout properties. */
     @Bean
     @ConfigurationProperties(prefix = "spring.ai.mcp.client")
     public McpClientTransportProperties mcpClientTransportProperties() {
         return new McpClientTransportProperties();
     }
 
-    /** Registry-backed provider; each server discovery failure is isolated by the provider. */
-    @Bean
-    @ConditionalOnMissingBean(SyncMcpToolCallbackProvider.class)
-    public SyncMcpToolCallbackProvider syncMcpToolCallbackProvider(
-            McpServerRegistry registry,
-            McpServerToolCallbacksAdapter adapter,
-            @Autowired(required = false) McpToolFilter toolFilter,
-            @Autowired(required = false) McpToolNamePrefixGenerator prefixGen) {
-
-        McpToolFilter effectiveFilter = toolFilter != null ? toolFilter : (connInfo, tool) -> true;
-        McpToolNamePrefixGenerator effectivePrefix = prefixGen != null ? prefixGen
-                : (connInfo, tool) -> tool.name();
-
-        return new SyncMcpToolCallbackProvider(effectiveFilter, effectivePrefix, registry, adapter,
-                ToolContextToMcpMetaConverter.defaultConverter());
-    }
-
     /**
-     * Properties POJO（读 {@code spring.ai.mcp.client.*} 配置，仅启动期用）。
+     * Properties POJO（读 {@code spring.ai.mcp.client.*} 配置）。
      */
     public static class McpClientTransportProperties {
 

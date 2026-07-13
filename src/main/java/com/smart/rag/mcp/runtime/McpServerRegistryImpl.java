@@ -6,14 +6,12 @@ import com.smart.rag.mcp.admin.entity.McpServerConfig;
 import com.smart.rag.mcp.core.McpServer;
 import com.smart.rag.mcp.core.McpServerRegistry;
 import com.smart.rag.mcp.core.ServerId;
-import com.smart.rag.mcp.mcpclient.SyncMcpToolCallbackProvider;
 import com.smart.rag.mcp.policy.McpAuthorizer;
 import com.smart.rag.mcp.policy.McpDescriptionSanitizer;
 import io.modelcontextprotocol.client.McpSyncClient;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Component;
 
@@ -38,7 +36,7 @@ public class McpServerRegistryImpl implements McpServerRegistry, McpServerRegist
     private final McpCircuitBreakerRegistry circuitRegistry;
     private final FallbackEligibility fallbackEligibility;
     private final McpDescriptionSanitizer descriptionSanitizer;
-    private final ObjectProvider<SyncMcpToolCallbackProvider> providerProvider;
+    private final com.smart.rag.mcp.admin.mapper.McpToolConfigMapper toolConfigMapper;
 
     private final AtomicReference<ImmutableMap<ServerId, McpServer>> snapshotRef =
             new AtomicReference<>(ImmutableMap.of());
@@ -61,12 +59,12 @@ public class McpServerRegistryImpl implements McpServerRegistry, McpServerRegist
                                   McpCircuitBreakerRegistry circuitRegistry,
                                   FallbackEligibility fallbackEligibility,
                                   McpDescriptionSanitizer descriptionSanitizer,
-                                  ObjectProvider<SyncMcpToolCallbackProvider> providerProvider) {
+                                  com.smart.rag.mcp.admin.mapper.McpToolConfigMapper toolConfigMapper) {
         this.authorizer = authorizer;
         this.circuitRegistry = circuitRegistry;
         this.fallbackEligibility = fallbackEligibility;
         this.descriptionSanitizer = descriptionSanitizer;
-        this.providerProvider = providerProvider;
+        this.toolConfigMapper = toolConfigMapper;
     }
 
     // === McpServerRegistry（只读）===
@@ -86,15 +84,14 @@ public class McpServerRegistryImpl implements McpServerRegistry, McpServerRegist
 
     @Override
     public void addServer(McpServerConfig config,
-                          @Nullable McpSyncClient client,
-                          @Nullable String initError) {
+                          @Nullable McpSyncClient client) {
         String sid = config.getServerId();
         if (sid == null || sid.isBlank()) {
-            sid = "unreachable-" + (config.getId() != null ? config.getId() : System.nanoTime());
+            throw new IllegalArgumentException("serverId must not be blank");
         }
         ServerId id = new ServerId(sid);
         McpServerImpl server = new McpServerImpl(id, client, authorizer, circuitRegistry,
-                fallbackEligibility, providerProvider.getIfAvailable(), initError, descriptionSanitizer);
+                fallbackEligibility, toolConfigMapper, descriptionSanitizer);
 
         ImmutableMap<ServerId, McpServer> oldSnapshot;
         ImmutableMap<ServerId, McpServer> newSnapshot;
@@ -111,13 +108,12 @@ public class McpServerRegistryImpl implements McpServerRegistry, McpServerRegist
         } while (!snapshotRef.compareAndSet(oldSnapshot, newSnapshot));
 
         McpServer previous = oldSnapshot.get(id);
-        if (previous instanceof McpServerImpl oldImpl && oldImpl.hasClient()) {
+        if (previous instanceof ManagedMcpServer oldImpl && oldImpl.hasClient()) {
             asyncCloseQuietly(oldImpl);
         }
         version.incrementAndGet();
-        log.info("MCP server registered: id={} client={} initError={}",
-                id.value(), client != null ? "present" : "null",
-                initError != null ? "present" : "null");
+        log.info("MCP server registered: id={} client={}",
+                id.value(), client != null ? "present" : "null");
     }
 
     @Override
@@ -139,7 +135,7 @@ public class McpServerRegistryImpl implements McpServerRegistry, McpServerRegist
         } while (!snapshotRef.compareAndSet(oldSnapshot, newSnapshot));
 
         McpServer removed = oldSnapshot.get(id);
-        if (removed instanceof McpServerImpl oldImpl && oldImpl.hasClient()) {
+        if (removed instanceof ManagedMcpServer oldImpl && oldImpl.hasClient()) {
             asyncCloseQuietly(oldImpl);
         }
         circuitRegistry.evict(id.value());
@@ -149,7 +145,7 @@ public class McpServerRegistryImpl implements McpServerRegistry, McpServerRegist
 
     @Override
     public void replaceServer(McpServerConfig config, McpSyncClient newClient) {
-        addServer(config, newClient, null);
+        addServer(config, newClient);
     }
 
     @Override
@@ -157,11 +153,87 @@ public class McpServerRegistryImpl implements McpServerRegistry, McpServerRegist
         return version.get();
     }
 
+    @Override
+    public ManagedMcpServer withdraw(ServerId id) {
+        ImmutableMap<ServerId, McpServer> oldSnapshot;
+        ImmutableMap<ServerId, McpServer> newSnapshot;
+        do {
+            oldSnapshot = snapshotRef.get();
+            McpServer current = oldSnapshot.get(id);
+            if (current == null) {
+                return null;
+            }
+            ImmutableMap.Builder<ServerId, McpServer> b = ImmutableMap.builder();
+            oldSnapshot.forEach((k, v) -> {
+                if (!k.equals(id)) {
+                    b.put(k, v);
+                }
+            });
+            newSnapshot = b.build();
+        } while (!snapshotRef.compareAndSet(oldSnapshot, newSnapshot));
+
+        ManagedMcpServer withdrawn = (ManagedMcpServer) oldSnapshot.get(id);
+        withdrawn.markInactive();
+        version.incrementAndGet();
+        log.info("MCP server withdrawn: id={}", id.value());
+        return withdrawn;
+    }
+
+    @Override
+    public void restore(ManagedMcpServer withdrawn) {
+        ServerId id = withdrawn.id();
+        ImmutableMap<ServerId, McpServer> oldSnapshot;
+        ImmutableMap<ServerId, McpServer> newSnapshot;
+        do {
+            oldSnapshot = snapshotRef.get();
+            // Only restore if no replacement was published
+            if (oldSnapshot.containsKey(id) && oldSnapshot.get(id) != withdrawn) {
+                // A new instance was published; do not overwrite it
+                withdrawn.closeQuietly();
+                return;
+            }
+            ImmutableMap.Builder<ServerId, McpServer> b = ImmutableMap.builder();
+            oldSnapshot.forEach((k, v) -> b.put(k, v));
+            b.put(id, withdrawn);
+            newSnapshot = b.build();
+        } while (!snapshotRef.compareAndSet(oldSnapshot, newSnapshot));
+
+        withdrawn.markActive();
+        version.incrementAndGet();
+        log.info("MCP server restored: id={}", id.value());
+    }
+
+    @Override
+    public boolean removeIfSame(ServerId id, ManagedMcpServer instance) {
+        ImmutableMap<ServerId, McpServer> oldSnapshot;
+        ImmutableMap<ServerId, McpServer> newSnapshot;
+        do {
+            oldSnapshot = snapshotRef.get();
+            McpServer current = oldSnapshot.get(id);
+            if (current != instance) {
+                return false;
+            }
+            ImmutableMap.Builder<ServerId, McpServer> b = ImmutableMap.builder();
+            oldSnapshot.forEach((k, v) -> {
+                if (!k.equals(id)) {
+                    b.put(k, v);
+                }
+            });
+            newSnapshot = b.build();
+        } while (!snapshotRef.compareAndSet(oldSnapshot, newSnapshot));
+
+        instance.closeQuietly();
+        circuitRegistry.evict(id.value());
+        version.incrementAndGet();
+        log.info("MCP server removed (if-same): id={}", id.value());
+        return true;
+    }
+
     @PreDestroy
     void destroy() {
         ImmutableMap<ServerId, McpServer> snapshot = snapshotRef.getAndSet(ImmutableMap.of());
         snapshot.values().forEach(s -> {
-            if (s instanceof McpServerImpl impl && impl.hasClient()) {
+            if (s instanceof ManagedMcpServer impl && impl.hasClient()) {
                 impl.closeQuietly();
             }
         });
@@ -176,7 +248,7 @@ public class McpServerRegistryImpl implements McpServerRegistry, McpServerRegist
         }
     }
 
-    private void asyncCloseQuietly(McpServerImpl server) {
+    private void asyncCloseQuietly(ManagedMcpServer server) {
         asyncCloseExecutor.submit(server::closeQuietly);
     }
 }

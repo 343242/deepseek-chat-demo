@@ -3,7 +3,7 @@ package com.smart.rag.mcp.runtime;
 import com.smart.rag.infrastructure.exception.RemoteException;
 import com.smart.rag.infrastructure.exception.ServiceException;
 import com.smart.rag.infrastructure.exception.errorcode.ServiceErrorCode;
-import com.smart.rag.infrastructure.security.HostSafetyValidator;
+import com.smart.rag.mcp.runtime.McpEndpointSafetyGuard;
 import com.smart.rag.mcp.admin.entity.McpServerConfig;
 import com.smart.rag.mcp.config.McpClientTransportConfiguration.McpClientTransportProperties;
 import io.modelcontextprotocol.client.McpSyncClient;
@@ -26,7 +26,7 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 class McpClientFactoryTest {
 
-    @Mock private HostSafetyValidator urlValidator;
+    @Mock private McpEndpointSafetyGuard safetyGuard;
     @Mock private McpBearerTokenCodec tokenCodec;
     @Mock private McpClientBuilder clientBuilder;
     @Mock private McpSyncClient client;
@@ -38,7 +38,7 @@ class McpClientFactoryTest {
     void setUp() {
         properties = new McpClientTransportProperties();
         properties.setRequestTimeout("15s");
-        factory = new McpClientFactory(urlValidator, tokenCodec, properties, clientBuilder);
+        factory = new McpClientFactory(safetyGuard, tokenCodec, properties, clientBuilder);
     }
 
     @Test
@@ -50,7 +50,7 @@ class McpClientFactoryTest {
 
         assertThat(factory.createClient(config)).isSameAs(client);
 
-        verify(urlValidator).validate("https://mcp.example.com");
+        verify(safetyGuard).validate("https://mcp.example.com");
         verify(client).initialize();
         verify(client, never()).close();
     }

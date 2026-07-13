@@ -5,6 +5,10 @@ import com.smart.rag.infrastructure.exception.RemoteException;
 import com.smart.rag.infrastructure.fallback.CircuitBreakerProperties;
 import com.smart.rag.infrastructure.fallback.CircuitBreakerState;
 import com.smart.rag.infrastructure.fallback.FallbackEligibility;
+import com.smart.rag.mcp.admin.entity.McpToolConfig;
+import com.smart.rag.mcp.admin.mapper.McpToolConfigMapper;
+import com.smart.rag.mcp.admin.service.McpSecurityConfigAccessor;
+import com.smart.rag.mcp.admin.service.McpToolConfigAccessor;
 import com.smart.rag.mcp.core.McpArgs;
 import com.smart.rag.mcp.core.McpIntent;
 import com.smart.rag.mcp.core.McpServerHealth;
@@ -14,8 +18,6 @@ import com.smart.rag.mcp.core.ServerId;
 import com.smart.rag.mcp.core.Subject;
 import com.smart.rag.mcp.policy.McpAuthorizer;
 import com.smart.rag.mcp.policy.McpDescriptionSanitizer;
-import com.smart.rag.mcp.admin.service.McpSecurityConfigAccessor;
-import com.smart.rag.mcp.admin.service.McpToolConfigAccessor;
 import io.modelcontextprotocol.client.McpSyncClient;
 import io.modelcontextprotocol.spec.McpSchema;
 import org.junit.jupiter.api.BeforeEach;
@@ -24,15 +26,12 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import com.smart.rag.mcp.mcpclient.SyncMcpToolCallbackProvider;
-import org.springframework.ai.tool.ToolCallback;
-import org.springframework.ai.tool.definition.ToolDefinition;
 
+import java.net.URI;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
-import java.net.URI;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -40,7 +39,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
-@DisplayName("McpServerImpl: A1 前缀过滤/剥离 + authz + circuit guard + fail-soft + isError（AC2/AC5/AC9）")
+@DisplayName("McpServerImpl: direct DB reads + authz + circuit guard + fail-soft")
 class McpServerImplTest {
 
     private static final ServerId KNOWLEDGE = new ServerId("knowledge");
@@ -48,18 +47,13 @@ class McpServerImplTest {
     private static final String SCHEMA = "{\"type\":\"object\"}";
 
     @Mock private McpSyncClient client;
-    @Mock private SyncMcpToolCallbackProvider provider;
-    @Mock private ToolCallback cbSearch;
-    @Mock private ToolCallback cbOps;
-    @Mock private ToolDefinition defSearch;
-    @Mock private ToolDefinition defOps;
+    @Mock private McpToolConfigMapper toolConfigMapper;
 
     private McpServerImpl server;
     private McpCircuitBreakerRegistry registry;
     private McpToolConfigAccessor toolConfigAccessor;
     private McpDescriptionSanitizer descriptionSanitizer;
 
-    /** policy 允许 knowledge_search(intent=RETRIEVAL)，failureThreshold=1 便于熔断测试。 */
     @BeforeEach
     void setUp() {
         toolConfigAccessor = mock(McpToolConfigAccessor.class);
@@ -73,46 +67,39 @@ class McpServerImplTest {
         registry = new McpCircuitBreakerRegistry(new CircuitBreakerProperties(1, 30000L, 1),
                 java.time.Clock.systemUTC());
         server = new McpServerImpl(KNOWLEDGE, client, authorizer, registry,
-                new FallbackEligibility(), provider, null, descriptionSanitizer);
+                new FallbackEligibility(), toolConfigMapper, descriptionSanitizer);
     }
 
-    private void stubDiscovery() {
-        // lenient：不同测试用不同子集（被前缀/authz 过滤的 callback 的部分方法可能不被读取）
-        lenient().when(provider.getToolCallbacks()).thenReturn(new ToolCallback[]{cbSearch, cbOps});
-        lenient().when(cbSearch.getToolDefinition()).thenReturn(defSearch);
-        lenient().when(defSearch.name()).thenReturn("knowledge_search");
-        lenient().when(defSearch.description()).thenReturn("search kb");
-        lenient().when(defSearch.inputSchema()).thenReturn(SCHEMA);
-        lenient().when(cbOps.getToolDefinition()).thenReturn(defOps);
-        lenient().when(defOps.name()).thenReturn("ops_ticket");
-        lenient().when(defOps.description()).thenReturn("ops");
-        lenient().when(defOps.inputSchema()).thenReturn(SCHEMA);
+    private void stubDbTools() {
+        McpToolConfig search = enabledTool("knowledge_search");
+        search.setInputSchema(SCHEMA);
+        lenient().when(toolConfigMapper.selectVisibleByServerId("knowledge"))
+                .thenReturn(List.of(search));
     }
 
     @Test
-    @DisplayName("visibleTo：按前缀过滤 + authz + intent（AC5）")
-    void visibleTo_filtersByPrefixAuthzIntent() {
-        stubDiscovery();
-        // 仅 knowledge_search（前缀 knowledge_ + allowlist + intent RETRIEVAL）；ops_ticket 前缀不符
+    @DisplayName("visibleTo: direct DB read + authz + intent")
+    void visibleTo_filtersByAuthzIntent() {
+        stubDbTools();
         List<McpTool> visible = server.tools().visibleTo(AUTHED, McpIntent.RETRIEVAL);
         assertEquals(1, visible.size());
         assertEquals("knowledge_search", visible.get(0).name());
         assertEquals(SCHEMA, visible.get(0).inputSchema());
 
-        // intent 不匹配 → 空
+        // No GENERAL_TOOL tools in DB mock → empty
         assertTrue(server.tools().visibleTo(AUTHED, McpIntent.GENERAL_TOOL).isEmpty());
     }
 
     @Test
-    @DisplayName("visibleTo：未认证主体 → 空")
+    @DisplayName("visibleTo: unauthenticated → empty")
     void visibleTo_unauthenticated_empty() {
-        stubDiscovery();
+        stubDbTools();
         assertTrue(server.tools().visibleTo(new Subject(0L, null), McpIntent.RETRIEVAL).isEmpty());
     }
 
     @Test
-    @DisplayName("call：剥前缀 → 委托 client.callTool(rawName)，isError 透传")
-    void call_stripsPrefix_andDelegates() throws Exception {
+    @DisplayName("call: strip prefix → delegate to client.callTool(rawName)")
+    void call_stripsPrefix_andDelegates() {
         when(client.callTool(any())).thenReturn(
                 McpSchema.CallToolResult.builder().content(List.of(new McpSchema.TextContent("hello"))).isError(false).build());
 
@@ -121,14 +108,14 @@ class McpServerImplTest {
         org.mockito.ArgumentCaptor<McpSchema.CallToolRequest> cap =
                 org.mockito.ArgumentCaptor.forClass(McpSchema.CallToolRequest.class);
         verify(client).callTool(cap.capture());
-        assertEquals("search", cap.getValue().name(), "剥前缀后传原始工具名给 server");
+        assertEquals("search", cap.getValue().name());
         assertEquals("hello", result.text());
         assertFalse(result.isError());
     }
 
     @Test
     void callUsesPersistedRawNameWhenCanonicalNameDiffers() {
-        com.smart.rag.mcp.admin.entity.McpToolConfig config = enabledTool("knowledge_search_docs");
+        McpToolConfig config = enabledTool("knowledge_search_docs");
         config.setToolName("search-docs");
         when(toolConfigAccessor.get("knowledge_search_docs")).thenReturn(config);
         when(client.callTool(any())).thenReturn(McpSchema.CallToolResult.builder()
@@ -143,7 +130,7 @@ class McpServerImplTest {
     }
 
     @Test
-    @DisplayName("call：CallToolResult.isError=true → McpToolResult.isError=true（C5 不抹平）")
+    @DisplayName("call: isError=true → McpToolResult.isError=true")
     void call_isErrorNotFlattened() {
         when(client.callTool(any())).thenReturn(
                 McpSchema.CallToolResult.builder().content(List.of(new McpSchema.TextContent("boom"))).isError(true).build());
@@ -153,7 +140,7 @@ class McpServerImplTest {
     }
 
     @Test
-    @DisplayName("call：未授权工具 → 抛 ClientException（authz 硬兜底，AC3）")
+    @DisplayName("call: unauthorized tool → ClientException")
     void call_unauthorized_throws() {
         assertThrows(ClientException.class,
                 () -> server.tools().call("knowledge_secret", McpArgs.empty(), AUTHED));
@@ -161,18 +148,15 @@ class McpServerImplTest {
     }
 
     @Test
-    @DisplayName("call：前缀不符（跨 server 误调）→ 抛 ClientException（R-11）")
+    @DisplayName("call: prefix mismatch → ClientException")
     void call_prefixMismatch_throws() {
-        // policy 允许 knowledge_search，但传入前缀不符的名字（即便 allowlist 想绕过也拒）
-        McpServerImpl s = new McpServerImpl(KNOWLEDGE, client, new McpAuthorizer(toolConfigAccessor), registry,
-                new FallbackEligibility(), provider, null, descriptionSanitizer);
         assertThrows(ClientException.class,
-                () -> s.tools().call("ops_search", McpArgs.empty(), AUTHED));
+                () -> server.tools().call("ops_search", McpArgs.empty(), AUTHED));
         verifyNoInteractions(client);
     }
 
     @Test
-    @DisplayName("call：服务器异常 → fail-soft 降级为 McpToolResult.error，不抛（AC9）")
+    @DisplayName("call: server exception → fail-soft McpToolResult.error")
     void call_serverFailure_softened() {
         when(client.callTool(any())).thenThrow(new RuntimeException("connection reset"));
         McpToolResult result = server.tools().call("knowledge_search", McpArgs.empty(), AUTHED);
@@ -182,12 +166,11 @@ class McpServerImplTest {
     }
 
     @Test
-    @DisplayName("call：熔断器 OPEN → 快速失败返回 error，不打远端（§11.2）")
+    @DisplayName("call: circuit OPEN → fast fail error")
     void call_circuitOpen_fastFails() {
-        // failureThreshold=1：一次失败即 OPEN
         when(client.callTool(any())).thenThrow(new RuntimeException("down"));
-        server.tools().call("knowledge_search", McpArgs.empty(), AUTHED); // 触发 OPEN
-        reset(client); // 第二次不应打远端
+        server.tools().call("knowledge_search", McpArgs.empty(), AUTHED);
+        reset(client);
         McpToolResult result = server.tools().call("knowledge_search", McpArgs.empty(), AUTHED);
         assertTrue(result.isError());
         assertTrue(result.text().contains("circuit open"));
@@ -195,57 +178,45 @@ class McpServerImplTest {
     }
 
     @Test
-    @DisplayName("health：CLOSED=alive / initError=down（熔断器只读投影，D-6/D-7）")
+    @DisplayName("health: CLOSED=alive")
     void health_projection() {
         assertEquals(McpServerHealth.Status.ALIVE, server.health().status());
-
-        McpServerImpl down = new McpServerImpl(new ServerId("dead"), client,
-                new McpAuthorizer(toolConfigAccessor), registry, new FallbackEligibility(), provider,
-                "connect refused", descriptionSanitizer);
-        assertEquals(McpServerHealth.Status.DOWN, down.health().status());
     }
 
     @Test
-    @DisplayName("call：HALF_OPEN 下非 eligible 异常释放探测槽，不卡死熔断器（H1）")
+    @DisplayName("call: HALF_OPEN non-eligible exception releases probe")
     void call_halfOpen_ineligibleException_releasesProbe() {
-        // failureThreshold=1 / cooldown=1ms / halfOpenMaxCalls=1 + 可控时钟
         MutableClock clock = new MutableClock(0);
         McpCircuitBreakerRegistry reg = new McpCircuitBreakerRegistry(
                 new CircuitBreakerProperties(1, 1L, 1), clock);
         McpServerImpl s = new McpServerImpl(KNOWLEDGE, client, new McpAuthorizer(toolConfigAccessor), reg,
-                new FallbackEligibility(), provider, null, descriptionSanitizer);
+                new FallbackEligibility(), toolConfigMapper, descriptionSanitizer);
 
-        // ① eligible 失败 → recordFailure → OPEN（threshold=1）
-        // ② 过 cooldown → HALF_OPEN；探测抛非 eligible（IAE）→ 必须 releaseProbe，不计熔断
-        // ③ 槽释放后下一次探测可再次放行打到 client（未修复则会 [circuit open] 不打 client）
         when(client.callTool(any()))
                 .thenThrow(new RuntimeException("net down"))
                 .thenThrow(new IllegalArgumentException("bad arg"))
                 .thenReturn(McpSchema.CallToolResult.builder()
                         .content(List.of(new McpSchema.TextContent("ok"))).isError(false).build());
 
-        s.tools().call("knowledge_search", McpArgs.empty(), AUTHED); // ① → OPEN
+        s.tools().call("knowledge_search", McpArgs.empty(), AUTHED);
         assertEquals(CircuitBreakerState.OPEN, reg.stateOf(KNOWLEDGE.value()));
-        clock.advance(5); // > cooldown(1ms) → HALF_OPEN
+        clock.advance(5);
         assertEquals(CircuitBreakerState.HALF_OPEN, reg.stateOf(KNOWLEDGE.value()));
 
-        McpToolResult probe = s.tools().call("knowledge_search", McpArgs.empty(), AUTHED); // ② IAE
+        McpToolResult probe = s.tools().call("knowledge_search", McpArgs.empty(), AUTHED);
         assertTrue(probe.isError());
-        assertEquals(CircuitBreakerState.HALF_OPEN, reg.stateOf(KNOWLEDGE.value()),
-                "非 eligible 异常不应计熔断（仍 HALF_OPEN，未回 OPEN）");
+        assertEquals(CircuitBreakerState.HALF_OPEN, reg.stateOf(KNOWLEDGE.value()));
 
-        McpToolResult ok = s.tools().call("knowledge_search", McpArgs.empty(), AUTHED); // ③ 槽已释放 → 放行
+        McpToolResult ok = s.tools().call("knowledge_search", McpArgs.empty(), AUTHED);
         assertFalse(ok.isError());
         assertEquals("ok", ok.text());
-        verify(client, times(3)).callTool(any()); // 3 次都打到 client（HALF_OPEN 未卡死）
+        verify(client, times(3)).callTool(any());
     }
 
     @Test
     void listToolsFromRemotePropagatesClassifiedFailure() {
         when(client.listTools()).thenThrow(new RuntimeException("connection refused"));
-
-        assertThrows(com.smart.rag.infrastructure.exception.RemoteException.class,
-                () -> server.listToolsFromRemote());
+        assertThrows(RemoteException.class, () -> server.listToolsFromRemote());
     }
 
     @Test
@@ -256,18 +227,17 @@ class McpServerImplTest {
     }
 
     @Test
-    void placeholderResourcesAndPromptsFailAsRemoteUnavailable() {
-        McpServerImpl placeholder = new McpServerImpl(new ServerId("unreachable-1"), null,
-                new McpAuthorizer(toolConfigAccessor), registry, new FallbackEligibility(), provider,
-                "MCP Server 连接或协议交互失败", descriptionSanitizer);
+    void nullClientResourcesAndPromptsFailAsRemoteUnavailable() {
+        McpServerImpl noClient = new McpServerImpl(new ServerId("dead"), null,
+                new McpAuthorizer(toolConfigAccessor), registry, new FallbackEligibility(), toolConfigMapper,
+                descriptionSanitizer);
 
         assertThrows(RemoteException.class,
-                () -> placeholder.resources().read(URI.create("https://remote/resource"), AUTHED));
+                () -> noClient.resources().read(URI.create("https://remote/resource"), AUTHED));
         assertThrows(RemoteException.class,
-                () -> placeholder.prompts().get("summary", McpArgs.empty(), AUTHED));
+                () -> noClient.prompts().get("summary", McpArgs.empty(), AUTHED));
     }
 
-    /** 可控时钟（镜像 McpCircuitBreakerRegistryTest），推进 cooldown 进入 HALF_OPEN。 */
     private static final class MutableClock extends Clock {
         long millis;
         MutableClock(long start) { this.millis = start; }
@@ -278,12 +248,11 @@ class McpServerImplTest {
         @Override public Clock withZone(ZoneId zone) { return this; }
     }
 
-    private static com.smart.rag.mcp.admin.entity.McpToolConfig enabledTool(String name) {
+    private static McpToolConfig enabledTool(String name) {
         if (name.endsWith("secret")) {
             return null;
         }
-        com.smart.rag.mcp.admin.entity.McpToolConfig config =
-                new com.smart.rag.mcp.admin.entity.McpToolConfig();
+        McpToolConfig config = new McpToolConfig();
         config.setPrefixedToolName(name);
         config.setToolName(name.substring(name.indexOf('_') + 1));
         config.setEnabled(true);

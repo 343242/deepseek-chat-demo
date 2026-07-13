@@ -1,44 +1,52 @@
 package com.smart.rag.mcp.admin.dto;
 
 import com.smart.rag.mcp.admin.entity.McpServerConfig;
+import org.springframework.lang.Nullable;
 
 /**
- * Server 配置响应（含 health 状态 + version）。
+ * Server 配置响应（PRD §R3）。
  * <p>
- * {@code health} 从 registry.find() 取 initError 派生；{@code initError} 非空 = DOWN。
+ * Status is a read-time projection via {@code McpConnectionStateProjector}.
+ * Never exposes: bearer token, ciphertext, desired/observed hash, stack trace, raw exception.
  */
 public record ServerConfigResponse(
         Long id,
         String serverId,
-        String url,
-        String name,
+        String displayName,
         String description,
+        String url,
+        String remoteServerName,
         Boolean enabled,
         Boolean autoConnect,
-        boolean hasBearerToken,
-        String initError,
-        String lastConnectedAt,
         Long version,
-        String createdAt,
-        String updatedAt,
-        String health
+        @Nullable McpConnectionStatus status,
+        @Nullable String errorCode,
+        @Nullable String errorMessage,
+        @Nullable String lastAttemptAt,
+        @Nullable String nextReconcileAt,
+        @Nullable String lastConnectedAt,
+        @Nullable String createdAt,
+        @Nullable String updatedAt
 ) {
-    public static ServerConfigResponse from(McpServerConfig c, String health) {
+    public static ServerConfigResponse from(McpServerConfig c, @Nullable McpConnectionStatus status) {
         return new ServerConfigResponse(
                 c.getId(),
                 c.getServerId(),
-                c.getUrl(),
                 c.getName(),
                 c.getDescription(),
+                c.getUrl(),
+                c.getRemoteServerName(),
                 c.getEnabled(),
                 c.getAutoConnect(),
-                c.getBearerTokenEncrypted() != null && !c.getBearerTokenEncrypted().isBlank(),
-                c.getInitError() == null ? null : "MCP Server 连接失败，请检查配置",
-                c.getLastConnectedAt() != null ? c.getLastConnectedAt().toString() : null,
                 c.getVersion(),
+                status,
+                c.getErrorCode(),
+                c.getErrorMessage(),
+                c.getLastAttemptAt() != null ? c.getLastAttemptAt().toString() : null,
+                c.getNextReconcileAt() != null ? c.getNextReconcileAt().toString() : null,
+                c.getLastConnectedAt() != null ? c.getLastConnectedAt().toString() : null,
                 c.getCreatedAt() != null ? c.getCreatedAt().toString() : null,
-                c.getUpdatedAt() != null ? c.getUpdatedAt().toString() : null,
-                health
+                c.getUpdatedAt() != null ? c.getUpdatedAt().toString() : null
         );
     }
 }

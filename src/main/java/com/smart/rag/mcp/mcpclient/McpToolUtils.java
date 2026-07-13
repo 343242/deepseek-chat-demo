@@ -64,14 +64,6 @@ public final class McpToolUtils {
         return prefixedToolName(prefix, null, toolName);
     }
 
-    public static String prefixedToolName(McpConnectionInfo connectionInfo, McpSchema.Tool tool) {
-        if (connectionInfo == null || connectionInfo.initializeResult() == null
-                || connectionInfo.initializeResult().serverInfo() == null || tool == null) {
-            throw new ServiceException(ServiceErrorCode.INTERNAL_ERROR,
-                    "MCP 工具命名缺少 Server 初始化信息");
-        }
-        return prefixedToolName(connectionInfo.initializeResult().serverInfo().name(), tool.name());
-    }
 
     /**
      * 清洗工具名为合法集 {@code [a-zA-Z0-9_-]}（含 CJK 块），替换 {@code -} 为 {@code _}。
@@ -89,6 +81,14 @@ public final class McpToolUtils {
 
     public static String canonicalServerId(String serverName) {
         return bound(requireSegment(serverName, "MCP Server 名称"), MAX_SERVER_ID_LENGTH);
+    }
+
+    /**
+     * Stable local identity from DB row ID: {@code mcp_<rowId>}.
+     * Remote Server name is informational only and never participates in local identity.
+     */
+    public static String serverId(long rowId) {
+        return "mcp_" + rowId;
     }
 
     private static String requireSegment(String value, String label) {

@@ -15,9 +15,11 @@ import com.smart.rag.mcp.admin.service.McpServerRuntime;
 import com.smart.rag.mcp.admin.service.McpToolAdminService;
 import com.smart.rag.mcp.admin.service.McpToolConfigAccessor;
 import com.smart.rag.mcp.core.McpServerRegistry;
-import com.smart.rag.mcp.mcpclient.DefaultMcpServerToolCallbacksAdapter;
-import com.smart.rag.mcp.mcpclient.SyncMcpToolCallbackProvider;
 import com.smart.rag.mcp.runtime.McpBearerTokenCodec;
+import com.smart.rag.mcp.runtime.McpConnectionReconciler;
+import com.smart.rag.mcp.runtime.McpConnectionRecoveryScheduler;
+import com.smart.rag.mcp.runtime.McpConnectionStateProjector;
+import com.smart.rag.mcp.runtime.McpDesiredStateHasher;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -29,7 +31,7 @@ class McpBeanGraphTest {
 
     private final ApplicationContextRunner contextRunner = new ApplicationContextRunner()
             .withPropertyValues("spring.ai.mcp.client.enabled=true")
-            .withUserConfiguration(McpClientConfiguration.class, McpClientTransportConfiguration.class)
+            .withUserConfiguration(McpClientTransportConfiguration.class)
             .withBean(ObjectMapper.class, ObjectMapper::new)
             .withBean(McpServerConfigMapper.class, () -> mock(McpServerConfigMapper.class))
             .withBean(McpToolConfigMapper.class, () -> mock(McpToolConfigMapper.class))
@@ -37,13 +39,16 @@ class McpBeanGraphTest {
             .withBean(TransactionTemplate.class, () -> mock(TransactionTemplate.class))
             .withBean(HostSafetyValidator.class, () -> mock(HostSafetyValidator.class))
             .withBean(McpBearerTokenCodec.class, () -> mock(McpBearerTokenCodec.class))
+            .withBean(com.smart.rag.mcp.runtime.McpBearerTokenValidator.class)
+            .withBean(McpDesiredStateHasher.class, () -> mock(McpDesiredStateHasher.class))
+            .withBean(McpConnectionStateProjector.class, () -> mock(McpConnectionStateProjector.class))
+            .withBean(McpConnectionReconciler.class, () -> mock(McpConnectionReconciler.class))
+            .withBean(McpConnectionRecoveryScheduler.class, () -> mock(McpConnectionRecoveryScheduler.class))
             .withBean(McpServerRuntime.class, () -> mock(McpServerRuntime.class))
             .withBean(McpServerRegistry.class, () -> mock(McpServerRegistry.class))
             .withBean(McpToolConfigAccessor.class)
             .withBean(McpSecurityConfigValidator.class)
             .withBean(McpSecurityConfigAccessor.class)
-            .withBean(DatabaseToolFilter.class)
-            .withBean(DefaultMcpServerToolCallbacksAdapter.class)
             .withBean(McpToolAdminService.class)
             .withBean(McpServerAdminService.class)
             .withBean(McpSecurityAdminService.class)
@@ -51,12 +56,11 @@ class McpBeanGraphTest {
             .withBean(McpBootstrapRunner.class);
 
     @Test
-    void adminProviderFilterGraphStartsWithoutConstructorCycle() {
+    void adminServiceGraphStartsWithoutConstructorCycle() {
         contextRunner.run(context -> {
             assertThat(context).hasNotFailed();
             assertThat(context).hasSingleBean(McpAdminService.class);
-            assertThat(context).hasSingleBean(SyncMcpToolCallbackProvider.class);
-            assertThat(context).hasSingleBean(DatabaseToolFilter.class);
+            assertThat(context).hasSingleBean(McpServerAdminService.class);
         });
     }
 }

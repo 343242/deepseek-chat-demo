@@ -2,6 +2,7 @@ package com.smart.rag.infrastructure.security;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Component;
 
 import javax.crypto.Cipher;
@@ -17,20 +18,9 @@ import java.util.Base64;
 /**
  * 通用 AES/GCM/NoPadding 加密器（256-bit key + 12B 随机 IV + 128-bit auth tag）。
  * <p>
- * <b>用途</b>：任意敏感字符串（API key、Bearer token、其他 secret）的对称加密存储。
- * 当前消费方：{@code ApiKeyCipher}（LLM BYOK，带 BYOK enabled 门控）、
- * {@code McpClientFactory}（MCP Bearer token，无门控）。
- * <p>
- * <b>Key</b>：256-bit，来自 {@link SecurityCryptoProperties#getMasterKey()}（base64 32B，env 注入）。
- * <b>IV</b>：每行独立 12B 随机（{@link SecureRandom}），不重复即满足 GCM 安全。
- * <b>存储</b>：密文（含 16B auth tag）与 IV 分存两列，由调用方决定列名。
- * <p>
- * <b>master-key 缺失时的行为</b>：构造时 <b>不 fail-fast</b>，
- * {@code keySpec=null} + {@link #isAvailable()} 返回 false；
- * encrypt/decrypt 抛 {@link IllegalStateException}。
- * 是否在启动期 fail-fast 由消费方决定（如 {@code ApiKeyCipher} 在 BYOK enabled=true 时 fail-fast）。
- * <p>
- * master-key 旋转不纳入本期（密文无版本标记）。
+ * Supports exactly one current key and one optional previous key (design §R8).
+ * New writes use current; reads accept current/previous.
+ * CipherText includes keyId so MCP v2 envelopes record which key was used.
  */
 @Component
 public class SecretCipher {
@@ -43,29 +33,40 @@ public class SecretCipher {
     private static final String ALGORITHM = "AES";
     private static final int KEY_BYTES = 32;
 
-    private final SecretKey keySpec;
+    private final SecretKey currentKey;
+    private final String currentKeyId;
+    private final SecretKey previousKey;
+    private final String previousKeyId;
     private final SecureRandom random = new SecureRandom();
 
-    public SecretCipher(SecurityCryptoProperties cryptoProperties) {
-        this.keySpec = resolveKey(cryptoProperties);
+    public SecretCipher(SecurityCryptoProperties props) {
+        this.currentKey = resolveKey(props.getMasterKey(), "master-key");
+        this.currentKeyId = props.getKeyId();
+        this.previousKey = resolveKey(props.getPreviousMasterKey(), "previous-master-key");
+        this.previousKeyId = props.getPreviousKeyId();
+
+        if (previousKey != null && (previousKeyId == null || previousKeyId.isBlank())) {
+            throw new IllegalStateException("previous-master-key 配置了但 previous-key-id 缺失");
+        }
+        if (currentKeyId != null && previousKeyId != null && currentKeyId.equals(previousKeyId)) {
+            throw new IllegalStateException("key-id 与 previous-key-id 不能相同");
+        }
     }
 
-    private static SecretKey resolveKey(SecurityCryptoProperties props) {
-        String base64 = props.getMasterKey();
+    private static SecretKey resolveKey(@Nullable String base64, String label) {
         if (base64 == null || base64.isBlank()) {
-            log.warn("app.security.crypto.master-key 缺失 → SecretCipher 不可用；消费方决定是否 fail-fast");
             return null;
         }
         byte[] keyBytes;
         try {
             keyBytes = Base64.getDecoder().decode(base64);
         } catch (IllegalArgumentException e) {
-            throw new IllegalStateException("app.security.crypto.master-key 非 base64 编码", e);
+            throw new IllegalStateException("app.security.crypto." + label + " 非 base64 编码", e);
         }
         try {
             if (keyBytes.length != KEY_BYTES) {
                 throw new IllegalStateException(
-                    "app.security.crypto.master-key 解码后必须 " + KEY_BYTES + "B（256-bit），实际 " + keyBytes.length + "B");
+                    "app.security.crypto." + label + " 解码后必须 " + KEY_BYTES + "B（256-bit），实际 " + keyBytes.length + "B");
             }
             return new SecretKeySpec(keyBytes, ALGORITHM);
         } finally {
@@ -79,19 +80,45 @@ public class SecretCipher {
         random.nextBytes(iv);
         try {
             Cipher cipher = Cipher.getInstance(TRANSFORMATION);
-            cipher.init(Cipher.ENCRYPT_MODE, keySpec, new GCMParameterSpec(GCM_TAG_BITS, iv));
+            cipher.init(Cipher.ENCRYPT_MODE, currentKey, new GCMParameterSpec(GCM_TAG_BITS, iv));
             byte[] cipherText = cipher.doFinal(plain.getBytes(StandardCharsets.UTF_8));
-            return new CipherText(cipherText, iv);
+            return new CipherText(cipherText, iv, currentKeyId);
         } catch (GeneralSecurityException e) {
             throw new IllegalStateException("AES/GCM encrypt 失败", e);
         }
     }
 
     public String decrypt(byte[] cipherText, byte[] iv) {
+        return decrypt(cipherText, iv, null);
+    }
+
+    /**
+     * Decrypt with an optional key selector. If keyId is null or matches current,
+     * try current key first. If keyId matches previousKeyId, try previous key.
+     * If keyId is unknown, try current then previous (bounded to two attempts).
+     */
+    public String decrypt(byte[] cipherText, byte[] iv, @Nullable String keyId) {
         requireAvailable();
+        // If keyId explicitly matches previous, try previous only
+        if (previousKey != null && keyId != null && keyId.equals(previousKeyId)) {
+            return doDecrypt(previousKey, cipherText, iv);
+        }
+        // Try current first
+        try {
+            return doDecrypt(currentKey, cipherText, iv);
+        } catch (IllegalStateException e) {
+            if (previousKey != null && (keyId == null || keyId.equals(currentKeyId))) {
+                // Fall back to previous key
+                return doDecrypt(previousKey, cipherText, iv);
+            }
+            throw e;
+        }
+    }
+
+    private static String doDecrypt(SecretKey key, byte[] cipherText, byte[] iv) {
         try {
             Cipher cipher = Cipher.getInstance(TRANSFORMATION);
-            cipher.init(Cipher.DECRYPT_MODE, keySpec, new GCMParameterSpec(GCM_TAG_BITS, iv));
+            cipher.init(Cipher.DECRYPT_MODE, key, new GCMParameterSpec(GCM_TAG_BITS, iv));
             byte[] plain = cipher.doFinal(cipherText);
             return new String(plain, StandardCharsets.UTF_8);
         } catch (GeneralSecurityException e) {
@@ -100,15 +127,23 @@ public class SecretCipher {
     }
 
     public boolean isAvailable() {
-        return keySpec != null;
+        return currentKey != null;
+    }
+
+    public String currentKeyId() {
+        return currentKeyId;
     }
 
     private void requireAvailable() {
-        if (keySpec == null) {
+        if (currentKey == null) {
             throw new IllegalStateException("SecretCipher 不可用（master-key 缺失）");
         }
     }
 
-    public record CipherText(byte[] cipher, byte[] iv) {
+    public record CipherText(byte[] cipher, byte[] iv, String keyId) {
+        /** Legacy constructor for backward compatibility (keyId defaults to current) */
+        public CipherText(byte[] cipher, byte[] iv) {
+            this(cipher, iv, null);
+        }
     }
 }

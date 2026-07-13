@@ -12,13 +12,19 @@ public interface McpToolConfigMapper extends BaseMapper<McpToolConfig> {
 
     List<McpToolConfig> selectByServerId(@Param("serverId") String serverId);
 
+    /** Visible tools for direct callback discovery/authorization */
+    List<McpToolConfig> selectVisibleByServerId(@Param("serverId") String serverId);
+
     int updateEnabledByServerId(@Param("serverId") String serverId, @Param("enabled") boolean enabled);
 
     int batchUpdateEnabled(@Param("ids") List<Long> ids, @Param("enabled") boolean enabled);
 
+    /** Mark tools not in the seen set as absent (complete-set reconciliation) */
+    int markAbsentExcept(@Param("serverId") String serverId, @Param("seenNames") List<String> seenNames);
+
     int deleteByServerId(@Param("serverId") String serverId);
 
-    /** DatabaseToolFilter 主查：按前缀全名查启用状态（三态：null=未入库） */
+    /** Direct indexed authorization lookup */
     McpToolConfig selectByPrefixedName(@Param("prefixedToolName") String prefixedToolName);
 
     int batchUpsert(@Param("tools") List<McpToolConfig> tools);

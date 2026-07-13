@@ -3,11 +3,11 @@ package com.smart.rag.mcp.runtime;
 import com.smart.rag.infrastructure.fallback.CircuitBreakerProperties;
 import com.smart.rag.infrastructure.fallback.FallbackEligibility;
 import com.smart.rag.mcp.admin.entity.McpServerConfig;
+import com.smart.rag.mcp.admin.mapper.McpToolConfigMapper;
 import com.smart.rag.mcp.admin.service.McpSecurityConfigAccessor;
 import com.smart.rag.mcp.admin.service.McpToolConfigAccessor;
 import com.smart.rag.mcp.core.McpServerHealth;
 import com.smart.rag.mcp.core.ServerId;
-import com.smart.rag.mcp.mcpclient.SyncMcpToolCallbackProvider;
 import com.smart.rag.mcp.policy.McpAuthorizer;
 import com.smart.rag.mcp.policy.McpDescriptionSanitizer;
 import io.modelcontextprotocol.client.McpSyncClient;
@@ -16,7 +16,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.beans.factory.ObjectProvider;
 
 import java.time.Clock;
 
@@ -25,10 +24,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 
 @ExtendWith(MockitoExtension.class)
-@DisplayName("McpServerRegistryImpl v4: 快照模式 + addServer/removeServer/replaceServer + 占位 + 版本号")
+@DisplayName("McpServerRegistryImpl: snapshot mode + addServer/removeServer/replaceServer")
 class McpServerRegistryImplTest {
 
-    @Mock private ObjectProvider<SyncMcpToolCallbackProvider> providerProvider;
+    @Mock private McpToolConfigMapper toolConfigMapper;
 
     private final McpAuthorizer authorizer = new McpAuthorizer(mock(McpToolConfigAccessor.class));
     private final McpCircuitBreakerRegistry registry =
@@ -38,7 +37,7 @@ class McpServerRegistryImplTest {
             new McpDescriptionSanitizer(mock(McpToolConfigAccessor.class), mock(McpSecurityConfigAccessor.class));
 
     private McpServerRegistryImpl newRegistry() {
-        return new McpServerRegistryImpl(authorizer, registry, eligibility, descriptionSanitizer, providerProvider);
+        return new McpServerRegistryImpl(authorizer, registry, eligibility, descriptionSanitizer, toolConfigMapper);
     }
 
     private McpServerConfig config(Long id, String serverId) {
@@ -65,7 +64,7 @@ class McpServerRegistryImplTest {
         McpSyncClient client = mock(McpSyncClient.class);
         McpServerConfig cfg = config(1L, "weather");
 
-        r.addServer(cfg, client, null);
+        r.addServer(cfg, client);
 
         assertThat(r.list()).hasSize(1);
         assertThat(r.find(new ServerId("weather"))).isPresent();
@@ -73,37 +72,21 @@ class McpServerRegistryImplTest {
     }
 
     @Test
-    @DisplayName("addServer(client=null, initError)：占位 server，health=down，version 仍递增")
-    void addServer_placeholder_initError() {
-        McpServerRegistryImpl r = newRegistry();
-        McpServerConfig cfg = config(2L, "tavily");
-
-        r.addServer(cfg, null, "connection refused");
-
-        assertThat(r.list()).hasSize(1);
-        assertThat(r.find(new ServerId("tavily")).orElseThrow().health().status())
-                .isEqualTo(McpServerHealth.Status.DOWN);
-        assertThat(r.currentVersion()).isEqualTo(1L);
-    }
-
-    @Test
-    @DisplayName("addServer(serverId=null)：自动派生合成 id unreachable-<rowId>")
-    void addServer_nullServerId_usesSyntheticId() {
+    @DisplayName("addServer(serverId=null)：抛 IllegalArgumentException")
+    void addServer_nullServerId_throws() {
         McpServerRegistryImpl r = newRegistry();
         McpServerConfig cfg = config(42L, null);
 
-        r.addServer(cfg, null, "init failed");
-
-        assertThat(r.find(new ServerId("unreachable-42")).orElseThrow().health().status())
-                .isEqualTo(McpServerHealth.Status.DOWN);
+        assertThatThrownBy(() -> r.addServer(cfg, null))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test
-    @DisplayName("removeServer：list 不再含、version 递增、circuitRegistry.evict 被调（隐式）")
+    @DisplayName("removeServer：list 不再含、version 递增")
     void removeServer_removesFromSnapshot() {
         McpServerRegistryImpl r = newRegistry();
         McpSyncClient client = mock(McpSyncClient.class);
-        r.addServer(config(1L, "weather"), client, null);
+        r.addServer(config(1L, "weather"), client);
         assertThat(r.currentVersion()).isEqualTo(1L);
 
         r.removeServer(new ServerId("weather"));
@@ -114,14 +97,14 @@ class McpServerRegistryImplTest {
     }
 
     @Test
-    @DisplayName("replaceServer：同 serverId 替换，version 递增，旧 client 关闭由调用方经 destroyClient 管理")
+    @DisplayName("replaceServer：同 serverId 替换，version 递增")
     void replaceServer_swapsAtomically() {
         McpServerRegistryImpl r = newRegistry();
         McpSyncClient oldClient = mock(McpSyncClient.class);
         McpSyncClient newClient = mock(McpSyncClient.class);
         McpServerConfig cfg = config(1L, "weather");
 
-        r.addServer(cfg, oldClient, null);
+        r.addServer(cfg, oldClient);
         long v0 = r.currentVersion();
 
         r.replaceServer(cfg, newClient);

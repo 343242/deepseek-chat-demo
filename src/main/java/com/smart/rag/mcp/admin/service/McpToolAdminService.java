@@ -1,75 +1,38 @@
 package com.smart.rag.mcp.admin.service;
 
-import com.github.benmanes.caffeine.cache.Cache;
-import com.github.benmanes.caffeine.cache.Caffeine;
 import com.smart.rag.infrastructure.audit.AdminAudit;
 import com.smart.rag.infrastructure.exception.ClientException;
-import com.smart.rag.infrastructure.exception.RemoteException;
 import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;
-import com.smart.rag.infrastructure.exception.errorcode.RemoteErrorCode;
 import com.smart.rag.mcp.admin.dto.UpdateToolRequest;
 import com.smart.rag.mcp.admin.entity.McpToolConfig;
 import com.smart.rag.mcp.admin.mapper.McpToolConfigMapper;
-import com.smart.rag.mcp.core.McpServer;
-import com.smart.rag.mcp.core.McpServerRegistry;
-import com.smart.rag.mcp.core.ServerId;
-import com.smart.rag.mcp.mcpclient.McpToolUtils;
-import com.smart.rag.mcp.mcpclient.SyncMcpToolCallbackProvider;
-import com.smart.rag.mcp.runtime.McpServerImpl;
-import io.modelcontextprotocol.spec.McpSchema;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
-import java.time.Duration;
 import java.util.List;
 
+/**
+ * MCP tool admin service — direct DB reads, no cache (Phase E).
+ * <p>
+ * Tool list reads are direct mapper queries on indexed columns.
+ * No Caffeine cache, no callbackProvider, no invalidation protocol.
+ */
 @Service
 public class McpToolAdminService {
 
     private final McpToolConfigMapper toolConfigMapper;
     private final TransactionTemplate txTemplate;
-    private final McpServerRegistry registry;
-    private final SyncMcpToolCallbackProvider callbackProvider;
-    private final McpToolConfigAccessor toolConfigAccessor;
-    private final McpSecurityConfigAccessor securityConfigAccessor;
-    private final Cache<String, List<McpToolConfig>> toolListCache = Caffeine.newBuilder()
-            .expireAfterWrite(Duration.ofMinutes(10)).maximumSize(100).build();
 
     public McpToolAdminService(McpToolConfigMapper toolConfigMapper,
                                TransactionTemplate txTemplate,
-                               McpServerRegistry registry,
-                               SyncMcpToolCallbackProvider callbackProvider,
                                McpToolConfigAccessor toolConfigAccessor,
                                McpSecurityConfigAccessor securityConfigAccessor) {
         this.toolConfigMapper = toolConfigMapper;
         this.txTemplate = txTemplate;
-        this.registry = registry;
-        this.callbackProvider = callbackProvider;
-        this.toolConfigAccessor = toolConfigAccessor;
-        this.securityConfigAccessor = securityConfigAccessor;
-    }
-
-    @AdminAudit(resourceType = "mcp_tool", action = "refresh_tools", resourceIdExpr = "#serverId")
-    public void refreshTools(String serverId) {
-        McpServer server = registry.find(new ServerId(serverId))
-                .orElseThrow(() -> new ClientException(ClientErrorCode.BAD_REQUEST, "MCP Server 不存在"));
-        if (!(server instanceof McpServerImpl implementation) || implementation.initError() != null) {
-            throw new RemoteException(RemoteErrorCode.MCP_SERVER_UNREACHABLE,
-                    "MCP Server 当前不可用，无法刷新工具");
-        }
-        List<McpSchema.Tool> tools = implementation.listToolsFromRemote();
-        int descriptionLimit = securityConfigAccessor.get().toolDescCharLimit();
-        List<McpToolConfig> rows = tools.stream()
-                .map(tool -> toConfig(serverId, tool, descriptionLimit))
-                .toList();
-        if (!rows.isEmpty()) {
-            txTemplate.executeWithoutResult(status -> toolConfigMapper.batchUpsert(rows));
-        }
-        invalidate(serverId);
     }
 
     public List<McpToolConfig> listTools(String serverId) {
-        return toolListCache.get(serverId, toolConfigMapper::selectByServerId);
+        return toolConfigMapper.selectByServerId(serverId);
     }
 
     @AdminAudit(resourceType = "mcp_tool", action = "enable", resourceIdExpr = "#toolConfigId")
@@ -98,7 +61,9 @@ public class McpToolAdminService {
         if (request.descriptionOverride() != null) {
             tool.setDescriptionOverride(request.descriptionOverride().trim());
         }
-        update(tool);
+        if (toolConfigMapper.updateById(tool) == 0) {
+            throw optimisticConflict();
+        }
     }
 
     @AdminAudit(resourceType = "mcp_tool", action = "batch_enable")
@@ -111,32 +76,16 @@ public class McpToolAdminService {
         batchSetEnabled(ids, false);
     }
 
-    public void invalidate(String serverId) {
-        toolListCache.invalidate(serverId);
-        toolConfigAccessor.invalidateAll();
-        callbackProvider.invalidateCache();
-    }
-
     private void batchSetEnabled(List<Long> ids, boolean enabled) {
         txTemplate.executeWithoutResult(status -> toolConfigMapper.batchUpdateEnabled(ids, enabled));
-        toolListCache.invalidateAll();
-        toolConfigAccessor.invalidateAll();
-        callbackProvider.invalidateCache();
     }
 
     private void setEnabled(Long id, boolean enabled) {
         McpToolConfig tool = requireTool(id);
         tool.setEnabled(enabled);
-        update(tool);
-    }
-
-    private void update(McpToolConfig tool) {
         if (toolConfigMapper.updateById(tool) == 0) {
             throw optimisticConflict();
         }
-        toolConfigAccessor.invalidate(tool.getPrefixedToolName());
-        toolListCache.invalidate(tool.getServerId());
-        callbackProvider.invalidateCache();
     }
 
     private McpToolConfig requireTool(Long id) {
@@ -145,25 +94,6 @@ public class McpToolAdminService {
             throw new ClientException(ClientErrorCode.BAD_REQUEST, "MCP 工具配置不存在");
         }
         return tool;
-    }
-
-    private static McpToolConfig toConfig(String serverId, McpSchema.Tool tool, int descriptionLimit) {
-        McpToolConfig row = new McpToolConfig();
-        row.setServerId(serverId);
-        row.setToolName(tool.name());
-        row.setPrefixedToolName(McpToolUtils.prefixedToolName(serverId, tool.name()));
-        row.setDescription(cap(tool.description(), descriptionLimit));
-        row.setEnabled(false);
-        row.setIntent("GENERAL_TOOL");
-        row.setRisk("low");
-        return row;
-    }
-
-    private static String cap(String value, int limit) {
-        if (value == null || value.length() <= limit) {
-            return value;
-        }
-        return value.substring(0, limit);
     }
 
     private static void verifyVersion(Long requested, Long current) {

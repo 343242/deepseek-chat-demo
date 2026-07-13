@@ -8,12 +8,13 @@ import com.baomidou.mybatisplus.annotation.Version;
 import java.time.OffsetDateTime;
 
 /**
- * MCP 工具配置实体 — 对应 {@code mcp_tool_config} 表（V17 迁移）。
+ * MCP 工具配置实体 — 对应 {@code mcp_tool_config} 表（V19 重建）。
  * <p>
- * <b>prefixedToolName</b>：由 {@code McpToolNamePrefixGenerator.prefixedToolName(connInfo, tool)} 派生
- * （基于 {@code serverInfo.name}），与系统派生的 serverId 同源。{@code DatabaseToolFilter} 主查键。
- * <p>
- * <b>enabled</b>：默认 false（DB-driven 默认 deny，避免远端新增危险工具自动放行）。
+ * <b>prefixedToolName</b>：由 {@code McpToolUtils.prefixedToolName(localServerId, rawName)} 派生，
+ * 基于 DB row ID 生成的 {@code mcp_<row-id>} local identity。
+ * <b>enabled</b>：默认 false（DB-driven 默认 deny）。
+ * <b>present</b>：true=当前 catalog 中存在；false=曾经见过现已缺失（catalog 对账标记）。
+ * <b>inputSchema</b>：MCP inputSchema JSON 对象（≤64KiB/tool）。
  * <b>version</b>：MyBatis-Plus {@code @Version} 乐观锁。
  */
 @TableName("mcp_tool_config")
@@ -43,6 +44,13 @@ public class McpToolConfig {
 
     /** ADMIN 可信描述覆盖（替代远端不可信 description，防 T2 元数据注入） */
     private String descriptionOverride;
+    /** true=当前 catalog 中存在；false=曾经见过现已缺失 */
+    private Boolean present = true;
+
+    private OffsetDateTime lastSeenAt;
+
+    /** MCP inputSchema JSON 对象（≤64KiB/tool） */
+    private String inputSchema;
 
     @Version
     private Long version;
@@ -77,6 +85,14 @@ public class McpToolConfig {
 
     public String getDescriptionOverride() { return descriptionOverride; }
     public void setDescriptionOverride(String descriptionOverride) { this.descriptionOverride = descriptionOverride; }
+    public Boolean getPresent() { return present; }
+    public void setPresent(Boolean present) { this.present = present; }
+
+    public OffsetDateTime getLastSeenAt() { return lastSeenAt; }
+    public void setLastSeenAt(OffsetDateTime lastSeenAt) { this.lastSeenAt = lastSeenAt; }
+
+    public String getInputSchema() { return inputSchema; }
+    public void setInputSchema(String inputSchema) { this.inputSchema = inputSchema; }
 
     public Long getVersion() { return version; }
     public void setVersion(Long version) { this.version = version; }

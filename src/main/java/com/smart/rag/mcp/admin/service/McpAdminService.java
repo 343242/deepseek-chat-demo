@@ -1,5 +1,6 @@
 package com.smart.rag.mcp.admin.service;
-
+import com.smart.rag.mcp.admin.dto.McpConnectionStatus;
+import com.smart.rag.mcp.runtime.McpConnectionStateProjector;
 import com.smart.rag.mcp.admin.dto.UpdateServerRequest;
 import com.smart.rag.mcp.admin.dto.UpdateToolRequest;
 import com.smart.rag.mcp.admin.entity.McpSecurityConfigView;
@@ -16,13 +17,16 @@ public class McpAdminService {
     private final McpServerAdminService serverService;
     private final McpToolAdminService toolService;
     private final McpSecurityAdminService securityService;
+    private final McpConnectionStateProjector projector;
 
     public McpAdminService(McpServerAdminService serverService,
                            McpToolAdminService toolService,
-                           McpSecurityAdminService securityService) {
+                           McpSecurityAdminService securityService,
+                           McpConnectionStateProjector projector) {
         this.serverService = serverService;
         this.toolService = toolService;
         this.securityService = securityService;
+        this.projector = projector;
     }
 
     public List<McpServerConfig> listServers() {
@@ -33,40 +37,40 @@ public class McpAdminService {
         return serverService.getServer(id);
     }
 
-    public String serverHealth(String serverId) {
-        return serverService.serverHealth(serverId);
+    public McpConnectionStatus serverStatus(McpServerConfig config) {
+        return projector.project(config);
     }
 
-    public void updateServer(Long id, UpdateServerRequest request) {
-        serverService.updateServer(id, request);
+    public McpServerConfig updateServer(Long id, UpdateServerRequest request) {
+        return serverService.updateServer(id, request);
     }
 
-    public McpServerConfig createServer(CreateServerRequest request) {
-        return serverService.createServer(request);
+    public McpServerConfig createServer(CreateServerRequest request, String idempotencyKey) {
+        return serverService.createServer(request, idempotencyKey);
     }
 
     public void deleteServer(Long id) {
         serverService.deleteServer(id);
     }
 
-    public void enableServer(String serverId) {
-        serverService.enableServer(serverId);
+    public McpServerConfig enableServer(String serverId) {
+        return serverService.enableServer(serverId);
     }
 
-    public void disableServer(String serverId) {
-        serverService.disableServer(serverId);
+    public McpServerConfig disableServer(String serverId) {
+        return serverService.disableServer(serverId);
     }
 
-    public void reconnectServer(String serverId) {
-        serverService.reconnectServer(serverId);
+    public McpServerConfig reconnectServer(String serverId) {
+        return serverService.reconnectServer(serverId);
     }
 
-    public void updateBearerToken(String serverId, String bearerToken) {
-        serverService.updateBearerToken(serverId, bearerToken);
+    public McpServerConfig updateBearerToken(String serverId, String bearerToken) {
+        return serverService.updateBearerToken(serverId, bearerToken);
     }
 
     public void refreshTools(String serverId) {
-        toolService.refreshTools(serverId);
+        serverService.refreshTools(serverId);
     }
 
     public List<McpToolConfig> listTools(String serverId) {

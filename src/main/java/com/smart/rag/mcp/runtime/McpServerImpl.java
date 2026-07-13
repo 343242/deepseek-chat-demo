@@ -26,12 +26,6 @@ import io.modelcontextprotocol.client.McpSyncClient;
 import io.modelcontextprotocol.spec.McpSchema;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import com.smart.rag.mcp.mcpclient.McpConnectionInfo;
-import com.smart.rag.mcp.mcpclient.McpServerToolCallbacksAdapter;
-import com.smart.rag.mcp.mcpclient.SyncMcpToolCallback;
-import com.smart.rag.mcp.mcpclient.SyncMcpToolCallbackProvider;
-import org.springframework.ai.tool.ToolCallback;
-import org.springframework.ai.tool.definition.ToolDefinition;
 import org.springframework.lang.Nullable;
 
 import java.net.URI;
@@ -40,7 +34,7 @@ import java.util.List;
 import java.util.Objects;
 
 /** Per-connection implementation of the MCP core capabilities. */
-public final class McpServerImpl implements McpServer {
+public final class McpServerImpl implements ManagedMcpServer {
 
     private static final Logger log = LoggerFactory.getLogger(McpServerImpl.class);
 
@@ -51,18 +45,10 @@ public final class McpServerImpl implements McpServer {
     private final FallbackEligibility fallbackEligibility;
     private final McpDescriptionSanitizer descriptionSanitizer;
     private final McpRemoteCallExecutor remoteCallExecutor;
+    private final com.smart.rag.mcp.admin.mapper.McpToolConfigMapper toolConfigMapper;
 
-    /** 聚合 provider（nullable：无 connections / starter 未建时）；tools 发现面委托它按前缀过滤。 */
-    @Nullable
-    private final SyncMcpToolCallbackProvider provider;
-
-    /**
-     * 启动期 initialize 失败信息（null=已就绪）；非空时 health=down、visibleTo 返回空。
-     * <p>调用成功时置 null（best-effort 恢复信号）：{@code volatile} 仅保证可见性、不保证"读-判定-写"原子；
-     * 瞬时抖动（health 读到旧值后另一线程清空）无副作用——至多多观察一次 down。
-     */
-    @Nullable
-    private volatile String initError;
+    /** Instance-local active flag: false after withdraw; callbacks captured before withdraw fail fast. */
+    private volatile boolean active = true;
 
     private final McpTools tools = new McpToolsImpl();
     private final McpResources resources = new McpResourcesImpl();
@@ -73,8 +59,7 @@ public final class McpServerImpl implements McpServer {
                   McpAuthorizer authorizer,
                   McpCircuitBreakerRegistry circuitRegistry,
                   FallbackEligibility fallbackEligibility,
-                  @Nullable SyncMcpToolCallbackProvider provider,
-                  @Nullable String initError,
+                  com.smart.rag.mcp.admin.mapper.McpToolConfigMapper toolConfigMapper,
                   McpDescriptionSanitizer descriptionSanitizer) {
         this.id = id;
         this.client = client;
@@ -82,8 +67,7 @@ public final class McpServerImpl implements McpServer {
         this.circuitRegistry = circuitRegistry;
         this.fallbackEligibility = fallbackEligibility;
         this.remoteCallExecutor = new McpRemoteCallExecutor(id, circuitRegistry, fallbackEligibility);
-        this.provider = provider;
-        this.initError = initError;
+        this.toolConfigMapper = toolConfigMapper;
         this.descriptionSanitizer = descriptionSanitizer;
     }
 
@@ -94,10 +78,6 @@ public final class McpServerImpl implements McpServer {
 
     @Override
     public McpServerHealth health() {
-        String err = initError;
-        if (err != null) {
-            return McpServerHealth.down("MCP Server 初始化失败");
-        }
         CircuitBreakerState state = circuitRegistry.stateOf(id.value());
         return switch (state) {
             case CLOSED -> McpServerHealth.alive();
@@ -125,38 +105,42 @@ public final class McpServerImpl implements McpServer {
 
         @Override
         public List<McpTool> visibleTo(Subject subj, McpIntent intent) {
-            if (initError != null || subj == null || !subj.isAuthenticated() || provider == null) {
+            if (!active || subj == null || !subj.isAuthenticated()) {
                 return List.of();
             }
-            String prefix = id.value() + "_";
-            ToolCallback[] callbacks;
+            // Direct DB read: enabled=true, present=true tools for this server
+            List<com.smart.rag.mcp.admin.entity.McpToolConfig> configs;
             try {
-                callbacks = provider.getToolCallbacks();
+                configs = toolConfigMapper.selectVisibleByServerId(id.value());
             } catch (Exception e) {
-                // 发现失败（server 不可达等）→ 空集，不击穿；不计熔断（listTools 非调用面，不反映 server 健康）
-                log.debug("MCP server 工具发现失败，返回空集，serverId={}, errorType={}",
+                log.debug("MCP server tool DB read failed, returning empty set, serverId={}, errorType={}",
                         id.value(), e.getClass().getSimpleName());
                 return List.of();
             }
+            if (configs == null || configs.isEmpty()) {
+                return List.of();
+            }
             List<McpTool> visible = new ArrayList<>();
-            for (ToolCallback cb : callbacks) {
-                ToolDefinition def = cb.getToolDefinition();
-                String name = def.name();
-                if (name == null || !name.startsWith(prefix)) {
+            for (var config : configs) {
+                String name = config.getPrefixedToolName();
+                if (name == null) {
                     continue;
                 }
                 if (!authorizer.canSee(subj, name, intent)) {
                     continue;
                 }
-                visible.add(new McpTool(name, descriptionSanitizer.sanitize(name, def.description()),
-                        def.inputSchema()));
+                String desc = descriptionSanitizer.sanitize(name, config.getDescription());
+                String schema = config.getInputSchema();
+                visible.add(new McpTool(name, desc, schema != null ? schema : "{}"));
             }
             return visible;
         }
 
         @Override
         public McpToolResult call(String name, McpArgs args, Subject subj) {
-            Objects.requireNonNull(args, "args");
+            if (!active) {
+                return McpToolResult.error("MCP Server 正在重连，请稍后重试");
+            }
             McpToolConfig toolConfig = authorizer.requireAuthorized(subj, name);
             String prefix = id.value() + "_";
             if (name == null || !name.startsWith(prefix)) {
@@ -180,7 +164,6 @@ public final class McpServerImpl implements McpServer {
                 McpSchema.CallToolResult result = client.callTool(
                         new McpSchema.CallToolRequest(rawName, args.asMap()));
                 circuitRegistry.recordSuccess(key);
-                initError = null; // 调用成功 → 视为恢复
                 return McpSchemaMapper.toToolResult(result);
             } catch (Exception e) {
                 if (fallbackEligibility.isEligible(e)) {
@@ -213,7 +196,7 @@ public final class McpServerImpl implements McpServer {
                     () -> connected.readResource(new McpSchema.ReadResourceRequest(uri.toString())),
                     result -> McpSchemaMapper.toResource(uri, result),
                     "MCP Resource 读取失败，请稍后重试",
-                    () -> initError = null));
+                    () -> {}));
         }
     }
 
@@ -232,14 +215,23 @@ public final class McpServerImpl implements McpServer {
                     () -> connected.getPrompt(new McpSchema.GetPromptRequest(name, args.asMap())),
                     result -> McpSchemaMapper.toPrompt(name, result),
                     "MCP Prompt 获取失败，请稍后重试",
-                    () -> initError = null));
+                    () -> {}));
         }
     }
 
+    @Override
     public boolean hasClient() {
         return client != null;
     }
 
+    /** Returns the underlying client, or null if this is a placeholder server. */
+    @Nullable
+    @Override
+    public McpSyncClient getConnectedClient() {
+        return client;
+    }
+
+    @Override
     public void closeQuietly() {
         if (client != null) {
             try {
@@ -250,8 +242,19 @@ public final class McpServerImpl implements McpServer {
         }
     }
 
-    public @Nullable String initError() {
-        return initError;
+    @Override
+    public boolean isActive() {
+        return active;
+    }
+
+    @Override
+    public void markInactive() {
+        this.active = false;
+    }
+
+    @Override
+    public void markActive() {
+        this.active = true;
     }
 
     public java.util.List<io.modelcontextprotocol.spec.McpSchema.Tool> listToolsFromRemote() {
@@ -270,25 +273,5 @@ public final class McpServerImpl implements McpServer {
                     "MCP Server 当前未连接，请稍后重试");
         }
         return client;
-    }
-
-    public List<ToolCallback> toolCallbacks(McpServerToolCallbacksAdapter.DiscoveryOptions options) {
-        if (client == null || initError != null) {
-            return List.of();
-        }
-        McpConnectionInfo connInfo = McpConnectionInfo.builder()
-                .clientCapabilities(client.getClientCapabilities())
-                .clientInfo(client.getClientInfo())
-                .initializeResult(client.getCurrentInitializationResult())
-                .build();
-        return client.listTools().tools().stream()
-                .filter(tool -> options.filter().test(connInfo, tool))
-                .<ToolCallback>map(tool -> SyncMcpToolCallback.builder()
-                        .mcpClient(client)
-                        .tool(tool)
-                        .prefixedToolName(options.prefixGenerator().prefixedToolName(connInfo, tool))
-                        .toolContextToMcpMetaConverter(options.metaConverter())
-                        .build())
-                .toList();
     }
 }

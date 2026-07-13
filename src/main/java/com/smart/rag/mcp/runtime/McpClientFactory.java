@@ -1,6 +1,5 @@
 package com.smart.rag.mcp.runtime;
 
-import com.smart.rag.infrastructure.security.HostSafetyValidator;
 import com.smart.rag.infrastructure.exception.RemoteException;
 import com.smart.rag.infrastructure.exception.errorcode.RemoteErrorCode;
 import com.smart.rag.mcp.admin.entity.McpServerConfig;
@@ -19,16 +18,17 @@ public class McpClientFactory {
 
     private static final Logger log = LoggerFactory.getLogger(McpClientFactory.class);
 
-    private final HostSafetyValidator urlValidator;
+
+    private final McpEndpointSafetyGuard safetyGuard;
     private final McpBearerTokenCodec tokenCodec;
     private final McpClientTransportProperties transportProps;
     private final McpClientBuilder clientBuilder;
 
-    public McpClientFactory(HostSafetyValidator urlValidator,
+    public McpClientFactory(McpEndpointSafetyGuard safetyGuard,
                             McpBearerTokenCodec tokenCodec,
                             McpClientTransportProperties transportProps,
                             McpClientBuilder clientBuilder) {
-        this.urlValidator = urlValidator;
+        this.safetyGuard = safetyGuard;
         this.tokenCodec = tokenCodec;
         this.transportProps = transportProps;
         this.clientBuilder = clientBuilder;
@@ -36,7 +36,7 @@ public class McpClientFactory {
 
     /** Creates a client after URL validation and fail-closed bearer token decoding. */
     public McpSyncClient createClient(McpServerConfig config) {
-        urlValidator.validate(config.getUrl());
+        safetyGuard.validate(config.getUrl());
 
         String bearerToken = tokenCodec.decode(config.getBearerTokenEncrypted());
         Duration timeout = parseTimeout(transportProps.getRequestTimeout(), Duration.ofSeconds(30));

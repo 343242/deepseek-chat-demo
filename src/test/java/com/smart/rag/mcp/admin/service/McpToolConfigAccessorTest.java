@@ -12,19 +12,25 @@ import static org.mockito.Mockito.when;
 class McpToolConfigAccessorTest {
 
     @Test
-    void unknownToolLookupIsNegativelyCachedUntilInvalidated() {
+    void directReadReturnsCommittedRow() {
         McpToolConfigMapper mapper = mock(McpToolConfigMapper.class);
-        when(mapper.selectByPrefixedName("unknown_tool")).thenReturn(null);
-        McpToolConfigAccessor accessor = new McpToolConfigAccessor(mapper);
-
-        assertThat(accessor.get("unknown_tool")).isNull();
-        assertThat(accessor.get("unknown_tool")).isNull();
-        verify(mapper).selectByPrefixedName("unknown_tool");
-
-        accessor.invalidate("unknown_tool");
         McpToolConfig config = new McpToolConfig();
         config.setEnabled(true);
-        when(mapper.selectByPrefixedName("unknown_tool")).thenReturn(config);
-        assertThat(accessor.get("unknown_tool")).isSameAs(config);
+        when(mapper.selectByPrefixedName("mcp_1_search")).thenReturn(config);
+
+        McpToolConfigAccessor accessor = new McpToolConfigAccessor(mapper);
+
+        assertThat(accessor.get("mcp_1_search")).isSameAs(config);
+        verify(mapper).selectByPrefixedName("mcp_1_search");
+    }
+
+    @Test
+    void unknownToolReturnsNull() {
+        McpToolConfigMapper mapper = mock(McpToolConfigMapper.class);
+        when(mapper.selectByPrefixedName("unknown")).thenReturn(null);
+
+        McpToolConfigAccessor accessor = new McpToolConfigAccessor(mapper);
+
+        assertThat(accessor.get("unknown")).isNull();
     }
 }

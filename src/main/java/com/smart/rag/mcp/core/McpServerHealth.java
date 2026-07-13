@@ -5,7 +5,7 @@ package com.smart.rag.mcp.core;
  * <ul>
  *   <li>{@link Status#ALIVE} ← 熔断器 CLOSED（正常放行）</li>
  *   <li>{@link Status#DEGRADED} ← 熔断器 HALF_OPEN（受控探测）</li>
- *   <li>{@link Status#DOWN} ← 熔断器 OPEN（快速失败）；或启动期 initialize 失败（initError 覆盖，design D-6）</li>
+ *   <li>{@link Status#DOWN} ← 熔断器 OPEN（快速失败）；或占位 server（client=null，未连接）</li>
  * </ul>
  * 状态机本身（计数/转换/恢复）由 {@code infrastructure.fallback} 三态熔断器承担，本类型只读投影。
  */

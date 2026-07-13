@@ -1,13 +1,14 @@
 package com.smart.rag.mcp.admin.service;
 
-import com.smart.rag.infrastructure.exception.ServiceException;
+import com.smart.rag.infrastructure.exception.ClientException;
 import com.smart.rag.infrastructure.security.HostSafetyValidator;
 import com.smart.rag.mcp.admin.entity.McpServerConfig;
 import com.smart.rag.mcp.admin.mapper.McpServerConfigMapper;
 import com.smart.rag.mcp.admin.mapper.McpToolConfigMapper;
 import com.smart.rag.mcp.runtime.McpBearerTokenCodec;
-import io.modelcontextprotocol.client.McpSyncClient;
-import io.modelcontextprotocol.spec.McpSchema;
+import com.smart.rag.mcp.runtime.McpBearerTokenValidator;
+import com.smart.rag.mcp.runtime.McpConnectionRecoveryScheduler;
+import com.smart.rag.mcp.runtime.McpDesiredStateHasher;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -16,15 +17,10 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.transaction.TransactionStatus;
 import org.springframework.transaction.support.TransactionTemplate;
 
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.doAnswer;
-import static org.mockito.Mockito.doThrow;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.*;
 
 @ExtendWith(MockitoExtension.class)
 class McpServerAdminServiceTest {
@@ -35,16 +31,18 @@ class McpServerAdminServiceTest {
     @Mock private McpServerRuntime runtime;
     @Mock private HostSafetyValidator urlValidator;
     @Mock private McpBearerTokenCodec tokenCodec;
+    @Mock private McpBearerTokenValidator tokenValidator;
+    @Mock private McpDesiredStateHasher desiredStateHasher;
     @Mock private McpToolAdminService toolService;
-    @Mock private McpSyncClient client;
+    @Mock private McpConnectionRecoveryScheduler scheduler;
 
     private McpServerAdminService service;
 
     @BeforeEach
     void setUp() {
         service = new McpServerAdminService(serverMapper, toolMapper, transactionTemplate,
-                runtime, urlValidator, tokenCodec, toolService);
-        doAnswer(invocation -> {
+                runtime, urlValidator, tokenCodec, tokenValidator, desiredStateHasher, scheduler);
+        lenient().doAnswer(invocation -> {
             java.util.function.Consumer<TransactionStatus> action = invocation.getArgument(0);
             action.accept(mock(TransactionStatus.class));
             return null;
@@ -52,72 +50,49 @@ class McpServerAdminServiceTest {
     }
 
     @Test
-    void createClosesInitializedClientAndFailsWhenRegistryHandoffFails() {
-        when(runtime.connect(any())).thenReturn(client);
-        McpSchema.InitializeResult initializeResult = mock(McpSchema.InitializeResult.class);
-        when(initializeResult.serverInfo()).thenReturn(new McpSchema.Implementation("knowledge", "1.0"));
-        when(client.getCurrentInitializationResult()).thenReturn(initializeResult);
+    void createCommitsDesiredStateWithLocalIdentityAndNoRemoteConnect() {
+        when(desiredStateHasher.hash(any(), any(), anyBoolean())).thenReturn("abc123");
         doAnswer(invocation -> {
             McpServerConfig config = invocation.getArgument(0);
-            config.setId(10L);
+            config.setId(42L);
             return 1;
         }).when(serverMapper).insert(any(McpServerConfig.class));
         when(serverMapper.updateById(any(McpServerConfig.class))).thenReturn(1);
-        doThrow(new IllegalStateException("registry unavailable"))
-                .when(runtime).add(any(McpServerConfig.class), org.mockito.ArgumentMatchers.eq(client),
-                        org.mockito.ArgumentMatchers.isNull());
-
-        CreateServerRequest request = new CreateServerRequest(
-                "https://mcp.example.com", "knowledge", null, true, null);
-
-        assertThatThrownBy(() -> service.createServer(request))
-                .isInstanceOf(ServiceException.class)
-                .hasMessageContaining("注册");
-        verify(runtime).close(client);
-    }
-
-    @Test
-    void createStoresPlaceholderWhenRemoteIdentityCannotBeCanonicalized() {
-        when(runtime.connect(any())).thenReturn(client);
-        McpSchema.InitializeResult initializeResult = mock(McpSchema.InitializeResult.class);
-        when(initializeResult.serverInfo()).thenReturn(new McpSchema.Implementation("***", "1.0"));
-        when(client.getCurrentInitializationResult()).thenReturn(initializeResult);
-        doAnswer(invocation -> {
-            McpServerConfig config = invocation.getArgument(0);
-            config.setId(10L);
-            return 1;
-        }).when(serverMapper).insert(any(McpServerConfig.class));
 
         McpServerConfig created = service.createServer(new CreateServerRequest(
-                "https://mcp.example.com", "broken", null, true, null));
+                "https://mcp.example.com", "knowledge", null, true, null), "test-key-1");
 
-        assertThat(created.getServerId()).isEqualTo("unreachable-10");
-        assertThat(created.getInitError()).isNotBlank();
-        verify(runtime).close(client);
-        verify(runtime).add(org.mockito.ArgumentMatchers.eq(created),
-                org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNotNull());
+        assertThat(created.getId()).isEqualTo(42L);
+        assertThat(created.getServerId()).isEqualTo("mcp_42");
+        assertThat(created.getDesiredStateHash()).isNotNull();
+        verify(runtime, never()).connect(any());
+        verify(runtime, never()).add(any(), any());
     }
 
     @Test
-    void createReleasesThroughRegistryWhenPostHandoffPersistenceFails() {
-        when(runtime.connect(any())).thenReturn(client);
-        McpSchema.InitializeResult initializeResult = mock(McpSchema.InitializeResult.class);
-        when(initializeResult.serverInfo()).thenReturn(new McpSchema.Implementation("knowledge", "1.0"));
-        when(client.getCurrentInitializationResult()).thenReturn(initializeResult);
-        doAnswer(invocation -> {
-            McpServerConfig config = invocation.getArgument(0);
-            config.setId(10L);
-            return 1;
-        }).when(serverMapper).insert(any(McpServerConfig.class));
-        when(serverMapper.updateById(any(McpServerConfig.class))).thenReturn(1);
-        when(serverMapper.markConnected("knowledge"))
-                .thenThrow(new IllegalStateException("database unavailable"));
+    void createRejectsMissingIdempotencyKey() {
+        assertThatThrownBy(() -> service.createServer(new CreateServerRequest(
+                "https://mcp.example.com", "test", null, true, null), null))
+                .isInstanceOf(ClientException.class);
 
         assertThatThrownBy(() -> service.createServer(new CreateServerRequest(
-                "https://mcp.example.com", "knowledge", null, true, null)))
-                .isInstanceOf(ServiceException.class);
+                "https://mcp.example.com", "test", null, true, null), ""))
+                .isInstanceOf(ClientException.class);
+    }
 
-        verify(runtime).remove("knowledge");
-        verify(runtime, never()).close(client);
+    @Test
+    void createWithExistingKeyReturnsSameServer() {
+        McpServerConfig existing = new McpServerConfig();
+        existing.setId(42L);
+        existing.setServerId("mcp_42");
+        existing.setUrl("https://mcp.example.com");
+        when(serverMapper.selectByCreateRequestKey("same-key")).thenReturn(existing);
+
+        McpServerConfig result = service.createServer(new CreateServerRequest(
+                "https://mcp.example.com", "test", null, true, null), "same-key");
+
+        assertThat(result.getId()).isEqualTo(42L);
+        assertThat(result.getServerId()).isEqualTo("mcp_42");
+        verify(serverMapper, never()).insert(any(McpServerConfig.class));
     }
 }

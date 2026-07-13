@@ -20,11 +20,44 @@ public class SecurityCryptoProperties {
     /** AES/GCM master-key，base64 编码 32B（256-bit）；env {@code SECURITY_CRYPTO_MASTER_KEY} 注入 */
     private String masterKey;
 
+    /** Current key identifier used in v2 envelopes */
+    private String keyId = "1";
+
+    /** Optional previous master-key for rotation; base64 32B */
+    private String previousMasterKey;
+
+    /** Key identifier for previousMasterKey */
+    private String previousKeyId;
+
     public String getMasterKey() {
         return masterKey;
     }
 
     public void setMasterKey(String masterKey) {
         this.masterKey = masterKey;
+    }
+
+    public String getKeyId() {
+        return keyId;
+    }
+
+    public void setKeyId(String keyId) {
+        this.keyId = keyId;
+    }
+
+    public String getPreviousMasterKey() {
+        return previousMasterKey;
+    }
+
+    public void setPreviousMasterKey(String previousMasterKey) {
+        this.previousMasterKey = previousMasterKey;
+    }
+
+    public String getPreviousKeyId() {
+        return previousKeyId;
+    }
+
+    public void setPreviousKeyId(String previousKeyId) {
+        this.previousKeyId = previousKeyId;
     }
 }

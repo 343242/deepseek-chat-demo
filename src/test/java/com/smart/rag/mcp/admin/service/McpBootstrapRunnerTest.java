@@ -1,56 +1,32 @@
 package com.smart.rag.mcp.admin.service;
 
-import com.smart.rag.mcp.admin.entity.McpServerConfig;
 import com.smart.rag.mcp.admin.mapper.McpServerConfigMapper;
-import com.smart.rag.mcp.config.McpClientTransportConfiguration.McpClientTransportProperties;
+import com.smart.rag.mcp.runtime.McpConnectionRecoveryScheduler;
 import org.junit.jupiter.api.Test;
 
-import java.util.List;
-import java.util.Map;
-
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyCollection;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.*;
 
 class McpBootstrapRunnerTest {
 
     @Test
-    void startupConnectsOnlyEnabledAutoConnectRows() throws Exception {
+    void startupTriggersRecoveryScanWhenServersExist() {
         McpServerConfigMapper mapper = mock(McpServerConfigMapper.class);
-        McpServerAdminService serverService = mock(McpServerAdminService.class);
-        McpClientTransportProperties properties = new McpClientTransportProperties();
-        McpServerConfig config = new McpServerConfig();
-        config.setServerId("knowledge");
-        when(mapper.selectCount(null)).thenReturn(1L);
-        when(mapper.selectAutoConnectEnabled()).thenReturn(List.of(config));
+        McpConnectionRecoveryScheduler scheduler = mock(McpConnectionRecoveryScheduler.class);
+        when(mapper.selectCount(null)).thenReturn(3L);
 
-        new McpBootstrapRunner(mapper, properties, serverService).run(null);
+        new McpBootstrapRunner(mapper, scheduler).run(null);
 
-        verify(mapper).selectAutoConnectEnabled();
-        verify(serverService).initializeAtStartup(config);
+        verify(scheduler).scan();
     }
 
     @Test
-    void startupDoesNotInsertYamlConnectionsOneByOne() throws Exception {
+    void startupWithEmptyDbDoesNotScan() {
         McpServerConfigMapper mapper = mock(McpServerConfigMapper.class);
-        McpServerAdminService serverService = mock(McpServerAdminService.class);
-        McpClientTransportProperties properties = new McpClientTransportProperties();
-        McpClientTransportProperties.ConnectionParameters first =
-                new McpClientTransportProperties.ConnectionParameters();
-        first.setUrl("https://first.example/mcp");
-        McpClientTransportProperties.ConnectionParameters second =
-                new McpClientTransportProperties.ConnectionParameters();
-        second.setUrl("https://second.example/mcp");
-        properties.getStreamableHttp().setConnections(Map.of("first", first, "second", second));
+        McpConnectionRecoveryScheduler scheduler = mock(McpConnectionRecoveryScheduler.class);
         when(mapper.selectCount(null)).thenReturn(0L);
-        when(mapper.selectAutoConnectEnabled()).thenReturn(List.of());
 
-        new McpBootstrapRunner(mapper, properties, serverService).run(null);
+        new McpBootstrapRunner(mapper, scheduler).run(null);
 
-        verify(mapper, never()).insert(any(McpServerConfig.class));
-        verify(mapper).insert(anyCollection());
+        verify(scheduler, never()).scan();
     }
 }

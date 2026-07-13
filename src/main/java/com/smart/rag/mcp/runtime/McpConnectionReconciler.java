@@ -44,19 +44,22 @@ public class McpConnectionReconciler {
     private final McpClientFactory clientFactory;
     private final McpDesiredStateHasher hasher;
     private final TransactionTemplate txTemplate;
+    private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
 
     public McpConnectionReconciler(McpServerConfigMapper serverMapper,
                                    McpToolConfigMapper toolMapper,
                                    McpServerRuntime runtime,
                                    McpClientFactory clientFactory,
                                    McpDesiredStateHasher hasher,
-                                   TransactionTemplate txTemplate) {
+                                   TransactionTemplate txTemplate,
+                                   com.fasterxml.jackson.databind.ObjectMapper objectMapper) {
         this.serverMapper = serverMapper;
         this.toolMapper = toolMapper;
         this.runtime = runtime;
         this.clientFactory = clientFactory;
         this.hasher = hasher;
         this.txTemplate = txTemplate;
+        this.objectMapper = objectMapper;
     }
 
     /**
@@ -81,8 +84,8 @@ public class McpConnectionReconciler {
 
         if (catalogOnly) {
             try {
-                var existingClient = ((com.smart.rag.mcp.runtime.McpServerImpl)
-                        runtime.find(serverId).get()).getClient();
+                var existingClient = ((ManagedMcpServer)
+                        runtime.find(serverId).get()).getConnectedClient();
                 if (existingClient != null) {
                     syncCatalog(config, capturedHash, existingClient);
                     return;
@@ -194,16 +197,20 @@ public class McpConnectionReconciler {
                 ? null  // stop retrying permanently
                 : OffsetDateTime.now().plus(calculateBackoff(failures));
 
-        serverMapper.updateObservedFailure(
+        int affected = serverMapper.updateObservedFailure(
                 config.getId(), capturedHash, errorCode, errorMessage,
                 failures, nextRetry);
+        if (affected == 0) {
+            log.debug("Failure not persisted (desired hash changed since capture): serverId={}",
+                    config.getServerId());
+        }
     }
 
     private static Duration calculateBackoff(int failures) {
         long backoffSeconds = INITIAL_BACKOFF.toSeconds() * (1L << Math.min(failures - 1, 6));
         backoffSeconds = Math.min(backoffSeconds, MAX_BACKOFF.toSeconds());
         // Add jitter (0-25%)
-        long jitter = (long) (backoffSeconds * 0.25 * Math.random());
+        long jitter = (long) (backoffSeconds * 0.25 * java.util.concurrent.ThreadLocalRandom.current().nextDouble());
         return Duration.ofSeconds(backoffSeconds + jitter);
     }
 
@@ -218,14 +225,11 @@ public class McpConnectionReconciler {
         }
     }
 
-    private static final com.fasterxml.jackson.databind.ObjectMapper OBJECT_MAPPER =
-            new com.fasterxml.jackson.databind.ObjectMapper();
-
-    private static String toJsonString(Object schema) {
+    private String toJsonString(Object schema) {
         if (schema == null) return "{}";
         if (schema instanceof String s) return s;
         try {
-            return OBJECT_MAPPER.writeValueAsString(schema);
+            return objectMapper.writeValueAsString(schema);
         } catch (Exception e) {
             return "{}";
         }

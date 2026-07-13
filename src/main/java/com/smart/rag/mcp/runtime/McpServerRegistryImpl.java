@@ -108,7 +108,7 @@ public class McpServerRegistryImpl implements McpServerRegistry, McpServerRegist
         } while (!snapshotRef.compareAndSet(oldSnapshot, newSnapshot));
 
         McpServer previous = oldSnapshot.get(id);
-        if (previous instanceof McpServerImpl oldImpl && oldImpl.hasClient()) {
+        if (previous instanceof ManagedMcpServer oldImpl && oldImpl.hasClient()) {
             asyncCloseQuietly(oldImpl);
         }
         version.incrementAndGet();
@@ -135,7 +135,7 @@ public class McpServerRegistryImpl implements McpServerRegistry, McpServerRegist
         } while (!snapshotRef.compareAndSet(oldSnapshot, newSnapshot));
 
         McpServer removed = oldSnapshot.get(id);
-        if (removed instanceof McpServerImpl oldImpl && oldImpl.hasClient()) {
+        if (removed instanceof ManagedMcpServer oldImpl && oldImpl.hasClient()) {
             asyncCloseQuietly(oldImpl);
         }
         circuitRegistry.evict(id.value());
@@ -154,7 +154,7 @@ public class McpServerRegistryImpl implements McpServerRegistry, McpServerRegist
     }
 
     @Override
-    public McpServerImpl withdraw(ServerId id) {
+    public ManagedMcpServer withdraw(ServerId id) {
         ImmutableMap<ServerId, McpServer> oldSnapshot;
         ImmutableMap<ServerId, McpServer> newSnapshot;
         do {
@@ -172,7 +172,7 @@ public class McpServerRegistryImpl implements McpServerRegistry, McpServerRegist
             newSnapshot = b.build();
         } while (!snapshotRef.compareAndSet(oldSnapshot, newSnapshot));
 
-        McpServerImpl withdrawn = (McpServerImpl) oldSnapshot.get(id);
+        ManagedMcpServer withdrawn = (ManagedMcpServer) oldSnapshot.get(id);
         withdrawn.markInactive();
         version.incrementAndGet();
         log.info("MCP server withdrawn: id={}", id.value());
@@ -180,7 +180,7 @@ public class McpServerRegistryImpl implements McpServerRegistry, McpServerRegist
     }
 
     @Override
-    public void restore(McpServerImpl withdrawn) {
+    public void restore(ManagedMcpServer withdrawn) {
         ServerId id = withdrawn.id();
         ImmutableMap<ServerId, McpServer> oldSnapshot;
         ImmutableMap<ServerId, McpServer> newSnapshot;
@@ -204,7 +204,7 @@ public class McpServerRegistryImpl implements McpServerRegistry, McpServerRegist
     }
 
     @Override
-    public boolean removeIfSame(ServerId id, McpServerImpl instance) {
+    public boolean removeIfSame(ServerId id, ManagedMcpServer instance) {
         ImmutableMap<ServerId, McpServer> oldSnapshot;
         ImmutableMap<ServerId, McpServer> newSnapshot;
         do {
@@ -233,7 +233,7 @@ public class McpServerRegistryImpl implements McpServerRegistry, McpServerRegist
     void destroy() {
         ImmutableMap<ServerId, McpServer> snapshot = snapshotRef.getAndSet(ImmutableMap.of());
         snapshot.values().forEach(s -> {
-            if (s instanceof McpServerImpl impl && impl.hasClient()) {
+            if (s instanceof ManagedMcpServer impl && impl.hasClient()) {
                 impl.closeQuietly();
             }
         });
@@ -248,7 +248,7 @@ public class McpServerRegistryImpl implements McpServerRegistry, McpServerRegist
         }
     }
 
-    private void asyncCloseQuietly(McpServerImpl server) {
+    private void asyncCloseQuietly(ManagedMcpServer server) {
         asyncCloseExecutor.submit(server::closeQuietly);
     }
 }

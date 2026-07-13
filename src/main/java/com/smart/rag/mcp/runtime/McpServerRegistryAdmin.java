@@ -1,7 +1,6 @@
 package com.smart.rag.mcp.runtime;
 
 import com.smart.rag.mcp.admin.entity.McpServerConfig;
-import com.smart.rag.mcp.core.McpServer;
 import com.smart.rag.mcp.core.ServerId;
 import io.modelcontextprotocol.client.McpSyncClient;
 import org.springframework.lang.Nullable;
@@ -14,8 +13,9 @@ import org.springframework.lang.Nullable;
  * <b>原子快照切换</b>（对齐 {@code LlmClientRegistry.snapshotRef}）：
  * 每次 mutate 构建 ImmutableMap → CAS → 旧 snapshot 中不再存在的 client 异步关闭。
  * <p>
- * <b>占位语义</b>：{@code client=null} + {@code initError != null} 表示握手失败的占位 server，
- * registry 中保留而非 remove，调用时返回友好错误。
+ * <b>占位语义</b>：{@code client=null} 表示握手失败的占位 server，
+ * registry 中保留而非 remove，调用时返回友好错误。DB 的 {@code error_code}/{@code error_message}
+ * 列替代了已删除的 runtime initError 字段。
  */
 public interface McpServerRegistryAdmin {
 
@@ -39,7 +39,7 @@ public interface McpServerRegistryAdmin {
 
     /**
      * 当前 registry 版本号（每次 mutate 递增）。
-     * {@code SyncMcpToolCallbackProvider} 用作 cache key 一部分，检测到版本变更即失效内部缓存。
+     * 用于检测 registry 快照变更，消费方比对版本号即可判断是否需要重新读取。
      */
     long currentVersion();
 
@@ -48,17 +48,17 @@ public interface McpServerRegistryAdmin {
      * Returns the withdrawn instance for potential restore, or null if not present.
      * Callbacks captured before withdrawal fail fast on next remote call.
      */
-    McpServerImpl withdraw(ServerId id);
+    ManagedMcpServer withdraw(ServerId id);
 
     /**
      * Restore a previously withdrawn instance back into the snapshot, marking it active.
      * Uses CAS: only succeeds if no other instance was published for this id.
      */
-    void restore(McpServerImpl withdrawn);
+    void restore(ManagedMcpServer withdrawn);
 
     /**
      * Remove a server only if the current snapshot entry is the exact same instance.
      * Prevents stale cleanup from removing a newer replacement.
      */
-    boolean removeIfSame(ServerId id, McpServerImpl instance);
+    boolean removeIfSame(ServerId id, ManagedMcpServer instance);
 }

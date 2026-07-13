@@ -40,7 +40,8 @@ public class McpAuthorizer {
                     "MCP 工具调用未获授权");
         }
         McpToolConfig config = toolConfigAccessor.get(prefixedName);
-        if (config == null || !Boolean.TRUE.equals(config.getEnabled())) {
+        if (config == null || !Boolean.TRUE.equals(config.getEnabled())
+                || !Boolean.TRUE.equals(config.getPresent())) {
             throw new ClientException(ClientErrorCode.FORBIDDEN, "MCP 工具调用未获授权");
         }
         return config;

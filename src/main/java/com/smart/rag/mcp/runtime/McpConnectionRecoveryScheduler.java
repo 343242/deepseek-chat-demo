@@ -14,6 +14,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -107,7 +108,7 @@ public class McpConnectionRecoveryScheduler {
     }
 
     private static long jitteredDelay() {
-        long base = 1000L + (long) (Math.random() * 2000L); // 1-3 seconds
+        long base = 1000L + ThreadLocalRandom.current().nextLong(2000L); // 1-3 seconds
         return base * 1_000_000L; // to nanos
     }
 

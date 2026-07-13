@@ -5,7 +5,7 @@ import com.smart.rag.mcp.core.McpServer;
 import com.smart.rag.mcp.core.McpServerRegistry;
 import com.smart.rag.mcp.core.ServerId;
 import com.smart.rag.mcp.runtime.McpClientFactory;
-import com.smart.rag.mcp.runtime.McpServerImpl;
+import com.smart.rag.mcp.runtime.ManagedMcpServer;
 import com.smart.rag.mcp.runtime.McpServerRegistryAdmin;
 import io.modelcontextprotocol.client.McpSyncClient;
 import org.springframework.lang.Nullable;
@@ -67,15 +67,15 @@ public class McpServerRuntime {
         clientFactory.destroyClient(client);
     }
 
-    public McpServerImpl withdraw(String serverId) {
+    public ManagedMcpServer withdraw(String serverId) {
         return registryAdmin.withdraw(new ServerId(serverId));
     }
 
-    public void restore(McpServerImpl withdrawn) {
+    public void restore(ManagedMcpServer withdrawn) {
         registryAdmin.restore(withdrawn);
     }
 
-    public boolean removeIfSame(String serverId, McpServerImpl instance) {
+    public boolean removeIfSame(String serverId, ManagedMcpServer instance) {
         return registryAdmin.removeIfSame(new ServerId(serverId), instance);
     }
 

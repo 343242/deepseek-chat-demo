@@ -10,6 +10,7 @@ import com.smart.rag.mcp.admin.mapper.McpServerConfigMapper;
 import com.smart.rag.mcp.admin.mapper.McpToolConfigMapper;
 import com.smart.rag.mcp.mcpclient.McpToolUtils;
 import com.smart.rag.mcp.runtime.McpBearerTokenCodec;
+import com.smart.rag.mcp.runtime.McpBearerTokenValidator;
 import com.smart.rag.mcp.runtime.McpConnectionRecoveryScheduler;
 import com.smart.rag.mcp.runtime.McpDesiredStateHasher;
 import org.slf4j.Logger;
@@ -30,6 +31,7 @@ public class McpServerAdminService {
     private final McpServerRuntime runtime;
     private final HostSafetyValidator urlValidator;
     private final McpBearerTokenCodec tokenCodec;
+    private final McpBearerTokenValidator tokenValidator;
     private final McpDesiredStateHasher desiredStateHasher;
 
     private final McpConnectionRecoveryScheduler scheduler;
@@ -40,6 +42,7 @@ public class McpServerAdminService {
                                  McpServerRuntime runtime,
                                  HostSafetyValidator urlValidator,
                                  McpBearerTokenCodec tokenCodec,
+                                 McpBearerTokenValidator tokenValidator,
                                  McpDesiredStateHasher desiredStateHasher,
                                  McpConnectionRecoveryScheduler scheduler) {
         this.serverConfigMapper = serverConfigMapper;
@@ -48,6 +51,7 @@ public class McpServerAdminService {
         this.runtime = runtime;
         this.urlValidator = urlValidator;
         this.tokenCodec = tokenCodec;
+        this.tokenValidator = tokenValidator;
         this.desiredStateHasher = desiredStateHasher;
         this.scheduler = scheduler;
     }
@@ -113,6 +117,7 @@ public class McpServerAdminService {
         }
         String url = request.url().trim();
         urlValidator.validate(url);
+        tokenValidator.validate(request.bearerToken());
 
         // Idempotency: check existing key first
         McpServerConfig existing = serverConfigMapper.selectByCreateRequestKey(idempotencyKey);
@@ -139,7 +144,7 @@ public class McpServerAdminService {
 
         // Two local writes in one transaction: insert -> assign mcp_<id> + hash -> update
         txTemplate.executeWithoutResult(status -> {
-            config.setDesiredStateHash("__pending__"); // placeholder for NOT NULL constraint
+            config.setDesiredStateHash("0".repeat(64)); // passes CHECK ^[0-9a-f]{64}$ until real hash assigned
             serverConfigMapper.insert(config);
             config.setServerId(McpToolUtils.serverId(config.getId()));
             config.setDesiredStateHash(desiredStateHasher.hash(
@@ -207,6 +212,7 @@ public class McpServerAdminService {
     @AdminAudit(resourceType = "mcp_server", action = "update_bearer_token",
             resourceIdExpr = "#serverId", sensitiveFields = {"bearerToken"})
     public McpServerConfig updateBearerToken(String serverId, String bearerToken) {
+        tokenValidator.validate(bearerToken);
         McpServerConfig config = requireServer(serverId);
         String encrypted = bearerToken != null && !bearerToken.isBlank()
                 ? tokenCodec.encode(bearerToken) : null;
@@ -230,6 +236,14 @@ public class McpServerAdminService {
         scheduler.wake(serverId);
     }
 
+    /**
+     * Idempotency payload comparison: URL equality + token presence (not value).
+     * <p>
+     * Token value is encrypted with a random IV, so byte-level comparison is not feasible
+     * without decryption. A retry with a different token value but same Idempotency-Key will
+     * return the existing row, keeping the original token. This is an accepted limitation:
+     * operators who need to rotate the token must use the dedicated update-bearer-token endpoint.
+     */
     private boolean sameCreatePayload(McpServerConfig existing, CreateServerRequest request) {
         if (!existing.getUrl().equals(request.url().trim())) return false;
         boolean existingToken = existing.getBearerTokenEncrypted() != null && !existing.getBearerTokenEncrypted().isBlank();

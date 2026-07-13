@@ -34,7 +34,7 @@ import java.util.List;
 import java.util.Objects;
 
 /** Per-connection implementation of the MCP core capabilities. */
-public final class McpServerImpl implements McpServer {
+public final class McpServerImpl implements ManagedMcpServer {
 
     private static final Logger log = LoggerFactory.getLogger(McpServerImpl.class);
 
@@ -138,7 +138,9 @@ public final class McpServerImpl implements McpServer {
 
         @Override
         public McpToolResult call(String name, McpArgs args, Subject subj) {
-            Objects.requireNonNull(args, "args");
+            if (!active) {
+                return McpToolResult.error("MCP Server 正在重连，请稍后重试");
+            }
             McpToolConfig toolConfig = authorizer.requireAuthorized(subj, name);
             String prefix = id.value() + "_";
             if (name == null || !name.startsWith(prefix)) {
@@ -217,16 +219,19 @@ public final class McpServerImpl implements McpServer {
         }
     }
 
+    @Override
     public boolean hasClient() {
         return client != null;
     }
 
     /** Returns the underlying client, or null if this is a placeholder server. */
     @Nullable
-    public McpSyncClient getClient() {
+    @Override
+    public McpSyncClient getConnectedClient() {
         return client;
     }
 
+    @Override
     public void closeQuietly() {
         if (client != null) {
             try {
@@ -237,14 +242,17 @@ public final class McpServerImpl implements McpServer {
         }
     }
 
+    @Override
     public boolean isActive() {
         return active;
     }
 
+    @Override
     public void markInactive() {
         this.active = false;
     }
 
+    @Override
     public void markActive() {
         this.active = true;
     }

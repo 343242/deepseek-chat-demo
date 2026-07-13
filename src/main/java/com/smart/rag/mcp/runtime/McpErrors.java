@@ -19,4 +19,15 @@ public final class McpErrors {
         }
         return "MCP Server 连接或协议交互失败";
     }
+
+    /**
+     * Stable allowlisted error code for persistence.
+     */
+    public static String safeCode(Throwable error) {
+        if (error instanceof AbstractException exception) {
+            return exception.getClass().getSimpleName().replace("Exception", "")
+                    + "_" + exception.getErrorCode().getCode();
+        }
+        return "MCP_CONNECT_FAILED";
+    }
 }

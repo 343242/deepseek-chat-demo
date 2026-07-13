@@ -1,0 +1,199 @@
+package com.smart.rag.mcp.runtime;
+
+import com.smart.rag.mcp.admin.entity.McpServerConfig;
+import com.smart.rag.mcp.admin.mapper.McpServerConfigMapper;
+import com.smart.rag.mcp.admin.mapper.McpToolConfigMapper;
+import com.smart.rag.mcp.admin.entity.McpToolConfig;
+import com.smart.rag.mcp.admin.service.McpServerRuntime;
+import com.smart.rag.mcp.mcpclient.McpToolUtils;
+import com.smart.rag.infrastructure.exception.RemoteException;
+import com.smart.rag.infrastructure.exception.errorcode.RemoteErrorCode;
+import io.modelcontextprotocol.client.McpSyncClient;
+import io.modelcontextprotocol.spec.McpSchema;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.lang.Nullable;
+import org.springframework.stereotype.Component;
+
+import java.time.Duration;
+import java.time.OffsetDateTime;
+import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
+
+/**
+ * One captured-hash connection/catalog attempt (design §6).
+ * <p>
+ * Each invocation does exactly one connect attempt outside transaction/guard,
+ * then conditionally commits observation under the mutation guard.
+ * No internal retry loop — the scheduler owns retry scheduling.
+ */
+@Component
+public class McpConnectionReconciler {
+
+    private static final Logger log = LoggerFactory.getLogger(McpConnectionReconciler.class);
+
+    private static final Duration INITIAL_BACKOFF = Duration.ofSeconds(5);
+    private static final Duration MAX_BACKOFF = Duration.ofMinutes(5);
+    private static final int PERMANENT_FAILURE_THRESHOLD = 10;
+
+    private final McpServerConfigMapper serverMapper;
+    private final McpToolConfigMapper toolMapper;
+    private final McpServerRuntime runtime;
+    private final McpClientFactory clientFactory;
+    private final McpDesiredStateHasher hasher;
+
+    public McpConnectionReconciler(McpServerConfigMapper serverMapper,
+                                   McpToolConfigMapper toolMapper,
+                                   McpServerRuntime runtime,
+                                   McpClientFactory clientFactory,
+                                   McpDesiredStateHasher hasher) {
+        this.serverMapper = serverMapper;
+        this.toolMapper = toolMapper;
+        this.runtime = runtime;
+        this.clientFactory = clientFactory;
+        this.hasher = hasher;
+    }
+
+    /**
+     * One connection attempt for the given server ID.
+     */
+    public void reconcile(String serverId) {
+        McpServerConfig config = serverMapper.selectByServerId(serverId);
+        if (config == null || Boolean.FALSE.equals(config.getEnabled())) {
+            return;
+        }
+
+        String capturedHash = config.getDesiredStateHash();
+        if (capturedHash == null) {
+            return;
+        }
+
+        // Connect outside transaction/guard
+        McpSyncClient client;
+        try {
+            client = runtime.connect(config);
+        } catch (RuntimeException e) {
+            persistFailure(config, capturedHash, McpErrors.safeCode(e), McpErrors.safeSummary(e));
+            return;
+        }
+
+        // Conditional observed success under guard
+        String remoteName = extractRemoteName(client);
+        String observedHash = capturedHash; // same hash means desired state was applied
+
+        int affected = runtime.withMutationGuard(() ->
+                serverMapper.updateObservedSuccess(
+                        config.getId(), capturedHash, observedHash, remoteName));
+
+        if (affected == 0) {
+            // Stale: desired state changed or disabled; close unowned client
+            clientFactory.destroyClient(client);
+            return;
+        }
+
+        // Publish the client into registry
+        try {
+            runtime.add(config, client, null);
+        } catch (RuntimeException e) {
+            log.warn("Registry publish failed, cleaning up: serverId={}", serverId, e);
+            runtime.removeIfSame(serverId, null);
+            clientFactory.destroyClient(client);
+            return;
+        }
+
+        // Catalog sync
+        try {
+            syncCatalog(config, capturedHash, client);
+        } catch (RuntimeException e) {
+            log.warn("Catalog sync failed for serverId={}: {}", serverId, e.getMessage());
+            // Keep the live client; catalog_synced stays false → DEGRADED
+        }
+    }
+
+    private void syncCatalog(McpServerConfig config, String capturedHash, McpSyncClient client) {
+        List<McpSchema.Tool> remoteTools;
+        try {
+            remoteTools = client.listTools().tools();
+        } catch (RuntimeException e) {
+            throw new RemoteException(RemoteErrorCode.MCP_SERVER_UNREACHABLE,
+                    "MCP Server 工具列表获取失败", e);
+        }
+
+        if (remoteTools == null || remoteTools.isEmpty()) {
+            // Empty catalog is valid
+            return;
+        }
+
+        String serverId = config.getServerId();
+        List<McpToolConfig> toolConfigs = remoteTools.stream()
+                .map(tool -> toToolConfig(serverId, tool))
+                .toList();
+
+        Set<String> seenNames = remoteTools.stream()
+                .map(McpSchema.Tool::name)
+                .collect(Collectors.toSet());
+
+        // Upsert seen tools + mark absent tools
+        toolMapper.batchUpsert(toolConfigs);
+        if (!seenNames.isEmpty()) {
+            toolMapper.markAbsentExcept(serverId, List.copyOf(seenNames));
+        }
+    }
+
+    private McpToolConfig toToolConfig(String serverId, McpSchema.Tool tool) {
+        McpToolConfig tc = new McpToolConfig();
+        tc.setServerId(serverId);
+        tc.setToolName(tool.name());
+        tc.setPrefixedToolName(McpToolUtils.prefixedToolName(serverId, tool.name()));
+        tc.setDescription(tool.description());
+        tc.setEnabled(false);
+        tc.setIntent("GENERAL_TOOL");
+        tc.setRisk("low");
+        tc.setPresent(true);
+        tc.setInputSchema(toJsonString(tool.inputSchema()));
+        return tc;
+    }
+
+    private void persistFailure(McpServerConfig config, String capturedHash,
+                                 String errorCode, String errorMessage) {
+        int failures = (config.getConsecutiveFailures() != null
+                ? config.getConsecutiveFailures() : 0) + 1;
+        OffsetDateTime nextRetry = failures >= PERMANENT_FAILURE_THRESHOLD
+                ? null  // stop retrying permanently
+                : OffsetDateTime.now().plus(calculateBackoff(failures));
+
+        serverMapper.updateObservedFailure(
+                config.getId(), capturedHash, errorCode, errorMessage,
+                failures, nextRetry);
+    }
+
+    private static Duration calculateBackoff(int failures) {
+        long backoffSeconds = INITIAL_BACKOFF.toSeconds() * (1L << Math.min(failures - 1, 6));
+        backoffSeconds = Math.min(backoffSeconds, MAX_BACKOFF.toSeconds());
+        // Add jitter (0-25%)
+        long jitter = (long) (backoffSeconds * 0.25 * Math.random());
+        return Duration.ofSeconds(backoffSeconds + jitter);
+    }
+
+    @Nullable
+    private static String extractRemoteName(McpSyncClient client) {
+        try {
+            McpSchema.InitializeResult result = client.getCurrentInitializationResult();
+            return result != null && result.serverInfo() != null
+                    ? result.serverInfo().name() : null;
+        } catch (RuntimeException e) {
+            return null;
+        }
+    }
+
+    private static String toJsonString(Object schema) {
+        if (schema == null) return "{}";
+        if (schema instanceof String s) return s;
+        try {
+            return new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(schema);
+        } catch (Exception e) {
+            return "{}";
+        }
+    }
+}

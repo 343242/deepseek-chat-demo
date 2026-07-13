@@ -551,3 +551,40 @@ BREAKING: all model IDs must be registry candidate ID format (deepseek-v4-flash,
 
 - Validate live third-party MCP Server interoperability before production rollout.
 - Audit the pre-existing `DefaultSubtask` terminal-state/payload publication ordering separately.
+
+
+## Session 17: MCP DB source-of-truth: review fixes, cleanup, and batch archive
+
+**Date**: 2026-07-13
+**Task**: MCP DB source-of-truth: review fixes, cleanup, and batch archive
+**Branch**: `agentic-rag-dev`
+
+### Summary
+
+Completed mcp-db-source-of-truth task: code review P0-P3 fixes (13 issues), deleted legacy provider/filter/adapter chain (11 classes), fixed unused variables and stale imports, added .omp/ and lsp.json to gitignore. Archived 6 completed tasks.
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `6a40c11` | (see git log) |
+| `0d6581a` | (see git log) |
+| `8ac3804` | (see git log) |
+| `4ef2f95` | (see git log) |
+| `26644a8` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

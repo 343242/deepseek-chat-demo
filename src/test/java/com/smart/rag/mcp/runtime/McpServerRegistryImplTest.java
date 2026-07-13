@@ -3,11 +3,11 @@ package com.smart.rag.mcp.runtime;
 import com.smart.rag.infrastructure.fallback.CircuitBreakerProperties;
 import com.smart.rag.infrastructure.fallback.FallbackEligibility;
 import com.smart.rag.mcp.admin.entity.McpServerConfig;
+import com.smart.rag.mcp.admin.mapper.McpToolConfigMapper;
 import com.smart.rag.mcp.admin.service.McpSecurityConfigAccessor;
 import com.smart.rag.mcp.admin.service.McpToolConfigAccessor;
 import com.smart.rag.mcp.core.McpServerHealth;
 import com.smart.rag.mcp.core.ServerId;
-import com.smart.rag.mcp.mcpclient.SyncMcpToolCallbackProvider;
 import com.smart.rag.mcp.policy.McpAuthorizer;
 import com.smart.rag.mcp.policy.McpDescriptionSanitizer;
 import io.modelcontextprotocol.client.McpSyncClient;
@@ -16,7 +16,6 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.beans.factory.ObjectProvider;
 
 import java.time.Clock;
 
@@ -28,7 +27,7 @@ import static org.mockito.Mockito.mock;
 @DisplayName("McpServerRegistryImpl: snapshot mode + addServer/removeServer/replaceServer")
 class McpServerRegistryImplTest {
 
-    @Mock private ObjectProvider<SyncMcpToolCallbackProvider> providerProvider;
+    @Mock private McpToolConfigMapper toolConfigMapper;
 
     private final McpAuthorizer authorizer = new McpAuthorizer(mock(McpToolConfigAccessor.class));
     private final McpCircuitBreakerRegistry registry =
@@ -38,7 +37,7 @@ class McpServerRegistryImplTest {
             new McpDescriptionSanitizer(mock(McpToolConfigAccessor.class), mock(McpSecurityConfigAccessor.class));
 
     private McpServerRegistryImpl newRegistry() {
-        return new McpServerRegistryImpl(authorizer, registry, eligibility, descriptionSanitizer, providerProvider);
+        return new McpServerRegistryImpl(authorizer, registry, eligibility, descriptionSanitizer, toolConfigMapper);
     }
 
     private McpServerConfig config(Long id, String serverId) {
@@ -71,7 +70,6 @@ class McpServerRegistryImplTest {
         assertThat(r.find(new ServerId("weather"))).isPresent();
         assertThat(r.currentVersion()).isEqualTo(1L);
     }
-
 
     @Test
     @DisplayName("addServer(serverId=null)：抛 IllegalArgumentException")

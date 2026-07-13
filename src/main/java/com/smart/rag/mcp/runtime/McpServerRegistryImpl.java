@@ -6,14 +6,12 @@ import com.smart.rag.mcp.admin.entity.McpServerConfig;
 import com.smart.rag.mcp.core.McpServer;
 import com.smart.rag.mcp.core.McpServerRegistry;
 import com.smart.rag.mcp.core.ServerId;
-import com.smart.rag.mcp.mcpclient.SyncMcpToolCallbackProvider;
 import com.smart.rag.mcp.policy.McpAuthorizer;
 import com.smart.rag.mcp.policy.McpDescriptionSanitizer;
 import io.modelcontextprotocol.client.McpSyncClient;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Component;
 
@@ -38,7 +36,7 @@ public class McpServerRegistryImpl implements McpServerRegistry, McpServerRegist
     private final McpCircuitBreakerRegistry circuitRegistry;
     private final FallbackEligibility fallbackEligibility;
     private final McpDescriptionSanitizer descriptionSanitizer;
-    private final ObjectProvider<SyncMcpToolCallbackProvider> providerProvider;
+    private final com.smart.rag.mcp.admin.mapper.McpToolConfigMapper toolConfigMapper;
 
     private final AtomicReference<ImmutableMap<ServerId, McpServer>> snapshotRef =
             new AtomicReference<>(ImmutableMap.of());
@@ -61,12 +59,12 @@ public class McpServerRegistryImpl implements McpServerRegistry, McpServerRegist
                                   McpCircuitBreakerRegistry circuitRegistry,
                                   FallbackEligibility fallbackEligibility,
                                   McpDescriptionSanitizer descriptionSanitizer,
-                                  ObjectProvider<SyncMcpToolCallbackProvider> providerProvider) {
+                                  com.smart.rag.mcp.admin.mapper.McpToolConfigMapper toolConfigMapper) {
         this.authorizer = authorizer;
         this.circuitRegistry = circuitRegistry;
         this.fallbackEligibility = fallbackEligibility;
         this.descriptionSanitizer = descriptionSanitizer;
-        this.providerProvider = providerProvider;
+        this.toolConfigMapper = toolConfigMapper;
     }
 
     // === McpServerRegistry（只读）===
@@ -93,7 +91,7 @@ public class McpServerRegistryImpl implements McpServerRegistry, McpServerRegist
         }
         ServerId id = new ServerId(sid);
         McpServerImpl server = new McpServerImpl(id, client, authorizer, circuitRegistry,
-                fallbackEligibility, providerProvider.getIfAvailable(), descriptionSanitizer);
+                fallbackEligibility, toolConfigMapper, descriptionSanitizer);
 
         ImmutableMap<ServerId, McpServer> oldSnapshot;
         ImmutableMap<ServerId, McpServer> newSnapshot;

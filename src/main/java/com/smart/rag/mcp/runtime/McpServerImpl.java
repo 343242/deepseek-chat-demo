@@ -26,12 +26,6 @@ import io.modelcontextprotocol.client.McpSyncClient;
 import io.modelcontextprotocol.spec.McpSchema;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import com.smart.rag.mcp.mcpclient.McpConnectionInfo;
-import com.smart.rag.mcp.mcpclient.McpServerToolCallbacksAdapter;
-import com.smart.rag.mcp.mcpclient.SyncMcpToolCallback;
-import com.smart.rag.mcp.mcpclient.SyncMcpToolCallbackProvider;
-import org.springframework.ai.tool.ToolCallback;
-import org.springframework.ai.tool.definition.ToolDefinition;
 import org.springframework.lang.Nullable;
 
 import java.net.URI;
@@ -51,10 +45,7 @@ public final class McpServerImpl implements McpServer {
     private final FallbackEligibility fallbackEligibility;
     private final McpDescriptionSanitizer descriptionSanitizer;
     private final McpRemoteCallExecutor remoteCallExecutor;
-
-    /** 聚合 provider（nullable：无 connections / starter 未建时）；tools 发现面委托它按前缀过滤。 */
-    @Nullable
-    private final SyncMcpToolCallbackProvider provider;
+    private final com.smart.rag.mcp.admin.mapper.McpToolConfigMapper toolConfigMapper;
 
     /** Instance-local active flag: false after withdraw; callbacks captured before withdraw fail fast. */
     private volatile boolean active = true;
@@ -68,7 +59,7 @@ public final class McpServerImpl implements McpServer {
                   McpAuthorizer authorizer,
                   McpCircuitBreakerRegistry circuitRegistry,
                   FallbackEligibility fallbackEligibility,
-                  @Nullable SyncMcpToolCallbackProvider provider,
+                  com.smart.rag.mcp.admin.mapper.McpToolConfigMapper toolConfigMapper,
                   McpDescriptionSanitizer descriptionSanitizer) {
         this.id = id;
         this.client = client;
@@ -76,7 +67,7 @@ public final class McpServerImpl implements McpServer {
         this.circuitRegistry = circuitRegistry;
         this.fallbackEligibility = fallbackEligibility;
         this.remoteCallExecutor = new McpRemoteCallExecutor(id, circuitRegistry, fallbackEligibility);
-        this.provider = provider;
+        this.toolConfigMapper = toolConfigMapper;
         this.descriptionSanitizer = descriptionSanitizer;
     }
 
@@ -114,31 +105,33 @@ public final class McpServerImpl implements McpServer {
 
         @Override
         public List<McpTool> visibleTo(Subject subj, McpIntent intent) {
-            if (!active || subj == null || !subj.isAuthenticated() || provider == null) {
+            if (!active || subj == null || !subj.isAuthenticated()) {
                 return List.of();
             }
-            String prefix = id.value() + "_";
-            ToolCallback[] callbacks;
+            // Direct DB read: enabled=true, present=true tools for this server
+            List<com.smart.rag.mcp.admin.entity.McpToolConfig> configs;
             try {
-                callbacks = provider.getToolCallbacks();
+                configs = toolConfigMapper.selectVisibleByServerId(id.value());
             } catch (Exception e) {
-                // 发现失败（server 不可达等）→ 空集，不击穿；不计熔断（listTools 非调用面，不反映 server 健康）
-                log.debug("MCP server 工具发现失败，返回空集，serverId={}, errorType={}",
+                log.debug("MCP server tool DB read failed, returning empty set, serverId={}, errorType={}",
                         id.value(), e.getClass().getSimpleName());
                 return List.of();
             }
+            if (configs == null || configs.isEmpty()) {
+                return List.of();
+            }
             List<McpTool> visible = new ArrayList<>();
-            for (ToolCallback cb : callbacks) {
-                ToolDefinition def = cb.getToolDefinition();
-                String name = def.name();
-                if (name == null || !name.startsWith(prefix)) {
+            for (var config : configs) {
+                String name = config.getPrefixedToolName();
+                if (name == null) {
                     continue;
                 }
                 if (!authorizer.canSee(subj, name, intent)) {
                     continue;
                 }
-                visible.add(new McpTool(name, descriptionSanitizer.sanitize(name, def.description()),
-                        def.inputSchema()));
+                String desc = descriptionSanitizer.sanitize(name, config.getDescription());
+                String schema = config.getInputSchema();
+                visible.add(new McpTool(name, desc, schema != null ? schema : "{}"));
             }
             return visible;
         }
@@ -272,25 +265,5 @@ public final class McpServerImpl implements McpServer {
                     "MCP Server 当前未连接，请稍后重试");
         }
         return client;
-    }
-
-    public List<ToolCallback> toolCallbacks(McpServerToolCallbacksAdapter.DiscoveryOptions options) {
-        if (client == null) {
-            return List.of();
-        }
-        McpConnectionInfo connInfo = McpConnectionInfo.builder()
-                .clientCapabilities(client.getClientCapabilities())
-                .clientInfo(client.getClientInfo())
-                .initializeResult(client.getCurrentInitializationResult())
-                .build();
-        return client.listTools().tools().stream()
-                .filter(tool -> options.filter().test(connInfo, tool))
-                .<ToolCallback>map(tool -> SyncMcpToolCallback.builder()
-                        .mcpClient(client)
-                        .tool(tool)
-                        .prefixedToolName(options.prefixGenerator().prefixedToolName(connInfo, tool))
-                        .toolContextToMcpMetaConverter(options.metaConverter())
-                        .build())
-                .toList();
     }
 }

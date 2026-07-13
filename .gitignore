@@ -30,3 +30,7 @@ bin/
 
 # Local skill lock file (not source)
 skills-lock.json
+
+# Platform tooling (not source)
+.omp/
+lsp.json

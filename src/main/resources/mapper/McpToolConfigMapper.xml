@@ -12,6 +12,9 @@
         <result column="intent" property="intent"/>
         <result column="risk" property="risk"/>
         <result column="description_override" property="descriptionOverride"/>
+        <result column="present" property="present"/>
+        <result column="last_seen_at" property="lastSeenAt"/>
+        <result column="input_schema" property="inputSchema"/>
         <result column="version" property="version"/>
         <result column="created_at" property="createdAt"/>
         <result column="updated_at" property="updatedAt"/>
@@ -19,7 +22,8 @@
 
     <sql id="Base_Column_List">
         id, server_id, tool_name, prefixed_tool_name, description, enabled,
-        intent, risk, description_override, version, created_at, updated_at
+        intent, risk, description_override, present, last_seen_at, input_schema,
+        version, created_at, updated_at
     </sql>
 
     <select id="selectByServerId" resultMap="BaseResultMap">
@@ -33,6 +37,16 @@
         SELECT <include refid="Base_Column_List"/>
         FROM mcp_tool_config
         WHERE prefixed_tool_name = #{prefixedToolName}
+    </select>
+
+    <!-- Visible tools for direct callback discovery/authorization -->
+    <select id="selectVisibleByServerId" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM mcp_tool_config
+        WHERE server_id = #{serverId}
+          AND enabled = TRUE
+          AND present = TRUE
+        ORDER BY prefixed_tool_name
     </select>
 
     <update id="updateEnabledByServerId">
@@ -54,6 +68,19 @@
         </foreach>
     </update>
 
+    <!-- Mark absent tools (complete-set reconciliation) -->
+    <update id="markAbsentExcept">
+        UPDATE mcp_tool_config
+        SET present = FALSE,
+            updated_at = NOW()
+        WHERE server_id = #{serverId}
+          AND present = TRUE
+          AND tool_name NOT IN
+        <foreach collection="seenNames" item="name" open="(" separator="," close=")">
+            #{name}
+        </foreach>
+    </update>
+
     <delete id="deleteByServerId">
         DELETE FROM mcp_tool_config
         WHERE server_id = #{serverId}
@@ -62,17 +89,23 @@
     <insert id="batchUpsert">
         INSERT INTO mcp_tool_config (
             server_id, tool_name, prefixed_tool_name, description,
-            enabled, intent, risk, version, created_at, updated_at
+            enabled, intent, risk, present, last_seen_at, input_schema,
+            version, created_at, updated_at
         ) VALUES
         <foreach collection="tools" item="tool" separator=",">
             (
                 #{tool.serverId}, #{tool.toolName}, #{tool.prefixedToolName}, #{tool.description},
-                #{tool.enabled}, #{tool.intent}, #{tool.risk}, 0, NOW(), NOW()
+                #{tool.enabled}, #{tool.intent}, #{tool.risk},
+                TRUE, CURRENT_TIMESTAMP, #{tool.inputSchema},
+                0, NOW(), NOW()
             )
         </foreach>
         ON CONFLICT (server_id, tool_name) DO UPDATE SET
             prefixed_tool_name = EXCLUDED.prefixed_tool_name,
             description = EXCLUDED.description,
+            present = TRUE,
+            last_seen_at = CURRENT_TIMESTAMP,
+            input_schema = EXCLUDED.input_schema,
             updated_at = NOW()
     </insert>
 

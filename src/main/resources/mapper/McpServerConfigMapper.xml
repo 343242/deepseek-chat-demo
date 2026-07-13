@@ -5,23 +5,33 @@
     <resultMap id="BaseResultMap" type="com.smart.rag.mcp.admin.entity.McpServerConfig">
         <id column="id" property="id"/>
         <result column="server_id" property="serverId"/>
+        <result column="remote_server_name" property="remoteServerName"/>
         <result column="url" property="url"/>
         <result column="name" property="name"/>
         <result column="description" property="description"/>
         <result column="enabled" property="enabled"/>
         <result column="auto_connect" property="autoConnect"/>
         <result column="bearer_token_encrypted" property="bearerTokenEncrypted"/>
-        <result column="init_error" property="initError"/>
+        <result column="desired_state_hash" property="desiredStateHash"/>
+        <result column="observed_state_hash" property="observedStateHash"/>
+        <result column="catalog_synced" property="catalogSynced"/>
+        <result column="error_code" property="errorCode"/>
+        <result column="error_message" property="errorMessage"/>
+        <result column="consecutive_failures" property="consecutiveFailures"/>
+        <result column="next_reconcile_at" property="nextReconcileAt"/>
+        <result column="last_attempt_at" property="lastAttemptAt"/>
         <result column="last_connected_at" property="lastConnectedAt"/>
+        <result column="create_request_key" property="createRequestKey"/>
         <result column="version" property="version"/>
         <result column="created_at" property="createdAt"/>
         <result column="updated_at" property="updatedAt"/>
     </resultMap>
 
     <sql id="Base_Column_List">
-        id, server_id, url, name, description, enabled, auto_connect,
-        bearer_token_encrypted, init_error, last_connected_at, version,
-        created_at, updated_at
+        id, server_id, remote_server_name, url, name, description, enabled, auto_connect,
+        bearer_token_encrypted, desired_state_hash, observed_state_hash, catalog_synced,
+        error_code, error_message, consecutive_failures, next_reconcile_at, last_attempt_at,
+        last_connected_at, create_request_key, version, created_at, updated_at
     </sql>
 
     <select id="selectByServerId" resultMap="BaseResultMap">
@@ -30,17 +40,56 @@
         WHERE server_id = #{serverId}
     </select>
 
+    <select id="selectByCreateRequestKey" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM mcp_server_config
+        WHERE create_request_key = #{createRequestKey}
+    </select>
+
     <select id="selectAutoConnectEnabled" resultMap="BaseResultMap">
         SELECT <include refid="Base_Column_List"/>
         FROM mcp_server_config
         WHERE enabled = TRUE AND auto_connect = TRUE
     </select>
 
-    <update id="updateInitError">
+    <!-- Recovery scan: enabled rows with due time -->
+    <select id="selectDueForReconcile" resultMap="BaseResultMap">
+        SELECT <include refid="Base_Column_List"/>
+        FROM mcp_server_config
+        WHERE enabled = TRUE
+          AND next_reconcile_at IS NOT NULL
+          AND next_reconcile_at &lt;= CURRENT_TIMESTAMP
+        ORDER BY next_reconcile_at
+        LIMIT #{limit}
+    </select>
+
+    <!-- Conditional observed success: only commits if hash still matches -->
+    <update id="updateObservedSuccess">
         UPDATE mcp_server_config
-        SET init_error = #{initError},
-            updated_at = NOW()
-        WHERE server_id = #{serverId}
+        SET observed_state_hash = #{observedStateHash},
+            catalog_synced = FALSE,
+            remote_server_name = #{remoteServerName},
+            last_connected_at = CURRENT_TIMESTAMP,
+            error_code = NULL,
+            error_message = NULL,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = #{id}
+          AND enabled = TRUE
+          AND desired_state_hash = #{capturedHash}
+    </update>
+
+    <!-- Conditional observed failure: persists safe error + retry scheduling -->
+    <update id="updateObservedFailure">
+        UPDATE mcp_server_config
+        SET error_code = #{errorCode},
+            error_message = #{errorMessage},
+            consecutive_failures = #{consecutiveFailures},
+            next_reconcile_at = #{nextReconcileAt},
+            last_attempt_at = CURRENT_TIMESTAMP,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = #{id}
+          AND enabled = TRUE
+          AND desired_state_hash = #{capturedHash}
     </update>
 
     <update id="updateBearerToken">
@@ -55,14 +104,6 @@
         UPDATE mcp_server_config
         SET enabled = #{enabled},
             version = version + 1,
-            updated_at = NOW()
-        WHERE server_id = #{serverId}
-    </update>
-
-    <update id="markConnected">
-        UPDATE mcp_server_config
-        SET init_error = NULL,
-            last_connected_at = NOW(),
             updated_at = NOW()
         WHERE server_id = #{serverId}
     </update>

@@ -8,18 +8,20 @@ import com.baomidou.mybatisplus.annotation.Version;
 import java.time.OffsetDateTime;
 
 /**
- * MCP Server 配置实体 — 对应 {@code mcp_server_config} 表（V17 迁移）。
+ * MCP Server 配置实体 — 对应 {@code mcp_server_config} 表（V19 重建）。
  * <p>
- * <b>serverId</b>：系统通过 canonical naming contract 从远端身份派生，
- * ADMIN 不可改——这与 {@code McpToolNamePrefixGenerator} 派生的工具前缀同源，
- * 保证 {@code DatabaseToolFilter} 按 {@code prefixed_tool_name} 查询命中。
- * INSERT 时可为 NULL（握手未完成），UPDATE 回填后非 NULL。
+ * PostgreSQL is the sole connection source. A committed row is durable desired state;
+ * in-memory clients are disposable observations.
  * <p>
- * <b>bearerTokenEncrypted</b>：版本化 AES/GCM cipher/IV envelope，更新触发 client 重建。
- * <b>initError</b>：软失败语义——client 创建/握手失败时记录原因，registry 中保留占位 server。
- * <b>version</b>：MyBatis-Plus {@code @Version} 乐观锁，{@code OptimisticLockerInnerInterceptor} 拦截。
+ * <b>serverId</b>: stable local identity {@code mcp_<row-id>}, assigned when the row is
+ * created. Remote Server name is informational only.
+ * <b>desiredStateHash</b>: SHA-256 of canonical URL + encrypted envelope/null + enabled.
+ * <b>observedStateHash</b>: hash of the currently published client; null = no trusted observation.
+ * <b>catalogSynced</b>: complete tool catalog committed for desired state.
+ * <b>version</b>: MyBatis-Plus {@code @Version} optimistic lock — desired writes bump it,
+ * observed writes do not.
  *
- * @see com.smart.rag.infrastructure.security.SecretCipher
+ * @see com.smart.rag.mcp.runtime.McpDesiredStateHasher
  */
 @TableName("mcp_server_config")
 public class McpServerConfig {
@@ -27,12 +29,15 @@ public class McpServerConfig {
     @TableId(type = IdType.AUTO)
     private Long id;
 
-    /** 系统派生；握手前 NULL，回填后非 NULL。失败时用合成 id {@code unreachable-<rowId>} */
+    /** Stable local identity mcp_<row-id> */
     private String serverId;
+
+    /** Informational MCP initialize result */
+    private String remoteServerName;
 
     private String url;
 
-    /** ADMIN 可改的展示名（不影响 serverId / 工具前缀） */
+    /** ADMIN display name (does not affect serverId or tool prefix) */
     private String name;
 
     private String description;
@@ -41,12 +46,38 @@ public class McpServerConfig {
 
     private Boolean autoConnect;
 
+    /** v2:<keyId>:<cipher>:<iv> encrypted envelope */
     private String bearerTokenEncrypted;
 
-    /** 软失败：client 创建/握手失败原因；非空时 health=down，工具调用返回友好错误 */
-    private String initError;
+    /** SHA-256 of canonical desired fields */
+    private String desiredStateHash;
 
+    /** Hash of currently published client; null = no trusted observation */
+    private String observedStateHash;
+
+    /** Complete tool catalog committed for desired state */
+    private Boolean catalogSynced;
+
+    /** Stable allowlisted current failure code */
+    private String errorCode;
+
+    /** Safe Chinese message from allowlist */
+    private String errorMessage;
+
+    /** Recovery backoff input */
+    private Integer consecutiveFailures;
+
+    /** Durable due time for reconciliation; null = no scheduled work */
+    private OffsetDateTime nextReconcileAt;
+
+    /** Latest background attempt */
+    private OffsetDateTime lastAttemptAt;
+
+    /** Latest applied connection */
     private OffsetDateTime lastConnectedAt;
+
+    /** Create idempotency key; lives as long as the row */
+    private String createRequestKey;
 
     @Version
     private Long version;
@@ -60,6 +91,9 @@ public class McpServerConfig {
 
     public String getServerId() { return serverId; }
     public void setServerId(String serverId) { this.serverId = serverId; }
+
+    public String getRemoteServerName() { return remoteServerName; }
+    public void setRemoteServerName(String remoteServerName) { this.remoteServerName = remoteServerName; }
 
     public String getUrl() { return url; }
     public void setUrl(String url) { this.url = url; }
@@ -79,11 +113,35 @@ public class McpServerConfig {
     public String getBearerTokenEncrypted() { return bearerTokenEncrypted; }
     public void setBearerTokenEncrypted(String bearerTokenEncrypted) { this.bearerTokenEncrypted = bearerTokenEncrypted; }
 
-    public String getInitError() { return initError; }
-    public void setInitError(String initError) { this.initError = initError; }
+    public String getDesiredStateHash() { return desiredStateHash; }
+    public void setDesiredStateHash(String desiredStateHash) { this.desiredStateHash = desiredStateHash; }
+
+    public String getObservedStateHash() { return observedStateHash; }
+    public void setObservedStateHash(String observedStateHash) { this.observedStateHash = observedStateHash; }
+
+    public Boolean getCatalogSynced() { return catalogSynced; }
+    public void setCatalogSynced(Boolean catalogSynced) { this.catalogSynced = catalogSynced; }
+
+    public String getErrorCode() { return errorCode; }
+    public void setErrorCode(String errorCode) { this.errorCode = errorCode; }
+
+    public String getErrorMessage() { return errorMessage; }
+    public void setErrorMessage(String errorMessage) { this.errorMessage = errorMessage; }
+
+    public Integer getConsecutiveFailures() { return consecutiveFailures; }
+    public void setConsecutiveFailures(Integer consecutiveFailures) { this.consecutiveFailures = consecutiveFailures; }
+
+    public OffsetDateTime getNextReconcileAt() { return nextReconcileAt; }
+    public void setNextReconcileAt(OffsetDateTime nextReconcileAt) { this.nextReconcileAt = nextReconcileAt; }
+
+    public OffsetDateTime getLastAttemptAt() { return lastAttemptAt; }
+    public void setLastAttemptAt(OffsetDateTime lastAttemptAt) { this.lastAttemptAt = lastAttemptAt; }
 
     public OffsetDateTime getLastConnectedAt() { return lastConnectedAt; }
     public void setLastConnectedAt(OffsetDateTime lastConnectedAt) { this.lastConnectedAt = lastConnectedAt; }
+
+    public String getCreateRequestKey() { return createRequestKey; }
+    public void setCreateRequestKey(String createRequestKey) { this.createRequestKey = createRequestKey; }
 
     public Long getVersion() { return version; }
     public void setVersion(Long version) { this.version = version; }

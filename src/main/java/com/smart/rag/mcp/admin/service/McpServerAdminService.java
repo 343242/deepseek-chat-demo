@@ -120,7 +120,6 @@ public class McpServerAdminService {
             }
             runtime.add(config, client, null);
             handedOff = true;
-            serverConfigMapper.markConnected(config.getServerId());
             toolAdminService.invalidate(config.getServerId());
         } catch (RemoteException e) {
             releaseFailedClient(config.getServerId(), client, handedOff);
@@ -187,11 +186,9 @@ public class McpServerAdminService {
             client = runtime.connect(config);
             runtime.replace(config, client);
             handedOff = true;
-            serverConfigMapper.markConnected(serverId);
             toolAdminService.invalidate(serverId);
         } catch (RuntimeException e) {
             releaseFailedClient(serverId, client, handedOff);
-            serverConfigMapper.updateInitError(serverId, McpErrors.safeSummary(e));
             throw new RemoteException(RemoteErrorCode.MCP_SERVER_UNREACHABLE,
                     "MCP Server 重连失败，请检查远端服务", e);
         }
@@ -214,10 +211,8 @@ public class McpServerAdminService {
             client = runtime.connect(refreshed);
             runtime.replace(refreshed, client);
             handedOff = true;
-            serverConfigMapper.markConnected(serverId);
         } catch (RuntimeException e) {
             releaseFailedClient(serverId, client, handedOff);
-            serverConfigMapper.updateInitError(serverId, McpErrors.safeSummary(e));
             throw new RemoteException(RemoteErrorCode.MCP_SERVER_UNREACHABLE,
                     "Bearer Token 更新后重连失败，请检查远端服务", e);
         }
@@ -233,22 +228,14 @@ public class McpServerAdminService {
             client = runtime.connect(config);
             runtime.add(config, client, null);
             handedOff = true;
-            serverConfigMapper.markConnected(config.getServerId());
         } catch (RuntimeException e) {
             releaseFailedClient(config.getServerId(), client, handedOff);
-            String message = McpErrors.safeSummary(e);
-            serverConfigMapper.updateInitError(config.getServerId(), message);
-            runtime.add(config, null, message);
+            runtime.add(config, null, McpErrors.safeSummary(e));
         }
     }
     private void persistPlaceholder(McpServerConfig config, RuntimeException failure) {
-        String syntheticId = "unreachable-" + config.getId();
-        String message = McpErrors.safeSummary(failure);
-        config.setServerId(syntheticId);
-        config.setInitError(message);
-        serverConfigMapper.updateById(config);
-        serverConfigMapper.updateInitError(syntheticId, message);
-        runtime.add(config, null, message);
+        // Phase C replaces placeholder model with desired/observed hash + background reconciler
+        runtime.add(config, null, McpErrors.safeSummary(failure));
         log.warn("MCP Server 创建后初始化失败，id={}", config.getId());
     }
     private McpServerConfig requireServer(String serverId) {

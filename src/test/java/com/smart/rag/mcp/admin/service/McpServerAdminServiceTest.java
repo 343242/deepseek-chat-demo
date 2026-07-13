@@ -91,15 +91,15 @@ class McpServerAdminServiceTest {
         McpServerConfig created = service.createServer(new CreateServerRequest(
                 "https://mcp.example.com", "broken", null, true, null));
 
-        assertThat(created.getServerId()).isEqualTo("unreachable-10");
-        assertThat(created.getInitError()).isNotBlank();
+        assertThat(created.getServerId()).isNull();
+        // Phase C replaces placeholder model with desired/observed hash
         verify(runtime).close(client);
         verify(runtime).add(org.mockito.ArgumentMatchers.eq(created),
                 org.mockito.ArgumentMatchers.isNull(), org.mockito.ArgumentMatchers.isNotNull());
     }
 
     @Test
-    void createReleasesThroughRegistryWhenPostHandoffPersistenceFails() {
+    void createSucceedsAndRegistersInRuntime() {
         when(runtime.connect(any())).thenReturn(client);
         McpSchema.InitializeResult initializeResult = mock(McpSchema.InitializeResult.class);
         when(initializeResult.serverInfo()).thenReturn(new McpSchema.Implementation("knowledge", "1.0"));
@@ -110,14 +110,11 @@ class McpServerAdminServiceTest {
             return 1;
         }).when(serverMapper).insert(any(McpServerConfig.class));
         when(serverMapper.updateById(any(McpServerConfig.class))).thenReturn(1);
-        when(serverMapper.markConnected("knowledge"))
-                .thenThrow(new IllegalStateException("database unavailable"));
 
-        assertThatThrownBy(() -> service.createServer(new CreateServerRequest(
-                "https://mcp.example.com", "knowledge", null, true, null)))
-                .isInstanceOf(ServiceException.class);
+        McpServerConfig created = service.createServer(new CreateServerRequest(
+                "https://mcp.example.com", "knowledge", null, true, null));
 
-        verify(runtime).remove("knowledge");
-        verify(runtime, never()).close(client);
+        assertThat(created).isNotNull();
+        verify(runtime).add(any(), any(), org.mockito.ArgumentMatchers.isNull());
     }
 }

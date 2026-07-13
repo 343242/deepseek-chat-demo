@@ -3,9 +3,9 @@ package com.smart.rag.mcp.admin.dto;
 import com.smart.rag.mcp.admin.entity.McpServerConfig;
 
 /**
- * Server 配置响应（含 health 状态 + version）。
+ * Server 配置响应（含 derived status + version）。
  * <p>
- * {@code health} 从 registry.find() 取 initError 派生；{@code initError} 非空 = DOWN。
+ * Status is a read-time projection; error fields come from the DB row.
  */
 public record ServerConfigResponse(
         Long id,
@@ -16,7 +16,8 @@ public record ServerConfigResponse(
         Boolean enabled,
         Boolean autoConnect,
         boolean hasBearerToken,
-        String initError,
+        String errorCode,
+        String errorMessage,
         String lastConnectedAt,
         Long version,
         String createdAt,
@@ -33,7 +34,8 @@ public record ServerConfigResponse(
                 c.getEnabled(),
                 c.getAutoConnect(),
                 c.getBearerTokenEncrypted() != null && !c.getBearerTokenEncrypted().isBlank(),
-                c.getInitError() == null ? null : "MCP Server 连接失败，请检查配置",
+                c.getErrorCode(),
+                c.getErrorMessage(),
                 c.getLastConnectedAt() != null ? c.getLastConnectedAt().toString() : null,
                 c.getVersion(),
                 c.getCreatedAt() != null ? c.getCreatedAt().toString() : null,

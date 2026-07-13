@@ -69,6 +69,10 @@ Admin owns initialized client -> registry add/replace succeeds -> Registry owns 
 | Invalid persisted security regex/cap | Structured warning and safe defaults |
 | Registry handoff failure | Close Admin-owned client |
 | Failure after registry handoff | Remove through registry; do not directly close client |
+| Stale desired hash during reconcile | Conditional WHERE returns 0 rows; close unowned client, do not publish |
+| Reconcile executor saturation | Stop current batch, jittered scan delay; DB due time unchanged |
+| Idempotency key reuse with different payload | `ClientException(CONFLICT)` |
+| v1 token envelope after V19 | Rejected; V19 deleted all MCP rows, no legacy decrypt |
 
 ### 5. Good / Base / Bad Cases
 

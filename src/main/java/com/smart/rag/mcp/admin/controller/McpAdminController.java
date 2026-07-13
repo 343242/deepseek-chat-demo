@@ -12,6 +12,7 @@ import com.smart.rag.mcp.admin.dto.UpdateSecurityConfigRequest;
 import com.smart.rag.mcp.admin.dto.UpdateServerRequest;
 import com.smart.rag.mcp.admin.dto.UpdateToolRequest;
 import com.smart.rag.mcp.admin.dto.VersionRequest;
+import com.smart.rag.mcp.admin.entity.McpSecurityConfigView;
 import com.smart.rag.mcp.admin.entity.McpServerConfig;
 import com.smart.rag.mcp.admin.entity.McpToolConfig;
 import com.smart.rag.mcp.admin.service.CreateServerRequest;
@@ -164,7 +165,7 @@ public class McpAdminController {
     // ==================== Security ====================
 
     @GetMapping("/security")
-    public GlobalResponse<com.smart.rag.mcp.admin.entity.McpSecurityConfigView> getSecurityConfig() {
+    public GlobalResponse<McpSecurityConfigView> getSecurityConfig() {
         return GlobalResponse.ok(service.getSecurityConfig());
     }
 

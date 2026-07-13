@@ -24,9 +24,7 @@ public class McpToolAdminService {
     private final TransactionTemplate txTemplate;
 
     public McpToolAdminService(McpToolConfigMapper toolConfigMapper,
-                               TransactionTemplate txTemplate,
-                               McpToolConfigAccessor toolConfigAccessor,
-                               McpSecurityConfigAccessor securityConfigAccessor) {
+                               TransactionTemplate txTemplate) {
         this.toolConfigMapper = toolConfigMapper;
         this.txTemplate = txTemplate;
     }

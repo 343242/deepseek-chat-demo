@@ -16,6 +16,9 @@ import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.support.TransactionTemplate;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.util.concurrent.ThreadLocalRandom;
+
 import java.time.Duration;
 import java.time.OffsetDateTime;
 import java.util.List;
@@ -42,9 +45,9 @@ public class McpConnectionReconciler {
     private final McpToolConfigMapper toolMapper;
     private final McpServerRuntime runtime;
     private final McpClientFactory clientFactory;
+    private final ObjectMapper objectMapper;
     private final McpDesiredStateHasher hasher;
     private final TransactionTemplate txTemplate;
-    private final com.fasterxml.jackson.databind.ObjectMapper objectMapper;
 
     public McpConnectionReconciler(McpServerConfigMapper serverMapper,
                                    McpToolConfigMapper toolMapper,
@@ -52,7 +55,7 @@ public class McpConnectionReconciler {
                                    McpClientFactory clientFactory,
                                    McpDesiredStateHasher hasher,
                                    TransactionTemplate txTemplate,
-                                   com.fasterxml.jackson.databind.ObjectMapper objectMapper) {
+                                   ObjectMapper objectMapper) {
         this.serverMapper = serverMapper;
         this.toolMapper = toolMapper;
         this.runtime = runtime;
@@ -210,7 +213,7 @@ public class McpConnectionReconciler {
         long backoffSeconds = INITIAL_BACKOFF.toSeconds() * (1L << Math.min(failures - 1, 6));
         backoffSeconds = Math.min(backoffSeconds, MAX_BACKOFF.toSeconds());
         // Add jitter (0-25%)
-        long jitter = (long) (backoffSeconds * 0.25 * java.util.concurrent.ThreadLocalRandom.current().nextDouble());
+        long jitter = (long) (backoffSeconds * 0.25 * ThreadLocalRandom.current().nextDouble());
         return Duration.ofSeconds(backoffSeconds + jitter);
     }
 

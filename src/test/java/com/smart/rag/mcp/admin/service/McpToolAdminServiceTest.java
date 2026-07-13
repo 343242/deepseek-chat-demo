@@ -21,15 +21,12 @@ class McpToolAdminServiceTest {
 
     @Mock private McpToolConfigMapper mapper;
     @Mock private TransactionTemplate transactionTemplate;
-    @Mock private McpToolConfigAccessor toolConfigAccessor;
-    @Mock private McpSecurityConfigAccessor securityConfigAccessor;
 
     private McpToolAdminService service;
 
     @BeforeEach
     void setUp() {
-        service = new McpToolAdminService(mapper, transactionTemplate,
-                toolConfigAccessor, securityConfigAccessor);
+        service = new McpToolAdminService(mapper, transactionTemplate);
         lenient().doAnswer(invocation -> {
             java.util.function.Consumer<TransactionStatus> action = invocation.getArgument(0);
             action.accept(mock(TransactionStatus.class));

@@ -66,14 +66,6 @@
 - base branch: `agentic-rag-dev`
 - 改动量：~8-12 文件（删 3 + 改 5 + 新增 1-2）
 
-## Requirements
-
-- TBD
-
-## Acceptance Criteria
-
-- [ ] TBD
-
 ## Notes
 
 - Keep `prd.md` focused on requirements, constraints, and acceptance criteria.

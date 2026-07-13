@@ -18,7 +18,7 @@ public interface McpTools {
      * 返回对调用方可见、且匹配 {@code intent} 路由的工具子集。
      * <p>
      * 既做 <b>authz</b>（未授权工具不暴露，纵深防御）又做 <b>intent 路由</b>
-     * （按 {@code McpToolPolicy.routing(tool→intent)} 过滤）。两层都过才暴露。
+     * （按 {@code McpToolConfig.intent} 过滤）。两层都过才暴露。
      *
      * @param subj   调用方主体；未认证（{@code !subj.isAuthenticated()}）→ 空集
      * @param intent 本次请求意图

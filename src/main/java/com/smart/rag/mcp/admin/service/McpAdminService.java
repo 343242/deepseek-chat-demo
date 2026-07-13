@@ -41,8 +41,8 @@ public class McpAdminService {
         serverService.updateServer(id, request);
     }
 
-    public McpServerConfig createServer(CreateServerRequest request) {
-        return serverService.createServer(request);
+    public McpServerConfig createServer(CreateServerRequest request, String idempotencyKey) {
+        return serverService.createServer(request, idempotencyKey);
     }
 
     public void deleteServer(Long id) {

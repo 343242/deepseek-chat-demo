@@ -63,6 +63,8 @@ public final class McpServerImpl implements McpServer {
      */
     @Nullable
     private volatile String initError;
+    /** Instance-local active flag: false after withdraw; callbacks captured before withdraw fail fast. */
+    private volatile boolean active = true;
 
     private final McpTools tools = new McpToolsImpl();
     private final McpResources resources = new McpResourcesImpl();
@@ -125,7 +127,7 @@ public final class McpServerImpl implements McpServer {
 
         @Override
         public List<McpTool> visibleTo(Subject subj, McpIntent intent) {
-            if (initError != null || subj == null || !subj.isAuthenticated() || provider == null) {
+            if (!active || initError != null || subj == null || !subj.isAuthenticated() || provider == null) {
                 return List.of();
             }
             String prefix = id.value() + "_";
@@ -252,6 +254,17 @@ public final class McpServerImpl implements McpServer {
 
     public @Nullable String initError() {
         return initError;
+    }
+    public boolean isActive() {
+        return active;
+    }
+
+    public void markInactive() {
+        this.active = false;
+    }
+
+    public void markActive() {
+        this.active = true;
     }
 
     public java.util.List<io.modelcontextprotocol.spec.McpSchema.Tool> listToolsFromRemote() {

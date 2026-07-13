@@ -43,4 +43,23 @@ public interface McpServerRegistryAdmin {
      * {@code SyncMcpToolCallbackProvider} 用作 cache key 一部分，检测到版本变更即失效内部缓存。
      */
     long currentVersion();
+
+    /**
+     * Withdraw a server from the snapshot and mark its instance inactive.
+     * Returns the withdrawn instance for potential restore, or null if not present.
+     * Callbacks captured before withdrawal fail fast on next remote call.
+     */
+    McpServerImpl withdraw(ServerId id);
+
+    /**
+     * Restore a previously withdrawn instance back into the snapshot, marking it active.
+     * Uses CAS: only succeeds if no other instance was published for this id.
+     */
+    void restore(McpServerImpl withdrawn);
+
+    /**
+     * Remove a server only if the current snapshot entry is the exact same instance.
+     * Prevents stale cleanup from removing a newer replacement.
+     */
+    boolean removeIfSame(ServerId id, McpServerImpl instance);
 }

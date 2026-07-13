@@ -16,6 +16,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -59,8 +60,10 @@ public class McpAdminController {
     }
 
     @PostMapping("/servers")
-    public GlobalResponse<ServerConfigResponse> createServer(@Valid @RequestBody CreateServerRequest request) {
-        McpServerConfig c = service.createServer(request);
+    public GlobalResponse<ServerConfigResponse> createServer(
+            @Valid @RequestBody CreateServerRequest request,
+            @RequestHeader(value = "Idempotency-Key", required = false) String idempotencyKey) {
+        McpServerConfig c = service.createServer(request, idempotencyKey);
         return GlobalResponse.ok(ServerConfigResponse.from(c,
                 c.getServerId() != null ? service.serverHealth(c.getServerId()) : "UNKNOWN"));
     }

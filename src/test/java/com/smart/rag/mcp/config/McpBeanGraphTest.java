@@ -18,6 +18,7 @@ import com.smart.rag.mcp.core.McpServerRegistry;
 import com.smart.rag.mcp.mcpclient.DefaultMcpServerToolCallbacksAdapter;
 import com.smart.rag.mcp.mcpclient.SyncMcpToolCallbackProvider;
 import com.smart.rag.mcp.runtime.McpBearerTokenCodec;
+import com.smart.rag.mcp.runtime.McpDesiredStateHasher;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -37,6 +38,7 @@ class McpBeanGraphTest {
             .withBean(TransactionTemplate.class, () -> mock(TransactionTemplate.class))
             .withBean(HostSafetyValidator.class, () -> mock(HostSafetyValidator.class))
             .withBean(McpBearerTokenCodec.class, () -> mock(McpBearerTokenCodec.class))
+            .withBean(McpDesiredStateHasher.class, () -> mock(McpDesiredStateHasher.class))
             .withBean(McpServerRuntime.class, () -> mock(McpServerRuntime.class))
             .withBean(McpServerRegistry.class, () -> mock(McpServerRegistry.class))
             .withBean(McpToolConfigAccessor.class)

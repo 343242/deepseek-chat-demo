@@ -157,6 +157,82 @@ public class McpServerRegistryImpl implements McpServerRegistry, McpServerRegist
         return version.get();
     }
 
+    @Override
+    public McpServerImpl withdraw(ServerId id) {
+        ImmutableMap<ServerId, McpServer> oldSnapshot;
+        ImmutableMap<ServerId, McpServer> newSnapshot;
+        do {
+            oldSnapshot = snapshotRef.get();
+            McpServer current = oldSnapshot.get(id);
+            if (current == null) {
+                return null;
+            }
+            ImmutableMap.Builder<ServerId, McpServer> b = ImmutableMap.builder();
+            oldSnapshot.forEach((k, v) -> {
+                if (!k.equals(id)) {
+                    b.put(k, v);
+                }
+            });
+            newSnapshot = b.build();
+        } while (!snapshotRef.compareAndSet(oldSnapshot, newSnapshot));
+
+        McpServerImpl withdrawn = (McpServerImpl) oldSnapshot.get(id);
+        withdrawn.markInactive();
+        version.incrementAndGet();
+        log.info("MCP server withdrawn: id={}", id.value());
+        return withdrawn;
+    }
+
+    @Override
+    public void restore(McpServerImpl withdrawn) {
+        ServerId id = withdrawn.id();
+        ImmutableMap<ServerId, McpServer> oldSnapshot;
+        ImmutableMap<ServerId, McpServer> newSnapshot;
+        do {
+            oldSnapshot = snapshotRef.get();
+            // Only restore if no replacement was published
+            if (oldSnapshot.containsKey(id) && oldSnapshot.get(id) != withdrawn) {
+                // A new instance was published; do not overwrite it
+                withdrawn.closeQuietly();
+                return;
+            }
+            ImmutableMap.Builder<ServerId, McpServer> b = ImmutableMap.builder();
+            oldSnapshot.forEach((k, v) -> b.put(k, v));
+            b.put(id, withdrawn);
+            newSnapshot = b.build();
+        } while (!snapshotRef.compareAndSet(oldSnapshot, newSnapshot));
+
+        withdrawn.markActive();
+        version.incrementAndGet();
+        log.info("MCP server restored: id={}", id.value());
+    }
+
+    @Override
+    public boolean removeIfSame(ServerId id, McpServerImpl instance) {
+        ImmutableMap<ServerId, McpServer> oldSnapshot;
+        ImmutableMap<ServerId, McpServer> newSnapshot;
+        do {
+            oldSnapshot = snapshotRef.get();
+            McpServer current = oldSnapshot.get(id);
+            if (current != instance) {
+                return false;
+            }
+            ImmutableMap.Builder<ServerId, McpServer> b = ImmutableMap.builder();
+            oldSnapshot.forEach((k, v) -> {
+                if (!k.equals(id)) {
+                    b.put(k, v);
+                }
+            });
+            newSnapshot = b.build();
+        } while (!snapshotRef.compareAndSet(oldSnapshot, newSnapshot));
+
+        instance.closeQuietly();
+        circuitRegistry.evict(id.value());
+        version.incrementAndGet();
+        log.info("MCP server removed (if-same): id={}", id.value());
+        return true;
+    }
+
     @PreDestroy
     void destroy() {
         ImmutableMap<ServerId, McpServer> snapshot = snapshotRef.getAndSet(ImmutableMap.of());

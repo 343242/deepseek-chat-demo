@@ -91,6 +91,14 @@ public final class McpToolUtils {
         return bound(requireSegment(serverName, "MCP Server 名称"), MAX_SERVER_ID_LENGTH);
     }
 
+    /**
+     * Stable local identity from DB row ID: {@code mcp_<rowId>}.
+     * Remote Server name is informational only and never participates in local identity.
+     */
+    public static String serverId(long rowId) {
+        return "mcp_" + rowId;
+    }
+
     private static String requireSegment(String value, String label) {
         String segment = format(value);
         if (segment.isEmpty()) {

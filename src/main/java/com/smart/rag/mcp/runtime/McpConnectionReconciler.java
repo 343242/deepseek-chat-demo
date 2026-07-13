@@ -107,7 +107,14 @@ public class McpConnectionReconciler {
             syncCatalog(config, capturedHash, client);
         } catch (RuntimeException e) {
             log.warn("Catalog sync failed for serverId={}: {}", serverId, e.getMessage());
-            // Keep the live client; catalog_synced stays false → DEGRADED
+            // Persist safe error so projector reports DEGRADED; keep the live client
+            int failures = config.getConsecutiveFailures() != null ? config.getConsecutiveFailures() : 0;
+            serverMapper.updateObservedFailure(
+                    config.getId(), capturedHash,
+                    McpErrors.CATALOG_SYNC_FAILED_CODE,
+                    McpErrors.CATALOG_SYNC_FAILED_MESSAGE,
+                    failures,
+                    OffsetDateTime.now().plus(Duration.ofSeconds(30)));
         }
     }
 
@@ -121,7 +128,8 @@ public class McpConnectionReconciler {
         }
 
         if (remoteTools == null || remoteTools.isEmpty()) {
-            // Empty catalog is valid
+            // Empty catalog is valid — mark synced
+            serverMapper.markCatalogSynced(config.getId(), capturedHash);
             return;
         }
 
@@ -139,6 +147,9 @@ public class McpConnectionReconciler {
         if (!seenNames.isEmpty()) {
             toolMapper.markAbsentExcept(serverId, List.copyOf(seenNames));
         }
+
+        // Mark catalog as synced for the currently observed desired state
+        serverMapper.markCatalogSynced(config.getId(), capturedHash);
     }
 
     private McpToolConfig toToolConfig(String serverId, McpSchema.Tool tool) {

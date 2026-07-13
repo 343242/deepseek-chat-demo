@@ -5,6 +5,7 @@ import com.smart.rag.mcp.admin.mapper.McpServerConfigMapper;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -14,7 +15,6 @@ import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Bounded scheduler for MCP connection recovery (design §6).
@@ -32,6 +32,7 @@ public class McpConnectionRecoveryScheduler {
 
     private final McpServerConfigMapper serverMapper;
     private final McpConnectionReconciler reconciler;
+    private final McpResilienceProperties resilienceProperties;
 
     private final ThreadPoolExecutor executor = new ThreadPoolExecutor(
             WORKERS, WORKERS, 60L, TimeUnit.SECONDS,
@@ -44,15 +45,29 @@ public class McpConnectionRecoveryScheduler {
     private volatile long saturatedUntilNanos = 0;
 
     public McpConnectionRecoveryScheduler(McpServerConfigMapper serverMapper,
-                                          McpConnectionReconciler reconciler) {
+                                          McpConnectionReconciler reconciler,
+                                          McpResilienceProperties resilienceProperties) {
         this.serverMapper = serverMapper;
         this.reconciler = reconciler;
+        this.resilienceProperties = resilienceProperties;
+    }
+
+    /**
+     * Periodic scan for due reconciliation work.
+     * Runs every 10 seconds after a 30-second startup delay.
+     */
+    @Scheduled(fixedDelay = 10_000, initialDelay = 30_000)
+    public void scheduledScan() {
+        scan();
     }
 
     /**
      * Scan for due rows and submit reconciliation work.
      */
     public void scan() {
+        if (!resilienceProperties.isRecoveryEnabled()) {
+            return;
+        }
         if (System.nanoTime() < saturatedUntilNanos) {
             return;
         }

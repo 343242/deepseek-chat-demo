@@ -39,4 +39,31 @@ public interface McpServerConfigMapper extends BaseMapper<McpServerConfig> {
                           @Param("version") Long version);
 
     int updateEnabled(@Param("serverId") String serverId, @Param("enabled") boolean enabled);
+
+    /** Mark catalog as synced for the currently observed desired state. */
+    int markCatalogSynced(@Param("id") Long id, @Param("capturedHash") String capturedHash);
+
+    /** Clear observation + schedule reconcile (reconnect / enable). */
+    int clearObservation(@Param("serverId") String serverId, @Param("version") Long version);
+
+    /** Clear catalog_synced only + schedule reconcile (refresh-tools). */
+    int clearCatalogSynced(@Param("serverId") String serverId, @Param("version") Long version);
+
+    /** Update URL + recompute desired hash + clear observation (URL change). */
+    int updateDesiredUrl(@Param("serverId") String serverId,
+                         @Param("url") String url,
+                         @Param("desiredStateHash") String desiredStateHash,
+                         @Param("version") Long version);
+
+    /** Update bearer token + recompute desired hash + clear observation (token rotation). */
+    int updateDesiredToken(@Param("serverId") String serverId,
+                           @Param("bearerTokenEncrypted") String bearerTokenEncrypted,
+                           @Param("desiredStateHash") String desiredStateHash,
+                           @Param("version") Long version);
+
+    /** Enable + clear observation + schedule reconcile. */
+    int enableAndScheduleReconcile(@Param("serverId") String serverId, @Param("version") Long version);
+
+    /** Disable + clear observation + clear reconcile schedule. */
+    int disableAndClearReconcile(@Param("serverId") String serverId, @Param("version") Long version);
 }

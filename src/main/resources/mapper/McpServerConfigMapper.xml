@@ -108,4 +108,102 @@
         WHERE server_id = #{serverId}
     </update>
 
+    <!-- Mark catalog as synced for the currently observed desired state -->
+    <update id="markCatalogSynced">
+        UPDATE mcp_server_config
+        SET catalog_synced = TRUE,
+            error_code = NULL,
+            error_message = NULL,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = #{id}
+          AND desired_state_hash = #{capturedHash}
+          AND observed_state_hash = #{capturedHash}
+    </update>
+
+    <!-- Clear observation + schedule reconcile (reconnect / enable) -->
+    <update id="clearObservation">
+        UPDATE mcp_server_config
+        SET observed_state_hash = NULL,
+            catalog_synced = FALSE,
+            error_code = NULL,
+            error_message = NULL,
+            consecutive_failures = 0,
+            next_reconcile_at = CURRENT_TIMESTAMP,
+            version = version + 1,
+            updated_at = NOW()
+        WHERE server_id = #{serverId} AND version = #{version}
+    </update>
+
+    <!-- Clear catalog_synced only + schedule reconcile (refresh-tools) -->
+    <update id="clearCatalogSynced">
+        UPDATE mcp_server_config
+        SET catalog_synced = FALSE,
+            next_reconcile_at = CURRENT_TIMESTAMP,
+            version = version + 1,
+            updated_at = NOW()
+        WHERE server_id = #{serverId} AND version = #{version}
+    </update>
+
+    <!-- Update URL + recompute desired hash + clear observation -->
+    <update id="updateDesiredUrl">
+        UPDATE mcp_server_config
+        SET url = #{url},
+            desired_state_hash = #{desiredStateHash},
+            observed_state_hash = NULL,
+            catalog_synced = FALSE,
+            error_code = NULL,
+            error_message = NULL,
+            consecutive_failures = 0,
+            next_reconcile_at = CURRENT_TIMESTAMP,
+            version = version + 1,
+            updated_at = NOW()
+        WHERE server_id = #{serverId} AND version = #{version}
+    </update>
+
+    <!-- Update bearer token + recompute desired hash + clear observation -->
+    <update id="updateDesiredToken">
+        UPDATE mcp_server_config
+        SET bearer_token_encrypted = #{bearerTokenEncrypted},
+            desired_state_hash = #{desiredStateHash},
+            observed_state_hash = NULL,
+            catalog_synced = FALSE,
+            error_code = NULL,
+            error_message = NULL,
+            consecutive_failures = 0,
+            next_reconcile_at = CURRENT_TIMESTAMP,
+            version = version + 1,
+            updated_at = NOW()
+        WHERE server_id = #{serverId} AND version = #{version}
+    </update>
+
+    <!-- Enable + clear observation + schedule reconcile -->
+    <update id="enableAndScheduleReconcile">
+        UPDATE mcp_server_config
+        SET enabled = TRUE,
+            observed_state_hash = NULL,
+            catalog_synced = FALSE,
+            error_code = NULL,
+            error_message = NULL,
+            consecutive_failures = 0,
+            next_reconcile_at = CURRENT_TIMESTAMP,
+            version = version + 1,
+            updated_at = NOW()
+        WHERE server_id = #{serverId} AND version = #{version}
+    </update>
+
+    <!-- Disable + clear observation + clear reconcile schedule -->
+    <update id="disableAndClearReconcile">
+        UPDATE mcp_server_config
+        SET enabled = FALSE,
+            observed_state_hash = NULL,
+            catalog_synced = FALSE,
+            error_code = NULL,
+            error_message = NULL,
+            consecutive_failures = 0,
+            next_reconcile_at = NULL,
+            version = version + 1,
+            updated_at = NOW()
+        WHERE server_id = #{serverId} AND version = #{version}
+    </update>
+
 </mapper>

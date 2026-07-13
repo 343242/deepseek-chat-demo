@@ -6,6 +6,7 @@ import com.smart.rag.mcp.admin.entity.McpServerConfig;
 import com.smart.rag.mcp.admin.mapper.McpServerConfigMapper;
 import com.smart.rag.mcp.admin.mapper.McpToolConfigMapper;
 import com.smart.rag.mcp.runtime.McpBearerTokenCodec;
+import com.smart.rag.mcp.runtime.McpConnectionRecoveryScheduler;
 import com.smart.rag.mcp.runtime.McpDesiredStateHasher;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -31,13 +32,14 @@ class McpServerAdminServiceTest {
     @Mock private McpBearerTokenCodec tokenCodec;
     @Mock private McpDesiredStateHasher desiredStateHasher;
     @Mock private McpToolAdminService toolService;
+    @Mock private McpConnectionRecoveryScheduler scheduler;
 
     private McpServerAdminService service;
 
     @BeforeEach
     void setUp() {
         service = new McpServerAdminService(serverMapper, toolMapper, transactionTemplate,
-                runtime, urlValidator, tokenCodec, desiredStateHasher, toolService);
+                runtime, urlValidator, tokenCodec, desiredStateHasher, toolService, scheduler);
         lenient().doAnswer(invocation -> {
             java.util.function.Consumer<TransactionStatus> action = invocation.getArgument(0);
             action.accept(mock(TransactionStatus.class));

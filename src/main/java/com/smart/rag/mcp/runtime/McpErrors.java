@@ -10,6 +10,9 @@ import com.smart.rag.infrastructure.exception.AbstractException;
  */
 public final class McpErrors {
 
+    public static final String CATALOG_SYNC_FAILED_CODE = "MCP_CATALOG_SYNC_FAILED";
+    public static final String CATALOG_SYNC_FAILED_MESSAGE = "MCP 工具目录同步失败";
+
     private McpErrors() {
     }
 

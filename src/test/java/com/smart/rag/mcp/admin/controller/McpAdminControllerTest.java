@@ -70,7 +70,7 @@ class McpAdminControllerTest {
         saved.setServerId("weather");
         saved.setUrl("https://mcp.example.com");
         saved.setEnabled(true);
-        when(service.createServer(any())).thenReturn(saved);
+        when(service.createServer(any(), any())).thenReturn(saved);
         when(service.serverHealth("weather")).thenReturn("ALIVE");
 
         mockMvc.perform(post("/api/admin/mcp/servers")

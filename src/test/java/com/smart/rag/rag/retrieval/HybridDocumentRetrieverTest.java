@@ -1,6 +1,5 @@
 package com.smart.rag.rag.retrieval;
 
-import com.smart.rag.agent.service.HybridSearchService;
 import com.smart.rag.infrastructure.concurrent.DefaultScopedTasks;
 import com.smart.rag.infrastructure.exception.ServiceException;
 import com.smart.rag.rag.config.RagRetrievalProperties;

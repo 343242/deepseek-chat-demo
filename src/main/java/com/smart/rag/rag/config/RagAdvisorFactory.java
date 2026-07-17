@@ -1,6 +1,6 @@
 package com.smart.rag.rag.config;
 
-import com.smart.rag.agent.service.HybridSearchService;
+import com.smart.rag.rag.retrieval.HybridSearchService;
 import com.smart.rag.rag.chunk.ParentDocumentPostProcessor;
 import com.smart.rag.rag.mapper.VectorStoreMapper;
 import com.smart.rag.rag.retrieval.RerankDocumentPostProcessor;

@@ -1,6 +1,6 @@
 package com.smart.rag.evaluation.runner;
 
-import com.smart.rag.agent.service.HybridSearchService;
+import com.smart.rag.rag.retrieval.HybridSearchService;
 import com.smart.rag.rag.chunk.ParentDocumentPostProcessor;
 import com.smart.rag.evaluation.config.EvaluationProperties;
 import com.smart.rag.evaluation.dataset.DatasetRepository;

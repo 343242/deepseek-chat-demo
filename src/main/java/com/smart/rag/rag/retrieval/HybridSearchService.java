@@ -1,4 +1,4 @@
-package com.smart.rag.agent.service;
+package com.smart.rag.rag.retrieval;
 
 import com.smart.rag.infrastructure.concurrent.ScopeOptions;
 import com.smart.rag.infrastructure.concurrent.ScopePolicy;
@@ -9,7 +9,6 @@ import com.smart.rag.infrastructure.exception.ServiceException;
 import com.smart.rag.infrastructure.exception.errorcode.ServiceErrorCode;
 import com.smart.rag.rag.config.RagRetrievalProperties;
 import com.smart.rag.rag.mapper.VectorStoreMapper;
-import com.smart.rag.rag.retrieval.QueryNormalizer;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -24,10 +23,14 @@ import java.util.*;
 import java.util.concurrent.TimeoutException;
 
 /**
- * 混合检索服务 -- 提取 HybridDocumentRetriever 核心逻辑为独立 Service
+ * 混合检索服务 -- RAG 检索域的核心实现
  * <p>
  * 供 HybridDocumentRetriever（Pipeline 模式）和 HybridSearchTool（Agent 模式）共用。
  * userId/teamId 从构造参数改为方法参数，支持按请求动态传入。
+ * <p>
+ * 本类归属于 rag.retrieval 包，因为其全部依赖（VectorStoreMapper / RagRetrievalProperties /
+ * QueryNormalizer）均在 rag 模块内。Agent 工具与 RAG 适配器均以单向依赖方式调用本服务，
+ * 避免 rag 反向依赖 agent 造成分层倒置。
  * <p>
  * 检索流程：
  * <ol>

@@ -1,6 +1,5 @@
 package com.smart.rag.agent.service;
 
-import com.smart.rag.infrastructure.concurrent.DefaultScopedTasks;
 import com.smart.rag.infrastructure.concurrent.ScopeOptions;
 import com.smart.rag.infrastructure.concurrent.ScopePolicy;
 import com.smart.rag.infrastructure.concurrent.ScopedTasks;
@@ -18,13 +17,10 @@ import org.springframework.ai.document.Document;
 import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.ai.vectorstore.filter.FilterExpressionBuilder;
-import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
 import java.util.*;
-import java.util.concurrent.Executor;
 import java.util.concurrent.TimeoutException;
 
 /**
@@ -53,15 +49,6 @@ public class HybridSearchService {
     private final QueryNormalizer queryNormalizer;
     private final ScopedTasks scopedTasks;
 
-    public HybridSearchService(VectorStore vectorStore,
-                               VectorStoreMapper vectorStoreMapper,
-                               RagRetrievalProperties properties,
-                               QueryNormalizer queryNormalizer,
-                               @Qualifier("ragSearchExecutor") Executor searchExecutor) {
-        this(vectorStore, vectorStoreMapper, properties, queryNormalizer, new DefaultScopedTasks());
-    }
-
-    @Autowired
     public HybridSearchService(VectorStore vectorStore,
                                VectorStoreMapper vectorStoreMapper,
                                RagRetrievalProperties properties,

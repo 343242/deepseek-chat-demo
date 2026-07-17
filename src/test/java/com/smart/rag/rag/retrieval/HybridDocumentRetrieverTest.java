@@ -1,6 +1,7 @@
 package com.smart.rag.rag.retrieval;
 
 import com.smart.rag.agent.service.HybridSearchService;
+import com.smart.rag.infrastructure.concurrent.DefaultScopedTasks;
 import com.smart.rag.infrastructure.exception.ServiceException;
 import com.smart.rag.rag.config.RagRetrievalProperties;
 import com.smart.rag.rag.mapper.VectorStoreMapper;
@@ -18,7 +19,6 @@ import org.springframework.ai.vectorstore.VectorStore;
 
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.Executors;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -89,7 +89,7 @@ class HybridDocumentRetrieverTest {
 
     private HybridDocumentRetriever createRetriever(RagRetrievalProperties props, Long userId, Long teamId) {
         HybridSearchService service = new HybridSearchService(vectorStore, vectorStoreMapper, props, queryNormalizer,
-                Executors.newVirtualThreadPerTaskExecutor());
+                new DefaultScopedTasks());
         return new HybridDocumentRetriever(service, userId, teamId);
     }
 

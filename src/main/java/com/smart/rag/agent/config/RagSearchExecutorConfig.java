@@ -12,15 +12,15 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
 /**
- * RAG 检索线程池配置
+ * RAG 后处理线程池配置
  * <p>
- * 注册两个独立的虚拟线程 executor：
+ * 注册虚拟线程 executor：
  * <ul>
- *   <li>{@code ragSearchExecutor} —— HybridSearchService 的 vector+BM25 并行检索（I/O 密集）</li>
  *   <li>{@code ragPostProcessExecutor} —— RerankThenMmrPostProcessor 的 Rerank⊥distance 并行（LLM/DB 阻塞 IO）</li>
  * </ul>
- * 两者独立（资源隔离：慢 Rerank 不挤占检索并发）。虚拟线程 per-task 贴合 I/O 密集场景（java-handbook 规则 22）。
- * 并发控制：检索侧由 HybridSearchService.orTimeout(5s) + DB 连接池保障；后处理侧由 rerank HTTP 超时 + 降级契约保障。
+ * 检索侧（vector+BM25）的并行执行已下沉到 Spring 管理的 {@code ScopedTasks}（见 ScopedTaskAutoConfiguration），
+ * 由其内部的 {@code DefaultScopeExecutorFactory} 自建虚拟线程池，因此本类不再注册检索专用 executor。
+ * 虚拟线程 per-task 贴合 I/O 密集场景（java-handbook 规则 22）。
  * <p>
  * 不开 {@code spring.threads.virtual.enabled} 全局开关，虚拟线程化范围最小化。
  */
@@ -29,20 +29,11 @@ public class RagSearchExecutorConfig {
 
     private static final Logger log = LoggerFactory.getLogger(RagSearchExecutorConfig.class);
 
-    private ExecutorService ragSearchExecutorService;
     private ExecutorService ragPostProcessExecutorService;
-
-    @Lazy
-    @Bean("ragSearchExecutor")
-    public ExecutorService ragSearchExecutor() {
-        ragSearchExecutorService = Executors.newVirtualThreadPerTaskExecutor();
-        log.info("RAG search executor: virtual thread per-task (I/O optimized)");
-        return ragSearchExecutorService;
-    }
 
     /**
      * RAG 后处理专用 executor：仅供 {@code RerankThenMmrPostProcessor} 的 Rerank⊥distance 并行。
-     * 独立于 ragSearchExecutor（资源隔离）；虚拟线程 per-task 契合 Rerank（LLM IO）/distance（DB IO）阻塞场景。
+     * 虚拟线程 per-task 契合 Rerank（LLM IO）/distance（DB IO）阻塞场景。
      */
     @Lazy
     @Bean("ragPostProcessExecutor")
@@ -54,7 +45,6 @@ public class RagSearchExecutorConfig {
 
     @PreDestroy
     public void shutdown() {
-        shutdownExecutor(ragSearchExecutorService, "RAG search executor");
         shutdownExecutor(ragPostProcessExecutorService, "RAG post-process executor");
     }
 

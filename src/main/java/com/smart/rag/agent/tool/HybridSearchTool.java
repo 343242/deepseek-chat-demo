@@ -5,6 +5,7 @@ import com.smart.rag.agent.service.HybridSearchService;
 import com.smart.rag.agent.workspace.RetrievedDocument;
 import com.smart.rag.agent.workspace.ToolWorkspace;
 import com.smart.rag.agent.dto.ToolResult;
+import com.smart.rag.infrastructure.trace.TracedStep;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.document.Document;
@@ -40,6 +41,7 @@ public class HybridSearchTool implements RagTool {
      * @param workspace 闭包捕获的 workspace 局部变量
      * @return JSON 格式的 ToolResult
      */
+    @TracedStep("HYBRID_SEARCH")
     public String execute(String queryText, Integer topK, ToolWorkspace workspace) {
         long start = System.currentTimeMillis();
         try {

@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3.0-mapper.dtd">
+<mapper namespace="com.smart.rag.infrastructure.trace.TraceMapper">
+
+    <!-- 按会话 ID 查询链路事件（按时间正序，还原请求完整流程） -->
+    <select id="selectBySessionId" resultType="com.smart.rag.infrastructure.trace.TraceEvent">
+        SELECT id, trace_id, session_id, user_id, step_type, tool_name, success,
+               duration_ms, input_summary, output_summary, doc_count, top_score,
+               documents, created_at
+        FROM trace_event
+        WHERE session_id = #{sessionId}
+        ORDER BY created_at ASC
+    </select>
+
+</mapper>

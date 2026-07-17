@@ -2,6 +2,7 @@ package com.smart.rag.chat.service;
 
 import com.smart.rag.agent.workspace.RetrievedDocument;
 import com.smart.rag.chat.dto.Reference;
+import com.smart.rag.infrastructure.trace.TracedStep;
 import org.springframework.ai.document.Document;
 import org.springframework.stereotype.Component;
 
@@ -28,6 +29,7 @@ public class ChatReferenceCollector {
      * @param docs 检索文档（可能为 null/空）
      * @return refBlock（null 表示无检索）+ references（null 表示无检索）
      */
+    @TracedStep("CONTEXT_ASSEMBLY")
     public ChatRefResult collect(List<Document> docs) {
         if (docs == null || docs.isEmpty()) {
             return new ChatRefResult(null, null);

@@ -5,6 +5,13 @@ mybatis-plus:
   configuration:
     log-impl: org.apache.ibatis.logging.nologging.NoLoggingImpl
 
+# === Observability prod 差异化 ===
+# health details 收紧：未认证不可见（含 DB URL / 候选者配置等）；认证后仍可见
+management:
+  endpoint:
+    health:
+      show-details: when-authorized
+
 logging:
   level:
     com.demo.chat: WARN

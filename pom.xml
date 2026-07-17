@@ -140,7 +140,8 @@
     	    <artifactId>spring-boot-starter-actuator</artifactId>
 	</dependency>
 
-	<!-- Tracing (Phase D D-6 方案 b): micrometer-tracing 抽象 + OTel bridge + SDK（无 exporter，仅本地日志 traceId 串联）。升级方案 a 仅加 OTLP exporter + collector，本类不改。 -->
+	<!-- Tracing (Phase D D-6 方案 b): micrometer-tracing 抽象 + OTel bridge + SDK（无 exporter，仅本地日志 traceId 串联）。
+	     RAG 链路明细走独立 rag_trace_event 表 + AOP 切面（见 rag/trace/），不依赖 OTel span 外发。 -->
 	<dependency>
 		<groupId>io.micrometer</groupId>
 		<artifactId>micrometer-tracing-bridge-otel</artifactId>
@@ -148,6 +149,11 @@
 	<dependency>
 		<groupId>io.opentelemetry</groupId>
 		<artifactId>opentelemetry-sdk</artifactId>
+	</dependency>
+	<!-- Prometheus registry — /actuator/prometheus 暴露 LlmMetrics/MessagingMetrics 自定义指标供抓取 -->
+	<dependency>
+		<groupId>io.micrometer</groupId>
+		<artifactId>micrometer-registry-prometheus</artifactId>
 	</dependency>
 
         <!-- exp4j (safe math expression evaluator, replaces ScriptEngine) -->

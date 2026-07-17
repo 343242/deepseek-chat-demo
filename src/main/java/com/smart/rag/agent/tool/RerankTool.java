@@ -5,6 +5,7 @@ import com.smart.rag.agent.dto.ToolResult;
 import com.smart.rag.agent.workspace.RetrievedDocument;
 import com.smart.rag.agent.workspace.ToolWorkspace;
 import com.smart.rag.rag.retrieval.RerankDocumentPostProcessor;
+import com.smart.rag.infrastructure.trace.TracedStep;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.document.Document;
@@ -50,6 +51,7 @@ public class RerankTool implements RagTool {
      * @param workspace 闭包捕获的 workspace 局部变量
      * @return JSON 格式的 ToolResult
      */
+    @TracedStep("RERANK")
     public String execute(String queryText, ToolWorkspace workspace) {
         long start = System.currentTimeMillis();
         try {

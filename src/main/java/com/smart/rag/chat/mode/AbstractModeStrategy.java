@@ -16,6 +16,7 @@ import com.smart.rag.chat.service.StrategyExecuteResult;
 import com.smart.rag.chat.service.StrategyExecutionContext;
 import com.smart.rag.chat.service.StreamResult;
 import com.smart.rag.infrastructure.advisor.RagContextAdvisor;
+import org.slf4j.MDC;
 import org.springframework.ai.chat.client.advisor.api.Advisor;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.model.Generation;
@@ -35,6 +36,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * 动态尾注入；流式额外补齐 Redis 记忆（走 advisor 链）+ DB 落库（{@link #onStreamComplete}）。
  */
 public abstract class AbstractModeStrategy implements ChatModeStrategy {
+
+    /** MDC key：把 conversationId 注入 MDC，供 RAG trace 切面（Chat 路径）兜底取 sessionId */
+    private static final String MDC_RAG_SESSION_ID = "ragSessionId";
 
     protected final AdvisorInfrastructure infra;
     protected final ChatRequestSpecFactory requestSpecFactory;
@@ -65,6 +69,15 @@ public abstract class AbstractModeStrategy implements ChatModeStrategy {
 
     @Override
     public final StrategyExecuteResult execute(StrategyExecutionContext ctx) {
+        MDC.put(MDC_RAG_SESSION_ID, ctx.conversationId());
+        try {
+            return doExecute(ctx);
+        } finally {
+            MDC.remove(MDC_RAG_SESSION_ID);
+        }
+    }
+
+    private StrategyExecuteResult doExecute(StrategyExecutionContext ctx) {
         AdvisorChainContext chainCtx = new AdvisorChainContext(
             ctx.conversationId(), ctx.request(), ctx.userId(),
             ctx.cagContext(), ctx.candidateId());
@@ -103,6 +116,15 @@ public abstract class AbstractModeStrategy implements ChatModeStrategy {
      */
     @Override
     public StreamResult executeStream(StrategyExecutionContext ctx) {
+        MDC.put(MDC_RAG_SESSION_ID, ctx.conversationId());
+        try {
+            return doExecuteStream(ctx);
+        } finally {
+            MDC.remove(MDC_RAG_SESSION_ID);
+        }
+    }
+
+    private StreamResult doExecuteStream(StrategyExecutionContext ctx) {
         AdvisorChainContext chainCtx = new AdvisorChainContext(
             ctx.conversationId(), ctx.request(), ctx.userId(),
             ctx.cagContext(), ctx.candidateId());

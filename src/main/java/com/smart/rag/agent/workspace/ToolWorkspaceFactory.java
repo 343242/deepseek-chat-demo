@@ -15,11 +15,23 @@ public class ToolWorkspaceFactory {
     /**
      * 创建请求级 Workspace
      *
-     * @param userId 用户 ID
-     * @param teamId 团队 ID（可空）
+     * @param userId    用户 ID
+     * @param teamId    团队 ID（可空）
      * @return 新的 ToolWorkspace 实例
      */
     public ToolWorkspace create(long userId, @Nullable Long teamId) {
         return new ToolWorkspace(userId, teamId);
+    }
+
+    /**
+     * 创建带会话标识的请求级 Workspace（用于 RAG 链路追踪关联）。
+     *
+     * @param userId    用户 ID
+     * @param teamId    团队 ID（可空）
+     * @param sessionId 会话标识（复用 conversationId，写入 trace_event.session_id）
+     * @return 新的 ToolWorkspace 实例
+     */
+    public ToolWorkspace create(long userId, @Nullable Long teamId, @Nullable String sessionId) {
+        return new ToolWorkspace(userId, teamId, sessionId);
     }
 }

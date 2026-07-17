@@ -151,8 +151,8 @@ public class AgentModeStrategy implements ChatModeStrategy {
         log.info("Agent intent classified: intent={}, confidence={}, queryLength={}",
             intentResult.intent(), intentResult.confidence(), ctx.request().message().length());
 
-        // Step 4: 创建请求级 Workspace
-        ToolWorkspace workspace = workspaceFactory.create(ctx.userId(), ctx.request().teamId());
+        // Step 4: 创建请求级 Workspace（传 conversationId 作为 sessionId，供 RAG 链路追踪关联）
+        ToolWorkspace workspace = workspaceFactory.create(ctx.userId(), ctx.request().teamId(), ctx.conversationId());
 
         // Step 5: 根据意图创建 Tool 回调（闭包捕获 workspace）
         ToolCallback[] toolCallbacks = agentToolCallbackFactory.createToolCallbacks(

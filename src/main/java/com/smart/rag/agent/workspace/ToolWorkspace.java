@@ -47,6 +47,8 @@ public class ToolWorkspace {
 
     private final long userId;
     private final @Nullable Long teamId;
+    /** 会话标识（复用 conversationId），用于链路追踪关联（trace_event.session_id） */
+    private final @Nullable String sessionId;
     private @Nullable AgentIntent intent;
     private List<String> subQueries = new CopyOnWriteArrayList<>();
     private final Set<Integer> completedSubQueries = ConcurrentHashMap.newKeySet();
@@ -61,8 +63,13 @@ public class ToolWorkspace {
     private final AtomicInteger refCounter = new AtomicInteger(0);
 
     public ToolWorkspace(long userId, @Nullable Long teamId) {
+        this(userId, teamId, null);
+    }
+
+    public ToolWorkspace(long userId, @Nullable Long teamId, @Nullable String sessionId) {
         this.userId = userId;
         this.teamId = teamId;
+        this.sessionId = sessionId;
     }
 
     // ── 查询分解 ──────────────────────────────────────────
@@ -363,5 +370,10 @@ public class ToolWorkspace {
 
     public @Nullable Long getTeamId() {
         return teamId;
+    }
+
+    /** 会话标识（复用 conversationId）；用于 RAG 链路追踪关联 */
+    public @Nullable String getSessionId() {
+        return sessionId;
     }
 }

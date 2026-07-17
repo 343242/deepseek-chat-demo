@@ -7,6 +7,7 @@ import com.smart.rag.agent.workspace.ToolWorkspace;
 import com.smart.rag.rag.config.RagRetrievalProperties;
 import com.smart.rag.rag.mapper.VectorStoreMapper;
 import com.smart.rag.rag.retrieval.QueryNormalizer;
+import com.smart.rag.infrastructure.trace.TracedStep;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.document.Document;
@@ -47,6 +48,7 @@ public class Bm25SearchTool implements RagTool {
      * @param workspace 闭包捕获的 workspace 局部变量
      * @return JSON 格式的 ToolResult
      */
+    @TracedStep("BM25_SEARCH")
     public String execute(String queryText, ToolWorkspace workspace) {
         long start = System.currentTimeMillis();
         try {

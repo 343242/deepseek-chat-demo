@@ -54,7 +54,17 @@ public class SecurityConfig {
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers("/api/auth/login", "/api/auth/register",
                                  "/api/auth/refresh", "/api/auth/captcha").permitAll()
-                .requestMatchers("/actuator/health").permitAll()
+                // Actuator: K8s liveness/readiness 探针无 Authorization 头，必须放行；
+                // /actuator/health/** 覆盖各组件子路径（db/vector/llm/messaging 等）。
+                // /actuator/prometheus 供抓取器访问——生产应通过网络策略/IP 白名单保护来源，
+                // 而非靠应用层鉴权（抓取器配 JWT 过重）。
+                // /actuator/metrics 故意不放行：业务敏感指标只走 prometheus 格式。
+                .requestMatchers(
+                    "/actuator/health",
+                    "/actuator/health/**",
+                    "/actuator/info",
+                    "/actuator/prometheus"
+                ).permitAll()
                 .anyRequest().authenticated()
             )
             .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class)

@@ -17,7 +17,8 @@ import java.util.Map;
  * 上下文相关性评分器（Context Relevance）
  * <p>
  * 衡量检索到的上下文对回答问题的有用程度。
- * LLM-as-Judge + Few-Shot 示例，useful_chunk_ratio 归一化到 0-1。
+ * LLM-as-Judge + Few-Shot 示例对每个片段打 1-5 分有用度，
+ * 本地计算 usefulness≥3 的片段占比作为最终分数（范围 0-1）。
  * </p>
  */
 @Component
@@ -75,13 +76,12 @@ public class ContextRelevanceScorer {
                 - 2分：轻微相关
                 - 1分：完全无关
 
-                输出 JSON（不要输出其他内容）：
+                输出 JSON（只包含 chunk_scores 数组，不要输出汇总比例）：
                 {
                   "chunk_scores": [
                     {"chunk_index": 0, "usefulness": 4, "reason": "..."},
                     {"chunk_index": 1, "usefulness": 1, "reason": "..."}
-                  ],
-                  "useful_chunk_ratio": 0.6
+                  ]
                 }
                 """.formatted(question, chunksBuilder.toString());
 
@@ -93,26 +93,38 @@ public class ContextRelevanceScorer {
 
         try {
             String json = JsonExtractorUtil.extractJson(verdict.rawJson());
-            Map<String, Object> result = objectMapper.readValue(json, new TypeReference<Map<String, Object>>() {});
+            Map<String, Object> result = objectMapper.readValue(json, new TypeReference<>() {});
 
-            // 优先使用 judge 返回的 ratio
-            if (result.containsKey("useful_chunk_ratio")) {
-                return ((Number) result.get("useful_chunk_ratio")).doubleValue();
-            }
-
-            // 否则手动计算：usefulness >= 3 的 chunk 数 / 总 chunk 数
+            // 始终本地计算：usefulness >= 3 的 chunk 数 / 总 chunk 数
+            // 不信任 Judge 自报的汇总比例，避免 LLM 估值偏差
             @SuppressWarnings("unchecked")
             List<Map<String, Object>> chunkScores = (List<Map<String, Object>>) result.get("chunk_scores");
-            if (chunkScores == null || chunkScores.isEmpty()) return 0;
+            if (chunkScores == null || chunkScores.isEmpty()) {
+                log.warn("Judge returned no chunk_scores for {} chunks", contextDocs.size());
+                return -1;
+            }
 
             long useful = chunkScores.stream()
-                    .filter(c -> ((Number) c.get("usefulness")).doubleValue() >= 3)
+                    .filter(c -> parseUsefulness(c) >= 3)
                     .count();
             return (double) useful / chunkScores.size();
         } catch (Exception e) {
             log.warn("Failed to parse context relevance result: {}", e.getMessage());
             return -1;
         }
+    }
+
+    /**
+     * 健壮地提取 chunk 的 usefulness 分数。
+     * 字段缺失或类型不符时返回 0（视为无用），避免单个 chunk 解析失败拖垮整体。
+     */
+    private double parseUsefulness(Map<String, Object> chunk) {
+        Object v = chunk.get("usefulness");
+        if (v instanceof Number n) return n.doubleValue();
+        if (v instanceof String s) {
+            try { return Double.parseDouble(s); } catch (NumberFormatException ignored) {}
+        }
+        return 0;
     }
 
 }

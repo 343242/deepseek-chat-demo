@@ -66,7 +66,12 @@ public class AnswerRelevanceScorer {
             }
         }
 
-        return count == 0 ? 0 : totalSimilarity / count;
+        // 所有 embedding 失败 = 评测无效，返回 -1（与 question 生成失败一致）
+        if (count == 0) {
+            log.warn("All generated-question embeddings failed");
+            return -1;
+        }
+        return totalSimilarity / count;
     }
 
     /**

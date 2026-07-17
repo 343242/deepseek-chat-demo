@@ -80,7 +80,7 @@ public class DatasetRepository {
         String sql = """
                 INSERT INTO evaluation_dataset (name, description, version, source, judge_model, item_count)
                 VALUES (?, ?, ?, ?, ?, ?)
-                RETURNING id, created_at, updated_at
+                RETURNING *
                 """;
         return jdbc.queryForObject(sql,
                 datasetRowMapper,

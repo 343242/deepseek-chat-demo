@@ -16,6 +16,7 @@ import com.smart.rag.rag.mapper.VectorStoreMapper;
 import com.smart.rag.rag.retrieval.HybridDocumentRetriever;
 import com.smart.rag.rag.retrieval.MmrDocumentPostProcessor;
 import com.smart.rag.rag.retrieval.QueryNormalizer;
+import com.smart.rag.infrastructure.llm.adapter.RewriteClientResolver;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
@@ -53,7 +54,7 @@ public class EvaluationRunner {
     private final ParentDocumentPostProcessor parentProcessor;
     private final QueryNormalizer queryNormalizer;
     private final QueryTransformer queryTransformer;
-    private final ChatClient.Builder chatClientBuilder;
+    private final RewriteClientResolver rewriteClientResolver;
     private final EvaluationProperties evalProps;
     private final RetrievalMetricsCalculator metricsCalculator;
     private final GenerationMetricsCalculator generationMetricsCalculator;
@@ -70,7 +71,7 @@ public class EvaluationRunner {
                             ParentDocumentPostProcessor parentProcessor,
                             QueryNormalizer queryNormalizer,
                             QueryTransformer queryTransformer,
-                            ChatClient.Builder chatClientBuilder,
+                            RewriteClientResolver rewriteClientResolver,
                             EvaluationProperties evalProps,
                             RetrievalMetricsCalculator metricsCalculator,
                             GenerationMetricsCalculator generationMetricsCalculator,
@@ -84,7 +85,7 @@ public class EvaluationRunner {
         this.parentProcessor = parentProcessor;
         this.queryNormalizer = queryNormalizer;
         this.queryTransformer = queryTransformer;
-        this.chatClientBuilder = chatClientBuilder;
+        this.rewriteClientResolver = rewriteClientResolver;
         this.evalProps = evalProps;
         this.metricsCalculator = metricsCalculator;
         this.generationMetricsCalculator = generationMetricsCalculator;
@@ -153,12 +154,13 @@ public class EvaluationRunner {
             // 7. 检索结果
             retrievedDocIds = extractedDocIds(afterParent);
 
-            // 8. 计算检索指标
+            // 8. 计算检索指标（基于最终列表 afterParent，与存入结果行的 retrievedDocIds 同源，
+            //    确保 Recall/Precision/NDCG 反映生成器实际看到的文档）
             Set<String> relevantIds = item.relevantChunkIds() != null
                     ? item.relevantChunkIds() : Set.of();
             int k = config.getTopK() != null ? config.getTopK() : evalProps.getRunner().getDefaultK();
             retrievalMetrics = metricsCalculator.calculate(
-                    extractedDocIds(retrieved), relevantIds, k);
+                    extractedDocIds(afterParent), relevantIds, k);
 
             // 9. LLM 生成 + 生成指标
             if (config.isGenerationEnabled()) {
@@ -234,7 +236,8 @@ public class EvaluationRunner {
 
                 回答：""".formatted(contextBuilder.toString(), queryText);
 
-        return chatClientBuilder.build().prompt()
+        ChatClient chatClient = rewriteClientResolver.resolve(evalProps.getGenerationModel());
+        return chatClient.prompt()
                 .user(prompt)
                 .call()
                 .content();

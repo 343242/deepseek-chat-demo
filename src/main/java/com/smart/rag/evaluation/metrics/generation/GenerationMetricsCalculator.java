@@ -52,7 +52,8 @@ public class GenerationMetricsCalculator {
 
         // 计算各项指标
         double faithfulness = faithfulnessScorer.score(answer, contextText);
-        double contextRecall = groundTruthAnswer != null
+        // 空白标准答案无法做 context recall（无 claims 可对照），返回 -1 哨兵
+        double contextRecall = groundTruthAnswer != null && !groundTruthAnswer.isBlank()
                 ? contextRecallScorer.score(groundTruthAnswer, contextText) : -1;
         double answerRelevance = answerRelevanceScorer.score(question, answer);
         double contextRelevance = contextRelevanceScorer.score(question, contextDocs);

@@ -34,3 +34,6 @@ skills-lock.json
 # Platform tooling (not source)
 .omp/
 lsp.json
+
+# ZCode local workspace (not source)
+.zcode/

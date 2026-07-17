@@ -1,8 +1,8 @@
 package com.smart.rag.chat.service;
 
 import com.smart.rag.chat.context.ContextPromptInjector;
-import com.smart.rag.chat.context.RequestContext;
-import com.smart.rag.chat.dto.ChatRequest;
+import com.smart.rag.mode.RequestContext;
+import com.smart.rag.mode.ChatRequest;
 import com.smart.rag.infrastructure.llm.CapabilityClient;
 import com.smart.rag.infrastructure.llm.registry.LlmClientRegistry;
 import org.springframework.ai.chat.client.ChatClient;

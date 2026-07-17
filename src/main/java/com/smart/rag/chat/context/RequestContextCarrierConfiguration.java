@@ -1,4 +1,5 @@
 package com.smart.rag.chat.context;
+import com.smart.rag.mode.RequestContext;
 
 import com.smart.rag.infrastructure.concurrent.context.ContextCarrier;
 import org.springframework.context.annotation.Bean;

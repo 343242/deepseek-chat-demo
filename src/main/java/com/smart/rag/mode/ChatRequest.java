@@ -1,6 +1,5 @@
-package com.smart.rag.chat.dto;
+package com.smart.rag.mode;
 
-import com.smart.rag.chat.mode.ChatMode;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;

@@ -1,7 +1,5 @@
-package com.smart.rag.chat.service;
+package com.smart.rag.mode;
 
-import com.smart.rag.chat.context.RequestContext;
-import com.smart.rag.chat.dto.ChatRequest;
 import org.jspecify.annotations.Nullable;
 
 /**

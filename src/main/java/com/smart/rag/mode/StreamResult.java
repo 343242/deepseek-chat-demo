@@ -1,6 +1,5 @@
-package com.smart.rag.chat.service;
+package com.smart.rag.mode;
 
-import com.smart.rag.chat.dto.Reference;
 import org.jspecify.annotations.Nullable;
 import reactor.core.publisher.Flux;
 

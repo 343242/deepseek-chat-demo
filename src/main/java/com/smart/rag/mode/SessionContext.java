@@ -1,4 +1,4 @@
-package com.smart.rag.chat.context;
+package com.smart.rag.mode;
 
 /**
  * 会话上下文 — 当前请求的会话状态

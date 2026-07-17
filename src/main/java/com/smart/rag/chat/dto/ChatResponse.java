@@ -1,6 +1,7 @@
 package com.smart.rag.chat.dto;
 
 import com.fasterxml.jackson.annotation.JsonInclude;
+import com.smart.rag.mode.Reference;
 import org.jspecify.annotations.Nullable;
 
 import java.util.List;

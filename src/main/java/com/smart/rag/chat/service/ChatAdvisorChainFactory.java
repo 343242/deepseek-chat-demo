@@ -1,8 +1,9 @@
 package com.smart.rag.chat.service;
 
-import com.smart.rag.chat.context.RequestContext;
-import com.smart.rag.chat.dto.ChatRequest;
-import com.smart.rag.chat.mode.ChatModeStrategy;
+import com.smart.rag.mode.AdvisorChainContext;
+import com.smart.rag.mode.RequestContext;
+import com.smart.rag.mode.ChatRequest;
+import com.smart.rag.mode.ChatModeStrategy;
 import org.springframework.ai.tool.ToolCallback;
 import org.springframework.stereotype.Component;
 

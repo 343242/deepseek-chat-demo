@@ -1,6 +1,6 @@
 package com.smart.rag.chat.controller;
 
-import com.smart.rag.chat.dto.ChatRequest;
+import com.smart.rag.mode.ChatRequest;
 import com.smart.rag.chat.dto.ChatResponse;
 import com.smart.rag.chat.service.ChatService;
 import com.smart.rag.chat.service.ModelService;

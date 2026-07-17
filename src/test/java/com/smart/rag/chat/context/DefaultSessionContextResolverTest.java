@@ -1,4 +1,5 @@
 package com.smart.rag.chat.context;
+import com.smart.rag.mode.SessionContext;
 
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;

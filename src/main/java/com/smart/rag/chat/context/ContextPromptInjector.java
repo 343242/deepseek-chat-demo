@@ -1,4 +1,5 @@
 package com.smart.rag.chat.context;
+import com.smart.rag.mode.RequestContext;
 
 import org.springframework.stereotype.Component;
 

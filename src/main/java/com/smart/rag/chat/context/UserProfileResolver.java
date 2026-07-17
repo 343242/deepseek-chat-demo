@@ -1,4 +1,5 @@
 package com.smart.rag.chat.context;
+import com.smart.rag.mode.UserContext;
 
 /**
  * 用户画像解析策略

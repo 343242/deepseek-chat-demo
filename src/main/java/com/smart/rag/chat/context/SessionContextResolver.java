@@ -1,4 +1,5 @@
 package com.smart.rag.chat.context;
+import com.smart.rag.mode.SessionContext;
 
 /**
  * 会话上下文解析策略

@@ -1,7 +1,8 @@
 package com.smart.rag.chat.mode;
 
 import com.smart.rag.chat.context.ContextPromptInjector;
-import com.smart.rag.chat.service.AdvisorChainContext;
+import com.smart.rag.mode.ChatMode;
+import com.smart.rag.mode.AdvisorChainContext;
 import com.smart.rag.chat.service.AdvisorInfrastructure;
 import com.smart.rag.chat.service.ChatConversationHelper;
 import com.smart.rag.chat.service.ChatMessagePublisher;

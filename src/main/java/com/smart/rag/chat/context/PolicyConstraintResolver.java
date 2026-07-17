@@ -1,4 +1,6 @@
 package com.smart.rag.chat.context;
+import com.smart.rag.mode.PolicyContext;
+import com.smart.rag.mode.UserContext;
 
 /**
  * 策略约束解析策略

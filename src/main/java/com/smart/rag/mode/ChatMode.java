@@ -1,4 +1,4 @@
-package com.smart.rag.chat.mode;
+package com.smart.rag.mode;
 
 /**
  * 对话模式枚举

@@ -2,7 +2,7 @@ package com.smart.rag.chat.service.impl;
 
 import com.smart.rag.chat.context.CagProperties;
 import com.smart.rag.chat.context.RequestContextManager;
-import com.smart.rag.chat.dto.ChatRequest;
+import com.smart.rag.mode.ChatRequest;
 import com.smart.rag.infrastructure.fallback.FallbackEligibility;
 import com.smart.rag.infrastructure.llm.CapabilityClient;
 import com.smart.rag.infrastructure.llm.LlmCapability;

@@ -1,4 +1,5 @@
 package com.smart.rag.chat.context;
+import com.smart.rag.mode.UserContext;
 
 import com.smart.rag.user.entity.SysPermission;
 import com.smart.rag.user.entity.SysRole;

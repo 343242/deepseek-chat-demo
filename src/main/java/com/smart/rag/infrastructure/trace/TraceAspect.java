@@ -88,7 +88,7 @@ public class TraceAspect {
     // 按类名 + 方法名匹配，不直接引用类型。
 
     private static final String TOOL_WORKSPACE_CLASS = "com.smart.rag.agent.workspace.ToolWorkspace";
-    private static final String STRATEGY_CTX_CLASS = "com.smart.rag.chat.service.StrategyExecutionContext";
+    private static final String STRATEGY_CTX_CLASS = "com.smart.rag.mode.StrategyExecutionContext";
 
     private StepContext extractContext(Object[] args) {
         String sessionId = null;

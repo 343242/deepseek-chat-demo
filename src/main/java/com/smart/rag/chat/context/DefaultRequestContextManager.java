@@ -1,4 +1,8 @@
 package com.smart.rag.chat.context;
+import com.smart.rag.mode.PolicyContext;
+import com.smart.rag.mode.SessionContext;
+import com.smart.rag.mode.UserContext;
+import com.smart.rag.mode.RequestContext;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

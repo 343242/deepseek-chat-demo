@@ -1,10 +1,6 @@
-package com.smart.rag.chat.mode;
+package com.smart.rag.mode;
 
-import com.smart.rag.chat.service.AdvisorChainContext;
 import com.smart.rag.chat.service.ModeChainResult;
-import com.smart.rag.chat.service.StrategyExecuteResult;
-import com.smart.rag.chat.service.StrategyExecutionContext;
-import com.smart.rag.chat.service.StreamResult;
 
 /**
  * 对话模式策略接口

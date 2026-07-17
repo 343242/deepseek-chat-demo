@@ -1,5 +1,7 @@
 package com.smart.rag.chat.mode;
 
+import com.smart.rag.mode.ChatMode;
+import com.smart.rag.mode.ChatModeStrategy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;

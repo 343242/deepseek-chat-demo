@@ -1,6 +1,6 @@
 package com.smart.rag.chat.service;
 
-import com.smart.rag.chat.dto.ChatRequest;
+import com.smart.rag.mode.ChatRequest;
 import com.smart.rag.chat.dto.ChatResponse;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 

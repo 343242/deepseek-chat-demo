@@ -1,4 +1,5 @@
 package com.smart.rag.chat.context;
+import com.smart.rag.mode.RequestContext;
 
 /**
  * 请求上下文管理器 — CAG 架构的核心组件

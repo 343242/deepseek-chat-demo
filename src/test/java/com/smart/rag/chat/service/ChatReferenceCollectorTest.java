@@ -1,6 +1,6 @@
 package com.smart.rag.chat.service;
 
-import com.smart.rag.chat.dto.Reference;
+import com.smart.rag.mode.Reference;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;

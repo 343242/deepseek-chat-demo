@@ -1,4 +1,4 @@
-package com.smart.rag.chat.context;
+package com.smart.rag.mode;
 
 import java.util.Set;
 

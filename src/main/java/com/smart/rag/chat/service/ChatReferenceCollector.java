@@ -1,7 +1,7 @@
 package com.smart.rag.chat.service;
 
 import com.smart.rag.rag.retrieval.RetrievedDocument;
-import com.smart.rag.chat.dto.Reference;
+import com.smart.rag.mode.Reference;
 import com.smart.rag.infrastructure.trace.TracedStep;
 import org.springframework.ai.document.Document;
 import org.springframework.stereotype.Component;

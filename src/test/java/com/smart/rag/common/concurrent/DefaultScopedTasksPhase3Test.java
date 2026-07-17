@@ -1,10 +1,10 @@
 package com.smart.rag.common.concurrent;
 
-import com.smart.rag.chat.context.PolicyContext;
-import com.smart.rag.chat.context.RequestContext;
+import com.smart.rag.mode.PolicyContext;
+import com.smart.rag.mode.RequestContext;
 import com.smart.rag.chat.context.RequestContextHolder;
-import com.smart.rag.chat.context.SessionContext;
-import com.smart.rag.chat.context.UserContext;
+import com.smart.rag.mode.SessionContext;
+import com.smart.rag.mode.UserContext;
 import com.smart.rag.infrastructure.concurrent.*;
 import com.smart.rag.infrastructure.concurrent.context.ContextCarrier;
 import com.smart.rag.infrastructure.concurrent.executor.DefaultScopeExecutorFactory;

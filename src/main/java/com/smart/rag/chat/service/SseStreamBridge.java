@@ -1,6 +1,6 @@
 package com.smart.rag.chat.service;
 
-import com.smart.rag.chat.dto.Reference;
+import com.smart.rag.mode.Reference;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;

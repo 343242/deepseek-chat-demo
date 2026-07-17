@@ -1,8 +1,10 @@
 package com.smart.rag.chat.mode;
 
 import com.smart.rag.chat.context.ContextPromptInjector;
-import com.smart.rag.chat.dto.Reference;
-import com.smart.rag.chat.service.AdvisorChainContext;
+import com.smart.rag.mode.ChatMode;
+import com.smart.rag.mode.ChatModeStrategy;
+import com.smart.rag.mode.Reference;
+import com.smart.rag.mode.AdvisorChainContext;
 import com.smart.rag.chat.service.AdvisorInfrastructure;
 import com.smart.rag.chat.service.ChatConversationHelper;
 import com.smart.rag.chat.service.ChatMessagePublisher;
@@ -12,9 +14,9 @@ import com.smart.rag.chat.service.ChatRetrievalService;
 import com.smart.rag.chat.service.ChatUsageTracker;
 import com.smart.rag.chat.service.ModeChainResult;
 import com.smart.rag.chat.service.StreamCompletionHelper;
-import com.smart.rag.chat.service.StrategyExecuteResult;
-import com.smart.rag.chat.service.StrategyExecutionContext;
-import com.smart.rag.chat.service.StreamResult;
+import com.smart.rag.mode.StrategyExecuteResult;
+import com.smart.rag.mode.StrategyExecutionContext;
+import com.smart.rag.mode.StreamResult;
 import com.smart.rag.infrastructure.advisor.RagContextAdvisor;
 import org.slf4j.MDC;
 import org.springframework.ai.chat.client.advisor.api.Advisor;

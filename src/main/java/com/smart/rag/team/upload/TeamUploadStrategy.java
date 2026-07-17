@@ -2,7 +2,7 @@ package com.smart.rag.team.upload;
 
 import com.smart.rag.infrastructure.exception.ClientException;
 import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;
-import com.smart.rag.common.upload.UploadStrategy;
+import com.smart.rag.rag.upload.UploadStrategy;
 import com.smart.rag.rag.event.DocumentCreatedEvent;
 import com.smart.rag.rag.dto.DocumentUploadResponse;
 import com.smart.rag.rag.etl.EtlStatus;

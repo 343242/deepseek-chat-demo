@@ -1,4 +1,4 @@
-package com.smart.rag.common.upload;
+package com.smart.rag.rag.upload;
 
 import com.smart.rag.rag.dto.DocumentUploadResponse;
 import org.jspecify.annotations.Nullable;
@@ -9,10 +9,14 @@ import java.util.List;
 /**
  * 文档上传策略接口 — OCP 合规
  * <p>
+ * 归属于 rag.upload 包：上传策略的核心契约围绕 rag 的文档域（返回类型
+ * {@link DocumentUploadResponse}、实现 {@link PersonalUploadStrategy} 均在 rag），
+ * 不应下沉到 common 造成 common 反向依赖 rag.dto。
+ * <p>
  * 根据 teamId 是否为 null 路由到不同的上传策略：
  * <ul>
- *   <li>teamId = null → PersonalUploadStrategy（现有个人上传逻辑）</li>
- *   <li>teamId ≠ null → TeamUploadStrategy（团队上传 + 额度校验 + 审批）</li>
+ *   <li>teamId = null → {@link PersonalUploadStrategy}（个人上传）</li>
+ *   <li>teamId ≠ null → TeamUploadStrategy（团队上传 + 额度校验 + 审批，由 team 模块实现）</li>
  * </ul>
  * <p>
  * 新团队功能通过新增策略类实现，无需修改现有代码。

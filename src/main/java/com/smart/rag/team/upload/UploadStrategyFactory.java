@@ -1,6 +1,6 @@
 package com.smart.rag.team.upload;
 
-import com.smart.rag.common.upload.UploadStrategy;
+import com.smart.rag.rag.upload.UploadStrategy;
 import com.smart.rag.rag.upload.PersonalUploadStrategy;
 import org.jspecify.annotations.Nullable;
 import org.springframework.stereotype.Component;

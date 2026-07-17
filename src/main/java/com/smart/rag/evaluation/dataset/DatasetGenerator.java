@@ -7,6 +7,7 @@ import com.smart.rag.infrastructure.concurrent.ScopePolicy;
 import com.smart.rag.infrastructure.concurrent.ScopedTasks;
 import com.smart.rag.infrastructure.concurrent.TaskScope;
 import com.smart.rag.evaluation.config.EvaluationProperties;
+import com.smart.rag.infrastructure.llm.adapter.RewriteClientResolver;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -38,20 +39,20 @@ public class DatasetGenerator {
     private static final Logger log = LoggerFactory.getLogger(DatasetGenerator.class);
 
     private final JdbcTemplate jdbc;
-    private final ChatClient.Builder chatClientBuilder;
+    private final RewriteClientResolver rewriteClientResolver;
     private final EvaluationProperties props;
     private final DatasetRepository datasetRepo;
     private final ObjectMapper objectMapper;
     private final ScopedTasks scopedTasks;
 
     public DatasetGenerator(JdbcTemplate jdbc,
-                            ChatClient.Builder chatClientBuilder,
+                            RewriteClientResolver rewriteClientResolver,
                             EvaluationProperties props,
                             DatasetRepository datasetRepo,
                             ObjectMapper objectMapper,
                             ScopedTasks scopedTasks) {
         this.jdbc = jdbc;
-        this.chatClientBuilder = chatClientBuilder;
+        this.rewriteClientResolver = rewriteClientResolver;
         this.props = props;
         this.datasetRepo = datasetRepo;
         this.objectMapper = objectMapper;
@@ -89,7 +90,7 @@ public class DatasetGenerator {
         log.info("Sampled {} chunks for dataset generation", chunks.size());
 
         // 3. 对每个 chunk 并发生成问题（最大并发数从配置读取）
-        ChatClient chatClient = chatClientBuilder.build();
+        ChatClient chatClient = rewriteClientResolver.resolve(props.getGenerationModel());
         int concurrency = props.getRunner().getConcurrency();
         ScopeOptions options = ScopeOptions.builder("dataset-generate")
                 .policy(ScopePolicy.COLLECT_ALL)

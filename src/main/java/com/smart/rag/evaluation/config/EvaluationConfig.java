@@ -2,13 +2,11 @@ package com.smart.rag.evaluation.config;
 
 import com.smart.rag.evaluation.judge.LlmJudge;
 import com.smart.rag.evaluation.judge.LlmJudgeImpl;
+import com.smart.rag.infrastructure.llm.adapter.RewriteClientResolver;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
-import org.springframework.ai.zhipuai.ZhiPuAiChatModel;
-import org.springframework.ai.zhipuai.ZhiPuAiChatOptions;
-import org.springframework.ai.zhipuai.api.ZhiPuAiApi;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -25,8 +23,9 @@ import org.springframework.context.annotation.Profile;
  * 生产环境默认关闭，确保零侵入。
  * </p>
  * <p>
- * Judge 模型完全独立于 Provider 路由体系（LlmClientRegistry），
- * 通过 app.evaluation.judge.* 配置直连厂商 API，评估模块作为数据孤岛。
+ * Judge 与生成模型均复用 {@code LlmClientRegistry} 的候选路由体系，
+ * 通过 {@link RewriteClientResolver} 解析为 Spring AI {@link ChatClient}，
+ * 不再绑定任何具体厂商 SDK。
  * </p>
  */
 @Configuration
@@ -39,29 +38,17 @@ public class EvaluationConfig {
     /**
      * 创建 Judge 专用 ChatClient
      * <p>
-     * 直接通过 ZhiPuAiApi 创建，不经过 LlmClientRegistry。
-     * temperature=0 确保评分确定性。
+     * 通过 {@link RewriteClientResolver} 从 {@code LlmClientRegistry} 解析候选，
+     * candidate id 取自 {@code app.evaluation.judge.candidate-id}，
+     * 为空时回退到默认 chat 候选。复用注册表的重试 / 熔断 / fallback。
      */
     @Bean("judgeChatClient")
-    public ChatClient judgeChatClient(EvaluationProperties evaluationProperties) {
-        EvaluationProperties.Judge judgeConfig = evaluationProperties.getJudge();
-
-        log.info("Initializing isolated Judge ChatClient: model={}, baseUrl={}",
-                judgeConfig.getModel(), judgeConfig.getBaseUrl());
-
-        ZhiPuAiApi api = ZhiPuAiApi.builder()
-                .baseUrl(judgeConfig.getBaseUrl())
-                .apiKey(judgeConfig.getApiKey())
-                .build();
-
-        ZhiPuAiChatOptions options = ZhiPuAiChatOptions.builder()
-                .model(judgeConfig.getModel())
-                .temperature(0.0)
-                .build();
-
-        ZhiPuAiChatModel chatModel = new ZhiPuAiChatModel(api, options);
-
-        return ChatClient.builder(chatModel).build();
+    public ChatClient judgeChatClient(EvaluationProperties evaluationProperties,
+                                      RewriteClientResolver rewriteClientResolver) {
+        String candidateId = evaluationProperties.getJudge().getCandidateId();
+        log.info("Initializing Judge ChatClient via registry: candidateId={}",
+                (candidateId == null || candidateId.isBlank()) ? "<default>" : candidateId);
+        return rewriteClientResolver.resolve(candidateId);
     }
 
     /**
@@ -74,7 +61,7 @@ public class EvaluationConfig {
     public LlmJudge llmJudge(ChatClient judgeChatClient,
                              EvaluationProperties evaluationProperties,
                              ObjectMapper objectMapper) {
-        log.info("LlmJudge initialized with model: {}", evaluationProperties.getJudgeModel());
-        return new LlmJudgeImpl(judgeChatClient, evaluationProperties, objectMapper);
+        log.info("LlmJudge initialized with candidate: {}", evaluationProperties.getJudgeModel());
+        return new LlmJudgeImpl(judgeChatClient, objectMapper);
     }
 }

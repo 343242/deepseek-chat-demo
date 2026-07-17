@@ -7,9 +7,9 @@ import com.smart.rag.infrastructure.concurrent.ScopePolicy;
 import com.smart.rag.infrastructure.concurrent.ScopedTasks;
 import com.smart.rag.infrastructure.concurrent.TaskScope;
 import com.smart.rag.evaluation.config.EvaluationProperties;
+import com.smart.rag.infrastructure.llm.adapter.RewriteClientResolver;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.util.ArrayList;
@@ -31,7 +31,7 @@ class DatasetGeneratorStructuredConcurrencyTest {
     @DisplayName("generate opens scoped tasks for chunk question generation")
     void generate_opensScopedTasksForChunkQuestionGeneration() {
         JdbcTemplate jdbc = mock(JdbcTemplate.class);
-        ChatClient.Builder chatClientBuilder = mock(ChatClient.Builder.class);
+        RewriteClientResolver rewriteClientResolver = mock(RewriteClientResolver.class);
         DatasetRepository datasetRepo = mock(DatasetRepository.class);
         RecordingScopedTasks scopedTasks = new RecordingScopedTasks();
         EvaluationProperties properties = new EvaluationProperties();
@@ -47,7 +47,7 @@ class DatasetGeneratorStructuredConcurrencyTest {
 
         DatasetGenerator generator = new DatasetGenerator(
                 jdbc,
-                chatClientBuilder,
+                rewriteClientResolver,
                 properties,
                 datasetRepo,
                 new ObjectMapper(),

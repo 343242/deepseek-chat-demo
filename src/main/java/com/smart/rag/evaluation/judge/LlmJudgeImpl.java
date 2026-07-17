@@ -1,6 +1,5 @@
 package com.smart.rag.evaluation.judge;
 
-import com.smart.rag.evaluation.config.EvaluationProperties;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -18,8 +17,8 @@ import java.util.List;
  * 基于 Spring AI ChatClient 调用 Judge 模型。
  * 关键设计：
  * <ul>
- *   <li>temperature=0：确保评分确定性</li>
- *   <li>最多重试 2 次：应对 API 临时错误</li>
+ *   <li>底层 ChatClient 由 LlmClientRegistry 解析，重试 / 熔断 / fallback 透明复用</li>
+ *   <li>本类不再叠加二次重试，仅捕获异常并降级为 JudgeVerdict.failed，保证单条评估不中断</li>
  *   <li>三层 JSON 解析容错：raw → ```json``` → 正则</li>
  * </ul>
  * </p>
@@ -27,39 +26,32 @@ import java.util.List;
 public class LlmJudgeImpl implements LlmJudge {
 
     private static final Logger log = LoggerFactory.getLogger(LlmJudgeImpl.class);
-    private static final int MAX_RETRIES = 2;
 
     private final ChatClient judgeClient;
-    private final String judgeModel;
     private final ObjectMapper objectMapper;
 
     public LlmJudgeImpl(ChatClient judgeClient,
-                        EvaluationProperties props,
                         ObjectMapper objectMapper) {
         this.judgeClient = judgeClient;
-        this.judgeModel = props.getJudgeModel();
         this.objectMapper = objectMapper;
     }
 
     @Override
     public JudgeVerdict evaluate(String prompt) {
-        Exception lastError = null;
-        for (int attempt = 0; attempt <= MAX_RETRIES; attempt++) {
-            try {
-                String response = judgeClient.prompt()
-                        .user(prompt)
-                        .call()
-                        .content();
-                if (response == null || response.isBlank()) {
-                    throw new IllegalStateException("Judge returned empty response");
-                }
-                return JudgeVerdict.ok(response);
-            } catch (Exception e) {
-                lastError = e;
-                log.warn("Judge attempt {} failed: {}", attempt + 1, e.getMessage());
+        try {
+            String response = judgeClient.prompt()
+                    .user(prompt)
+                    .call()
+                    .content();
+            if (response == null || response.isBlank()) {
+                return JudgeVerdict.failed("Judge returned empty response");
             }
+            return JudgeVerdict.ok(response);
+        } catch (Exception e) {
+            // 网络层错误已由 ResilientChatClient 重试，此处仅兜底降级，避免中断整条评测
+            log.warn("Judge invocation failed: {}", e.getMessage());
+            return JudgeVerdict.failed(e.getMessage());
         }
-        return JudgeVerdict.failed(lastError.getMessage());
     }
 
     @Override

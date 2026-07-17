@@ -16,7 +16,6 @@ import org.springframework.scheduling.annotation.EnableAsync;
 @SpringBootApplication(
         scanBasePackages = "com.smart.rag",
         exclude = {
-                org.springframework.ai.model.zhipuai.autoconfigure.ZhiPuAiChatAutoConfiguration.class,
                 org.springframework.boot.autoconfigure.security.servlet.UserDetailsServiceAutoConfiguration.class
         }
 )

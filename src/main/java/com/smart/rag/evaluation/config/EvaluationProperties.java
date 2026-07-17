@@ -10,8 +10,9 @@ import org.springframework.context.annotation.Profile;
  * 对应 application-evaluation.yml 中 app.evaluation.* 配置项。
  * 仅在 evaluation profile 激活时生效。
  * <p>
- * Judge 模型配置独立于 Provider 路由体系（app.evaluation.judge.*），
- * 评估模块作为 smart-rag 的数据孤岛，自行管理模型连接。
+ * Judge 与生成模型均复用 {@code LlmClientRegistry} 的候选路由体系，
+ * 通过 app.llm.capabilities.chat.candidates 中声明的 candidate id 寻址，
+ * 留空时回退到默认 chat 候选。
  */
 @Component
 @Profile("evaluation")
@@ -21,8 +22,8 @@ public class EvaluationProperties {
     /** 是否启用评估模块（需同时激活 evaluation profile） */
     private boolean enabled = false;
 
-    /** 生成模型（用于 Pipeline 答案生成，格式：providerId/modelId） */
-    private String generationModel = "deepseek/deepseek-v4-pro";
+    /** 生成模型候选 ID（对应 app.llm.capabilities.chat.candidates[].id，用于 Pipeline 答案生成） */
+    private String generationModel = "deepseek-v4-flash";
 
     /** 评估使用的测试用户 ID（需确保该用户有足够数据） */
     private Long testUserId = 1L;
@@ -39,10 +40,10 @@ public class EvaluationProperties {
     // ======================== 便捷方法 ========================
 
     /**
-     * 获取 Judge 模型 ID（如 "glm-5.1"）
+     * 获取 Judge 候选 ID（指向 app.llm.capabilities.chat.candidates 中的某一项；为 null/blank 时回退默认 chat 候选）
      */
     public String getJudgeModel() {
-        return judge.getModel();
+        return judge.getCandidateId();
     }
 
     // ======================== Getters & Setters ========================
@@ -98,42 +99,24 @@ public class EvaluationProperties {
     // ======================== 嵌套配置类 ========================
 
     /**
-     * Judge 模型独立配置
+     * Judge 候选配置
      * <p>
-     * 完全独立于 Provider 路由体系，评估模块自己管理 API 连接。
+     * 复用 Provider 路由体系（LlmClientRegistry），通过 candidate id 寻址。
+     * 留空时回退到默认 chat 候选。
      */
     public static class Judge {
-        /** 模型 ID（如 "glm-5.1"） */
-        private String model = "glm-5.1";
+        /**
+         * 候选 ID，对应 app.llm.capabilities.chat.candidates[].id。
+         * 为 null/blank 时使用默认 chat 候选。
+         */
+        private String candidateId;
 
-        /** API Base URL */
-        private String baseUrl = "https://open.bigmodel.cn/api/paas/v4";
-
-        /** API Key */
-        private String apiKey;
-
-        public String getModel() {
-            return model;
+        public String getCandidateId() {
+            return candidateId;
         }
 
-        public void setModel(String model) {
-            this.model = model;
-        }
-
-        public String getBaseUrl() {
-            return baseUrl;
-        }
-
-        public void setBaseUrl(String baseUrl) {
-            this.baseUrl = baseUrl;
-        }
-
-        public String getApiKey() {
-            return apiKey;
-        }
-
-        public void setApiKey(String apiKey) {
-            this.apiKey = apiKey;
+        public void setCandidateId(String candidateId) {
+            this.candidateId = candidateId;
         }
     }
 

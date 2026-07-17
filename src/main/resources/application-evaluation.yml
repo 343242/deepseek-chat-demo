@@ -4,7 +4,8 @@
 app:
   evaluation:
     enabled: true
-    generation-model: deepseek/deepseek-v4-pro
+    # 生成模型候选 ID，对应 app.llm.capabilities.chat.candidates[].id；留空则用默认 chat 候选
+    generation-model: deepseek-v4-flash
     test-user-id: 1
     dataset:
       sample-size: 50
@@ -13,8 +14,7 @@ app:
       default-k: 10
       concurrency: 1
       timeout-seconds: 300
-    # Judge 模型独立配置（不走 Provider 路由）
+    # Judge 候选 ID，对应 app.llm.capabilities.chat.candidates[].id；留空则用默认 chat 候选
+    # 建议 Judge 与 generation-model 选不同候选，避免自评偏差
     judge:
-      model: glm-5.1
-      base-url: ${ZHIPU_BASE_URL:https://open.bigmodel.cn/api/paas/v4}
-      api-key: ${ZHIPU_API_KEY:CHANGE_ME}
+      candidate-id: qwen3-max

@@ -4,7 +4,7 @@ import com.smart.rag.infrastructure.concurrent.ScopedTasks;
 import com.smart.rag.infrastructure.llm.CapabilityClient;
 import com.smart.rag.infrastructure.llm.LlmCapability;
 import com.smart.rag.infrastructure.llm.config.LlmByokProperties;
-import com.smart.rag.infrastructure.llm.config.LlmConfigSource;
+import com.smart.rag.infrastructure.llm.config.ByokConfigSource;
 import com.smart.rag.infrastructure.llm.metrics.LlmMetrics;
 import com.smart.rag.infrastructure.llm.resilience.LlmCircuitBreakerAdapterRegistry;
 import org.junit.jupiter.api.BeforeEach;
@@ -33,7 +33,7 @@ import static org.mockito.Mockito.when;
 class LlmClientRegistryTest {
 
     @Mock private LlmClientFactory factory;
-    @Mock private LlmConfigSource configSource;
+    @Mock private ByokConfigSource configSource;
     @Mock private LlmCircuitBreakerAdapterRegistry circuitBreakerRegistry;
     @Mock private ScopedTasks scopedTasks;
     @Mock private LlmMetrics metrics;

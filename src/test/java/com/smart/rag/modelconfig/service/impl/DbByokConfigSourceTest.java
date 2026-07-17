@@ -1,4 +1,4 @@
-package com.smart.rag.infrastructure.llm.config;
+package com.smart.rag.modelconfig.service.impl;
 
 import com.smart.rag.infrastructure.llm.LlmCapability;
 import com.smart.rag.infrastructure.llm.metrics.LlmMetrics;
@@ -19,15 +19,15 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /**
- * LlmConfigSource 单元测试（design §5.4 / R1 / AC29）— 三态语义、命名空间 candidateId、endpoints 解析。
+ * DbByokConfigSource 单元测试（design §5.4 / R1 / AC29）— 三态语义、命名空间 candidateId、endpoints 解析。
  */
 @ExtendWith(MockitoExtension.class)
-class LlmConfigSourceTest {
+class DbByokConfigSourceTest {
 
     @Mock private LlmModelConfigService configService;
     @Mock private LlmMetrics metrics;
 
-    @InjectMocks private LlmConfigSource source;
+    @InjectMocks private DbByokConfigSource source;
 
     private LlmModelConfig row(long id, String model, Integer status) {
         LlmModelConfig r = new LlmModelConfig();

@@ -22,9 +22,12 @@ class InfrastructureBoundaryTest {
     private static final Set<String> BUSINESS_PACKAGE_PREFIXES = Set.of(
             "com.smart.rag.agent.",
             "com.smart.rag.chat.",
+            "com.smart.rag.config.",
             "com.smart.rag.conversation.",
+            "com.smart.rag.evaluation.",
+            "com.smart.rag.mcp.",
+            "com.smart.rag.modelconfig.",
             "com.smart.rag.rag.",
-            "com.smart.rag.security.",
             "com.smart.rag.team.",
             "com.smart.rag.user."
     );

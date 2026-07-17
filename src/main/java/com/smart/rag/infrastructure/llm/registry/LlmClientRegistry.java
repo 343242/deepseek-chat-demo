@@ -12,8 +12,8 @@ import com.smart.rag.infrastructure.exception.RemoteException;
 import com.smart.rag.infrastructure.exception.errorcode.RemoteErrorCode;
 import com.smart.rag.infrastructure.llm.CapabilityClient;
 import com.smart.rag.infrastructure.llm.LlmCapability;
+import com.smart.rag.infrastructure.llm.config.ByokConfigSource;
 import com.smart.rag.infrastructure.llm.config.LlmByokProperties;
-import com.smart.rag.infrastructure.llm.config.LlmConfigSource;
 import com.smart.rag.infrastructure.llm.metrics.LlmMetrics;
 import com.smart.rag.infrastructure.llm.resilience.LlmCircuitBreakerAdapterRegistry;
 import jakarta.annotation.PostConstruct;
@@ -40,7 +40,7 @@ import java.util.concurrent.atomic.AtomicReference;
  * 旧 API（{@code get/getDefault/getChain/...}）零改动，14 调用方不受影响。
  * <p>
  * <b>用户级（BYOK，本期 CHAT-only）</b>：{@link #userSnapshots}（Caffeine 有界）cache-aside，
- * {@code getUserChain/getUserDefault} cache miss 时 lazy 从 {@link LlmConfigSource} 构建；
+ * {@code getUserChain/getUserDefault} cache miss 时 lazy 从 {@link ByokConfigSource} 构建；
  * 空链（DB 无行/全 disabled）→ delegate 系统级 snapshot（<b>不缓存</b>，P0-1 天然满足）。
  * {@code app.llm.byok.enabled=false} 时 getUser* 直接走系统级（N4 回滚）。
  * <p>
@@ -66,7 +66,7 @@ public class LlmClientRegistry {
     private final int destroyConcurrency;
     private final AtomicReference<RegistrySnapshot> snapshotRef;
 
-    private final LlmConfigSource configSource;
+    private final ByokConfigSource configSource;
     private final LlmByokProperties byokProperties;
     private final LlmCircuitBreakerAdapterRegistry circuitBreakerRegistry;
     @Nullable
@@ -82,7 +82,7 @@ public class LlmClientRegistry {
 
     @Autowired
     public LlmClientRegistry(LlmClientFactory factory, ScopedTasks scopedTasks,
-                             LlmConfigSource configSource, LlmByokProperties byokProperties,
+                             ByokConfigSource configSource, LlmByokProperties byokProperties,
                              LlmCircuitBreakerAdapterRegistry circuitBreakerRegistry,
                              @Nullable LlmMetrics metrics) {
         this.factory = factory;
@@ -315,7 +315,7 @@ public class LlmClientRegistry {
             .toList();
     }
 
-    /** cache miss 时从 LlmConfigSource 构建（含解密 key + 命名空间 candidateId） */
+    /** cache miss 时从 ByokConfigSource 构建（含解密 key + 命名空间 candidateId） */
     private RegistrySnapshot buildUserSnapshot(Long userId) {
         List<LlmClientFactory.ResolvedCandidate> resolved =
             configSource.userChain(userId, LlmCapability.CHAT);

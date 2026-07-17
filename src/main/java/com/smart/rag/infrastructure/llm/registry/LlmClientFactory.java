@@ -46,7 +46,7 @@ import java.util.stream.Collectors;
  * <b>BYOK 重载（design §5.2）</b>：{@link #buildSnapshot(List)} 接受已解析的
  * {@link ResolvedCandidate}（含 baseUrl/apiKey），对每个 candidate 直接 {@code new GenericOpenAiProvider}
  * （无 cache、无锁，design §5.1），绕过 Spring 注入的 {@code providers} map（启动固化，BYOK 进不来）。
- * candidateId 命名空间由 {@code LlmConfigSource} 在构造 candidate 时设为 {@code u:{userId}:{modelCode}}。
+ * candidateId 命名空间由 {@code DbByokConfigSource} 在构造 candidate 时设为 {@code u:{userId}:{modelCode}}。
  */
 @Component
 public class LlmClientFactory {
@@ -97,7 +97,7 @@ public class LlmClientFactory {
     /**
      * 已解析的 BYOK 候选（design §5.2）— 含连接信息，解耦 ModelCandidate 不带 url/key 的问题。
      * <p>
-     * 由 {@code LlmConfigSource} 从 DB 行产生（含解密 key）；candidate.id 已由其设为
+     * 由 {@code DbByokConfigSource} 从 DB 行产生（含解密 key）；candidate.id 已由其设为
      * {@code u:{userId}:{modelCode}} 命名空间形式（熔断器/snapshot key 隔离，design §5.2）。
      */
     public record ResolvedCandidate(ModelCandidate candidate, String providerCode,

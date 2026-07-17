@@ -1,9 +1,10 @@
-package com.smart.rag.infrastructure.llm.config;
+package com.smart.rag.modelconfig.service.impl;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smart.rag.infrastructure.llm.ChatCandidate;
 import com.smart.rag.infrastructure.llm.LlmCapability;
+import com.smart.rag.infrastructure.llm.config.ByokConfigSource;
 import com.smart.rag.infrastructure.llm.metrics.LlmMetrics;
 import com.smart.rag.infrastructure.llm.registry.LlmClientFactory;
 import com.smart.rag.modelconfig.entity.LlmModelConfig;
@@ -17,10 +18,13 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 用户级 BYOK 配置源（design §5.4）— DB > yml，三态语义（对抗审查 R1）。
+ * 用户级 BYOK 配置源的 DB 实现（{@link ByokConfigSource} 的 modelconfig 模块实现）。
  * <p>
- * {@link #userChain(Long, LlmCapability)} 返回 {@link LlmClientFactory.ResolvedCandidate} 链
- * （含解密 key + 命名空间 candidateId），由 {@code LlmClientRegistry} 在 cache miss 时 lazy 构建：
+ * 归属于 modelconfig 包：本类持有对 {@link LlmModelConfigService} 与 {@link LlmModelConfig}
+ * 的依赖（DB schema 知识本就属 modelconfig），实现 infrastructure 定义的 SPI 接口，
+ * 依赖方向为 modelconfig -> infrastructure（合法），避免 infrastructure 反向依赖业务包。
+ * <p>
+ * 三态语义（design §5.4 / R1）：
  * <ul>
  *   <li><b>无行</b> → 空 List（Registry delegate yml 系统级 snapshot，正常 fallback，无 warn/counter）</li>
  *   <li><b>全 disabled</b> → 空 List + WARN + {@code llm.byok.fallback{reason=all_disabled}} 计数
@@ -35,9 +39,9 @@ import java.util.Map;
  * @see LlmClientFactory#buildSnapshot(List)
  */
 @Component
-public class LlmConfigSource {
+public class DbByokConfigSource implements ByokConfigSource {
 
-    private static final Logger log = LoggerFactory.getLogger(LlmConfigSource.class);
+    private static final Logger log = LoggerFactory.getLogger(DbByokConfigSource.class);
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private static final TypeReference<Map<String, String>> ENDPOINTS_TYPE = new TypeReference<>() {};
 
@@ -45,14 +49,12 @@ public class LlmConfigSource {
     @Nullable
     private final LlmMetrics metrics;
 
-    public LlmConfigSource(LlmModelConfigService configService, @Nullable LlmMetrics metrics) {
+    public DbByokConfigSource(LlmModelConfigService configService, @Nullable LlmMetrics metrics) {
         this.configService = configService;
         this.metrics = metrics;
     }
 
-    /**
-     * 用户 BYOK 链（三态，design §5.4 / R1）。空 = fallback yml。
-     */
+    @Override
     public List<LlmClientFactory.ResolvedCandidate> userChain(Long userId, LlmCapability cap) {
         List<LlmModelConfig> rows = configService.selectAll(userId, cap);
         if (rows.isEmpty()) {

@@ -2,7 +2,7 @@ package com.smart.rag.agent.dto;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.smart.rag.agent.workspace.RetrievedDocument;
+import com.smart.rag.rag.retrieval.RetrievedDocument;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

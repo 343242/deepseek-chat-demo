@@ -1,4 +1,4 @@
-package com.smart.rag.agent.workspace;
+package com.smart.rag.rag.retrieval;
 
 import org.springframework.ai.document.Document;
 
@@ -6,7 +6,10 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * 检索结果 DTO — Tool Workspace 中的文档表示（agent + chat 双路径共享）。
+ * 检索结果 DTO — 检索工作区中的文档表示（agent + chat 双路径共享）。
+ * <p>
+ * 归属于 rag.retrieval 包：作为检索结果的统一文档表示，供 agent 工具链（ToolWorkspace）
+ * 与 chat 检索路径（ChatReferenceCollector）共享，避免 chat 反向依赖 agent.workspace。
  *
  * @param chunkId       vector_store.id（chunk 级），原 docId，重命名消除"docId 实为 chunkId"歧义
  * @param documentId    所属文档 ID（metadata.documentId 提升为一等字段）

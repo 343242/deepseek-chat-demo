@@ -1,5 +1,6 @@
 package com.smart.rag.agent.workspace;
 
+import com.smart.rag.rag.retrieval.RetrievedDocument;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;

@@ -2,7 +2,7 @@ package com.smart.rag.agent.tool;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smart.rag.rag.retrieval.HybridSearchService;
-import com.smart.rag.agent.workspace.RetrievedDocument;
+import com.smart.rag.rag.retrieval.RetrievedDocument;
 import com.smart.rag.agent.workspace.ToolWorkspace;
 import com.smart.rag.agent.dto.ToolResult;
 import com.smart.rag.infrastructure.trace.TracedStep;

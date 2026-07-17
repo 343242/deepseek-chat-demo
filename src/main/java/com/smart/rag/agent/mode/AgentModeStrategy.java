@@ -29,7 +29,7 @@ import com.smart.rag.agent.intent.AgentIntent;
 import com.smart.rag.agent.intent.IntentClassifier;
 import com.smart.rag.agent.intent.IntentResult;
 import com.smart.rag.agent.tool.callback.AgentToolCallbackFactory;
-import com.smart.rag.agent.workspace.RetrievedDocument;
+import com.smart.rag.rag.retrieval.RetrievedDocument;
 import com.smart.rag.agent.workspace.ToolWorkspace;
 import com.smart.rag.agent.workspace.ToolWorkspaceFactory;
 import com.smart.rag.chat.dto.Reference;

@@ -3,6 +3,7 @@ package com.smart.rag.agent.workspace;
 import com.smart.rag.agent.dto.IntermediateAnswer;
 import com.smart.rag.agent.dto.SelfReflection;
 import com.smart.rag.agent.intent.AgentIntent;
+import com.smart.rag.rag.retrieval.RetrievedDocument;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

@@ -1,6 +1,6 @@
 package com.smart.rag.rag;
 
-import com.smart.rag.common.team.TeamStatusService;
+import com.smart.rag.team.service.TeamStatusService;
 import com.smart.rag.infrastructure.exception.ClientException;
 import com.smart.rag.infrastructure.exception.ServiceException;
 import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;

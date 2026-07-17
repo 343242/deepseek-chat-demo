@@ -1,6 +1,6 @@
 package com.smart.rag.team.upload;
 
-import com.smart.rag.common.team.TeamStatusService;
+import com.smart.rag.team.service.TeamStatusService;
 import com.smart.rag.rag.upload.BucketResolver;
 import com.smart.rag.rag.upload.OrphanChunkCleaner;
 import io.minio.*;

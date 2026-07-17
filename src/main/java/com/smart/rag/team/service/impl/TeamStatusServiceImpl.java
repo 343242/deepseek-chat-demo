@@ -1,6 +1,6 @@
 package com.smart.rag.team.service.impl;
 
-import com.smart.rag.common.team.TeamStatusService;
+import com.smart.rag.team.service.TeamStatusService;
 import com.smart.rag.team.entity.Team;
 import com.smart.rag.team.enums.TeamStatus;
 import com.smart.rag.team.entity.TeamMember;

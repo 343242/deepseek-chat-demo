@@ -1,10 +1,10 @@
-package com.smart.rag.common.team;
+package com.smart.rag.team.service;
 
 /**
  * 团队状态查询服务（只读）。
  * <p>
- * 定义在 common 包，供 rag 等其他模块通过接口依赖注入，
- * 避免直接依赖 team.mapper 造成模块耦合（依赖倒置原则）。
+ * 归属于 team 模块（team 业务契约应由 team 模块自有，不应下沉到 common
+ * 污染基础设施层的中立性）。跨模块调用方按需注入本接口。
  */
 public interface TeamStatusService {
 

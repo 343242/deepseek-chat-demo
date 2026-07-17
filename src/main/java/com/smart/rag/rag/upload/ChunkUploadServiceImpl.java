@@ -16,7 +16,7 @@ import com.smart.rag.rag.service.DocumentDedupService;
 import com.smart.rag.rag.service.impl.DocumentValidator;
 import com.smart.rag.infrastructure.web.util.SecurityUtils;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.smart.rag.common.team.TeamStatusService;
+import com.smart.rag.team.service.TeamStatusService;
 import io.minio.*;
 import io.minio.SourceObject;
 import org.apache.commons.codec.digest.DigestUtils;

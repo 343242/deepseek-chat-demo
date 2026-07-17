@@ -1,6 +1,6 @@
 package com.smart.rag.rag.upload;
 
-import com.smart.rag.common.team.TeamStatusService;
+import com.smart.rag.team.service.TeamStatusService;
 import com.smart.rag.infrastructure.exception.ClientException;
 import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;
 import com.smart.rag.rag.config.DocumentProperties;

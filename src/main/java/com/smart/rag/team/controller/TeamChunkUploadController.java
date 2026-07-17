@@ -5,7 +5,7 @@ import com.smart.rag.infrastructure.exception.ServiceException;
 import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;
 import com.smart.rag.infrastructure.exception.errorcode.ServiceErrorCode;
 import com.smart.rag.infrastructure.response.GlobalResponse;
-import com.smart.rag.common.team.TeamStatusService;
+import com.smart.rag.team.service.TeamStatusService;
 import com.smart.rag.rag.upload.*;
 import com.smart.rag.infrastructure.web.util.SecurityUtils;
 import jakarta.validation.Valid;

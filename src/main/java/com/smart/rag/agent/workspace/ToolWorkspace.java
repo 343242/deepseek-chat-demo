@@ -2,7 +2,7 @@ package com.smart.rag.agent.workspace;
 
 import com.smart.rag.agent.dto.IntermediateAnswer;
 import com.smart.rag.agent.dto.SelfReflection;
-import com.smart.rag.agent.intent.AgentIntent;
+import com.smart.rag.mode.AgentIntent;
 import com.smart.rag.rag.retrieval.RetrievedDocument;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
@@ -31,7 +31,7 @@ import java.util.stream.Collectors;
  * <p>
  * 生命周期：ToolWorkspaceFactory.create() -> 闭包捕获 -> 请求结束 GC 回收
  */
-public class ToolWorkspace {
+public class ToolWorkspace implements com.smart.rag.mode.WorkspaceInfo {
 
     private static final Logger log = LoggerFactory.getLogger(ToolWorkspace.class);
 

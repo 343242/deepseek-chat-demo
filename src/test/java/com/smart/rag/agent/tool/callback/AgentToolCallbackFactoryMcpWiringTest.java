@@ -1,6 +1,6 @@
 package com.smart.rag.agent.tool.callback;
 
-import com.smart.rag.agent.intent.AgentIntent;
+import com.smart.rag.mode.AgentIntent;
 import com.smart.rag.agent.workspace.ToolWorkspace;
 import com.smart.rag.chat.tool.ToolRegistry;
 import com.smart.rag.mcp.adapter.McpToolCallbackAdapter;

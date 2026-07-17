@@ -5,7 +5,6 @@ import com.smart.rag.chat.context.ContextPromptInjector;
 import com.smart.rag.mode.ChatMode;
 import com.smart.rag.mode.ChatModeStrategy;
 import com.smart.rag.chat.mode.MultiTurnModeStrategy;
-import com.smart.rag.chat.mode.AbstractModeStrategy;
 import com.smart.rag.infrastructure.llm.ChatCapable;
 import com.smart.rag.infrastructure.llm.adapter.ChatModelAdapter;
 import com.smart.rag.infrastructure.llm.registry.LlmClientRegistry;
@@ -13,7 +12,7 @@ import com.smart.rag.mode.AdvisorChainContext;
 import com.smart.rag.chat.service.AdvisorInfrastructure;
 import com.smart.rag.chat.service.ChatConversationHelper;
 import com.smart.rag.chat.service.ChatMessagePublisher;
-import com.smart.rag.chat.service.ModeChainResult;
+import com.smart.rag.mode.ModeChainResult;
 import com.smart.rag.chat.service.StreamCompletionHelper;
 import com.smart.rag.chat.service.PromptLoaderService;
 import com.smart.rag.mode.StreamResult;
@@ -25,9 +24,10 @@ import com.smart.rag.agent.guardrail.AgentDegradationStrategy;
 import com.smart.rag.agent.guardrail.AgentGuardrails;
 import com.smart.rag.agent.guardrail.GuardrailEnforcingToolCallAdvisor;
 import com.smart.rag.agent.guardrail.TokenCountingChatModel;
-import com.smart.rag.agent.intent.AgentIntent;
+import com.smart.rag.mode.AgentIntent;
+import com.smart.rag.mode.ModeSupport;
 import com.smart.rag.agent.intent.IntentClassifier;
-import com.smart.rag.agent.intent.IntentResult;
+import com.smart.rag.mode.IntentResult;
 import com.smart.rag.agent.tool.callback.AgentToolCallbackFactory;
 import com.smart.rag.rag.retrieval.RetrievedDocument;
 import com.smart.rag.agent.workspace.ToolWorkspace;
@@ -277,7 +277,7 @@ public class AgentModeStrategy implements ChatModeStrategy {
             ChatResponse springResponse = spec.call()
                 .chatResponse();
 
-            String content = AbstractModeStrategy.extractContent(springResponse);
+            String content = ModeSupport.extractContent(springResponse);
             Map<String, Object> agentMetadata = buildAgentMetadata(result);
             List<Reference> references = buildReferences(result.workspace().getRetrievedDocs());
             return StrategyExecuteResult.agent(springResponse, content, agentMetadata, references);

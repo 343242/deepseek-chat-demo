@@ -1,6 +1,6 @@
 package com.smart.rag.agent.trace;
 
-import com.smart.rag.agent.intent.AgentIntent;
+import com.smart.rag.mode.AgentIntent;
 import org.jspecify.annotations.Nullable;
 
 import java.util.List;

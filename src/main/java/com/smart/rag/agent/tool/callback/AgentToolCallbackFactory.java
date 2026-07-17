@@ -1,7 +1,7 @@
 package com.smart.rag.agent.tool.callback;
 
 import com.smart.rag.chat.tool.ToolRegistry;
-import com.smart.rag.agent.intent.AgentIntent;
+import com.smart.rag.mode.AgentIntent;
 import com.smart.rag.agent.tool.*;
 import com.smart.rag.agent.tool.dto.AgentEventLookupRequest;
 import com.smart.rag.agent.tool.dto.DocDetailRequest;

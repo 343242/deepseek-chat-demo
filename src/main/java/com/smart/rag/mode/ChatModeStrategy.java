@@ -1,6 +1,5 @@
 package com.smart.rag.mode;
 
-import com.smart.rag.chat.service.ModeChainResult;
 
 /**
  * 对话模式策略接口

@@ -2,6 +2,8 @@ package com.smart.rag.agent.intent;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smart.rag.agent.config.AgentRagProperties;
+import com.smart.rag.mode.AgentIntent;
+import com.smart.rag.mode.IntentResult;
 import com.smart.rag.infrastructure.llm.ChatCapable;
 import com.smart.rag.infrastructure.llm.ChatRequest;
 import com.smart.rag.infrastructure.llm.LlmResponse;

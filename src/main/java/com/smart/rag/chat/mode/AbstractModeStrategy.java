@@ -2,6 +2,7 @@ package com.smart.rag.chat.mode;
 
 import com.smart.rag.chat.context.ContextPromptInjector;
 import com.smart.rag.mode.ChatMode;
+import com.smart.rag.mode.ModeSupport;
 import com.smart.rag.mode.ChatModeStrategy;
 import com.smart.rag.mode.Reference;
 import com.smart.rag.mode.AdvisorChainContext;
@@ -12,7 +13,7 @@ import com.smart.rag.chat.service.ChatReferenceCollector;
 import com.smart.rag.chat.service.ChatRequestSpecFactory;
 import com.smart.rag.chat.service.ChatRetrievalService;
 import com.smart.rag.chat.service.ChatUsageTracker;
-import com.smart.rag.chat.service.ModeChainResult;
+import com.smart.rag.mode.ModeChainResult;
 import com.smart.rag.chat.service.StreamCompletionHelper;
 import com.smart.rag.mode.StrategyExecuteResult;
 import com.smart.rag.mode.StrategyExecutionContext;
@@ -21,7 +22,6 @@ import com.smart.rag.infrastructure.advisor.RagContextAdvisor;
 import org.slf4j.MDC;
 import org.springframework.ai.chat.client.advisor.api.Advisor;
 import org.springframework.ai.chat.model.ChatResponse;
-import org.springframework.ai.chat.model.Generation;
 import org.springframework.ai.document.Document;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.SignalType;
@@ -107,7 +107,7 @@ public abstract class AbstractModeStrategy implements ChatModeStrategy {
             ctx.conversationId(), chain, ctx.cagContext()
         ).call().chatResponse();
 
-        String content = extractContent(springResponse);
+        String content = ModeSupport.extractContent(springResponse);
         return StrategyExecuteResult.standard(springResponse, content, references);
     }
 
@@ -179,12 +179,6 @@ public abstract class AbstractModeStrategy implements ChatModeStrategy {
     protected void onStreamComplete(StrategyExecutionContext ctx, String content, SignalType signal) {
         // P4-1：落库逻辑提取到 StreamCompletionHelper，AGENT 流式（不继承本类）复用同一语义
         StreamCompletionHelper.onComplete(ctx, content, signal, chatMessagePublisher, conversationHelper);
-    }
-
-    public static String extractContent(ChatResponse response) {
-        if (response == null) return "";
-        Generation gen = response.getResult();
-        return gen != null && gen.getOutput() != null ? gen.getOutput().getText() : "";
     }
 
     public static void recordUsage(ChatUsageTracker tracker,

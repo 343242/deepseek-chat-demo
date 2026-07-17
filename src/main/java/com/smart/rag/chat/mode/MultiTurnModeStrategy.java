@@ -11,7 +11,7 @@ import com.smart.rag.chat.service.ChatReferenceCollector;
 import com.smart.rag.chat.service.ChatRequestSpecFactory;
 import com.smart.rag.chat.service.ChatRetrievalService;
 import com.smart.rag.chat.service.ChatUsageTracker;
-import com.smart.rag.chat.service.ModeChainResult;
+import com.smart.rag.mode.ModeChainResult;
 import org.springframework.ai.chat.client.advisor.MessageChatMemoryAdvisor;
 import org.springframework.ai.chat.client.advisor.api.Advisor;
 import org.springframework.stereotype.Component;

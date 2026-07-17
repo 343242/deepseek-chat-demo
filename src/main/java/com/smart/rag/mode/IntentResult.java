@@ -1,4 +1,4 @@
-package com.smart.rag.agent.intent;
+package com.smart.rag.mode;
 
 import java.util.List;
 

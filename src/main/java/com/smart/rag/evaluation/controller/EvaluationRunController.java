@@ -8,6 +8,7 @@ import com.smart.rag.evaluation.runner.EvaluationRun;
 import com.smart.rag.evaluation.runner.EvaluationExecutionService;
 import com.smart.rag.evaluation.runner.EvaluationExecutionService.RunSummary;
 import com.smart.rag.evaluation.runner.EvaluationRunner.EvalConfig;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
@@ -32,15 +33,18 @@ public class EvaluationRunController {
     private final EvaluationResultRepository resultRepo;
     private final DatasetRepository datasetRepo;
     private final EvaluationProperties evalProps;
+    private final ObjectMapper objectMapper;
 
     public EvaluationRunController(EvaluationExecutionService executionService,
                                    EvaluationResultRepository resultRepo,
                                    DatasetRepository datasetRepo,
-                                   EvaluationProperties evalProps) {
+                                   EvaluationProperties evalProps,
+                                   ObjectMapper objectMapper) {
         this.executionService = executionService;
         this.resultRepo = resultRepo;
         this.datasetRepo = datasetRepo;
         this.evalProps = evalProps;
+        this.objectMapper = objectMapper;
     }
 
     /**
@@ -104,7 +108,11 @@ public class EvaluationRunController {
     }
 
     /**
-     * 比较多次运行结果
+     * 比较多次运行结果（按指标并列对比）
+     * <p>
+     * 对每个 runId 聚合 retrieval/generation 指标均值，并把 summary 从 JSON 字符串解析为对象，
+     * 避免返回转义字符串。生成侧指标的 -1 哨兵在 SQL 聚合时已过滤。
+     * </p>
      */
     @PostMapping("/compare")
     public ResponseEntity<Map<String, Object>> compareRuns(@RequestBody Map<String, Object> request) {
@@ -117,12 +125,30 @@ public class EvaluationRunController {
         Map<String, Object> comparison = new LinkedHashMap<>();
         for (Number runId : runIds) {
             var run = resultRepo.findRunById(runId.longValue());
-            if (run.isPresent()) {
-                comparison.put(run.get().name(), Map.of(
-                        "runId", runId,
-                        "summary", run.get().summary()
-                ));
+            if (run.isEmpty()) {
+                continue;
             }
+            EvaluationRun r = run.get();
+
+            // summary 列存的是 jsonb 字符串，解析为对象避免双重转义
+            Object summaryObj;
+            if (r.summary() == null || r.summary().isBlank()) {
+                summaryObj = null;
+            } else {
+                try {
+                    summaryObj = objectMapper.readValue(r.summary(), Map.class);
+                } catch (Exception e) {
+                    log.warn("Failed to parse summary for run {}: {}", r.id(), e.getMessage());
+                    summaryObj = r.summary(); // 降级为原始字符串
+                }
+            }
+
+            Map<String, Object> metrics = resultRepo.aggregateMetricsByRunId(r.id());
+            comparison.put(r.name(), Map.of(
+                    "runId", r.id(),
+                    "summary", summaryObj,
+                    "metrics", metrics
+            ));
         }
         return ResponseEntity.ok(Map.of("comparison", comparison));
     }

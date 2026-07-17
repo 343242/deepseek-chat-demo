@@ -7,7 +7,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Profile;
@@ -15,22 +14,22 @@ import org.springframework.context.annotation.Profile;
 /**
  * 评估模块配置
  * <p>
- * 仅在以下条件同时满足时激活：
- * <ul>
- *   <li>Spring Profile 包含 "evaluation"</li>
- *   <li>app.evaluation.enabled = true</li>
- * </ul>
- * 生产环境默认关闭，确保零侵入。
+ * 仅在 Spring Profile 包含 "evaluation" 时激活，生产环境默认关闭，确保零侵入。
  * </p>
  * <p>
  * Judge 与生成模型均复用 {@code LlmClientRegistry} 的候选路由体系，
  * 通过 {@link RewriteClientResolver} 解析为 Spring AI {@link ChatClient}，
  * 不再绑定任何具体厂商 SDK。
  * </p>
+ * <p>
+ * 激活守卫说明：全模块（含本类及所有 Scorer/Calculator/Runner/Controller）统一只用
+ * {@code @Profile("evaluation")}，不加 {@code @ConditionalOnProperty}。
+ * 否则当 profile 开启但 {@code app.evaluation.enabled=false} 时，本类不装载 →
+ * 无 {@code LlmJudge} bean → Scorer 构造失败导致启动崩溃。
+ * </p>
  */
 @Configuration
 @Profile("evaluation")
-@ConditionalOnProperty(name = "app.evaluation.enabled", havingValue = "true")
 public class EvaluationConfig {
 
     private static final Logger log = LoggerFactory.getLogger(EvaluationConfig.class);

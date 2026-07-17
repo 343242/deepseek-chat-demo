@@ -93,10 +93,17 @@ public class EvaluationExecutionService {
                         result.generatedAnswer(), result.stageSnapshots(),
                         result.retrievalMetrics(), result.generationMetrics(),
                         result.error(), result.latencyMs()));
-                successCount++;
-                totalLatency += result.latencyMs();
+                // evaluate() 内部吞掉所有异常并返回带 error 字段的 result（永不抛出），
+                // 因此必须检查 error 区分"评测逻辑失败"与"成功"——否则错误项会被计入 successCount
+                if (result.error() != null) {
+                    failCount++;
+                } else {
+                    successCount++;
+                    totalLatency += result.latencyMs();
+                }
             } catch (Exception e) {
-                log.error("Failed to evaluate item {}: {}", item.id(), e.getMessage(), e);
+                // 仅持久化失败会走到这里（evaluate 不抛）
+                log.error("Failed to persist result for item {}: {}", item.id(), e.getMessage(), e);
                 failCount++;
             }
         }

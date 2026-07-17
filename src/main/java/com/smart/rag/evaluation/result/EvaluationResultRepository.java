@@ -194,4 +194,43 @@ public class EvaluationResultRepository {
                 "SELECT COUNT(*) FROM evaluation_result WHERE run_id = ?", Integer.class, runId);
         return count != null ? count : 0;
     }
+
+    /**
+     * 聚合某次运行的所有指标均值（用于 /compare 端点）。
+     * <p>
+     * retrieval_metrics 理论上每行都有；generation_metrics 可能为 null（generation 关闭时）。
+     * 生成侧指标的 -1 哨兵值通过 {@code CASE WHEN ... >= 0 THEN ... END} 过滤——
+     * Postgres 的 AVG 会忽略 CASE 缺省 ELSE 产生的 NULL。
+     * </p>
+     * <p>
+     * 注意：聚合 SQL 使用 Postgres jsonb 函数（{@code ->>}、{@code ::jsonb}），依赖 PG 方言。
+     * 空 run（无 result 行）返回一行全 NULL 值（AVG 对空集返回 NULL，COUNT 返回 0），
+     * 不会抛 EmptyResultDataAccessException。
+     * </p>
+     *
+     * @return Map 的 key 形如 {@code avg_recall} / {@code avg_faithfulness} / {@code total_items} 等；
+     *         AVG 结果为 {@code BigDecimal}（可能 null），COUNT 为 {@code Long}
+     */
+    public Map<String, Object> aggregateMetricsByRunId(long runId) {
+        return jdbc.queryForMap("""
+                SELECT
+                  AVG((retrieval_metrics::jsonb ->> 'recall')::double precision)              AS avg_recall,
+                  AVG((retrieval_metrics::jsonb ->> 'precision')::double precision)           AS avg_precision,
+                  AVG((retrieval_metrics::jsonb ->> 'mrr')::double precision)                 AS avg_mrr,
+                  AVG((retrieval_metrics::jsonb ->> 'ndcg')::double precision)                AS avg_ndcg,
+                  AVG((retrieval_metrics::jsonb ->> 'contextPrecision')::double precision)    AS avg_context_precision,
+                  AVG(CASE WHEN (generation_metrics::jsonb ->> 'faithfulness')::double precision >= 0
+                           THEN (generation_metrics::jsonb ->> 'faithfulness')::double precision END)    AS avg_faithfulness,
+                  AVG(CASE WHEN (generation_metrics::jsonb ->> 'contextRecall')::double precision >= 0
+                           THEN (generation_metrics::jsonb ->> 'contextRecall')::double precision END)    AS avg_context_recall,
+                  AVG(CASE WHEN (generation_metrics::jsonb ->> 'answerRelevance')::double precision >= 0
+                           THEN (generation_metrics::jsonb ->> 'answerRelevance')::double precision END)  AS avg_answer_relevance,
+                  AVG(CASE WHEN (generation_metrics::jsonb ->> 'contextRelevance')::double precision >= 0
+                           THEN (generation_metrics::jsonb ->> 'contextRelevance')::double precision END) AS avg_context_relevance,
+                  COUNT(*) AS total_items,
+                  COUNT(*) FILTER (WHERE error IS NOT NULL) AS error_items
+                FROM evaluation_result
+                WHERE run_id = ?
+                """, runId);
+    }
 }

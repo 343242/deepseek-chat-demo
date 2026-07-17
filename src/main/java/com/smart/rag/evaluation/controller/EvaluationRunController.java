@@ -7,14 +7,18 @@ import com.smart.rag.evaluation.result.EvaluationResultRepository;
 import com.smart.rag.evaluation.runner.EvaluationRun;
 import com.smart.rag.evaluation.runner.EvaluationExecutionService;
 import com.smart.rag.evaluation.runner.EvaluationExecutionService.RunSummary;
+import com.smart.rag.evaluation.runner.EvaluationProgressSink;
+import com.smart.rag.evaluation.runner.EvaluationSseBridge;
 import com.smart.rag.evaluation.runner.EvaluationRunner.EvalConfig;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.context.annotation.Profile;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.*;
 
@@ -34,21 +38,31 @@ public class EvaluationRunController {
     private final DatasetRepository datasetRepo;
     private final EvaluationProperties evalProps;
     private final ObjectMapper objectMapper;
+    private final EvaluationProgressSink progressSink;
+    private final EvaluationSseBridge sseBridge;
 
     public EvaluationRunController(EvaluationExecutionService executionService,
                                    EvaluationResultRepository resultRepo,
                                    DatasetRepository datasetRepo,
                                    EvaluationProperties evalProps,
-                                   ObjectMapper objectMapper) {
+                                   ObjectMapper objectMapper,
+                                   EvaluationProgressSink progressSink,
+                                   EvaluationSseBridge sseBridge) {
         this.executionService = executionService;
         this.resultRepo = resultRepo;
         this.datasetRepo = datasetRepo;
         this.evalProps = evalProps;
         this.objectMapper = objectMapper;
+        this.progressSink = progressSink;
+        this.sseBridge = sseBridge;
     }
 
     /**
-     * 启动评估运行
+     * 启动评估运行（异步）。
+     * <p>
+     * 创建 run 记录（标记 running）后立即返回，实际评测在虚拟线程上 fire-and-forget 执行。
+     * 客户端可通过 {@code GET /{runId}/events} 订阅 SSE 进度，或轮询 run 状态。
+     * </p>
      */
     @PostMapping
     public ResponseEntity<Map<String, Object>> startRun(
@@ -66,7 +80,7 @@ public class EvaluationRunController {
                     .body(Map.of("error", "Dataset not found: " + datasetId));
         }
 
-        // 创建运行记录
+        // 创建运行记录（同步，标记 running）
         EvaluationRun run = executionService.createRun(datasetId, name, configOverride);
 
         // 构建评估配置
@@ -75,14 +89,26 @@ public class EvaluationRunController {
         // 获取数据项
         List<EvaluationDatasetItem> items = datasetRepo.listItemsByDatasetId(datasetId);
 
-        // 执行评估
-        RunSummary summary = executionService.executeRun(run, items, config);
+        // 异步提交（fire-and-forget），HTTP 线程立即返回
+        executionService.submitRun(run, items, config);
 
-        return ResponseEntity.ok(Map.of(
-                "runId", summary.runId(),
-                "status", summary.status().getValue(),
-                "summary", summary.summary()
+        return ResponseEntity.accepted().body(Map.of(
+                "runId", run.id(),
+                "status", run.status().getValue(),
+                "message", "Evaluation submitted; subscribe GET /api/evaluation/runs/" + run.id() + "/events for progress"
         ));
+    }
+
+    /**
+     * 订阅某次运行的 SSE 进度流。
+     * <p>
+     * 推送 per-item 进度事件（{@code event: progress}），结束时发 {@code event: done}。
+     * 即使订阅晚于任务启动，也能收到最近 20 条历史进度（replay）。
+     * </p>
+     */
+    @GetMapping(value = "/{runId}/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public SseEmitter streamProgress(@PathVariable long runId) {
+        return sseBridge.bridge(progressSink.subscribe(runId));
     }
 
     /**

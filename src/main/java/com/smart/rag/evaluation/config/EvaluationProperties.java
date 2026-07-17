@@ -154,6 +154,14 @@ public class EvaluationProperties {
         /** 单条评估超时（秒） */
         private int timeoutSeconds = 300;
 
+        /**
+         * 同时执行的最大 run 数（背压，防打爆下游 LLM API）。
+         * <p>
+         * 虚拟线程本身 unlimited（JEP 444 不池化），并发上限在更高层用 Semaphore 限制。
+         * 超过此数的 run 提交后会等待 acquire 超时（{@link #timeoutSeconds}）后标记 FAILED。
+         */
+        private int maxConcurrentRuns = 2;
+
         public int getDefaultK() {
             return defaultK;
         }
@@ -176,6 +184,14 @@ public class EvaluationProperties {
 
         public void setTimeoutSeconds(int timeoutSeconds) {
             this.timeoutSeconds = timeoutSeconds;
+        }
+
+        public int getMaxConcurrentRuns() {
+            return maxConcurrentRuns;
+        }
+
+        public void setMaxConcurrentRuns(int maxConcurrentRuns) {
+            this.maxConcurrentRuns = maxConcurrentRuns;
         }
     }
 }

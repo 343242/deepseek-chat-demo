@@ -16,6 +16,7 @@ import com.smart.rag.rag.mapper.VectorStoreMapper;
 import com.smart.rag.rag.retrieval.HybridDocumentRetriever;
 import com.smart.rag.rag.retrieval.MmrDocumentPostProcessor;
 import com.smart.rag.rag.retrieval.QueryNormalizer;
+import com.smart.rag.infrastructure.concurrent.ScopedTasks;
 import com.smart.rag.infrastructure.llm.adapter.RewriteClientResolver;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.jspecify.annotations.Nullable;
@@ -32,7 +33,6 @@ import org.springframework.context.annotation.Profile;
 
 import java.util.List;
 import java.util.Set;
-import java.util.concurrent.Executors;
 
 /**
  * 评估执行引擎（核心）
@@ -60,6 +60,7 @@ public class EvaluationRunner {
     private final GenerationMetricsCalculator generationMetricsCalculator;
     private final ObjectMapper objectMapper;
     private final DatasetRepository datasetRepo;
+    private final ScopedTasks scopedTasks;
 
     /** Rerank 单例 Bean（null when rerank-enabled=false），生命周期由 Spring 容器管理 */
     private final RerankDocumentPostProcessor rerankPostProcessor;
@@ -77,6 +78,7 @@ public class EvaluationRunner {
                             GenerationMetricsCalculator generationMetricsCalculator,
                             ObjectMapper objectMapper,
                             DatasetRepository datasetRepo,
+                            ScopedTasks scopedTasks,
                             @Nullable RerankDocumentPostProcessor rerankPostProcessor) {
         this.vectorStore = vectorStore;
         this.vectorStoreMapper = vectorStoreMapper;
@@ -91,6 +93,7 @@ public class EvaluationRunner {
         this.generationMetricsCalculator = generationMetricsCalculator;
         this.objectMapper = objectMapper;
         this.datasetRepo = datasetRepo;
+        this.scopedTasks = scopedTasks;
         this.rerankPostProcessor = rerankPostProcessor;
     }
 
@@ -190,10 +193,11 @@ public class EvaluationRunner {
         RagRetrievalProperties evalProps = copyWithOverride(properties, config);
         Long userId = config.getTestUserId() != null
                 ? config.getTestUserId() : this.evalProps.getTestUserId();
-        // 创建使用覆盖配置的临时 HybridSearchService
+        // 用 Spring 管理的 ScopedTasks 构造，复用其虚拟线程作用域执行器。
+        // 原先用 Executors.newVirtualThreadPerTaskExecutor() 会每 item 创建并泄漏一个 executor，
+        // 且 HybridSearchService 的 5-arg 构造会丢弃该参数（legacy 死代码）。
         HybridSearchService evalSearchService = new HybridSearchService(
-                vectorStore, vectorStoreMapper, evalProps, queryNormalizer,
-                Executors.newVirtualThreadPerTaskExecutor());
+                vectorStore, vectorStoreMapper, evalProps, queryNormalizer, scopedTasks);
         return new HybridDocumentRetriever(evalSearchService, userId, null);
     }
 

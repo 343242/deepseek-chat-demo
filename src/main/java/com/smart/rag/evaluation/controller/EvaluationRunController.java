@@ -203,6 +203,12 @@ public class EvaluationRunController {
             if (override.containsKey("generationEnabled")) {
                 config.setGenerationEnabled((Boolean) override.get("generationEnabled"));
             }
+            if (override.containsKey("parentChildEnabled")) {
+                config.setParentChildEnabled((Boolean) override.get("parentChildEnabled"));
+            }
+            if (override.containsKey("testUserId")) {
+                config.setTestUserId(((Number) override.get("testUserId")).longValue());
+            }
         }
 
         return config;

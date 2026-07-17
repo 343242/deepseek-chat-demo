@@ -148,17 +148,38 @@ public class EvaluationProperties {
         /** 默认评估的 topK */
         private int defaultK = 10;
 
-        /** 并发评估数（避免打爆 API） */
+        /** 单次 run 内 item 级并发数（1=串行，>1 用 ScopedTasks 并发 fork） */
         private int concurrency = 1;
 
-        /** 单条评估超时（秒） */
-        private int timeoutSeconds = 300;
+        /**
+         * 信号量获取超时（秒）。
+         * <p>
+         * 并发 run 数达 {@link #maxConcurrentRuns} 上限时，新 run 等待获取信号量的最长时间。
+         * 超时后该 run 标记为 FAILED（快速失败，客户端可重试）。
+         */
+        private int acquireTimeoutSeconds = 60;
+
+        /**
+         * 单条 item 评测的 ScopedTasks 作用域超时（秒）。
+         * <p>
+         * 用于 {@code ScopeOptions.defaultTimeout}——单个 item 的所有 fork 必须在此时间内完成。
+         * 注意：真正的 LLM 调用级超时需在 llm 模块配置（retry/probe），此处只约束 fork 作用域。
+         */
+        private int itemTimeoutSeconds = 300;
+
+        /**
+         * run 被判定为 stale 的阈值（分钟）。
+         * <p>
+         * {@code EvaluationRunSweeper} 定期扫描，超过此阈值仍处于 running 的 run 被标记 FAILED
+         * （应对 JVM 崩溃导致的 stuck-running 记录）。需根据数据集大小调整。
+         */
+        private int staleRunMinutes = 30;
 
         /**
          * 同时执行的最大 run 数（背压，防打爆下游 LLM API）。
          * <p>
          * 虚拟线程本身 unlimited（JEP 444 不池化），并发上限在更高层用 Semaphore 限制。
-         * 超过此数的 run 提交后会等待 acquire 超时（{@link #timeoutSeconds}）后标记 FAILED。
+         * 超过此数的 run 提交后会等待 acquire 超时（{@link #acquireTimeoutSeconds}）后标记 FAILED。
          */
         private int maxConcurrentRuns = 2;
 
@@ -178,12 +199,28 @@ public class EvaluationProperties {
             this.concurrency = concurrency;
         }
 
-        public int getTimeoutSeconds() {
-            return timeoutSeconds;
+        public int getAcquireTimeoutSeconds() {
+            return acquireTimeoutSeconds;
         }
 
-        public void setTimeoutSeconds(int timeoutSeconds) {
-            this.timeoutSeconds = timeoutSeconds;
+        public void setAcquireTimeoutSeconds(int acquireTimeoutSeconds) {
+            this.acquireTimeoutSeconds = acquireTimeoutSeconds;
+        }
+
+        public int getItemTimeoutSeconds() {
+            return itemTimeoutSeconds;
+        }
+
+        public void setItemTimeoutSeconds(int itemTimeoutSeconds) {
+            this.itemTimeoutSeconds = itemTimeoutSeconds;
+        }
+
+        public int getStaleRunMinutes() {
+            return staleRunMinutes;
+        }
+
+        public void setStaleRunMinutes(int staleRunMinutes) {
+            this.staleRunMinutes = staleRunMinutes;
         }
 
         public int getMaxConcurrentRuns() {

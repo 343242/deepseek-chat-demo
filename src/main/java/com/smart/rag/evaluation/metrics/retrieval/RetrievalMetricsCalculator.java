@@ -38,7 +38,9 @@ public class RetrievalMetricsCalculator {
 
         double recall = computeRecall(topK, relevantIds);
         double precision = computePrecision(topK, relevantIds);
-        double mrr = computeMRR(retrievedIds, relevantIds);
+        // MRR 与 NDCG 一样基于 topK 计算，保证 @K 截断语义一致
+        // （此前传完整 retrievedIds 导致 MRR 不受 K 约束，与 @K 标签矛盾）
+        double mrr = computeMRR(topK, relevantIds);
         double ndcg = computeNDCG(retrievedIds, relevantIds, k);
         double contextPrecision = computeContextPrecision(topK, relevantIds);
 
@@ -65,11 +67,11 @@ public class RetrievalMetricsCalculator {
     }
 
     /**
-     * MRR = 1 / rank_i，其中 rank_i 是第一个相关文档的排名
+     * MRR@K = 1 / rank_i，其中 rank_i 是 topK 中第一个相关文档的排名
      */
-    private double computeMRR(List<String> retrievedIds, Set<String> relevantIds) {
-        for (int i = 0; i < retrievedIds.size(); i++) {
-            if (relevantIds.contains(retrievedIds.get(i))) {
+    private double computeMRR(List<String> topK, Set<String> relevantIds) {
+        for (int i = 0; i < topK.size(); i++) {
+            if (relevantIds.contains(topK.get(i))) {
                 return 1.0 / (i + 1);
             }
         }

@@ -6,6 +6,11 @@ import com.smart.rag.evaluation.dataset.EvaluationDatasetItem;
 import com.smart.rag.evaluation.result.EvaluationResult;
 import com.smart.rag.evaluation.result.EvaluationResultRepository;
 import com.smart.rag.evaluation.runner.EvaluationRunner.EvalConfig;
+import com.smart.rag.infrastructure.concurrent.ScopeJoiner;
+import com.smart.rag.infrastructure.concurrent.ScopeOptions;
+import com.smart.rag.infrastructure.concurrent.ScopePolicy;
+import com.smart.rag.infrastructure.concurrent.ScopedTasks;
+import com.smart.rag.infrastructure.concurrent.TaskScope;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -13,11 +18,14 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Service;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * 评估执行服务
@@ -40,6 +48,7 @@ public class EvaluationExecutionService {
     private final ExecutorService evalExecutor;
     private final Semaphore evalRunSemaphore;
     private final EvaluationProgressSink progressSink;
+    private final ScopedTasks scopedTasks;
 
     public EvaluationExecutionService(EvaluationRunner evaluationRunner,
                                       EvaluationResultRepository resultRepo,
@@ -48,7 +57,8 @@ public class EvaluationExecutionService {
                                       ObjectMapper objectMapper,
                                       @Qualifier("evalExecutor") ExecutorService evalExecutor,
                                       @Qualifier("evalRunSemaphore") Semaphore evalRunSemaphore,
-                                      EvaluationProgressSink progressSink) {
+                                      EvaluationProgressSink progressSink,
+                                      ScopedTasks scopedTasks) {
         this.evaluationRunner = evaluationRunner;
         this.resultRepo = resultRepo;
         this.datasetRepo = datasetRepo;
@@ -57,6 +67,7 @@ public class EvaluationExecutionService {
         this.evalExecutor = evalExecutor;
         this.evalRunSemaphore = evalRunSemaphore;
         this.progressSink = progressSink;
+        this.scopedTasks = scopedTasks;
     }
 
     /**
@@ -102,10 +113,10 @@ public class EvaluationExecutionService {
 
         evalExecutor.submit(() -> {
             long runId = run.id();
-            long timeoutSeconds = evalProps.getRunner().getTimeoutSeconds();
+            long acquireTimeoutSeconds = evalProps.getRunner().getAcquireTimeoutSeconds();
             try {
-                if (!evalRunSemaphore.tryAcquire(timeoutSeconds, TimeUnit.SECONDS)) {
-                    log.warn("Run {} rejected: concurrency limit (acquire timeout {}s)", runId, timeoutSeconds);
+                if (!evalRunSemaphore.tryAcquire(acquireTimeoutSeconds, TimeUnit.SECONDS)) {
+                    log.warn("Run {} rejected: concurrency limit (acquire timeout {}s)", runId, acquireTimeoutSeconds);
                     resultRepo.updateRunStatus(runId, EvaluationRunStatus.FAILED,
                             "{\"error\":\"concurrency limit exceeded, try again later\"}");
                     return;
@@ -128,9 +139,10 @@ public class EvaluationExecutionService {
     }
 
     /**
-     * 执行评估运行（同步）。
+     * 执行评估运行（同步，可并发）。
      * <p>
-     * 串行执行所有数据项的评估，写入结果，每完成一项推送进度事件，最后汇总状态。
+     * 用 {@link ScopedTasks} fork 多个 item，并发度由 {@code app.evaluation.runner.concurrency} 控制
+     * （默认 1=串行）。每个 item 完成后立即持久化并推送进度事件（计数用原子变量保证线程安全）。
      * 通常由 {@link #submitRun} 在虚拟线程上调用；保留 public 便于复用或单测。
      * </p>
      *
@@ -140,60 +152,78 @@ public class EvaluationExecutionService {
      * @return 运行摘要
      */
     public RunSummary executeRun(EvaluationRun run, List<EvaluationDatasetItem> items, EvalConfig config) {
-        int successCount = 0;
-        int failCount = 0;
-        long totalLatency = 0;
         int total = items.size();
+        AtomicInteger successCount = new AtomicInteger(0);
+        AtomicInteger failCount = new AtomicInteger(0);
+        AtomicInteger processed = new AtomicInteger(0);
+        AtomicLong totalLatency = new AtomicLong(0);
 
-        for (int idx = 0; idx < items.size(); idx++) {
-            EvaluationDatasetItem item = items.get(idx);
-            long itemStart = System.currentTimeMillis();
-            try {
-                var result = evaluationRunner.evaluate(item, config);
-                resultRepo.insertResult(new EvaluationResult(
-                        null, run.id(), result.itemId(), result.itemQuestionSnapshot(),
-                        result.itemGroundTruthSnapshot(), result.itemRelevantChunkIdsSnapshot(),
-                        result.queryRewritten(), result.retrievedDocIds(),
-                        result.generatedAnswer(), result.stageSnapshots(),
-                        result.retrievalMetrics(), result.generationMetrics(),
-                        result.error(), result.latencyMs()));
-                long elapsed = System.currentTimeMillis() - itemStart;
-                int processed = idx + 1;
-                // evaluate() 内部吞掉所有异常并返回带 error 字段的 result（永不抛出），
-                // 因此必须检查 error 区分"评测逻辑失败"与"成功"——否则错误项会被计入 successCount
-                if (result.error() != null) {
-                    failCount++;
-                    progressSink.emit(run.id(), EvaluationProgressEvent.failed(
-                            run.id(), processed, total, successCount, failCount,
-                            item.id() != null ? item.id() : 0L, result.error(), elapsed));
-                } else {
-                    successCount++;
-                    totalLatency += result.latencyMs();
-                    progressSink.emit(run.id(), EvaluationProgressEvent.success(
-                            run.id(), processed, total, successCount, failCount,
-                            item.id() != null ? item.id() : 0L, elapsed));
-                }
-            } catch (Exception e) {
-                // 仅持久化失败会走到这里（evaluate 不抛）
-                long elapsed = System.currentTimeMillis() - itemStart;
-                log.error("Failed to persist result for item {}: {}", item.id(), e.getMessage(), e);
-                failCount++;
-                progressSink.emit(run.id(), EvaluationProgressEvent.failed(
-                        run.id(), idx + 1, total, successCount, failCount,
-                        item.id() != null ? item.id() : 0L, e.getMessage(), elapsed));
+        int concurrency = Math.max(1, evalProps.getRunner().getConcurrency());
+        ScopeOptions options = ScopeOptions.builder("eval-run-" + run.id())
+                .policy(ScopePolicy.COLLECT_ALL)  // 单 item 失败不影响其它
+                .maxConcurrency(concurrency)
+                .defaultTimeout(Duration.ofSeconds(evalProps.getRunner().getItemTimeoutSeconds()))
+                .build();
+
+        try (TaskScope scope = scopedTasks.open("eval-run-" + run.id(), options)) {
+            for (EvaluationDatasetItem item : items) {
+                long itemStart = System.currentTimeMillis();
+                scope.fork("item-" + item.id(), () -> {
+                    try {
+                        var result = evaluationRunner.evaluate(item, config);
+                        resultRepo.insertResult(new EvaluationResult(
+                                null, run.id(), result.itemId(), result.itemQuestionSnapshot(),
+                                result.itemGroundTruthSnapshot(), result.itemRelevantChunkIdsSnapshot(),
+                                result.queryRewritten(), result.retrievedDocIds(),
+                                result.generatedAnswer(), result.stageSnapshots(),
+                                result.retrievalMetrics(), result.generationMetrics(),
+                                result.error(), result.latencyMs()));
+                        long elapsed = System.currentTimeMillis() - itemStart;
+                        int done = processed.incrementAndGet();
+                        // evaluate() 内部吞掉所有异常并返回带 error 字段的 result（永不抛出），
+                        // 因此必须检查 error 区分"评测逻辑失败"与"成功"——否则错误项会被计入 successCount
+                        if (result.error() != null) {
+                            int fc = failCount.incrementAndGet();
+                            progressSink.emit(run.id(), EvaluationProgressEvent.failed(
+                                    run.id(), done, total, successCount.get(), fc,
+                                    item.id() != null ? item.id() : 0L, result.error(), elapsed));
+                        } else {
+                            int sc = successCount.incrementAndGet();
+                            totalLatency.addAndGet(result.latencyMs());
+                            progressSink.emit(run.id(), EvaluationProgressEvent.success(
+                                    run.id(), done, total, sc, failCount.get(),
+                                    item.id() != null ? item.id() : 0L, elapsed));
+                        }
+                    } catch (Exception e) {
+                        // 仅持久化失败会走到这里（evaluate 不抛）
+                        long elapsed = System.currentTimeMillis() - itemStart;
+                        log.error("Failed to evaluate/persist item {}: {}", item.id(), e.getMessage(), e);
+                        int done = processed.incrementAndGet();
+                        int fc = failCount.incrementAndGet();
+                        progressSink.emit(run.id(), EvaluationProgressEvent.failed(
+                                run.id(), done, total, successCount.get(), fc,
+                                item.id() != null ? item.id() : 0L, e.getMessage(), elapsed));
+                    }
+                    return null;
+                });
             }
+            scope.join();
         }
 
-        // 汇总并更新状态
-        EvaluationRunStatus status = failCount == 0
+        // 汇总并更新状态（join 后所有 fork 已完成，安全读 final 值）
+        int sc = successCount.get();
+        int fc = failCount.get();
+        long lat = totalLatency.get();
+
+        EvaluationRunStatus status = fc == 0
                 ? EvaluationRunStatus.COMPLETED
-                : (successCount > 0 ? EvaluationRunStatus.COMPLETED : EvaluationRunStatus.FAILED);
+                : (sc > 0 ? EvaluationRunStatus.COMPLETED : EvaluationRunStatus.FAILED);
 
         Map<String, Object> summary = Map.of(
-                "totalItems", items.size(),
-                "successCount", successCount,
-                "failCount", failCount,
-                "avgLatencyMs", successCount > 0 ? totalLatency / successCount : 0
+                "totalItems", total,
+                "successCount", sc,
+                "failCount", fc,
+                "avgLatencyMs", sc > 0 ? lat / sc : 0
         );
 
         String summaryJson;

@@ -13,7 +13,14 @@ app:
     runner:
       default-k: 10
       concurrency: 1
-      timeout-seconds: 300
+      # 信号量获取超时（秒）：并发 run 数达上限时，新 run 等待获取信号量的最长时间
+      acquire-timeout-seconds: 60
+      # 单条 item 的 ScopedTasks 作用域超时（秒）；LLM 调用级超时在 llm 模块配置
+      item-timeout-seconds: 300
+      # run 被判定为 stale 的阈值（分钟）：超时仍 running 的 run 被 sweeper 标记 FAILED
+      stale-run-minutes: 30
+      # 同时执行的最大 run 数（虚拟线程 unlimited，靠此 Semaphore 限并发，防打爆 LLM API）
+      max-concurrent-runs: 2
     # Judge 候选 ID，对应 app.llm.capabilities.chat.candidates[].id；留空则用默认 chat 候选
     # 建议 Judge 与 generation-model 选不同候选，避免自评偏差
     judge:

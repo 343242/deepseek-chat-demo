@@ -86,7 +86,7 @@ public class BailianEmbeddingClient extends AbstractEmbeddingClient {
         float[][][] batches = executeBatchesConcurrently(texts, textType);
         List<float[]> results = new ArrayList<>(texts.size());
         for (float[][] batch : batches) {
-            for (float[] f : batch) results.add(f);
+            results.addAll(Arrays.asList(batch));
         }
         return results;
     }

@@ -1,5 +1,6 @@
 package com.smart.rag.config;
 
+import com.smart.rag.infrastructure.concurrent.ThreadPoolConstants;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 /**

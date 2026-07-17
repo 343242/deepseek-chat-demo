@@ -1,6 +1,6 @@
 package com.smart.rag.common.concurrent;
 
-import com.smart.rag.config.ThreadPoolConstants;
+import com.smart.rag.infrastructure.concurrent.ThreadPoolConstants;
 import com.smart.rag.infrastructure.concurrent.DefaultScopedTasks;
 import com.smart.rag.infrastructure.concurrent.DefaultSubtask;
 import com.smart.rag.infrastructure.concurrent.executor.DefaultScopeExecutorFactory;

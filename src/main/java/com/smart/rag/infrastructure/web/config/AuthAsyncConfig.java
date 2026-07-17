@@ -1,6 +1,6 @@
 package com.smart.rag.infrastructure.web.config;
 
-import com.smart.rag.config.ThreadPoolConstants;
+import com.smart.rag.infrastructure.concurrent.ThreadPoolConstants;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.annotation.Bean;

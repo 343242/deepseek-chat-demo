@@ -1,7 +1,10 @@
-package com.smart.rag.config;
+package com.smart.rag.infrastructure.concurrent;
 
 /**
  * 线程池全局常量 — 基于 CPU 核心数动态计算线程池参数。
+ * <p>
+ * 归属于 infrastructure.concurrent：纯计算工具，无 Spring/业务依赖，
+ * 供 infrastructure 内部及上层业务模块（config/rag 等）共享使用。
  * <p>
  * 遵循 Brian Goetz《Java Concurrency in Practice》的线程数公式：
  * <ul>

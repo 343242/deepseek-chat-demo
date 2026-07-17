@@ -1,6 +1,5 @@
 package com.smart.rag.infrastructure.concurrent;
 
-import com.smart.rag.config.ThreadPoolConstants;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 import java.time.Duration;

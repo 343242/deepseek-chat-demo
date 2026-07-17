@@ -1,6 +1,5 @@
 package com.smart.rag.infrastructure.advisor;
 
-import com.smart.rag.config.AdvisorAutoConfiguration;
 import com.smart.rag.infrastructure.exception.ClientException;
 import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;
 import org.slf4j.Logger;
@@ -21,7 +20,7 @@ import java.util.concurrent.locks.ReentrantLock;
  * <p>
  * 线程安全：Bucket 所有操作均在 ReentrantLock 保护下完成（避免虚拟线程 Pinning）。
  * 内存安全：通过 {@link #cleanIdleBuckets()} 定期清理空闲桶，
- * 由 {@link AdvisorAutoConfiguration} 通过 @Scheduled 调用。
+ * 由上层配置类（AdvisorAutoConfiguration）通过 @Scheduled 调用。
  */
 public class TokenBucketLimiter implements RateLimiter {
 

@@ -48,10 +48,13 @@ public class TraceAspect {
 
     private final TraceRecorder recorder;
     private final ObjectMapper objectMapper;
+    private final List<TraceContextProvider> contextProviders;
 
-    public TraceAspect(TraceRecorder recorder, ObjectMapper objectMapper) {
+    public TraceAspect(TraceRecorder recorder, ObjectMapper objectMapper,
+                       List<TraceContextProvider> contextProviders) {
         this.recorder = recorder;
         this.objectMapper = objectMapper;
+        this.contextProviders = contextProviders;
     }
 
     @Around("@annotation(traced)")
@@ -83,12 +86,9 @@ public class TraceAspect {
     }
 
     // === 上下文提取 ===
-    // 反射识别业务类型（ToolWorkspace / StrategyExecutionContext），避免 infrastructure 包硬依赖业务包
-    // （InfrastructureBoundaryTest 架构约束：infrastructure 不能 import 业务包）。
-    // 按类名 + 方法名匹配，不直接引用类型。
-
-    private static final String TOOL_WORKSPACE_CLASS = "com.smart.rag.agent.workspace.ToolWorkspace";
-    private static final String STRATEGY_CTX_CLASS = "com.smart.rag.mode.StrategyExecutionContext";
+    // 通过 TraceContextProvider SPI 识别业务类型（ToolWorkspace / StrategyExecutionContext），
+    // 避免本包硬依赖业务包（InfrastructureBoundaryTest 架构约束）。
+    // provider 由业务模块实现并注入（DIP），业务类重命名不会让本切面静默失效。
 
     private StepContext extractContext(Object[] args) {
         String sessionId = null;
@@ -97,17 +97,18 @@ public class TraceAspect {
         if (args != null) {
             for (Object arg : args) {
                 if (arg == null) continue;
-                String typeName = arg.getClass().getName();
-                if (TOOL_WORKSPACE_CLASS.equals(typeName)) {
-                    // ToolWorkspace: getSessionId() / getUserId()
-                    if (sessionId == null) sessionId = invokeStringMethod(arg, "getSessionId");
-                    if (userId == null) userId = invokeLongMethod(arg, "getUserId");
-                } else if (STRATEGY_CTX_CLASS.equals(typeName)) {
-                    // StrategyExecutionContext (record): conversationId() / userId()
-                    if (sessionId == null) sessionId = invokeStringMethod(arg, "conversationId");
-                    if (userId == null) userId = invokeLongMethod(arg, "userId");
-                } else if (arg instanceof String s && inputQuery == null && !s.isBlank()) {
-                    // 首个非空 String 视为输入 query（QueryRewriteTool/VectorSearchTool 等首参都是 query）
+                // 优先委托给已注册的 provider 提取 sessionId/userId
+                if (sessionId == null || userId == null) {
+                    for (TraceContextProvider provider : contextProviders) {
+                        if (provider.supports(arg)) {
+                            if (sessionId == null) sessionId = provider.extractSessionId(arg);
+                            if (userId == null) userId = provider.extractUserId(arg);
+                            if (sessionId != null && userId != null) break;
+                        }
+                    }
+                }
+                // 首个非空 String 视为输入 query（QueryRewriteTool/VectorSearchTool 等首参都是 query）
+                if (arg instanceof String s && inputQuery == null && !s.isBlank()) {
                     inputQuery = s;
                 }
             }
@@ -121,25 +122,6 @@ public class TraceAspect {
         }
         if (userId == null) userId = 0L;
         return new StepContext(sessionId, userId, inputQuery);
-    }
-
-    private @Nullable String invokeStringMethod(Object target, String methodName) {
-        try {
-            Object v = target.getClass().getMethod(methodName).invoke(target);
-            return v == null ? null : v.toString();
-        } catch (Exception e) {
-            return null;
-        }
-    }
-
-    private @Nullable Long invokeLongMethod(Object target, String methodName) {
-        try {
-            Object v = target.getClass().getMethod(methodName).invoke(target);
-            if (v instanceof Number n) return n.longValue();
-            return null;
-        } catch (Exception e) {
-            return null;
-        }
     }
 
     // === 结果记录 ===

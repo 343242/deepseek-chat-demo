@@ -5,6 +5,7 @@ import com.smart.rag.agent.event.payload.IntentClassifiedPayload;
 import com.smart.rag.agent.event.payload.IntermediateAnswerPayload;
 import com.smart.rag.agent.event.payload.RetrievalStrategyPayload;
 import com.smart.rag.agent.event.payload.SelfReflectionPayload;
+import jakarta.annotation.PreDestroy;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -12,6 +13,10 @@ import org.springframework.stereotype.Component;
 
 import java.time.Instant;
 import java.util.List;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 /**
@@ -30,12 +35,28 @@ public class AgentEventStore {
 
     private static final Logger log = LoggerFactory.getLogger(AgentEventStore.class);
 
+    /** 异步写入队列容量（仿 TraceRecorder：队列满时 CallerRunsPolicy 同步回退，不丢数据）*/
+    private static final int QUEUE_CAPACITY = 2000;
+
     private final AgentEventMapper mapper;
     private final EventPayloadMapper payloadMapper;
+    private final ExecutorService executor;
 
     public AgentEventStore(AgentEventMapper mapper, EventPayloadMapper payloadMapper) {
         this.mapper = mapper;
         this.payloadMapper = payloadMapper;
+        // 单线程 + 有界队列 + CallerRunsPolicy：写入不阻塞业务（含 reactive 流式线程），
+        // 队列满时让调用方线程同步写，保证不丢事件。daemon 线程随 JVM 退出。
+        this.executor = new ThreadPoolExecutor(
+                1, 1, 60L, TimeUnit.SECONDS,
+                new LinkedBlockingQueue<>(QUEUE_CAPACITY),
+                r -> {
+                    Thread t = new Thread(r, "agent-event-writer");
+                    t.setDaemon(true);
+                    return t;
+                },
+                new ThreadPoolExecutor.CallerRunsPolicy()
+        );
     }
 
     /** 恢复快照最大加载事件条数 */
@@ -105,18 +126,35 @@ public class AgentEventStore {
     public void record(String sessionId, Long userId, AgentEventType eventType, AgentEventPriority priority,
                        String data, @Nullable String toolName, @Nullable Boolean success,
                        @Nullable Long durationMs) {
+        AgentSessionEvent event = new AgentSessionEvent(
+            sessionId, userId, eventType, priority, data,
+            toolName, success, durationMs, Instant.now()
+        );
+        // 异步写入：不阻塞业务线程（含 reactive 流式线程）。
+        // submit 失败（如 executor 已关闭）由队列满时的 CallerRunsPolicy 兜底同步执行。
+        executor.submit(() -> {
+            try {
+                mapper.insert(event);
+                log.debug("Recorded agent event: type={}, session={}, tool={}",
+                    eventType, sessionId, toolName);
+            } catch (Exception e) {
+                // 事件记录失败不应影响主流程
+                log.error("Failed to record agent event: type={}, session={}",
+                    eventType, sessionId, e);
+            }
+        });
+    }
+
+    /**
+     * 优雅关闭：排空待写事件（最多等待 5s），避免应用关闭时丢失已提交未写入的事件。
+     */
+    @PreDestroy
+    void shutdown() {
+        executor.shutdown();
         try {
-            AgentSessionEvent event = new AgentSessionEvent(
-                sessionId, userId, eventType, priority, data,
-                toolName, success, durationMs, Instant.now()
-            );
-            mapper.insert(event);
-            log.debug("Recorded agent event: type={}, session={}, tool={}",
-                eventType, sessionId, toolName);
-        } catch (Exception e) {
-            // 事件记录失败不应影响主流程
-            log.error("Failed to record agent event: type={}, session={}",
-                eventType, sessionId, e);
+            executor.awaitTermination(5, TimeUnit.SECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
         }
     }
 

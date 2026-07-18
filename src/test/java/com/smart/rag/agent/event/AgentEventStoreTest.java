@@ -55,6 +55,7 @@ class AgentEventStoreTest {
 
             IntentClassifiedPayload payload = new IntentClassifiedPayload("DIRECT_ANSWER", 0.9, "hash");
             store.recordIntentClassified("sess-1", 1L, payload);
+            store.shutdown(); // 排空异步队列，确保 insert 已执行
 
             ArgumentCaptor<AgentSessionEvent> captor = ArgumentCaptor.forClass(AgentSessionEvent.class);
             verify(mapper).insert(captor.capture());
@@ -75,6 +76,7 @@ class AgentEventStoreTest {
         @DisplayName("调用 mapper.insert 且 eventType=TOOL_CALLED, priority=NORMAL")
         void recordToolCall_insertsWithCorrectType() {
             store.recordToolCall("sess-1", 1L, "hybridSearch", true, "{\"result\":\"ok\"}", 150L);
+            store.shutdown(); // 排空异步队列
 
             ArgumentCaptor<AgentSessionEvent> captor = ArgumentCaptor.forClass(AgentSessionEvent.class);
             verify(mapper).insert(captor.capture());
@@ -185,6 +187,7 @@ class AgentEventStoreTest {
 
             assertThatCode(() -> store.recordToolCall("sess-1", 1L, "search", true, "data", 100L))
                     .doesNotThrowAnyException();
+            store.shutdown(); // 排空异步队列，让 worker 线程的 insert 异常被吞
         }
 
         @Test
@@ -196,6 +199,7 @@ class AgentEventStoreTest {
             assertThatCode(() -> store.recordIntentClassified("sess-1", 1L,
                             new IntentClassifiedPayload("DIRECT_ANSWER", 0.9, "hash")))
                     .doesNotThrowAnyException();
+            store.shutdown(); // 排空异步队列，让 worker 执行 toJson + insert（异常被吞）
         }
     }
 }

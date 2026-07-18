@@ -19,10 +19,14 @@ import com.smart.rag.mode.StreamResult;
 import com.smart.rag.mode.StrategyExecuteResult;
 import com.smart.rag.mode.StrategyExecutionContext;
 import com.smart.rag.agent.advisor.AgentSystemPromptAdvisor;
+import com.smart.rag.agent.event.AgentEventStore;
+import com.smart.rag.agent.event.payload.GuardrailTriggeredPayload;
+import com.smart.rag.agent.event.payload.IntentClassifiedPayload;
 import com.smart.rag.agent.config.AgentRagProperties;
 import com.smart.rag.agent.guardrail.AgentDegradationStrategy;
 import com.smart.rag.agent.guardrail.AgentGuardrails;
 import com.smart.rag.agent.guardrail.GuardrailEnforcingToolCallAdvisor;
+import com.smart.rag.agent.guardrail.GuardrailHardStopException;
 import com.smart.rag.agent.guardrail.TokenCountingChatModel;
 import com.smart.rag.mode.AgentIntent;
 import com.smart.rag.mode.ModeSupport;
@@ -102,6 +106,7 @@ public class AgentModeStrategy implements ChatModeStrategy {
     private final ObjectProvider<MultiTurnModeStrategy> multiTurnProvider;
     private final ChatMessagePublisher chatMessagePublisher;
     private final ChatConversationHelper conversationHelper;
+    private final AgentEventStore eventStore;
 
     public AgentModeStrategy(AdvisorInfrastructure infra,
                               IntentClassifier intentClassifier,
@@ -114,7 +119,8 @@ public class AgentModeStrategy implements ChatModeStrategy {
                               AgentDegradationStrategy degradationStrategy,
                               ObjectProvider<MultiTurnModeStrategy> multiTurnProvider,
                               ChatMessagePublisher chatMessagePublisher,
-                              ChatConversationHelper conversationHelper) {
+                              ChatConversationHelper conversationHelper,
+                              AgentEventStore eventStore) {
         this.infra = infra;
         this.intentClassifier = intentClassifier;
         this.workspaceFactory = workspaceFactory;
@@ -127,6 +133,7 @@ public class AgentModeStrategy implements ChatModeStrategy {
         this.multiTurnProvider = multiTurnProvider;
         this.chatMessagePublisher = chatMessagePublisher;
         this.conversationHelper = conversationHelper;
+        this.eventStore = eventStore;
     }
 
     @Override
@@ -150,6 +157,10 @@ public class AgentModeStrategy implements ChatModeStrategy {
         IntentResult intentResult = intentClassifier.classify(ctx.request().message());
         log.info("Agent intent classified: intent={}, confidence={}, queryLength={}",
             intentResult.intent(), intentResult.confidence(), ctx.request().message().length());
+        // 记录意图分类事件（供 AgentEventLookupTool 查询历史 + 会话恢复快照）
+        eventStore.recordIntentClassified(ctx.conversationId(), ctx.userId(),
+            new IntentClassifiedPayload(intentResult.intent().name(), intentResult.confidence(),
+                hashQuery(ctx.request().message())));
 
         // Step 4: 创建请求级 Workspace（传 conversationId 作为 sessionId，供 RAG 链路追踪关联）
         ToolWorkspace workspace = workspaceFactory.create(ctx.userId(), ctx.request().teamId(), ctx.conversationId());
@@ -283,6 +294,11 @@ public class AgentModeStrategy implements ChatModeStrategy {
             return StrategyExecuteResult.agent(springResponse, content, agentMetadata, references);
 
         } catch (Exception e) {
+            // 护栏硬中断（迭代/token 超限）：记录事件后走降级或重新抛出
+            if (e instanceof GuardrailHardStopException gre) {
+                eventStore.recordGuardrailTriggered(ctx.conversationId(), ctx.userId(),
+                    new GuardrailTriggeredPayload(gre.getReason(), gre.getMessage(), "stop"));
+            }
             if (degradationStrategy.shouldDegrade(e)) {
                 log.warn("Agent degradation triggered, falling back to MULTI_TURN", e);
                 return fallbackToMultiTurn(ctx);
@@ -335,6 +351,13 @@ public class AgentModeStrategy implements ChatModeStrategy {
                     collectedContent.append(text, 0, Math.min(text.length(), remaining));
                 }
             })
+            .doOnError(e -> {
+                // 流式护栏硬中断：记录事件（与 execute 的 catch 对称）
+                if (e instanceof GuardrailHardStopException gre) {
+                    eventStore.recordGuardrailTriggered(ctx.conversationId(), ctx.userId(),
+                        new GuardrailTriggeredPayload(gre.getReason(), gre.getMessage(), "stop"));
+                }
+            })
             .doFinally(signal -> StreamCompletionHelper.onComplete(
                 ctx, collectedContent.toString(), signal, chatMessagePublisher, conversationHelper));
 
@@ -352,6 +375,28 @@ public class AgentModeStrategy implements ChatModeStrategy {
                 doc.fileName(), doc.page()));
         }
         return refs;
+    }
+
+    /**
+     * 对用户查询做 SHA-256 哈希并截断（脱敏），用于 IntentClassifiedPayload.rawQueryHash。
+     * <p>
+     * 不存原始查询文本，仅存哈希用于事件去重与关联，避免在事件表中沉淀敏感输入。
+     */
+    private static String hashQuery(String query) {
+        if (query == null || query.isBlank()) {
+            return "";
+        }
+        try {
+            var md = java.security.MessageDigest.getInstance("SHA-256");
+            byte[] digest = md.digest(query.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            StringBuilder sb = new StringBuilder();
+            for (byte b : digest) {
+                sb.append(String.format("%02x", b));
+            }
+            return sb.substring(0, 16); // 64-bit 前缀，足够区分
+        } catch (java.security.NoSuchAlgorithmException e) {
+            return "";
+        }
     }
 
     private static Map<String, Object> buildAgentMetadata(ModeChainResult result) {

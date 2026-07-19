@@ -37,7 +37,7 @@ class UserControllerTest {
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     private final LoginResponse.UserInfo testUserInfo = new LoginResponse.UserInfo(
-            1L, "testuser", "nick", "test@example.com", "avatar.png", List.of("USER"));
+            1L, "testuser", "nick", "test@example.com", "avatar.png", List.of("USER"), List.of());
 
     @BeforeEach
     void setUp() {

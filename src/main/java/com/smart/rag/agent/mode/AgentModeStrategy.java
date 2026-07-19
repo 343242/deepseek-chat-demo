@@ -377,7 +377,7 @@ public class AgentModeStrategy implements ChatModeStrategy {
         return new StreamResult(content, buildReferences(result.workspace().getRetrievedDocs()));
     }
 
-    /** 从 workspace 检索文档构造引用映射（#n → chunkId/documentId/fileName/page），无检索时返回 null */
+    /** 从 workspace 检索文档构造引用映射（#n → chunkId/documentId/fileName/page/score/source/content），无检索时返回 null */
     private static List<Reference> buildReferences(List<RetrievedDocument> docs) {
         if (docs == null || docs.isEmpty()) {
             return null;
@@ -385,7 +385,7 @@ public class AgentModeStrategy implements ChatModeStrategy {
         List<Reference> refs = new ArrayList<>(docs.size());
         for (RetrievedDocument doc : docs) {
             refs.add(new Reference(doc.refNumber(), doc.chunkId(), doc.documentId(),
-                doc.fileName(), doc.page()));
+                doc.fileName(), doc.page(), doc.score(), doc.source(), doc.content()));
         }
         return refs;
     }

@@ -84,6 +84,9 @@ app:
     issuer: smart-rag
     redis-prefix: "auth:token:"
     cookie-secure: true   # 生产环境 Cookie 必须 Secure（防 HTTP 降级截获 token）；dev/evaluation 保持 false
+    # Cookie SameSite：默认 Lax 适配同源/反代部署。
+    # 前后端跨域部署（不同源）时改 None —— 此时 cookie-secure=true 已满足规范，后端还会强制校验兜底。
+    cookie-same-site: ${JWT_COOKIE_SAMESITE:Lax}
   snowflake:
     epoch: ${SNOWFLAKE_EPOCH:2026-01-01T00:00:00+08:00}
     datacenter-id: ${SNOWFLAKE_DATACENTER_ID:0}

@@ -36,7 +36,7 @@ class TokenCacheServiceTest {
     @BeforeEach
     void setUp() {
         jwtProperties = new JwtProperties(
-                "test-secret", 3600L, 86400L, "issuer", "auth:access:", false
+                "test-secret", 3600L, 86400L, "issuer", "auth:access:", false, "Lax"
         );
         // Use reflection to set jwtProperties since @InjectMocks already created the instance
         try {

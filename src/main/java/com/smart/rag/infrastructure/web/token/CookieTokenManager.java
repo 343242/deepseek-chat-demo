@@ -4,6 +4,8 @@ import com.smart.rag.infrastructure.web.config.JwtProperties;
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 /**
@@ -15,6 +17,8 @@ import org.springframework.stereotype.Component;
  */
 @Component
 public class CookieTokenManager {
+
+    private static final Logger log = LoggerFactory.getLogger(CookieTokenManager.class);
 
     private final JwtProperties jwtProperties;
 
@@ -56,13 +60,29 @@ public class CookieTokenManager {
 
     // ==================== Private ====================
 
+    /**
+     * 应用 SameSite 属性，并强制保证语义合法。
+     * <p>
+     * 按浏览器规范，{@code SameSite=None} 必须 {@code Secure}，否则 Chrome/Firefox 会静默拒绝 Set-Cookie，
+     * 导致登录态丢失。此处检测到 None 时强制 {@code setSecure(true)} 兜底，避免运维遗漏 cookie-secure 配置。
+     */
+    private void applySameSite(Cookie cookie) {
+        String sameSite = jwtProperties.cookieSameSite();
+        if ("none".equalsIgnoreCase(sameSite) && !cookie.getSecure()) {
+            log.warn("SameSite=None 强制开启 Secure（原配置 cookie-secure={}）—— 否则浏览器会拒绝 Set-Cookie",
+                    jwtProperties.cookieSecure());
+            cookie.setSecure(true);
+        }
+        cookie.setAttribute("SameSite", sameSite);
+    }
+
     private Cookie buildAccessTokenCookie(String token) {
         Cookie cookie = new Cookie("access_token", token);
         cookie.setHttpOnly(true);
         cookie.setSecure(jwtProperties.cookieSecure());
         cookie.setPath("/api");
         cookie.setMaxAge((int) jwtProperties.accessExpiration());
-        cookie.setAttribute("SameSite", "Lax");
+        applySameSite(cookie);
         return cookie;
     }
 
@@ -72,7 +92,7 @@ public class CookieTokenManager {
         cookie.setSecure(jwtProperties.cookieSecure());
         cookie.setPath("/api/auth/refresh");
         cookie.setMaxAge((int) jwtProperties.refreshExpiration());
-        cookie.setAttribute("SameSite", "Lax");
+        applySameSite(cookie);
         return cookie;
     }
 
@@ -82,7 +102,7 @@ public class CookieTokenManager {
         cookie.setSecure(jwtProperties.cookieSecure());
         cookie.setPath(path);
         cookie.setMaxAge(0);
-        cookie.setAttribute("SameSite", "Lax");
+        applySameSite(cookie);
         return cookie;
     }
 }

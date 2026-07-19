@@ -167,10 +167,14 @@ public class AuthServiceImpl implements AuthService {
         }
 
         TokenPair tokenPair = new TokenPair(accessToken, refreshToken);
+        // permissions 同步取一次缓存：预热刚 submit，通常 miss → 返回 List.of()。
+        // 与 warmupUserPermissions 的设计一致：登录响应不阻塞等待权限加载，
+        // 前端拿到 token 后应立即调 GET /api/auth/me 拉取完整权限快照。
+        List<String> permissions = loadPermissionsBestEffort(user.getId());
         LoginResponse response = new LoginResponse(
             new LoginResponse.UserInfo(
                 user.getId(), user.getUsername(), user.getNickname(),
-                user.getEmail(), user.getAvatar(), roleNames
+                user.getEmail(), user.getAvatar(), roleNames, permissions
             )
         );
         return new LoginResult(tokenPair, response);
@@ -279,14 +283,17 @@ public class AuthServiceImpl implements AuthService {
 
         List<String> roleNames = sysUserRoleMapper.selectRoleNamesByUserId(userId);
 
+        // /me 是权限兜底入口：缓存 miss 时同步加载一次 DB，确保前端拿到非空快照。
         Set<String> permissions = tokenCacheService.getUserPermissions(userId);
         if (permissions == null) {
             userPermissionProvider.loadUserPermissions(userId);
+            permissions = tokenCacheService.getUserPermissions(userId);
         }
 
         return new LoginResponse.UserInfo(
             user.getId(), user.getUsername(), user.getNickname(),
-            user.getEmail(), user.getAvatar(), roleNames
+            user.getEmail(), user.getAvatar(), roleNames,
+            permissions != null ? List.copyOf(permissions) : List.of()
         );
     }
 
@@ -360,6 +367,18 @@ public class AuthServiceImpl implements AuthService {
         } catch (Exception e) {
             log.debug("Permission warmup not scheduled for userId={}: {}", userId, e.getMessage());
         }
+    }
+
+    /**
+     * 同步读取权限缓存的 best-effort 版本：miss 返回空列表，不触发 DB 加载。
+     * <p>
+     * 用于登录/注册/刷新响应 —— 这些路径已通过 {@link #warmupUserPermissions} 异步预热，
+     * 此处只取已缓存的结果（通常 miss → 空列表），避免阻塞响应。
+     * 权限的"完整快照"由 {@code GET /api/auth/me}（{@link #getCurrentUser}）兜底。
+     */
+    private List<String> loadPermissionsBestEffort(Long userId) {
+        Set<String> cached = tokenCacheService.getUserPermissions(userId);
+        return cached != null ? List.copyOf(cached) : List.of();
     }
 
     private void validateCaptcha(String captchaId, String captchaCode) {

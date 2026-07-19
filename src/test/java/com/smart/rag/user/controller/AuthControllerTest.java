@@ -51,7 +51,7 @@ class AuthControllerTest {
     }
 
     private LoginResponse.UserInfo buildUserInfo() {
-        return new LoginResponse.UserInfo(1L, "testuser", "Test", "test@example.com", null, List.of("USER"));
+        return new LoginResponse.UserInfo(1L, "testuser", "Test", "test@example.com", null, List.of("USER"), List.of());
     }
 
     @Nested

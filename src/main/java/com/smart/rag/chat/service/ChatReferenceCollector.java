@@ -39,13 +39,15 @@ public class ChatReferenceCollector {
         int n = 1;
         for (Document d : docs) {
             RetrievedDocument rd = RetrievedDocument.from(d).withRefNumber(n);
-            refs.add(new Reference(n, rd.chunkId(), rd.documentId(), rd.fileName(), rd.page()));
+            String truncated = truncate(rd.content());
+            refs.add(new Reference(n, rd.chunkId(), rd.documentId(), rd.fileName(), rd.page(),
+                rd.score(), rd.source(), truncated));
             block.append("<<REF>>[").append(n).append("] ")
                 .append(rd.fileName()).append("(").append(rd.documentId());
             if (rd.page() != null) {
                 block.append(", p.").append(rd.page());
             }
-            block.append(")\n").append(truncate(rd.content())).append("\n<<END>>\n");
+            block.append(")\n").append(truncated).append("\n<<END>>\n");
             n++;
         }
         String refBlock = "## 检索参考信息（引用时用「来源#n：文件名」）\n" + block;

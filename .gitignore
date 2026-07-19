@@ -37,3 +37,7 @@ lsp.json
 
 # ZCode local workspace (not source)
 .zcode/
+
+# Production deployment artifacts (contains TLS private keys)
+certbot/
+

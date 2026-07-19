@@ -3,8 +3,14 @@ server:
   # 信任反代 X-Forwarded-*，使 getRemoteAddr() 返回真实客户端 IP（登录/验证码限流与审计准确）；
   # 仅在部署于受信反向代理（nginx/ALB）后启用，否则客户端可伪造 IP
   forward-headers-strategy: framework
+  # 优雅停机：docker stop / SIGTERM 时不立即关 socket，让 in-flight 请求处理完
+  # 配合 app.messaging.shutdown-timeout (RocketMQ consumer) + log4j2 shutdownHook=disable 形成完整链路
+  shutdown: graceful
 
 spring:
+  lifecycle:
+    # 优雅停机最长等待 30s（覆盖典型 SSE 长会话的 tail；超时后强制关闭）
+    timeout-per-shutdown-phase: 30s
   datasource:
     url: jdbc:postgresql://${DB_HOST:localhost}:5432/${DB_NAME:smart_rag}
     username: ${POSTGRES_USER}
@@ -211,4 +217,4 @@ management:
 
 logging:
   level:
-    com.demo.chat: INFO
+    com.smart.rag: INFO   # 原值 com.demo.chat 是历史残留，实际业务包是 com.smart.rag

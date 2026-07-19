@@ -285,6 +285,103 @@ src/main/java/com/smart/rag/
 >
 > LLM SPI 详细契约（注入规则、模型 ID 格式、错误矩阵）见 [`.trellis/spec/backend/llm-spi.md`](.trellis/spec/backend/llm-spi.md)。
 
+## 生产部署（单机全栈容器化）
+
+面向单台 VPS 的生产部署方案：中间件 + 应用 + 反向代理 + 自动 HTTPS 全部跑在 `docker compose` 里。
+
+### 资源需求
+
+| 规格 | 说明 |
+|------|------|
+| **最低** | 4 vCPU / 8 GB RAM / 40 GB SSD |
+| **推荐** | 4 vCPU / 16 GB RAM / 80 GB SSD（文档量大或并发高时） |
+| **操作系统** | 任意 Linux 发行版（Ubuntu 22.04 / Debian 12 验证过），装好 Docker Engine + Compose v2 即可，无需 JDK |
+
+内存分配（8GB VPS 实测）：PostgreSQL ~700MB + Redis ~350MB + MinIO ~450MB + RocketMQ(broker+proxy+dashboard) ~1.8GB + 应用 JVM ~2GB + Nginx ~50MB + OS ~1GB ≈ 6.5GB，留 1.5GB buffer。
+
+> **RocketMQ 不可省略**：3 个 `SmartLifecycle` Consumer（`ChatMessageSaveConsumer` / `UsageRecordConsumer` / `EtlDocumentConsumer`）在应用启动时同步建链，broker 不可达会让 ApplicationContext 启动失败。
+
+### 部署步骤
+
+```bash
+# 1. 克隆代码到服务器
+git clone <repo-url> smart-rag && cd smart-rag
+
+# 2. 准备环境变量（必须把所有 ⚠️ 必填项改掉）
+cp .env.example .env
+vim .env   # 重点：SERVER_NAME / 各种密码 / 4 个 LLM API key / JWT_SECRET
+
+# 3. （首次）申请 Let's Encrypt 证书 —— 需要 80 端口公网可达且 DNS A 记录已生效
+./scripts/init-ssl.sh
+
+# 4. 启动完整栈
+docker compose -f docker-compose.prod.yml up -d
+
+# 5. 等待应用就绪（Flyway 迁移 + RocketMQ subscribe 大约 60-90s）
+docker compose -f docker-compose.prod.yml logs -f app
+# 看到 "Started SmartRagApplication" 即就绪
+
+# 6. 验证
+curl https://${SERVER_NAME}/actuator/health
+# 期望: {"status":"UP"}
+```
+
+### 日常运维
+
+```bash
+# 更新代码并重新构建应用（中间件不动，热更应用）
+git pull
+docker compose -f docker-compose.prod.yml up -d --build app
+
+# 查看实时日志
+docker compose -f docker-compose.prod.yml logs -f app
+
+# 进入应用容器排查
+docker compose -f docker-compose.prod.yml exec app sh
+
+# 优雅重启（30s drain in-flight 请求）
+docker compose -f docker-compose.prod.yml restart app
+
+# 完全停机（保留数据卷）
+docker compose -f docker-compose.prod.yml down
+```
+
+### 网络拓扑
+
+```
+Internet ──► nginx (80/443) ──► app (8080)
+                                  │
+                                  ├── postgres (5432, 内部)
+                                  ├── redis    (6379, 内部)
+                                  ├── minio    (9000, 内部)
+                                  └── rmqbroker(8081, 内部)
+```
+
+**只有 nginx 暴露 80/443 到公网**，所有中间件仅在 `smart-rag-net` 内部网络，无法从公网直连。
+
+### 故障排查
+
+| 现象 | 排查方向 |
+|------|---------|
+| `docker compose up` 后 app 容器反复重启 | `docker compose logs app` 看是否 env 缺失（常见：`JWT_SECRET` / 4 个 LLM key 未填） |
+| 应用启动卡在 RocketMQ subscribe | 确认 `rmqbroker` 健康检查通过：`docker compose ps rmqbroker` |
+| HTTPS 访问报 502 | app 未就绪，检查 `docker compose logs app` 是否还在 Flyway 迁移 |
+| 证书续期失败 | `docker compose logs certbot`；手动续：`docker compose run --rm certbot certonly --webroot --webroot-path /var/www/certbot -d ${SERVER_NAME}` |
+| 文档上传 413 | nginx `client_max_body_size 60m` 已设，检查是否被外层 CDN/ALB 截断 |
+
+### 备份与恢复
+
+数据卷：`pgdata` / `redisdata` / `miniodata` / `rmqdata`。生产建议每日定时备份 PG：
+
+```bash
+# 备份（每日 cron）
+docker compose -f docker-compose.prod.yml exec -T postgres \
+    pg_dump -U ${POSTGRES_USER} ${POSTGRES_DB} | gzip > backup-$(date +%F).sql.gz
+
+# 恢复
+gunzip -c backup-2026-07-19.sql.gz | docker compose -f docker-compose.prod.yml exec -T postgres psql -U ${POSTGRES_USER} ${POSTGRES_DB}
+```
+
 ## 文档
 
 ### 设计文档

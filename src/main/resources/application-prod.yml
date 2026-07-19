@@ -14,4 +14,4 @@ management:
 
 logging:
   level:
-    com.demo.chat: WARN
+    com.smart.rag: WARN   # 原值 com.demo.chat 是历史残留（chat-demo 项目），实际业务包是 com.smart.rag

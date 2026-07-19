@@ -22,12 +22,7 @@ public record AgentRagProperties(
     double contextWindowRatio,
     // 容错
     int toolTimeoutMs,
-    boolean degradeOnFailure,
-    // System Prompt 模板
-    String directAnswerPrompt,
-    String retrievalPrompt,
-    String deepRetrievalPrompt,
-    String generalToolPrompt
+    boolean degradeOnFailure
 ) {
     /**
      * 紧凑构造器 — 参数校验与默认值兜底

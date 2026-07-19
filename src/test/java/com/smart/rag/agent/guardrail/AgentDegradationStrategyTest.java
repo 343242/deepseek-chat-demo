@@ -30,8 +30,7 @@ class AgentDegradationStrategyTest {
                 3,          // maxConsecutiveSameTool
                 0.8,        // contextWindowRatio
                 10000,      // toolTimeoutMs
-                true,       // degradeOnFailure
-                null, null, null, null  // prompts
+                true        // degradeOnFailure
         );
     }
 
@@ -49,8 +48,7 @@ class AgentDegradationStrategyTest {
                 3,          // maxConsecutiveSameTool
                 0.8,        // contextWindowRatio
                 10000,      // toolTimeoutMs
-                false,      // degradeOnFailure
-                null, null, null, null  // prompts
+                false       // degradeOnFailure
         );
     }
 

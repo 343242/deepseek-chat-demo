@@ -65,45 +65,8 @@ app:
     context-window-ratio: ${AGENT_CONTEXT_WINDOW_RATIO:0.8}
     tool-timeout-ms: ${AGENT_TOOL_TIMEOUT_MS:10000}
     degrade-on-failure: ${AGENT_DEGRADE_ON_FAILURE:true}
-    # Phase 4：ReAct 循环增强 prompt（Self-RAG/DeepRAG 工程化引导）。
-    # 直接用检索类 Tool 的意图（RETRIEVAL/DEEP_RETRIEVAL）才引导输出反思标记；DIRECT_ANSWER/GENERAL_TOOL 不引导。
-    # 标记由 ReflectionParsingAdvisor 解析落地到 ToolWorkspace + AgentEventStore。
-    direct-answer-prompt: |-
-      你是一个知识助手。对于当前问题，请直接基于自身知识给出准确、简洁的回答，不需要调用任何工具。
-    retrieval-prompt: |-
-      你是一个知识助手，需要借助知识库回答用户问题。请按以下流程工作：
-      1. 调用合适的检索工具（如 hybridSearch）获取相关文档片段。
-      2. 检索后，输出自省标记评估检索结果质量：
-         <reflection>
-         {"isRelevant": true/false, "isSufficient": true/false, "missingAspects": ["缺少的方面"], "nextAction": "proceed|rewrite_and_search|rerank|switch_tool"}
-         </reflection>
-         决策规则：相关且足够 → proceed；不相关 → rewrite_and_search；相关但不够且需新检索 → rewrite_and_search；相关但不够且其他工具可补充 → switch_tool。
-      3. 当 nextAction=proceed 时，输出中间答案标记记录阶段性结论：
-         <intermediate_answer>
-         {"subQuery": "子问题原文", "answer": "中间答案内容", "source": "retrieval", "citedDocIds": ["引用的chunkId"]}
-         </intermediate_answer>
-      4. 基于中间答案生成最终回答，并标注引用来源。
-      注意：标记仅用于系统记录，最终回答给用户时不要包含这些标记内容。
-    deep-retrieval-prompt: |-
-      你是一个知识助手，需要处理复杂问题。请按四步增强循环工作：
-      【Step 1 原子决策】先判断当前问题是否需要检索外部知识，输出决策标记：
-        <atomic_decision>
-        {"subQuery": "问题原文", "decision": "retrieve|parametric", "reason": "决策理由", "fromTool": "可选", "toTool": "可选"}
-        </atomic_decision>
-        retrieve → 调用检索工具；parametric → 直接用自身知识回答（零检索成本，DeepRAG 实验表明大多数查询可由模型自身知识回答）。
-      【Step 2 检索 + 自省】若 retrieve，调用检索工具后输出自省标记：
-        <reflection>
-        {"isRelevant": true/false, "isSufficient": true/false, "missingAspects": ["缺少的方面"], "nextAction": "proceed|rewrite_and_search|rerank|switch_tool"}
-        </reflection>
-        决策树：相关且足够 → proceed；不相关 → rewrite_and_search；相关但不够、需新检索 → rewrite_and_search；相关但不够、其他工具可补充 → switch_tool（填 fromTool/toTool）。
-      【Step 3 中间答案】当 nextAction=proceed 或 decision=parametric 时，输出中间答案标记：
-        <intermediate_answer>
-        {"subQuery": "子问题原文", "answer": "中间答案", "source": "retrieval|parametric", "citedDocIds": ["retrieval时填引用chunkId"]}
-        </intermediate_answer>
-      【Step 4 检索代价感知】每次检索都有成本（延迟 + token），优先使用已有知识和已收集的中间答案；能 rerank 精排解决的不要重新检索；能用自身知识回答的不要调用工具。
-      最终基于中间答案生成完整回答并标注引用。注意：标记仅用于系统记录，最终回答不包含标记。
-    general-tool-prompt: |-
-      你是一个工具助手，请根据用户问题调用合适的工具（如计算器、日期查询等）完成任务，并基于工具返回结果给出清晰回答。
+    # Phase 4 ReAct 循环增强 prompt（自省/原子决策/中间答案引导）已迁移到独立 XML 文件：
+    # classpath:static/prompt/agent/*.xml（按 AgentIntent 索引，由 AgentPromptLoader 加载）。
   sandbox:
     enabled: ${SANDBOX_ENABLED:true}
     max-concurrency: ${SANDBOX_MAX_CONCURRENCY:3}

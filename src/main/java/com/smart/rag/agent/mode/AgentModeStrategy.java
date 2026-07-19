@@ -3,6 +3,7 @@ package com.smart.rag.agent.mode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smart.rag.infrastructure.advisor.ConversationContextAdvisor;
 import com.smart.rag.agent.advisor.ReflectionParsingAdvisor;
+import com.smart.rag.agent.config.AgentPromptLoader;
 import com.smart.rag.chat.context.ContextPromptInjector;
 import com.smart.rag.mode.ChatMode;
 import com.smart.rag.mode.ChatModeStrategy;
@@ -103,6 +104,7 @@ public class AgentModeStrategy implements ChatModeStrategy {
     private final AgentRagProperties agentProperties;
     private final ContextPromptInjector contextPromptInjector;
     private final PromptLoaderService promptLoaderService;
+    private final AgentPromptLoader agentPromptLoader;
     private final LlmClientRegistry llmRegistry;
     private final AgentDegradationStrategy degradationStrategy;
     private final ObjectProvider<MultiTurnModeStrategy> multiTurnProvider;
@@ -118,6 +120,7 @@ public class AgentModeStrategy implements ChatModeStrategy {
                               AgentRagProperties agentProperties,
                               ContextPromptInjector contextPromptInjector,
                               PromptLoaderService promptLoaderService,
+                              AgentPromptLoader agentPromptLoader,
                               LlmClientRegistry llmRegistry,
                               AgentDegradationStrategy degradationStrategy,
                               ObjectProvider<MultiTurnModeStrategy> multiTurnProvider,
@@ -132,6 +135,7 @@ public class AgentModeStrategy implements ChatModeStrategy {
         this.agentProperties = agentProperties;
         this.contextPromptInjector = contextPromptInjector;
         this.promptLoaderService = promptLoaderService;
+        this.agentPromptLoader = agentPromptLoader;
         this.llmRegistry = llmRegistry;
         this.degradationStrategy = degradationStrategy;
         this.multiTurnProvider = multiTurnProvider;
@@ -234,14 +238,13 @@ public class AgentModeStrategy implements ChatModeStrategy {
      * <p>
      * v5：只返回静态（基座 + 意图）；CAG 上下文改由 {@link AgentSystemPromptAdvisor} 注入动态尾
      * （CAG 每请求变化，进静态会破坏前缀缓存）。
+     * <p>
+     * 意图 prompt 来自 {@link AgentPromptLoader}（classpath:static/prompt/agent/*.xml，按 intent 索引），
+     * 基座来自 {@link PromptLoaderService#getDefaultPrompt()}（default.xml，跨请求共享）。
+     * 两者拼接顺序：基座在前（前缀缓存友好），意图 prompt 在后（含自省/原子决策/中间答案引导）。
      */
     private String resolveAgentPrompt(AgentIntent intent) {
-        String template = switch (intent) {
-            case DIRECT_ANSWER -> agentProperties.directAnswerPrompt();
-            case RETRIEVAL -> agentProperties.retrievalPrompt();
-            case DEEP_RETRIEVAL -> agentProperties.deepRetrievalPrompt();
-            case GENERAL_TOOL -> agentProperties.generalToolPrompt();
-        };
+        String template = agentPromptLoader.getPrompt(intent);
 
         if (template == null || template.isBlank()) {
             template = "你是一个 AI 助手。请根据用户的问题提供准确的回答。";

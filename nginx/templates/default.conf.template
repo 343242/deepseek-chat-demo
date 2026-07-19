@@ -1,0 +1,118 @@
+# Smart RAG Nginx 反向代理配置
+# 由 nginx 官方镜像 envsubst 渲染：${SERVER_NAME} 来自 docker-compose env
+# $$ 转义保留 nginx 原生 $scheme/$host 等变量
+
+# ─────────────────────────────────────────────────────────────────
+# upstream：应用容器
+# ─────────────────────────────────────────────────────────────────
+upstream smart_rag_backend {
+    server app:8080;
+    keepalive 32;   # 复用上游连接，降低高频 API 调用的 TCP 握手开销
+}
+
+# 限流：每 IP 每秒 20 个请求，突发 40 个排队；防止单 IP 洪峰压垮后端
+# 应用层已有 user-id 维度的业务限流（chat），这里是网络层的粗粒度补充
+limit_req_zone $binary_remote_addr zone=smart_rag_general:10m rate=20r/s;
+# 登录/注册更严格：每 IP 每秒 5 个（应用层还有 30 次/30min 的滑动窗口）
+limit_req_zone $binary_remote_addr zone=smart_rag_auth:10m rate=5r/s;
+
+# 上传体积上限：对齐应用 spring.servlet.multipart.max-file-size=55MB，留 5MB buffer 给 multipart 包装
+client_max_body_size 60m;
+
+# ─────────────────────────────────────────────────────────────────
+# HTTP (80)：ACME challenge 走 webroot，其余 301 跳 HTTPS
+# ─────────────────────────────────────────────────────────────────
+server {
+    listen 80;
+    server_name ${SERVER_NAME};
+
+    # Let's Encrypt HTTP-01 验证目录
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    location / {
+        return 301 https://$$host$$request_uri;
+    }
+}
+
+# ─────────────────────────────────────────────────────────────────
+# HTTPS (443)：主入口，反代到 app:8080
+# ─────────────────────────────────────────────────────────────────
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name ${SERVER_NAME};
+
+    # 证书路径（首次部署前由 scripts/init-ssl.sh 申请）
+    ssl_certificate     /etc/letsencrypt/live/${SERVER_NAME}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/${SERVER_NAME}/privkey.pem;
+
+    # 仅 TLS 1.2/1.3，禁用老旧协议与弱套件
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers off;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305;
+    ssl_session_cache shared:SSL:10m;
+    ssl_session_timeout 1d;
+    ssl_session_tickets off;
+
+    # OCSP stapling（加速证书校验 + 隐私）
+    ssl_stapling on;
+    ssl_stapling_verify on;
+
+    # 安全响应头
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+    # ── Actuator 探针：仅放行 health/info，prometheus 不对公网（白名单 IP 或内网） ──
+    location = /actuator/health  { proxy_pass http://smart_rag_backend; }
+    location = /actuator/health/ { proxy_pass http://smart_rag_backend; }
+    location = /actuator/info    { proxy_pass http://smart_rag_backend; }
+
+    # prometheus 抓取走单独内网，公网直接 403（防业务指标外泄）
+    location = /actuator/prometheus {
+        # 若有内部监控节点，把 IP 加到 allow 列表
+        # allow 10.0.0.0/8;
+        # allow 172.16.0.0/12;
+        deny all;
+        return 403;
+    }
+    # 其余 /actuator/** 一律拒（env/beans/threaddump 等敏感端点未对外暴露，但兜底）
+    location ^~ /actuator/ {
+        deny all;
+        return 403;
+    }
+
+    # ── 登录 / 注册 / 验证码：严格限流 ──
+    location ~ ^/api/auth/(login|register|refresh|captcha) {
+        limit_req zone=smart_rag_auth burst=10 nodelay;
+        proxy_pass http://smart_rag_backend;
+        include /etc/nginx/conf.d/proxy-common.conf;
+    }
+
+    # ── SSE 流式接口：关闭缓冲，长超时，HTTP/1.1 keep-alive ──
+    # 匹配 chat 对话流（chat/completions 风格的 stream 端点 / agent ReAct 输出）
+    location ~ ^/api/(chat|agent).*(stream|sse) {
+        proxy_pass http://smart_rag_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";          # 触发 upstream keepalive 复用
+        proxy_buffering off;                     # SSE 关键：禁缓冲，让 token 立即推给客户端
+        proxy_cache off;
+        proxy_read_timeout 600s;                 # 长会话：最长 10 分钟 idle
+        proxy_send_timeout 600s;
+        chunked_transfer_encoding on;
+        include /etc/nginx/conf.d/proxy-common.conf;
+    }
+
+    # ── 默认路由：通用限流 + 标准反代 ──
+    location / {
+        limit_req zone=smart_rag_general burst=40 nodelay;
+        proxy_pass http://smart_rag_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_read_timeout 120s;
+        include /etc/nginx/conf.d/proxy-common.conf;
+    }
+}

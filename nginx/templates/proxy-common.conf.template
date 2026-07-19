@@ -1,0 +1,17 @@
+# Nginx 反代公共片段（被 default.conf.template 各 location include）
+# 通过 docker volume 挂载到 /etc/nginx/conf.d/proxy-common.conf
+# 注意：文件名不含 .template 后缀，envsubst 不会处理它，$$ 无需转义
+
+proxy_set_header Host              $host;
+proxy_set_header X-Real-IP         $remote_addr;
+proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+proxy_set_header X-Forwarded-Proto $scheme;
+proxy_set_header X-Forwarded-Host  $host;
+
+# HTTP/1.1 + Connection 复用（实际 Connection 头在调用处单独设）
+proxy_http_version 1.1;
+
+# 连接建立超时（指向后端 TCP 握手）
+proxy_connect_timeout 10s;
+# 发往后端的请求体超时（大文件上传预留充足时间）
+proxy_send_timeout 120s;

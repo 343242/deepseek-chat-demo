@@ -1,0 +1,28 @@
+# Git attributes —— 强制关键脚本文件用 LF 行尾
+# 背景：Windows 默认 CRLF，但 mvnw / shell 脚本在 Linux 容器（Docker / CI）里执行时
+#       CRLF 会让 shebang #!/bin/sh\r 找不到解释器，报 "not found" 难以排查。
+# 这些文件强制 LF，无论 checkout 平台。
+
+# Maven Wrapper（容器内构建必需）
+mvnw         text eol=lf
+mvnw.cmd     text eol=crlf
+
+# Shell 脚本（部署 / 运维）
+*.sh         text eol=lf
+**/scripts/** text eol=lf
+
+# Docker / Compose / Nginx（Linux 容器读取）
+Dockerfile*      text eol=lf
+*.dockerfile     text eol=lf
+docker-compose*.yml text eol=lf
+nginx/**         text eol=lf
+
+# Linux 配置文件
+*.conf       text eol=lf
+.editorconfig text eol=lf
+.gitignore   text eol=lf
+.gitattributes text eol=lf
+.env*        text eol=lf
+
+# 默认：让 Git 自动处理（Windows 仓库标准行为）
+* text=auto

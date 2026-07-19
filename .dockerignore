@@ -1,0 +1,57 @@
+# 构建上下文排除清单 —— 让 docker build 只发送必要文件到 daemon
+# (语法: https://docs.docker.com/build/concepts/context/#dockerignore-files)
+
+# 构建产物 / 中间文件
+target/
+**/target/
+*.class
+*.jar
+!mvnw
+*.iml
+
+# VCS / IDE / 工具
+.git/
+.gitignore
+.idea/
+.vscode/
+.settings/
+.project
+.classpath
+.factorypath
+*.swp
+.DS_Store
+
+# 日志 / 运行时产物
+logs/
+**/logs/
+*.log
+
+# 敏感文件 —— 绝不进镜像（密钥、本地真实配置）
+.env
+.env.*
+!.env.example
+src/main/resources/application-dev.yml
+src/main/resources/application-evaluation.yml
+
+# 协作 / 文档 / 设计稿（与运行时无关）
+AGENTS.md
+CLAUDE.md
+.agents/
+.zcode/
+.claude/
+.codex/
+.omp/
+.trellis/
+docs/
+*.md
+!README.md
+
+# Docker 自身（避免 recursive include）
+Dockerfile
+.dockerignore
+docker-compose*.yml
+
+# 平台 / 临时
+graphify-out/
+bin/
+.tmp/

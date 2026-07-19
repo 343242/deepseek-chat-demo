@@ -1,0 +1,263 @@
+# Smart RAG — 单机全栈生产部署编排
+# ============================================================================
+# 用法（详见 README.md 「生产部署」章节）：
+#   1. cp .env.example .env  并填入实际密钥 / 域名
+#   2. 首次部署：./scripts/init-ssl.sh（申请 Let's Encrypt 证书）
+#   3. 启动：  docker compose -f docker-compose.prod.yml up -d
+#   4. 更新：  docker compose -f docker-compose.prod.yml up -d --build app
+#
+# 网络拓扑：
+#   - 仅 nginx 暴露 80/443 到公网
+#   - 中间件（PG/Redis/MinIO/RocketMQ）只在内部网络 smart-rag-net，公网不可达
+#   - app 通过 service 名访问中间件（DB_HOST=postgres, REDIS_HOST=redis ...）
+# ============================================================================
+
+services:
+  # ── 应用 ──────────────────────────────────────────────────────────────
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: smart-rag-app
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      SPRING_PROFILES_ACTIVE: stable,prod
+      # 容器内通过 service 名访问同网络中间件（覆盖 .env 里的 localhost 默认值）
+      DB_HOST: postgres
+      REDIS_HOST: redis
+      ROCKETMQ_ENDPOINTS: rmqbroker:8081
+      MINIO_ENDPOINT: http://minio:9000
+    depends_on:
+      postgres:   { condition: service_healthy }
+      redis:      { condition: service_healthy }
+      minio:      { condition: service_healthy }
+      rmqbroker:  { condition: service_healthy }
+    volumes:
+      # 应用日志（log4j2.xml 输出到 /app/logs/，按级别分文件）
+      - ./logs:/app/logs
+    networks:
+      - smart-rag-net
+    mem_limit: 2560m
+    mem_reservation: 2048m
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/actuator/health/liveness || exit 1"]
+      interval: 15s
+      timeout: 5s
+      start_period: 90s   # Flyway 20 个迁移 + PgVectorStore 建表 + RocketMQ subscribe，冷启给足时间
+      retries: 5
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  # ── 反向代理 ──────────────────────────────────────────────────────────
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: smart-rag-nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    # nginx 官方镜像自带的 envsubst 机制会自动把 /etc/nginx/templates/*.template
+    # 渲染成 /etc/nginx/conf.d/*.conf，$$ 转义可保留 nginx 原生变量
+    environment:
+      SERVER_NAME: ${SERVER_NAME:?SERVER_NAME required}
+    volumes:
+      - ./nginx/templates:/etc/nginx/templates:ro
+      - certbot-etc:/etc/letsencrypt:ro
+      - certbot-var:/var/lib/letsencrypt
+      - certbot-webroot:/var/www/certbot:ro
+    depends_on:
+      app: { condition: service_healthy }
+    networks:
+      - smart-rag-net
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  # ── 证书续期守护 ──────────────────────────────────────────────────────
+  certbot:
+    image: certbot/certbot:latest
+    container_name: smart-rag-certbot
+    restart: unless-stopped
+    volumes:
+      - certbot-etc:/etc/letsencrypt
+      - certbot-var:/var/lib/letsencrypt
+      - certbot-webroot:/var/www/certbot
+    # 每 12 小时尝试续期一次（Let's Encrypt 证书 90 天有效，到期前 30 天才会真正续）
+    entrypoint: ["/bin/sh", "-c", "trap exit TERM; while :; do certbot renew --quiet --webroot --webroot-path /var/www/certbot; sleep 12h; done"]
+    networks:
+      - smart-rag-net
+
+  # ── 中间件（端口仅内部网络，不映射到宿主机） ──────────────────────────
+  postgres:
+    build: ./docker/postgres
+    container_name: smart-rag-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-smart_rag}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}
+    volumes:
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres} -d ${POSTGRES_DB:-smart_rag}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - smart-rag-net
+    logging:
+      driver: json-file
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+  redis:
+    image: redis:8.2.6-bookworm
+    container_name: smart-rag-redis
+    restart: unless-stopped
+    command: >
+      sh -c 'redis-server
+      --appendonly yes
+      --requirepass "$$REDIS_PASSWORD"
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru'
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?REDIS_PASSWORD required}
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a $$REDIS_PASSWORD ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - smart-rag-net
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  minio:
+    image: pgsty/minio:latest
+    container_name: smart-rag-minio
+    restart: unless-stopped
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD required}
+    volumes:
+      - miniodata:/data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - smart-rag-net
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ── RocketMQ 5.x（强制依赖：3 个 SmartLifecycle Consumer 启动时建链） ──
+  rmqnamesrv:
+    image: apache/rocketmq:5.2.0
+    container_name: smart-rag-rmqnamesrv
+    restart: unless-stopped
+    environment:
+      JAVA_OPT_EXT: "-Xms256m -Xmx400m"
+    command: sh mqnamesrv
+    healthcheck:
+      test: ["CMD-SHELL", "grep -q 'The Name Server boot success' /home/rocketmq/logs/rocketmqlogs/namesrv.log || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - smart-rag-net
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  rmqbroker:
+    image: apache/rocketmq:5.2.0
+    container_name: smart-rag-rmqbroker
+    user: root
+    restart: unless-stopped
+    environment:
+      NAMESRV_ADDR: "rmqnamesrv:9876"
+      JAVA_OPT_EXT: "-Xms512m -Xmx512m"
+    depends_on:
+      rmqnamesrv:
+        condition: service_healthy
+    command:
+      - sh
+      - -c
+      - |
+        cat > /home/rocketmq/rocketmq-5.2.0/conf/broker.conf << EOF
+        brokerClusterName = DefaultCluster
+        brokerName = broker-a
+        brokerId = 0
+        deleteWhen = 04
+        fileReservedTime = 48
+        # 单机生产：SYNC_MASTER + SYNC_FLUSH 保证消息不丢（性能换可靠性）
+        brokerRole = SYNC_MASTER
+        flushDiskType = SYNC_FLUSH
+        timerMaxDelaySec = 31622400
+        # Docker 环境：brokerIP1 必须设为容器内可达地址，否则 proxy 广播的内网 IP 让客户端连不上
+        brokerIP1 = rmqbroker
+        autoCreateTopicEnable = true
+        EOF
+        sh mqbroker --enable-proxy \
+          -c /home/rocketmq/rocketmq-5.2.0/conf/broker.conf
+    volumes:
+      - rmqdata:/home/rocketmq/store
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/10911' 2>/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+    networks:
+      - smart-rag-net
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  rmqdashboard:
+    image: apacherocketmq/rocketmq-dashboard:2.1.0
+    container_name: smart-rag-rmqdashboard
+    network_mode: "service:rmqbroker"
+    environment:
+      JAVA_OPTS: >-
+        -Xms256m -Xmx256m
+        -Drocketmq.config.enableDashBoardCollect=false
+        -Drocketmq.namesrv.addr=rmqnamesrv:9876
+        -Dserver.port=8082
+    depends_on:
+      rmqbroker:
+        condition: service_healthy
+    restart: unless-stopped
+
+networks:
+  smart-rag-net:
+    driver: bridge
+
+volumes:
+  pgdata:
+  redisdata:
+  miniodata:
+  rmqdata:
+  certbot-etc:
+  certbot-var:
+  certbot-webroot:

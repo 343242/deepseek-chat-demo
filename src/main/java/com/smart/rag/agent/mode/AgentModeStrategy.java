@@ -1,6 +1,8 @@
 package com.smart.rag.agent.mode;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smart.rag.infrastructure.advisor.ConversationContextAdvisor;
+import com.smart.rag.agent.advisor.ReflectionParsingAdvisor;
 import com.smart.rag.chat.context.ContextPromptInjector;
 import com.smart.rag.mode.ChatMode;
 import com.smart.rag.mode.ChatModeStrategy;
@@ -107,6 +109,7 @@ public class AgentModeStrategy implements ChatModeStrategy {
     private final ChatMessagePublisher chatMessagePublisher;
     private final ChatConversationHelper conversationHelper;
     private final AgentEventStore eventStore;
+    private final ObjectMapper objectMapper;
 
     public AgentModeStrategy(AdvisorInfrastructure infra,
                               IntentClassifier intentClassifier,
@@ -120,7 +123,8 @@ public class AgentModeStrategy implements ChatModeStrategy {
                               ObjectProvider<MultiTurnModeStrategy> multiTurnProvider,
                               ChatMessagePublisher chatMessagePublisher,
                               ChatConversationHelper conversationHelper,
-                              AgentEventStore eventStore) {
+                              AgentEventStore eventStore,
+                              ObjectMapper objectMapper) {
         this.infra = infra;
         this.intentClassifier = intentClassifier;
         this.workspaceFactory = workspaceFactory;
@@ -134,6 +138,7 @@ public class AgentModeStrategy implements ChatModeStrategy {
         this.chatMessagePublisher = chatMessagePublisher;
         this.conversationHelper = conversationHelper;
         this.eventStore = eventStore;
+        this.objectMapper = objectMapper;
     }
 
     @Override
@@ -191,6 +196,11 @@ public class AgentModeStrategy implements ChatModeStrategy {
         String staticPrompt = resolveAgentPrompt(intentResult.intent());
         String cagSegment = contextPromptInjector.cagSegment(ctx.cagContext());
         chain.add(new AgentSystemPromptAdvisor(intentResult.intent(), staticPrompt, cagSegment, workspace, guardrails));
+
+        // Step 7.5: ReflectionParsingAdvisor -- 解析 LLM 响应中的 <reflection>/<atomic_decision>/
+        // <intermediate_answer> 标记，写入 workspace + emit 事件（Phase 4 主体；order=3 在 ToolCallAdvisor 之后）。
+        // 忠于 Self-RAG/DeepRAG 论文：反思/原子决策/中间答案是主模型推理过程的产出，闭源 LLM 用结构化标记近似。
+        chain.add(new ReflectionParsingAdvisor(workspace, eventStore, ctx.conversationId(), ctx.userId(), objectMapper));
 
         // Step 8: 对话记忆
         // 过滤 Redis 历史中残留的 tool 消息，避免 DeepSeek "role 'tool' without preceding tool_calls" 报错

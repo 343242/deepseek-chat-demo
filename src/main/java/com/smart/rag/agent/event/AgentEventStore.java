@@ -286,8 +286,8 @@ public class AgentEventStore {
             case RETRIEVAL_STRATEGY -> {
                 RetrievalStrategyPayload p = payloadMapper.toRetrievalStrategy(event.getData());
                 yield (p != null)
-                    ? "- Strategy: %s (round=%d, subQueries=%d)".formatted(
-                        p.strategy(), p.targetRound(), p.subQueries().size())
+                    ? "- Strategy: %s -> %s (reason=%s)".formatted(
+                        p.from(), p.to(), truncate(p.reason(), 80))
                     : "- Strategy: " + event.getData();
             }
             case TOOL_CALLED ->

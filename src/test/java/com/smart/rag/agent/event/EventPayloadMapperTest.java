@@ -95,14 +95,14 @@ class EventPayloadMapperTest {
         @DisplayName("序列化 -> 反序列化 round-trip")
         void roundTrip() {
             RetrievalStrategyPayload original = new RetrievalStrategyPayload(
-                    "hybrid", List.of("q1", "q2", "q3"), 2);
+                    "hybridSearch", "vectorSearch", "missing keyword match");
             String json = mapper.toJson(original);
             RetrievalStrategyPayload restored = mapper.toRetrievalStrategy(json);
 
             assertThat(restored).isNotNull();
-            assertThat(restored.strategy()).isEqualTo("hybrid");
-            assertThat(restored.subQueries()).containsExactly("q1", "q2", "q3");
-            assertThat(restored.targetRound()).isEqualTo(2);
+            assertThat(restored.from()).isEqualTo("hybridSearch");
+            assertThat(restored.to()).isEqualTo("vectorSearch");
+            assertThat(restored.reason()).isEqualTo("missing keyword match");
         }
     }
 

@@ -78,7 +78,7 @@ public class AgentPromptLoader {
                         continue;
                     }
 
-                    loaded.put(intent, rawXml.trim());
+                    loaded.put(intent, stripWrapper(rawXml));
                     log.info("Loaded agent prompt for intent: {} (from {})", intent, resource.getFilename());
                 }
             }
@@ -100,6 +100,41 @@ public class AgentPromptLoader {
      */
     public @Nullable String getPrompt(AgentIntent intent) {
         return templates.get(intent);
+    }
+
+    /**
+     * 剥离 XML 文档的元信息外壳，只保留 LLM 需要的内部结构化指令内容。
+     * <p>
+     * 清理对象（纯噪音，LLM 不解析 XML）：
+     * <ol>
+     *   <li>{@code <?xml ...?>} 声明 — 给 XML 解析器的元信息，LLM 无用</li>
+     *   <li>{@code <prompt version="1.0" model="...">} 根元素开标签 —
+     *       version/model 属性是加载器识别意图用的，LLM 无需感知</li>
+     *   <li>{@code </prompt>} 根元素闭标签</li>
+     * </ol>
+     * <p>
+     * <b>必须保留</b>：所有内部结构标签（{@code <role>}/{@code <workflow>}/
+     * {@code <decision_rules>}/{@code <example>} 等）——它们是 Prompt Engineering
+     * 的核心语义锚点（Anthropic 官方：LLM 对 XML 标签有 fine-tune 偏好）。
+     * <p>
+     * <b>为什么不用 DOM 解析</b>：{@code Element.getTextContent()} 会 flatten 所有
+     * 内部标签变成纯文本，丧失结构信号；只能用字符串/正则处理。
+     * <p>
+     * <b>正则安全性</b>：{@code <prompt>} 标签属性值（version/model）不含 {@code >}，
+     * {@code <prompt[^>]*>} 非贪婪到首个 {@code >} 安全匹配。
+     *
+     * @param rawXml 原始 XML 文档文本
+     * @return 清理后的 prompt 正文（首尾已 trim）
+     */
+    static String stripWrapper(String rawXml) {
+        String s = rawXml;
+        // 1. 剥离首行 XML 声明 <?xml ...?>（含其后空白/换行）
+        s = s.replaceFirst("(?s)^<\\?xml[^>]*\\?>\\s*", "");
+        // 2. 剥离 <prompt ...> 根元素开标签（首次出现）
+        s = s.replaceFirst("<prompt[^>]*>", "");
+        // 3. 剥离 </prompt> 根元素闭标签（末尾，含前置空白）
+        s = s.replaceFirst("(?s)\\s*</prompt>\\s*$", "");
+        return s.trim();
     }
 
     /**

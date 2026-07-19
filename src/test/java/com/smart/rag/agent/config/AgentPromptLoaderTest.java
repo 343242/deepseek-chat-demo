@@ -60,7 +60,6 @@ class AgentPromptLoaderTest {
             assertThat(prompt).contains("<intermediate_answer_schema>");
             assertThat(prompt).contains("retrieve 路径");             // 双路径示例
             assertThat(prompt).contains("parametric 路径");
-            assertThat(prompt).contains("<cost_awareness>");         // 检索代价感知
         }
 
         @Test
@@ -95,23 +94,37 @@ class AgentPromptLoaderTest {
         }
 
         @Test
-        @DisplayName("DEEP_RETRIEVAL 检索代价感知为肯定式（避免重新检索，非 不要重新检索）")
-        void deepRetrieval_costAwarenessPositive() {
-            String prompt = loader.getPrompt(AgentIntent.DEEP_RETRIEVAL);
-            assertThat(prompt).contains("避免重新检索");
-            assertThat(prompt).contains("避免调用检索工具");
-        }
-
-        @Test
-        @DisplayName("所有 prompt 都是合法 XML（含 <?xml 声明 + <prompt> 根元素）")
-        void allPrompts_areValidXml() {
+        @DisplayName("所有 prompt 已清理 XML 声明和 prompt 根元素外壳")
+        void allPrompts_wrapperStripped() {
             for (AgentIntent intent : AgentIntent.values()) {
                 String prompt = loader.getPrompt(intent);
                 assertThat(prompt).as("intent %s prompt non-null", intent).isNotNull();
-                assertThat(prompt).startsWith("<?xml");
-                assertThat(prompt).contains("<prompt ");
-                assertThat(prompt).contains("</prompt>");
+                // 已剥离的元信息外壳
+                assertThat(prompt).as("intent %s no xml declaration", intent)
+                    .doesNotContain("<?xml");
+                assertThat(prompt).as("intent %s no <prompt tag", intent)
+                    .doesNotContain("<prompt");
+                assertThat(prompt).as("intent %s no </prompt> tag", intent)
+                    .doesNotContain("</prompt>");
+                // 内部结构标签必须保留
+                assertThat(prompt).as("intent %s retains <role>", intent)
+                    .contains("<role>");
             }
+        }
+
+        @Test
+        @DisplayName("清理后不含 XML 声明和 prompt 根元素，但保留内部结构标签")
+        void stripped_correctly() {
+            String prompt = loader.getPrompt(AgentIntent.DEEP_RETRIEVAL);
+            assertThat(prompt).doesNotStartWith("<?xml");
+            assertThat(prompt).doesNotContain("<prompt");
+            assertThat(prompt).doesNotContain("</prompt>");
+            // 内部结构标签完整保留（Prompt Engineering 语义锚点）
+            assertThat(prompt).contains("<role>");
+            assertThat(prompt).contains("<workflow>");
+            assertThat(prompt).contains("<decision_rules>");
+            assertThat(prompt).contains("<examples>");
+            assertThat(prompt).contains("<output_format>");
         }
     }
 
@@ -122,6 +135,66 @@ class AgentPromptLoaderTest {
             assertThat(loader.getPrompt(intent))
                 .as("intent %s must be loaded", intent)
                 .isNotNull();
+        }
+    }
+
+    @Nested
+    @DisplayName("stripWrapper 清理逻辑（纯函数边界 case）")
+    class StripWrapperLogic {
+
+        @Test
+        @DisplayName("剥离标准 XML 声明 + prompt 根，保留内部内容")
+        void standardStrip() {
+            String raw = """
+                <?xml version="1.0" encoding="UTF-8"?>
+                <prompt version="1.0" model="DEEP_RETRIEVAL">
+
+                    <role>测试角色</role>
+                    <workflow>测试流程</workflow>
+
+                </prompt>
+                """;
+            String stripped = AgentPromptLoader.stripWrapper(raw);
+
+            assertThat(stripped).doesNotContain("<?xml");
+            assertThat(stripped).doesNotContain("<prompt");
+            assertThat(stripped).doesNotContain("</prompt>");
+            assertThat(stripped).contains("<role>测试角色</role>");
+            assertThat(stripped).contains("<workflow>测试流程</workflow>");
+            // 首尾已 trim
+            assertThat(stripped).startsWith("<role>");
+            assertThat(stripped).endsWith("</workflow>");
+        }
+
+        @Test
+        @DisplayName("prompt 标签带各种属性都能剥离")
+        void promptWithVariousAttributes() {
+            String raw = "<?xml version=\"1.0\"?>\n<prompt version=\"2.0\" model=\"X\" custom=\"y\">\n<role>r</role>\n</prompt>";
+            String stripped = AgentPromptLoader.stripWrapper(raw);
+
+            assertThat(stripped).isEqualTo("<role>r</role>");
+        }
+
+        @Test
+        @DisplayName("内部含 prompt 字样的标签不会被误剥（只剥根元素）")
+        void innerPromptTagPreserved() {
+            // 假设内部有 <example><prompt>...</prompt></example> 这种结构（虽不常见）
+            String raw = "<?xml version=\"1.0\"?>\n<prompt model=\"X\">\n<role>r</role>\n<example><prompt>nested</prompt></example>\n</prompt>";
+            String stripped = AgentPromptLoader.stripWrapper(raw);
+
+            // 根元素已剥，但内部的 nested <prompt> 保留（replaceFirst 只剥首个 <prompt...>）
+            assertThat(stripped).contains("<prompt>nested</prompt>");
+            assertThat(stripped).contains("<role>r</role>");
+        }
+
+        @Test
+        @DisplayName("XML 声明含不同属性也能剥离")
+        void variousXmlDeclarations() {
+            String raw = "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n<prompt model=\"X\">\n<role>r</role>\n</prompt>";
+            String stripped = AgentPromptLoader.stripWrapper(raw);
+
+            assertThat(stripped).doesNotContain("<?xml");
+            assertThat(stripped).isEqualTo("<role>r</role>");
         }
     }
 }

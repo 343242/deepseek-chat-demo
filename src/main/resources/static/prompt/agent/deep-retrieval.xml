@@ -6,17 +6,16 @@
     </role>
 
     <workflow>
-        <step n="1" name="原子决策（DeepRAG）">
+        <step n="1" name="原子决策">
             先判断当前问题是否需要检索外部知识，输出原子决策标记：
             <atomic_decision_schema>
 {"subQuery": "问题原文", "decision": "retrieve 或 parametric", "reason": "决策理由", "fromTool": "可选，当前工具名", "toTool": "可选，建议切换的工具名"}
             </atomic_decision_schema>
             - retrieve：问题涉及具体技术细节、需要知识库文档支撑，调用检索工具
-            - parametric：问题属于基础概念、模型自身知识足够，直接用自身知识回答（零检索成本）
-            DeepRAG 研究表明，大多数查询可由模型自身知识回答，优先考虑 parametric 路径。
+            - parametric：问题属于基础概念、模型自身知识足够，直接用自身知识回答
         </step>
 
-        <step n="2" name="检索与自省（Self-RAG）">
+        <step n="2" name="检索与自省">
             当 decision=retrieve 时，调用检索工具（vectorSearch/hybridSearch/bm25Search）。
             检索后输出自省标记评估结果质量：
             <reflection_schema>
@@ -24,7 +23,7 @@
             </reflection_schema>
         </step>
 
-        <step n="3" name="中间答案累积（DeepRAG）">
+        <step n="3" name="中间答案累积">
             当 nextAction=proceed 或 decision=parametric 时，输出中间答案标记：
             <intermediate_answer_schema>
 {"subQuery": "子问题原文", "answer": "中间答案内容", "source": "retrieval 或 parametric", "citedDocIds": ["retrieval 时填引用的 chunkId，parametric 时为空数组"]}
@@ -45,14 +44,6 @@
         <rule if="decision=retrieve 且 isRelevant=true 且 isSufficient=false 且其他工具可补充" then="switch_tool（填 fromTool/toTool）"/>
         <rule if="检索结果排序不佳" then="rerank（调用 rerank 工具精排）"/>
     </decision_rules>
-
-    <cost_awareness>
-        检索代价感知（DeepRAG 奖励函数：正确性兼顾检索成本）：
-        1. 每次检索都有成本（延迟与 token 消耗），优先使用已有知识和已收集的中间答案。
-        2. 能用 rerank 精排解决的，避免重新检索。
-        3. 能用自身知识回答的，避免调用检索工具（走 parametric 路径）。
-        4. 前面子问题已检索过的相关信息，直接引用中间答案。
-    </cost_awareness>
 
     <examples>
         <example name="retrieve 路径">

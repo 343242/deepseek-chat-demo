@@ -44,13 +44,17 @@ public class AuthController {
     }
 
     @PostMapping("/register")
-    public GlobalResponse<LoginResponse.UserInfo> register(@Valid @RequestBody RegisterRequest request,
-                                                            HttpServletRequest httpRequest) {
-        return GlobalResponse.ok(authService.register(
+    public GlobalResponse<LoginResponse> register(@Valid @RequestBody RegisterRequest request,
+                                                    HttpServletRequest httpRequest,
+                                                    HttpServletResponse httpResponse) {
+        // 注册成功后直接签发 token 并写入 Cookie，实现"注册即登录"（与 /login 行为对齐）。
+        AuthService.LoginResult result = authService.register(
                 request.username(), request.password(), request.email(),
                 request.nickname(), request.captchaId(), request.captchaCode(),
                 httpRequest.getRemoteAddr()
-        ));
+        );
+        cookieTokenManager.setTokenCookies(httpResponse, result.tokens().accessToken(), result.tokens().refreshToken());
+        return GlobalResponse.ok(result.response());
     }
 
     @PostMapping("/login")

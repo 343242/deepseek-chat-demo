@@ -101,6 +101,14 @@ class AuthServiceTest {
         when(tokenCacheService.getUserPermissions(1L)).thenReturn(null);
     }
 
+    /** 注册即登录：register 事务提交后会调用 issueTokensAndPersist，需补 token 签发桩。 */
+    private void setupRegisterTokenMocks(Long userId) {
+        when(jwtTokenProvider.generateAccessToken(eq(userId), anyList(), anyString())).thenReturn("access-token");
+        when(jwtTokenProvider.generateRefreshToken(userId)).thenReturn("refresh-token");
+        when(tokenCacheService.batchStoreTokens(eq(userId), anyString(), anyList(), anyString(), anyLong(), anyLong()))
+                .thenReturn(null);
+    }
+
 
     // ==================== Login ====================
 
@@ -213,18 +221,27 @@ class AuthServiceTest {
         }
 
         @Test
-        @DisplayName("register_success: 正常注册")
+        @DisplayName("register_success: 正常注册并直接签发 token（注册即登录）")
         void register_success() {
             setupRegisterMocks();
+            setupRegisterTokenMocks(123456L);
             when(transactionTemplate.execute(any())).thenAnswer(invocation -> {
                 org.springframework.transaction.support.TransactionCallback<?> cb = invocation.getArgument(0);
                 return cb.doInTransaction(null);
             });
 
-            LoginResponse.UserInfo result = authService.register("newuser", "Password1!", "new@example.com", "Nick", "cap-id", "150", null);
+            AuthService.LoginResult result = authService.register("newuser", "Password1!", "new@example.com", "Nick", "cap-id", "150", null);
 
             assertNotNull(result);
-            assertEquals("newuser", result.username());
+            // 验证 token 已签发
+            assertNotNull(result.tokens());
+            assertEquals("access-token", result.tokens().accessToken());
+            assertEquals("refresh-token", result.tokens().refreshToken());
+            // 验证响应体含用户信息（roles 固定为 [USER]）
+            assertEquals("newuser", result.response().user().username());
+            assertEquals(List.of("USER"), result.response().user().roles());
+            // 验证 token 确实落 Redis
+            verify(tokenCacheService).batchStoreTokens(eq(123456L), anyString(), anyList(), anyString(), anyLong(), anyLong());
         }
 
         @Test
@@ -250,14 +267,15 @@ class AuthServiceTest {
         @DisplayName("register_emailNormalized: 验证 email 被 toLowerCase")
         void register_emailNormalized() {
             setupRegisterMocks();
+            setupRegisterTokenMocks(123456L);
             when(transactionTemplate.execute(any())).thenAnswer(invocation -> {
                 org.springframework.transaction.support.TransactionCallback<?> cb = invocation.getArgument(0);
                 return cb.doInTransaction(null);
             });
 
-            LoginResponse.UserInfo result = authService.register("newuser", "Password1!", "New@EXAMPLE.com", "Nick", "cap-id", "150", null);
+            AuthService.LoginResult result = authService.register("newuser", "Password1!", "New@EXAMPLE.com", "Nick", "cap-id", "150", null);
 
-            assertEquals("new@example.com", result.email());
+            assertEquals("new@example.com", result.response().user().email());
         }
     }
 
@@ -288,6 +306,7 @@ class AuthServiceTest {
         @Test @DisplayName("3类组合通过: 大写+小写+数字")
         void threeCategories_pass() {
             setupRegisterMocks_forPassword();
+            setupRegisterTokenMocks(123L);
             when(transactionTemplate.execute(any())).thenAnswer(inv -> {
                 org.springframework.transaction.support.TransactionCallback<?> cb = inv.getArgument(0);
                 return cb.doInTransaction(null);

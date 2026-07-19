@@ -131,20 +131,39 @@ public class AuthServiceImpl implements AuthService {
 
         // 6. Query roles（单次 JOIN 直取 role_name，省去二次查询 sys_role）
         List<String> roleNames = sysUserRoleMapper.selectRoleNamesByUserId(user.getId());
-        // 权限预热：异步执行，不阻塞登录响应；best-effort，失败仅记日志（miss 由 getCurrentUser 兜底）
+
+        // 7. 签发 token + 存储 + 权限预热（与 refreshToken / register 共用）
+        return issueTokensAndPersist(user, roleNames, ClientErrorCode.LOGIN_FAILED);
+    }
+
+    /**
+     * 签发 access/refresh token 并原子写入 Redis（含用户状态二次校验），同时异步预热权限缓存。
+     * <p>
+     * login / refreshToken / register 三条路径共用，确保 token 签发逻辑单点维护。
+     * <p>
+     * 调用方必须保证：调用前用户已通过身份认证（密码校验 / 注册事务已提交），且 {@code user.id} 在 DB 中真实存在。
+     *
+     * @param user              已认证用户（id/username/nickname/email/avatar 用于响应）
+     * @param roleNames         角色名列表（决定 token 的 roles claim）
+     * @param statusErrorCode   当 Redis 中的用户状态被判定为 disabled/deleted 时抛出的错误码
+     * @return LoginResult 含 token pair 和 UserInfo
+     */
+    private LoginResult issueTokensAndPersist(SysUser user, List<String> roleNames,
+                                              ClientErrorCode statusErrorCode) {
+        // 权限预热：异步执行，不阻塞响应；best-effort，失败仅记日志（miss 由 getCurrentUser 兜底）
         warmupUserPermissions(user.getId());
 
-        // 7. Generate tokens（jti 在签发前生成，避免签发后再解析 token 取 jti）
+        // Generate tokens（jti 在签发前生成，避免签发后再解析 token 取 jti）
         String jti = java.util.UUID.randomUUID().toString();
         String accessToken = jwtTokenProvider.generateAccessToken(user.getId(), roleNames, jti);
         String refreshToken = jwtTokenProvider.generateRefreshToken(user.getId());
 
-        // 8. Pipeline 批量：用户状态检查 + Token 存储（3+ Redis → 1 Pipeline 往返）
+        // Pipeline 批量：用户状态检查 + Token 存储（3+ Redis → 1 Pipeline 往返）
         String redisStatus = tokenCacheService.batchStoreTokens(
                 user.getId(), jti, roleNames, refreshToken,
                 jwtProperties.accessExpiration(), jwtProperties.refreshExpiration());
         if ("disabled".equals(redisStatus) || "deleted".equals(redisStatus)) {
-            throw new ClientException(ClientErrorCode.LOGIN_FAILED);
+            throw new ClientException(statusErrorCode);
         }
 
         TokenPair tokenPair = new TokenPair(accessToken, refreshToken);
@@ -159,8 +178,8 @@ public class AuthServiceImpl implements AuthService {
 
 
     @Override
-    public LoginResponse.UserInfo register(String username, String password, String email,
-                                            String nickname, String captchaId, String captchaCode, String ip) {
+    public LoginResult register(String username, String password, String email,
+                                String nickname, String captchaId, String captchaCode, String ip) {
         validateCaptcha(captchaId, captchaCode);
 
         if (ip != null) {
@@ -212,10 +231,10 @@ public class AuthServiceImpl implements AuthService {
             throw new ServiceException(ServiceErrorCode.INTERNAL_ERROR, "注册失败");
         }
 
-        return new LoginResponse.UserInfo(
-            newUser.getId(), newUser.getUsername(), newUser.getNickname(),
-            newUser.getEmail(), newUser.getAvatar(), List.of(DEFAULT_ROLE_NAME)
-        );
+        // DB 事务已提交（user + role 落库），此时签发 token 写 Redis：
+        //   - 顺序保证：即使 token 签发失败（HTTP 500），DB 用户已存在，前端可引导用户手动登录，数据一致性正确。
+        //   - roleNames 复用注册时分配的固定 USER 角色，无需再查 DB（与原 UserInfo.roles 行为一致）。
+        return issueTokensAndPersist(newUser, List.of(DEFAULT_ROLE_NAME), ClientErrorCode.LOGIN_FAILED);
     }
 
     @Override
@@ -241,26 +260,7 @@ public class AuthServiceImpl implements AuthService {
 
         List<String> roleNames = sysUserRoleMapper.selectRoleNamesByUserId(userId);
 
-        String jti = java.util.UUID.randomUUID().toString();
-        String newAccessToken = jwtTokenProvider.generateAccessToken(userId, roleNames, jti);
-        String newRefreshToken = jwtTokenProvider.generateRefreshToken(userId);
-
-        // Pipeline 批量：用户状态检查 + Token 存储（与 login 一致，1 次往返）
-        String redisStatus = tokenCacheService.batchStoreTokens(
-                userId, jti, roleNames, newRefreshToken,
-                jwtProperties.accessExpiration(), jwtProperties.refreshExpiration());
-        if ("disabled".equals(redisStatus) || "deleted".equals(redisStatus)) {
-            throw new ClientException(ClientErrorCode.USER_DISABLED);
-        }
-
-        TokenPair tokenPair = new TokenPair(newAccessToken, newRefreshToken);
-        LoginResponse response = new LoginResponse(
-            new LoginResponse.UserInfo(
-                user.getId(), user.getUsername(), user.getNickname(),
-                user.getEmail(), user.getAvatar(), roleNames
-            )
-        );
-        return new LoginResult(tokenPair, response);
+        return issueTokensAndPersist(user, roleNames, ClientErrorCode.USER_DISABLED);
     }
 
     /**

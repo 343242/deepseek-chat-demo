@@ -25,6 +25,7 @@ import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 import java.util.List;
 
 import static org.mockito.ArgumentMatchers.*;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
@@ -58,17 +59,25 @@ class AuthControllerTest {
     class RegisterTests {
 
         @Test
-        @DisplayName("register_validRequest → 200")
+        @DisplayName("register_validRequest → 200，并调用 setTokenCookies 写入双令牌（注册即登录）")
         void register_validRequest() throws Exception {
+            AuthService.LoginResult result = new AuthService.LoginResult(
+                    new AuthService.TokenPair("access-token", "refresh-token"),
+                    new LoginResponse(buildUserInfo())
+            );
             when(authService.register(anyString(), anyString(), anyString(), any(), anyString(), anyString(), any()))
-                    .thenReturn(buildUserInfo());
+                    .thenReturn(result);
 
             mockMvc.perform(post("/api/auth/register")
                             .contentType(MediaType.APPLICATION_JSON)
                             .content(objectMapper.writeValueAsString(
                                     new RegisterRequest("testuser", "Password1!", "t@e.com", "nick", "cap-id", "100"))))
                     .andExpect(status().isOk())
-                    .andExpect(jsonPath("$.data.username").value("testuser"));
+                    .andExpect(jsonPath("$.data.user.username").value("testuser"));
+
+            // CookieTokenManager 是 mock，无法直接断言 Cookie 值；
+            // 改为验证 controller 把签发出的双 token 透传给了 CookieTokenManager（与 login 行为对齐）。
+            verify(cookieTokenManager).setTokenCookies(any(), eq("access-token"), eq("refresh-token"));
         }
 
         @Test

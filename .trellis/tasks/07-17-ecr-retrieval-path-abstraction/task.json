@@ -3,7 +3,7 @@
   "name": "ecr-retrieval-path-abstraction",
   "title": "RetrievalPath interface + Vector/Bm25 adapters + HybridSearchService refactor",
   "description": "RetrievalPath interface + Vector/Bm25 adapters + HybridSearchService refactor",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

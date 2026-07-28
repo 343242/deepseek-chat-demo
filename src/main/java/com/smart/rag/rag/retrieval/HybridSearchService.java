@@ -13,13 +13,13 @@ import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.document.Document;
-import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.ai.vectorstore.VectorStore;
-import org.springframework.ai.vectorstore.filter.FilterExpressionBuilder;
+
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
 import java.util.*;
+import java.util.concurrent.Executor;
 import java.util.concurrent.TimeoutException;
 
 /**
@@ -28,15 +28,11 @@ import java.util.concurrent.TimeoutException;
  * 供 HybridDocumentRetriever（Pipeline 模式）和 HybridSearchTool（Agent 模式）共用。
  * userId/teamId 从构造参数改为方法参数，支持按请求动态传入。
  * <p>
- * 本类归属于 rag.retrieval 包，因为其全部依赖（VectorStoreMapper / RagRetrievalProperties /
- * QueryNormalizer）均在 rag 模块内。Agent 工具与 RAG 适配器均以单向依赖方式调用本服务，
- * 避免 rag 反向依赖 agent 造成分层倒置。
- * <p>
- * 检索流程：
+ * 检索流程（RetrievalPath 驱动）：
  * <ol>
- *   <li>pgvector HNSW 向量检索（语义相似度，按 userId 或 teamId 过滤）</li>
- *   <li>PostgreSQL tsvector 全文检索（BM25 词频匹配，按 userId 或 teamId 过滤）</li>
- *   <li>RRF (Reciprocal Rank Fusion) 倒数排名融合</li>
+ *   <li>遍历注入的 {@link RetrievalPath} 列表，通过 ScopedTasks 并发执行</li>
+ *   <li>降级逻辑：全部失败抛异常，部分失败 warn + 优雅降级</li>
+ *   <li>RRF (Reciprocal Rank Fusion) 按 path.rrfWeighting() 选择加权/纯排名融合</li>
  * </ol>
  */
 @Service
@@ -46,23 +42,85 @@ public class HybridSearchService {
 
     private static final long SEARCH_TIMEOUT_SECONDS = 5;
 
-    private final VectorStore vectorStore;
-    private final VectorStoreMapper vectorStoreMapper;
+    private final List<RetrievalPath> paths;
     private final RagRetrievalProperties properties;
     private final QueryNormalizer queryNormalizer;
     private final ScopedTasks scopedTasks;
 
+    // ========================================================================
+    // Production constructors (List<RetrievalPath> based)
+    // ========================================================================
+
+    public HybridSearchService(List<RetrievalPath> paths,
+                               RagRetrievalProperties properties,
+                               QueryNormalizer queryNormalizer,
+                               Executor searchExecutor) {
+        this(paths, properties, queryNormalizer, new com.smart.rag.infrastructure.concurrent.DefaultScopedTasks());
+    }
+
+    public HybridSearchService(List<RetrievalPath> paths,
+                               RagRetrievalProperties properties,
+                               QueryNormalizer queryNormalizer,
+                               ScopedTasks scopedTasks) {
+        this.paths = List.copyOf(paths);
+        this.properties = properties;
+        this.queryNormalizer = queryNormalizer;
+        this.scopedTasks = scopedTasks;
+    }
+
+    // ========================================================================
+    // Backward-compat constructors (for existing tests — DO NOT REMOVE until
+    // HybridDocumentRetrieverTest is migrated to the new API)
+    // ========================================================================
+
+    /**
+     * @deprecated Use the {@code List<RetrievalPath>} constructor instead.
+     * Retained solely for backward compatibility with existing tests.
+     */
+    @Deprecated
+    public HybridSearchService(VectorStore vectorStore,
+                               VectorStoreMapper vectorStoreMapper,
+                               RagRetrievalProperties properties,
+                               QueryNormalizer queryNormalizer,
+                               Executor searchExecutor) {
+        this(buildPaths(vectorStore, vectorStoreMapper, properties),
+                properties, queryNormalizer, searchExecutor);
+    }
+
+    /**
+     * @deprecated Use the {@code List<RetrievalPath>} constructor instead.
+     * Retained solely for backward compatibility with existing tests.
+     */
+    @Deprecated
     public HybridSearchService(VectorStore vectorStore,
                                VectorStoreMapper vectorStoreMapper,
                                RagRetrievalProperties properties,
                                QueryNormalizer queryNormalizer,
                                ScopedTasks scopedTasks) {
-        this.vectorStore = vectorStore;
-        this.vectorStoreMapper = vectorStoreMapper;
-        this.properties = properties;
-        this.queryNormalizer = queryNormalizer;
-        this.scopedTasks = scopedTasks;
+        this(buildPaths(vectorStore, vectorStoreMapper, properties),
+                properties, queryNormalizer, scopedTasks);
     }
+
+    /**
+     * Static factory that builds the RetrievalPath list from legacy deps.
+     * Mirrors the old hybridRetrievalEnabled conditional logic:
+     * - Always includes vector-search.
+     * - Includes bm25-search only when hybridRetrievalEnabled=true.
+     */
+    private static List<RetrievalPath> buildPaths(VectorStore vectorStore,
+                                                  VectorStoreMapper vectorStoreMapper,
+                                                  RagRetrievalProperties properties) {
+        List<RetrievalPath> result = new ArrayList<>();
+        result.add(new VectorRetrievalPath(vectorStore, properties));
+        if (properties.hybridRetrievalEnabled()) {
+            result.add(new Bm25RetrievalPath(vectorStoreMapper, new QueryNormalizer(), properties));
+        }
+        return result;
+    }
+
+    // ========================================================================
+    // Core search
+    // ========================================================================
 
     /**
      * 混合检索入口
@@ -74,135 +132,69 @@ public class HybridSearchService {
      */
     public List<Document> hybridSearch(String queryText, long userId, @Nullable Long teamId) {
         String normalized = queryNormalizer.normalize(queryText);
-        int vectorTopK = properties.vectorTopK();
-        int bm25TopK = properties.bm25TopK();
-
-        if (!properties.hybridRetrievalEnabled()) {
-            return vectorSearch(normalized, vectorTopK, userId, teamId);
-        }
 
         ScopeOptions options = ScopeOptions.builder("hybrid-search")
                 .policy(ScopePolicy.COLLECT_ALL)
                 .defaultTimeout(Duration.ofSeconds(SEARCH_TIMEOUT_SECONDS))
                 .build();
         try (var scope = scopedTasks.open("hybrid-search", options)) {
-            Subtask<List<ScoredDocument>> vectorTask =
-                    scope.fork("vector-search", () -> vectorSearchWithScore(normalized, vectorTopK, userId, teamId));
-            Subtask<List<ScoredDocument>> bm25Task =
-                    scope.fork("bm25-search", () -> bm25Search(normalized, bm25TopK, userId, teamId));
+            Map<RetrievalPath, Subtask<List<ScoredDocument>>> tasks = new LinkedHashMap<>();
+            for (RetrievalPath path : paths) {
+                tasks.put(path, scope.fork(path.name(), () -> path.search(normalized, userId, teamId)));
+            }
 
             scope.join();
 
-            List<ScoredDocument> vectorResults = taskResultOrEmpty(vectorTask, "Vector search");
-            List<ScoredDocument> bm25Results = taskResultOrEmpty(bm25Task, "BM25 search");
-            boolean vectorFailed = vectorTask.exception() != null;
-            boolean bm25Failed = bm25Task.exception() != null;
+            // Degradation: count failures
+            int failedCount = 0;
+            for (var entry : tasks.entrySet()) {
+                if (entry.getValue().exception() != null) {
+                    failedCount++;
+                    log.warn("{} degraded: {}", entry.getValue().name(),
+                            entry.getValue().exception().getMessage());
+                }
+            }
 
-            if (vectorFailed && bm25Failed) {
-                log.error("Both vector and BM25 search failed for queryLen={}", normalized.length());
+            if (failedCount == paths.size()) {
+                log.error("All {} retrieval path(s) failed for queryLen={}", paths.size(), normalized.length());
                 throw new ServiceException(ServiceErrorCode.INTERNAL_ERROR, "向量检索和 BM25 检索均不可用");
             }
 
-            if (vectorFailed || bm25Failed) {
-                log.warn("Partial search degradation: vector={}, bm25={}",
-                        vectorFailed ? "FAILED" : "OK", bm25Failed ? "FAILED" : "OK");
+            if (failedCount > 0) {
+                log.warn("Partial search degradation: {}/{} paths failed", failedCount, paths.size());
             }
 
-            List<Document> fused = rrfFusion(vectorResults, bm25Results);
-            log.debug("Hybrid search: queryLen={}, vectorFailed={}, bm25Failed={}, fused={}, teamId={}",
-                    normalized.length(), vectorFailed, bm25Failed, fused.size(), teamId);
+            List<Document> fused = rrfFusion(tasks);
+            log.debug("Hybrid search: queryLen={}, paths={}, failed={}, fused={}, teamId={}",
+                    normalized.length(), paths.size(), failedCount, fused.size(), teamId);
 
             return fused;
         }
     }
 
-    // === 向量检索 ===
+    // ========================================================================
+    // RRF Fusion
+    // ========================================================================
 
-    private List<Document> vectorSearch(String queryText, int topK,
-                                        long userId, @Nullable Long teamId) {
-        try {
-            return vectorSearchOrThrow(queryText, topK, userId, teamId);
-        } catch (Exception e) {
-            log.warn("Vector search failed: {}", e.getMessage());
-            log.debug("Vector search exception detail", e);
-            return List.of();
-        }
-    }
-
-    private List<Document> vectorSearchOrThrow(String queryText, int topK,
-                                               long userId, @Nullable Long teamId) {
-        FilterExpressionBuilder filterBuilder = new FilterExpressionBuilder();
-        var filter = teamId != null
-                ? filterBuilder.eq("teamId", String.valueOf(teamId)).build()
-                : filterBuilder.eq("userId", String.valueOf(userId)).build();
-
-        return vectorStore.similaritySearch(
-                SearchRequest.builder()
-                        .query(queryText)
-                        .topK(topK)
-                        .similarityThreshold(properties.similarityThreshold())
-                        .filterExpression(filter)
-                        .build()
-        );
-    }
-
-    private List<ScoredDocument> vectorSearchWithScore(String queryText, int topK,
-                                                       long userId, @Nullable Long teamId) {
-        List<Document> docs = vectorSearchOrThrow(queryText, topK, userId, teamId);
-        List<ScoredDocument> results = new ArrayList<>(docs.size());
-        for (int i = 0; i < docs.size(); i++) {
-            Document doc = docs.get(i);
-            double vectorScore = doc.getScore() != null ? doc.getScore() : 0.5;
-            results.add(new ScoredDocument(doc, i + 1, vectorScore));
-        }
-        return results;
-    }
-
-    // === BM25 全文检索 ===
-
-    private List<ScoredDocument> bm25Search(String queryText, int topK,
-                                            long userId, @Nullable Long teamId) {
-        String sanitized = queryNormalizer.sanitizeForTsQuery(queryText);
-        if (sanitized.isBlank()) {
-            return List.of();
-        }
-
-        String isolationField = teamId != null ? "teamId" : "userId";
-        String isolationValue = teamId != null ? String.valueOf(teamId) : String.valueOf(userId);
-        String ftsConfig = properties.ftsConfig();
-
-        List<Document> docs = vectorStoreMapper.bm25Search(
-                ftsConfig, sanitized, isolationField, isolationValue, topK);
-
-        List<ScoredDocument> results = new ArrayList<>(docs.size());
-        for (int i = 0; i < docs.size(); i++) {
-            results.add(new ScoredDocument(docs.get(i), i + 1, 0.0));
-        }
-        return results;
-    }
-
-    // === RRF 融合 ===
-
-    private List<Document> rrfFusion(List<ScoredDocument> vectorResults, List<ScoredDocument> bm25Results) {
+    private List<Document> rrfFusion(Map<RetrievalPath, Subtask<List<ScoredDocument>>> tasks) {
         int k = properties.rrfK();
         Map<String, Double> scores = new HashMap<>();
         Map<String, Document> docMap = new HashMap<>();
 
-        // 向量检索：加权 RRF -- score * 1/(k + rank)
-        for (ScoredDocument sd : vectorResults) {
-            String docId = sd.doc.getId();
-            if (docId == null) continue;
-            double weighted = sd.score * (1.0 / (k + sd.rank));
-            scores.merge(docId, weighted, Double::sum);
-            docMap.putIfAbsent(docId, sd.doc);
-        }
+        for (var entry : tasks.entrySet()) {
+            RetrievalPath path = entry.getKey();
+            List<ScoredDocument> docs = taskResultOrEmpty(entry.getValue(), path.name());
+            boolean scored = path.rrfWeighting() == RetrievalPath.RrfWeighting.SCORE_WEIGHTED;
 
-        // BM25：纯排名 RRF
-        for (ScoredDocument sd : bm25Results) {
-            String docId = sd.doc.getId();
-            if (docId == null) continue;
-            scores.merge(docId, 1.0 / (k + sd.rank), Double::sum);
-            docMap.putIfAbsent(docId, sd.doc);
+            for (ScoredDocument sd : docs) {
+                String docId = sd.doc().getId();
+                if (docId == null) continue;
+                double contribution = scored
+                        ? sd.score() * (1.0 / (k + sd.rank()))
+                        : 1.0 / (k + sd.rank());
+                scores.merge(docId, contribution, Double::sum);
+                docMap.putIfAbsent(docId, sd.doc());
+            }
         }
 
         return scores.entrySet().stream()
@@ -219,7 +211,9 @@ public class HybridSearchService {
                 .toList();
     }
 
-    // === 工具方法 ===
+    // ========================================================================
+    // Utility
+    // ========================================================================
 
     private List<ScoredDocument> taskResultOrEmpty(
             Subtask<List<ScoredDocument>> task,
@@ -236,10 +230,6 @@ public class HybridSearchService {
         if (failure instanceof TimeoutException) {
             throw new java.util.concurrent.CompletionException(failure);
         }
-        log.warn("{} degraded: {}", branchName, failure.getMessage());
-        log.debug("{} exception detail", branchName, failure);
         return List.of();
     }
-
-    private record ScoredDocument(Document doc, int rank, double score) {}
 }

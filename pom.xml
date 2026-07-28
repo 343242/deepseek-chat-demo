@@ -397,6 +397,13 @@
             <artifactId>opendataloader-pdf-core</artifactId>
             <version>1.11.0</version>
         </dependency>
+
+        <!-- fastutil: primitive collection types (Long2DoubleMap, Long2IntMap, Long2ObjectMap) for graph algorithm layer -->
+        <dependency>
+            <groupId>it.unimi.dsi</groupId>
+            <artifactId>fastutil</artifactId>
+            <version>8.5.18</version>
+        </dependency>
     </dependencies>
 
     <dependencyManagement>

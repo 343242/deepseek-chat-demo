@@ -3,7 +3,7 @@
   "name": "ecr-graph-algorithm",
   "title": "WeightedGraph + AdjacencyListGraph + Louvain detector (zero business deps)",
   "description": "WeightedGraph + AdjacencyListGraph + Louvain detector (zero business deps)",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

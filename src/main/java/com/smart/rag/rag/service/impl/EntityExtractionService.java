@@ -83,6 +83,8 @@ public class EntityExtractionService {
     private final VectorStoreMapper vectorStoreMapper;
     private final LlmClientRegistry llmClientRegistry;
     private final ExecutorService etlCpuExecutor;
+    private final EntityIndexService entityIndexService;
+    private final CommunityDetectionJob communityDetectionJob;
 
     public EntityExtractionService(EntityCanonicalizationService canonicalizationService,
                                     EntityEmbeddingService embeddingService,
@@ -90,7 +92,9 @@ public class EntityExtractionService {
                                     EventMapper eventMapper,
                                     VectorStoreMapper vectorStoreMapper,
                                     LlmClientRegistry llmClientRegistry,
-                                    ExecutorService etlCpuExecutor) {
+                                    ExecutorService etlCpuExecutor,
+                                    EntityIndexService entityIndexService,
+                                    CommunityDetectionJob communityDetectionJob) {
         this.canonicalizationService = canonicalizationService;
         this.embeddingService = embeddingService;
         this.entityMapper = entityMapper;
@@ -98,6 +102,8 @@ public class EntityExtractionService {
         this.vectorStoreMapper = vectorStoreMapper;
         this.llmClientRegistry = llmClientRegistry;
         this.etlCpuExecutor = etlCpuExecutor;
+        this.entityIndexService = entityIndexService;
+        this.communityDetectionJob = communityDetectionJob;
     }
 
 
@@ -180,6 +186,10 @@ public class EntityExtractionService {
 
                 // Step 6: 标记 community_stale=TRUE
                 entityMapper.markCommunityStale(affectedEntityIds);
+
+                // Step 7: 触发离线结构分批处理（§8.1 Step 6 续：共现图 + weak_tie + Louvain + bridge）
+                // failure-isolated（§8.3）：结构分计算失败不影响 Path A/B，下次 ETL 重试
+                recomputeStructureScores(userId, teamId);
             }
 
             log.info("Entity extraction completed for documentId={}: {} entities, {} extractions",
@@ -188,6 +198,22 @@ public class EntityExtractionService {
         } catch (Exception e) {
             // 整体失败不影响 Path A/B（§8.3 / AC7）
             log.error("Entity extraction failed for documentId={}: {}", documentId, e.getMessage(), e);
+        }
+    }
+
+    /**
+     * §8.1 Step 6 续：触发作用域结构分重算（共现图投影 + weak_tie + Louvain 社区 + bridge）。
+     * 顺序：{@link EntityIndexService#recomputeWeakTieScores}（刷新共现图 + 计算 weak_tie）
+     * → {@link CommunityDetectionJob#run}（Louvain + bridge + clearStale）。
+     * 失败隔离（§8.3）：任一步失败仅记录日志，不影响 Path A/B；entity 层用默认分兜底，下次 ETL 重试。
+     */
+    private void recomputeStructureScores(Long userId, @Nullable Long teamId) {
+        try {
+            entityIndexService.recomputeWeakTieScores(userId, teamId);
+            communityDetectionJob.run(userId, teamId);
+        } catch (Exception e) {
+            log.error("Structure score recompute failed for userId={}, teamId={}: {}",
+                    userId, teamId, e.getMessage(), e);
         }
     }
 

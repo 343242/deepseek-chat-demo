@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.smart.rag.rag.mapper.EntityCooccurrenceMapper">
+
+    <resultMap id="cooccurrenceRow" type="com.smart.rag.rag.mapper.EntityCooccurrenceMapper$CooccurrenceRow">
+        <constructor>
+            <arg column="entity_a" javaType="long"/>
+            <arg column="entity_b" javaType="long"/>
+            <arg column="co_count" javaType="int"/>
+        </constructor>
+    </resultMap>
+
+    <!-- 读取作用域内全部共现边（CooccurrenceGraphLoader 用） -->
+    <select id="selectByScope" resultMap="cooccurrenceRow">
+        SELECT entity_a, entity_b, co_count
+        FROM rag_entity_cooccurrence
+        WHERE user_id = #{userId}
+          AND (#{teamId} IS NULL AND team_id IS NULL OR team_id = #{teamId})
+    </select>
+
+    <!-- 清除作用域内全部共现边（全量重投影前置，去除失效边 §5.3） -->
+    <delete id="deleteByScope">
+        DELETE FROM rag_entity_cooccurrence
+        WHERE user_id = #{userId}
+          AND (#{teamId} IS NULL AND team_id IS NULL OR team_id = #{teamId})
+    </delete>
+
+    <!-- 共现图投影（§5.4）：从 rag_chunk_entity 自连接投影，LEAST/GREATEST 规范边方向。
+         按作用域过滤；ON CONFLICT 幂等（相同数据重跑 co_count 不变、无重复行）。 -->
+    <insert id="projectCooccurrence">
+        INSERT INTO rag_entity_cooccurrence (entity_a, entity_b, co_count, user_id, team_id)
+        SELECT
+            LEAST(e1.entity_id, e2.entity_id) AS entity_a,
+            GREATEST(e1.entity_id, e2.entity_id) AS entity_b,
+            count(*) AS co_count,
+            re1.user_id,
+            re1.team_id
+        FROM rag_chunk_entity e1
+        JOIN rag_chunk_entity e2
+          ON e1.chunk_id = e2.chunk_id
+         AND e1.entity_id &lt; e2.entity_id
+        JOIN rag_entity re1 ON re1.id = e1.entity_id
+        JOIN rag_entity re2 ON re2.id = e2.entity_id
+        WHERE re1.user_id = re2.user_id
+          AND COALESCE(re1.team_id, -1) = COALESCE(re2.team_id, -1)
+          AND re1.user_id = #{userId}
+          AND (#{teamId} IS NULL AND re1.team_id IS NULL OR re1.team_id = #{teamId})
+        GROUP BY LEAST(e1.entity_id, e2.entity_id),
+                 GREATEST(e1.entity_id, e2.entity_id),
+                 re1.user_id, re1.team_id
+        ON CONFLICT (user_id, COALESCE(team_id, -1), LEAST(entity_a, entity_b), GREATEST(entity_a, entity_b))
+        DO UPDATE SET co_count = EXCLUDED.co_count
+    </insert>
+
+    <!-- weak_tie_score 批量计算（§5.1 CTE）：neighbor_sets → neighbor_pairs → embeddedness → UPDATE。
+         WHERE re.degree < 100 性能预算（hub 维持默认 0.5）。无邻居/无邻居对的实体不在结果集中，保持默认。 -->
+    <update id="updateWeakTieScores">
+        WITH neighbor_sets AS (
+            SELECT
+                vn.entity_id,
+                array_agg(vn.neighbor_id) AS neighbors
+            FROM v_entity_neighbors vn
+            JOIN rag_entity re ON re.id = vn.entity_id
+            WHERE vn.user_id = #{userId}
+              AND (#{teamId} IS NULL AND vn.team_id IS NULL OR vn.team_id = #{teamId})
+              AND re.degree &lt; 100
+            GROUP BY vn.entity_id
+        ),
+        neighbor_pairs AS (
+            SELECT
+                ns.entity_id,
+                n1.neighbor_id AS n1,
+                n2.neighbor_id AS n2,
+                (
+                    SELECT count(*) FROM v_entity_neighbors vn1
+                    WHERE vn1.entity_id = n1.neighbor_id
+                      AND vn1.neighbor_id IN (
+                          SELECT neighbor_id FROM v_entity_neighbors WHERE entity_id = n2.neighbor_id
+                      )
+                ) AS common_count,
+                (SELECT count(*) FROM v_entity_neighbors WHERE entity_id = n1.neighbor_id) AS deg_n1,
+                (SELECT count(*) FROM v_entity_neighbors WHERE entity_id = n2.neighbor_id) AS deg_n2
+            FROM neighbor_sets ns
+            JOIN v_entity_neighbors n1 ON n1.entity_id = ns.entity_id
+            JOIN v_entity_neighbors n2 ON n2.entity_id = ns.entity_id
+            WHERE n1.neighbor_id &lt; n2.neighbor_id
+              AND n1.user_id = #{userId}
+              AND (#{teamId} IS NULL AND n1.team_id IS NULL OR n1.team_id = #{teamId})
+        ),
+        embeddedness AS (
+            SELECT
+                entity_id,
+                avg(common_count::float / NULLIF(deg_n1 + deg_n2 - common_count, 0)) AS avg_emb
+            FROM neighbor_pairs
+            GROUP BY entity_id
+        )
+        UPDATE rag_entity e
+        SET weak_tie_score = COALESCE(1.0 - emb.avg_emb, 0.5),
+            updated_at = NOW()
+        FROM embeddedness emb
+        WHERE e.id = emb.entity_id
+          AND e.user_id = #{userId}
+    </update>
+
+</mapper>

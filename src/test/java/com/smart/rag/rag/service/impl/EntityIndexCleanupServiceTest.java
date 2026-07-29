@@ -9,19 +9,16 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.transaction.TransactionStatus;
 import org.springframework.transaction.support.TransactionTemplate;
 
-import java.util.Collections;
 import java.util.List;
 import java.util.function.Consumer;
 import java.util.Map;
 
-import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
@@ -87,7 +84,7 @@ class EntityIndexCleanupServiceTest {
             verify(chunkEntityMapper).deleteByChunkIds(eq(List.of("uuid-1", "uuid-2")));
             verify(eventMapper).deleteByChunkIds(eq(List.of("uuid-1", "uuid-2")));
             verify(entityMapper).recalculateDegree(eq(List.of(10L, 20L)));
-            verify(entityMapper).deleteOrphans();
+            verify(entityMapper).deleteOrphans(eq(List.of(10L, 20L)));
             verify(entityMapper).markCommunityStale(eq(List.of(10L, 20L)));
         }
 
@@ -115,7 +112,7 @@ class EntityIndexCleanupServiceTest {
 
             verify(transactionTemplate).executeWithoutResult(any());
             verify(entityMapper).recalculateDegree(eq(List.of(10L)));
-            verify(entityMapper).deleteOrphans();
+            verify(entityMapper).deleteOrphans(eq(List.of(10L)));
             verify(entityMapper).markCommunityStale(eq(List.of(10L)));
             verify(chunkEntityMapper, never()).deleteByChunkIds(anyList());
         }

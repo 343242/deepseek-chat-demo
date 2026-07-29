@@ -15,14 +15,12 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 import java.util.List;
 
-import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
@@ -60,16 +58,22 @@ class EntityEmbeddingServiceTest {
     class EmbedEntitiesTests {
 
         @Test
-        @DisplayName("已有 embedding 的实体被跳过")
-        void skipAlreadyEmbedded() {
+        @DisplayName("已有 embedding 的实体仍被重新嵌入")
+        void reEmbedAlreadyEmbedded() {
+            when(llmClientRegistry.getDefault(LlmCapability.EMBEDDING, EmbeddingCapable.class))
+                    .thenReturn(embeddingCapable);
+            when(embeddingCapable.embedBatch(anyList(), eq(EmbeddingType.DOCUMENT)))
+                    .thenReturn(List.of(new float[]{0.9f, 0.1f}));
+
             RagEntity entity = new RagEntity();
             entity.setId(1L);
-            entity.setDescription("test");
+            entity.setDescription("updated description");
             entity.setEmbedding(new float[]{0.1f, 0.2f});
 
             service.embedEntities(List.of(entity));
 
-            verify(llmClientRegistry, never()).getDefault(any(), any());
+            verify(embeddingCapable).embedBatch(anyList(), eq(EmbeddingType.DOCUMENT));
+            verify(entityMapper).updateEmbedding(eq(1L), any(float[].class));
         }
 
         @Test

@@ -9,11 +9,13 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.text.Normalizer;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.Map;
 import java.util.stream.Collectors;
 
@@ -37,11 +39,14 @@ public class EntityCanonicalizationService {
 
     private final EntityMapper entityMapper;
     private final ChunkEntityMapper chunkEntityMapper;
+    private final TransactionTemplate transactionTemplate;
 
     public EntityCanonicalizationService(EntityMapper entityMapper,
-                                         ChunkEntityMapper chunkEntityMapper) {
+                                         ChunkEntityMapper chunkEntityMapper,
+                                         TransactionTemplate transactionTemplate) {
         this.entityMapper = entityMapper;
         this.chunkEntityMapper = chunkEntityMapper;
+        this.transactionTemplate = transactionTemplate;
     }
 
     /**
@@ -58,15 +63,15 @@ public class EntityCanonicalizationService {
      * 抽取结果的内部分组结构
      */
     public record ParsedExtraction(
-        String chunkId,
-        String eventSummary,
-        List<ParsedEntity> entities
+            String chunkId,
+            String eventSummary,
+            List<ParsedEntity> entities
     ) {}
 
     public record ParsedEntity(
-        String name,
-        String description,
-        String type
+            String name,
+            String description,
+            String type
     ) {}
 
     /**
@@ -120,53 +125,59 @@ public class EntityCanonicalizationService {
                 })
                 .toList();
 
-        // 3. 批量 UPSERT
-        entityMapper.upsertByNormUserTeam(entitiesToUpsert);
+        // 3-6. 在事务中执行 UPSERT + chunk_entity 插入 + degree 重算
+        //    防止并发 cleanup 看到中间态 degree=0 导致实体被误删
+        AtomicReference<List<Long>> entityIdsRef = new AtomicReference<>();
+        transactionTemplate.executeWithoutResult(status -> {
+            // 3. 批量 UPSERT
+            entityMapper.upsertByNormUserTeam(entitiesToUpsert);
 
-        // 4. 查询 UPSERT 后的 entity ids（按 name_norm + user_id + team_id 查回）
-        List<RagEntity> upserted = findEntitiesByNameNorms(
-                aggregated.keySet(), userId, teamId);
+            // 4. 查询 UPSERT 后的 entity ids（按 name_norm + user_id + team_id 查回）
+            List<RagEntity> upserted = findEntitiesByNameNorms(
+                    aggregated.keySet(), userId, teamId);
 
-        // 5. 批量 INSERT rag_chunk_entity
-        List<RagChunkEntity> chunkEntities = new ArrayList<>();
-        for (ParsedExtraction ext : extractions) {
-            for (ParsedEntity pe : ext.entities()) {
-                String nameNorm = canonicalize(pe.name());
-                if (nameNorm.isEmpty()) {
-                    continue;
+            // 5. 批量 INSERT rag_chunk_entity
+            List<RagChunkEntity> chunkEntities = new ArrayList<>();
+            for (ParsedExtraction ext : extractions) {
+                for (ParsedEntity pe : ext.entities()) {
+                    String nameNorm = canonicalize(pe.name());
+                    if (nameNorm.isEmpty()) {
+                        continue;
+                    }
+                    // 找到对应的 entity id
+                    upserted.stream()
+                            .filter(e -> e.getNameNorm().equals(nameNorm))
+                            .findFirst()
+                            .ifPresent(entity -> {
+                                RagChunkEntity ce = new RagChunkEntity();
+                                ce.setChunkId(ext.chunkId());
+                                ce.setEntityId(entity.getId());
+                                chunkEntities.add(ce);
+                            });
                 }
-                // 找到对应的 entity id
-                upserted.stream()
-                        .filter(e -> e.getNameNorm().equals(nameNorm))
-                        .findFirst()
-                        .ifPresent(entity -> {
-                            RagChunkEntity ce = new RagChunkEntity();
-                            ce.setChunkId(ext.chunkId());
-                            ce.setEntityId(entity.getId());
-                            chunkEntities.add(ce);
-                        });
             }
-        }
 
-        if (!chunkEntities.isEmpty()) {
-            // 分批插入（MyBatis foreach 限制）
-            int batchSize = 500;
-            for (int i = 0; i < chunkEntities.size(); i += batchSize) {
-                List<RagChunkEntity> batch = chunkEntities.subList(i, Math.min(i + batchSize, chunkEntities.size()));
-                chunkEntityMapper.insertBatch(batch);
+            if (!chunkEntities.isEmpty()) {
+                // 分批插入（MyBatis foreach 限制）
+                int batchSize = 500;
+                for (int i = 0; i < chunkEntities.size(); i += batchSize) {
+                    List<RagChunkEntity> batch = chunkEntities.subList(i, Math.min(i + batchSize, chunkEntities.size()));
+                    chunkEntityMapper.insertBatch(batch);
+                }
             }
-        }
 
-        // 6. 重算 degree
-        List<Long> entityIds = upserted.stream().map(RagEntity::getId).toList();
-        if (!entityIds.isEmpty()) {
-            entityMapper.recalculateDegree(entityIds);
-        }
+            // 6. 重算 degree
+            List<Long> ids = upserted.stream().map(RagEntity::getId).toList();
+            if (!ids.isEmpty()) {
+                entityMapper.recalculateDegree(ids);
+            }
+            entityIdsRef.set(ids);
+        });
 
-        log.info("Canonicalized {} entities for {} chunks, {} chunk-entity links created",
-                aggregated.size(), allChunkIds.size(), chunkEntities.size());
+        log.info("Canonicalized {} entities for {} chunks",
+                aggregated.size(), allChunkIds.size());
 
-        return entityIds;
+        return entityIdsRef.get();
     }
 
     /**

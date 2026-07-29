@@ -58,14 +58,13 @@ public class EntityEmbeddingService {
         int batchSize = properties.getEmbeddingBatchSize();
         int maxLen = properties.getDescriptionMaxLength();
 
-        // 过滤已有 embedding 的实体
+        // 过滤有效实体（description 非空）
         List<RagEntity> toEmbed = entities.stream()
-                .filter(e -> e.getEmbedding() == null || e.getEmbedding().length == 0)
                 .filter(e -> e.getDescription() != null && !e.getDescription().isEmpty())
                 .toList();
 
         if (toEmbed.isEmpty()) {
-            log.debug("No entities need embedding (all already embedded or empty description)");
+            log.debug("No entities need embedding (all empty description)");
             return;
         }
 

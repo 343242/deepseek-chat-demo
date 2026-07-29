@@ -24,11 +24,12 @@ public interface EntityMapper extends BaseMapper<RagEntity> {
     void recalculateDegree(@Param("entityIds") List<Long> entityIds);
 
     /**
-     * 删除 degree=0 的孤儿实体
+     * 删除 degree=0 的孤儿实体（仅限指定 ID 列表）
      *
+     * @param entityIds 受影响的实体 ID 列表
      * @return 删除行数
      */
-    int deleteOrphans();
+    int deleteOrphans(@Param("entityIds") List<Long> entityIds);
 
     /**
      * 标记指定实体 community_stale=TRUE

@@ -26,9 +26,10 @@
         <foreach collection="entityIds" item="id" open="(" separator="," close=")">#{id}</foreach>
     </update>
 
-    <!-- 删除 degree=0 的孤儿实体 -->
+    <!-- 删除 degree=0 的孤儿实体（仅限指定 ID 列表） -->
     <delete id="deleteOrphans">
-        DELETE FROM rag_entity WHERE degree = 0
+        DELETE FROM rag_entity WHERE degree = 0 AND id IN
+        <foreach collection="entityIds" item="id" open="(" separator="," close=")">#{id}</foreach>
     </delete>
 
     <!-- 标记指定实体 community_stale=TRUE -->
@@ -42,7 +43,7 @@
     <!-- 批量更新 embedding -->
     <update id="updateEmbedding">
         UPDATE rag_entity
-        SET embedding = #{embedding}::vector,
+        SET embedding = #{embedding,typeHandler=com.smart.rag.rag.mapper.VectorTypeHandler}::vector,
             updated_at = NOW()
         WHERE id = #{id}
     </update>

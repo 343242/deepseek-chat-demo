@@ -6,7 +6,6 @@ import com.smart.rag.infrastructure.llm.LlmCapability;
 import com.smart.rag.infrastructure.llm.LlmResponse;
 import com.smart.rag.infrastructure.llm.registry.LlmClientRegistry;
 import com.smart.rag.rag.entity.RagEntity;
-import com.smart.rag.rag.event.EtlCompletedEvent;
 import com.smart.rag.rag.event.EtlVectorizedEvent;
 import com.smart.rag.rag.mapper.EntityMapper;
 import com.smart.rag.rag.mapper.EventMapper;
@@ -65,24 +64,23 @@ class EntityExtractionServiceTest {
             """;
 
     @Nested
-    @DisplayName("事件监听器委托同一方法")
+    @DisplayName("onEtlVectorized 事件监听器")
     class EventListenerTests {
 
         @Test
-        @DisplayName("onEtlCompleted 委托 extractAndIndex")
-        void onEtlCompletedDelegates() {
-            // 空文档 → 快速返回
+        @DisplayName("onEtlVectorized 委托 extractAndIndex")
+        void onEtlVectorizedDelegates() {
             when(vectorStoreMapper.selectChunksByDocumentId(anyString()))
                     .thenReturn(List.of());
 
-            service.onEtlCompleted(new EtlCompletedEvent(1L, 100L, null));
+            service.onEtlVectorized(new EtlVectorizedEvent(1L, 100L, null));
 
             verify(vectorStoreMapper).selectChunksByDocumentId("1");
         }
 
         @Test
-        @DisplayName("onEtlVectorized 委托 extractAndIndex")
-        void onEtlVectorizedDelegates() {
+        @DisplayName("onEtlVectorized with teamId")
+        void onEtlVectorizedWithTeamDelegates() {
             when(vectorStoreMapper.selectChunksByDocumentId(anyString()))
                     .thenReturn(List.of());
 

@@ -1,6 +1,8 @@
 package com.smart.rag.rag.etl;
 
 import com.smart.rag.infrastructure.concurrent.ExecutorMode;
+import com.smart.rag.rag.event.EtlVectorizedEvent;
+import org.springframework.context.ApplicationEventPublisher;
 import com.smart.rag.infrastructure.concurrent.ScopeJoiner;
 import com.smart.rag.infrastructure.concurrent.ScopeOptions;
 import com.smart.rag.infrastructure.concurrent.ScopePolicy;
@@ -37,6 +39,7 @@ public class StandardStrategy implements EtlRouteStrategy {
     private final ExecutorService ioExecutor;
     private final ExecutorService cpuExecutor;
     private final ScopedTasks scopedTasks;
+    private final ApplicationEventPublisher eventPublisher;
 
     public StandardStrategy(Extractor extractor,
                             Transformer transformer,
@@ -44,7 +47,8 @@ public class StandardStrategy implements EtlRouteStrategy {
                             EtlStatusManager statusManager,
                             ExecutorService etlIoExecutor,
                             ExecutorService etlCpuExecutor,
-                            ScopedTasks scopedTasks) {
+                            ScopedTasks scopedTasks,
+                            ApplicationEventPublisher eventPublisher) {
         this.extractor = extractor;
         this.transformer = transformer;
         this.loader = loader;
@@ -52,6 +56,7 @@ public class StandardStrategy implements EtlRouteStrategy {
         this.ioExecutor = etlIoExecutor;
         this.cpuExecutor = etlCpuExecutor;
         this.scopedTasks = scopedTasks;
+        this.eventPublisher = eventPublisher;
     }
 
     @Override
@@ -187,6 +192,7 @@ public class StandardStrategy implements EtlRouteStrategy {
         if (chunkCount == null) {
             return EtlResult.failed(c.documentId(), "Load failed");
         }
+        eventPublisher.publishEvent(new EtlVectorizedEvent(c.documentId(), c.userId(), c.teamId()));
         return EtlResult.success(c.documentId(), chunkCount);
     }
 

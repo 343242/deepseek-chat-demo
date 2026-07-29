@@ -3,6 +3,7 @@ package com.smart.rag.rag.etl;
 import com.smart.rag.infrastructure.concurrent.*;
 import com.smart.rag.rag.config.EtlFastTrackProperties;
 import com.smart.rag.rag.mapper.VectorStoreMapper;
+import com.smart.rag.rag.event.EtlVectorizedEvent;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.document.Document;
@@ -16,6 +17,7 @@ import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -27,9 +29,10 @@ class StructuredEtlStrategyTest {
     @DisplayName("StandardStrategy opens scoped tasks for extract transform and load")
     void standardStrategy_opensScopedTasksForEachBatchStage() {
         Extractor extractor = mock(Extractor.class);
-        Transformer transformer = mock(Transformer.class);
         Loader loader = mock(Loader.class);
+        Transformer transformer = mock(Transformer.class);
         EtlStatusManager statusManager = mock(EtlStatusManager.class);
+        ApplicationEventPublisher eventPublisher = mock(ApplicationEventPublisher.class);
         RecordingScopedTasks scopedTasks = new RecordingScopedTasks();
         ExecutorService ioExecutor = executor("test-io-");
         ExecutorService cpuExecutor = executor("test-cpu-");
@@ -42,13 +45,14 @@ class StructuredEtlStrategyTest {
 
         try {
             StandardStrategy strategy = new StandardStrategy(
-                    extractor, transformer, loader, statusManager, ioExecutor, cpuExecutor, scopedTasks);
+                    extractor, transformer, loader, statusManager, ioExecutor, cpuExecutor, scopedTasks, eventPublisher);
 
             List<EtlResult> results = strategy.execute(List.of(candidate));
 
             assertThat(results).containsExactly(EtlResult.success(1L, 1));
             assertThat(scopedTasks.scopeNames())
                     .containsExactly("standard-extract", "standard-transform", "standard-load");
+            verify(eventPublisher).publishEvent(any(EtlVectorizedEvent.class));
         } finally {
             ioExecutor.shutdown();
             cpuExecutor.shutdown();

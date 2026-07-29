@@ -10,7 +10,6 @@ import com.smart.rag.infrastructure.llm.LlmResponse;
 import com.smart.rag.infrastructure.llm.registry.LlmClientRegistry;
 import com.smart.rag.rag.entity.RagEntity;
 import com.smart.rag.rag.entity.RagEvent;
-import com.smart.rag.rag.event.EtlCompletedEvent;
 import com.smart.rag.rag.event.EtlVectorizedEvent;
 import com.smart.rag.rag.mapper.EntityMapper;
 import com.smart.rag.rag.mapper.EventMapper;
@@ -31,7 +30,7 @@ import java.util.concurrent.ExecutorService;
 /**
  * 实体抽取编排服务（SRP: 仅编排，不含规范化/embedding 逻辑）
  * <p>
- * 监听 ETL 完成事件，调度：
+ * 监听 ETL 向量化完成事件（{@link EtlVectorizedEvent}），调度：
  * <ol>
  *   <li>从 vector_store 查文档所有 chunk</li>
  *   <li>并行 LLM 抽取（per chunk，failure-isolated）</li>
@@ -40,6 +39,9 @@ import java.util.concurrent.ExecutorService;
  *   <li>委托 EntityEmbeddingService embedding</li>
  *   <li>标记 community_stale=TRUE</li>
  * </ol>
+ * <p>
+ * 仅响应 {@link EtlVectorizedEvent}（chunks 就绪信号），不监听 {@code EtlCompletedEvent}，
+ * 避免 FastTrack 路径上对未分块 BM25 行的重复抽取。
  */
 @Service
 @ConditionalOnProperty(prefix = "app.rag.entity", name = "enabled", havingValue = "true")
@@ -98,11 +100,6 @@ public class EntityExtractionService {
         this.etlCpuExecutor = etlCpuExecutor;
     }
 
-    @EventListener
-    @Async("etlIoExecutor")
-    public void onEtlCompleted(EtlCompletedEvent event) {
-        extractAndIndex(event.documentId(), event.userId(), event.teamId());
-    }
 
     @EventListener
     @Async("etlIoExecutor")

@@ -13,8 +13,11 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.transaction.TransactionStatus;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.List;
+import java.util.function.Consumer;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.*;
@@ -31,9 +34,22 @@ class EntityCanonicalizationServiceTest {
     private EntityMapper entityMapper;
     @Mock
     private ChunkEntityMapper chunkEntityMapper;
+    @Mock
+    private TransactionTemplate transactionTemplate;
 
     @InjectMocks
     private EntityCanonicalizationService service;
+
+    @BeforeEach
+    void setUp() {
+        // 模拟 TransactionTemplate：立即执行 Consumer 回调
+        lenient().doAnswer(invocation -> {
+            @SuppressWarnings("unchecked")
+            Consumer<TransactionStatus> consumer = invocation.getArgument(0);
+            consumer.accept(null);
+            return null;
+        }).when(transactionTemplate).executeWithoutResult(any());
+    }
 
     // ==================== canonicalize ====================
 
@@ -84,15 +100,6 @@ class EntityCanonicalizationServiceTest {
     @Nested
     @DisplayName("aggregateAndUpsert — 分组拼接 + UPSERT")
     class AggregateAndUpsertTests {
-
-        @BeforeEach
-        void setUp() {
-            // 模拟 UPSERT 后 selectList 返回带 ID 的实体
-            lenient().when(entityMapper.selectList(any())).thenAnswer(inv -> {
-                var wrapper = inv.getArgument(0);
-                return List.of();  // 简化：返回空列表（实际会按条件查）
-            });
-        }
 
         @Test
         @DisplayName("同名实体跨 chunk description 拼接")

@@ -78,7 +78,7 @@ public class EntityIndexCleanupService {
             log.warn("Entity IDs found but no chunk IDs for documentId={}, recalc degree only", documentId);
             transactionTemplate.executeWithoutResult(status -> {
                 entityMapper.recalculateDegree(affectedEntityIds);
-                entityMapper.deleteOrphans();
+                entityMapper.deleteOrphans(affectedEntityIds);
                 entityMapper.markCommunityStale(affectedEntityIds);
             });
             return;
@@ -96,7 +96,7 @@ public class EntityIndexCleanupService {
             entityMapper.recalculateDegree(affectedEntityIds);
 
             // 6. 删除 degree=0 孤儿实体
-            entityMapper.deleteOrphans();
+            entityMapper.deleteOrphans(affectedEntityIds);
 
             // 7. 标记 community_stale=TRUE
             entityMapper.markCommunityStale(affectedEntityIds);

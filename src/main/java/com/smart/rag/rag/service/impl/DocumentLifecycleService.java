@@ -5,8 +5,10 @@ import com.smart.rag.rag.entity.RagDocument;
 import com.smart.rag.rag.event.DocumentDeletedEvent;
 import com.smart.rag.rag.mapper.RagDocumentMapper;
 import com.smart.rag.rag.service.FileStorageService;
+import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 
@@ -31,6 +33,9 @@ public class DocumentLifecycleService {
     private final FileStorageService fileStorageService;
     private final RagDocumentMapper ragDocumentMapper;
     private final ApplicationEventPublisher eventPublisher;
+    @Autowired(required = false)
+    @Nullable
+    private EntityIndexCleanupService entityIndexCleanupService;
 
     public DocumentLifecycleService(Loader vectorStoreLoader,
                                     FileStorageService fileStorageService,
@@ -53,7 +58,15 @@ public class DocumentLifecycleService {
     public boolean cascadeDelete(RagDocument doc) {
         Long id = doc.getId();
 
-        // 1. 清理向量库
+        // 0. 清理实体索引（在删向量之前）
+        if (entityIndexCleanupService != null) {
+            try {
+                entityIndexCleanupService.cleanupByDocumentId(id);
+            } catch (Exception e) {
+                log.error("Failed to cleanup entity index for deleted docId={}: {}", id, e.getMessage());
+            }
+        }
+
         boolean vectorDeleted = false;
         try {
             vectorStoreLoader.deleteByDocumentId(id);

@@ -46,6 +46,10 @@ app:
       #     supports-thinking: false
   rag:
     fts-config: ${RAG_FTS_CONFIG:jiebacfg}
+    entity:
+      enabled: ${RAG_ENTITY_ENABLED:false}
+      embedding-batch-size: ${RAG_ENTITY_EMBEDDING_BATCH_SIZE:10}
+      description-max-length: ${RAG_ENTITY_DESCRIPTION_MAX_LENGTH:500}
   cag:
     enabled: ${CAG_ENABLED:true}
     inject-prompt: ${CAG_INJECT_PROMPT:true}

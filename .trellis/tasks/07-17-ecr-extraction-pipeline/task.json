@@ -3,7 +3,7 @@
   "name": "ecr-extraction-pipeline",
   "title": "Offline entity extraction/canonicalization/embedding + ETL events + cleanup",
   "description": "Offline entity extraction/canonicalization/embedding + ETL events + cleanup",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,

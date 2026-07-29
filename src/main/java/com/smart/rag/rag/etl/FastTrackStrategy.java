@@ -7,11 +7,13 @@ import com.smart.rag.infrastructure.concurrent.ScopePolicy;
 import com.smart.rag.infrastructure.concurrent.ScopedTasks;
 import com.smart.rag.infrastructure.concurrent.TaskScope;
 import com.smart.rag.rag.config.EtlFastTrackProperties;
+import com.smart.rag.rag.event.EtlVectorizedEvent;
 import com.smart.rag.rag.mapper.VectorStoreMapper;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.document.Document;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
@@ -49,6 +51,7 @@ public class FastTrackStrategy implements EtlRouteStrategy {
     private final EtlStatusManager statusManager;
     private final EtlFastTrackProperties fastTrackProperties;
     private final VectorStoreMapper vectorStoreMapper;
+    private final ApplicationEventPublisher eventPublisher;
     private final ExecutorService ioExecutor;
     private final ExecutorService cpuExecutor;
     private final ScopedTasks scopedTasks;
@@ -62,6 +65,7 @@ public class FastTrackStrategy implements EtlRouteStrategy {
                              EtlStatusManager statusManager,
                              EtlFastTrackProperties fastTrackProperties,
                              VectorStoreMapper vectorStoreMapper,
+                             ApplicationEventPublisher eventPublisher,
                              ExecutorService etlIoExecutor,
                              ExecutorService etlCpuExecutor,
                              ScopedTasks scopedTasks) {
@@ -71,6 +75,7 @@ public class FastTrackStrategy implements EtlRouteStrategy {
         this.statusManager = statusManager;
         this.fastTrackProperties = fastTrackProperties;
         this.vectorStoreMapper = vectorStoreMapper;
+        this.eventPublisher = eventPublisher;
         this.ioExecutor = etlIoExecutor;
         this.cpuExecutor = etlCpuExecutor;
         this.scopedTasks = scopedTasks;
@@ -194,6 +199,8 @@ public class FastTrackStrategy implements EtlRouteStrategy {
                     }
 
                     loader.load(chunks);
+                    eventPublisher.publishEvent(new EtlVectorizedEvent(
+                            c.documentId(), c.userId(), c.teamId()));
                     vectorStoreMapper.deleteFastTrackRows(c.documentId());
                     statusManager.updateChunkCount(c.documentId(), chunks.size());
                     log.info("FastTrack async completed: id={}, chunks={}", c.documentId(), chunks.size());

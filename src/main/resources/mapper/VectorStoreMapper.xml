@@ -102,4 +102,11 @@
         SELECT COUNT(*) FROM vector_store WHERE metadata->> #{isolationField} = #{isolationValue}
     </select>
 
+    <!-- ======================== Entity Extraction Support ======================== -->
+
+    <select id="selectChunksByDocumentId" resultMap="vectorStoreRow">
+        SELECT id, content, metadata
+        FROM vector_store
+        WHERE metadata->>'documentId' = #{documentId}
+    </select>
 </mapper>

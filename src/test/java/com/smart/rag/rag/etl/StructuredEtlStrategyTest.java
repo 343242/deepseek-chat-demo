@@ -6,6 +6,7 @@ import com.smart.rag.rag.mapper.VectorStoreMapper;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.ai.document.Document;
+import org.springframework.context.ApplicationEventPublisher;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -80,6 +81,7 @@ class StructuredEtlStrategyTest {
                     statusManager,
                     new EtlFastTrackProperties(),
                     vectorStoreMapper,
+                    mock(ApplicationEventPublisher.class),
                     ioExecutor,
                     cpuExecutor,
                     scopedTasks

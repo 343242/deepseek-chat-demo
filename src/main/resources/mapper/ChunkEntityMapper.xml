@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.smart.rag.rag.mapper.ChunkEntityMapper">
+
+    <!-- 通过 documentId（经 vector_store 关联）查出受影响的 entity_id 列表 -->
+    <select id="selectEntityIdsByDocumentId" resultType="java.lang.Long">
+        SELECT DISTINCT ce.entity_id
+        FROM rag_chunk_entity ce
+        INNER JOIN vector_store vs ON ce.chunk_id = vs.id
+        WHERE vs.metadata->>'documentId' = #{documentId}
+    </select>
+
+    <!-- 按 chunk_ids 批量删除 -->
+    <delete id="deleteByChunkIds">
+        DELETE FROM rag_chunk_entity
+        WHERE chunk_id IN
+        <foreach collection="chunkIds" item="cid" open="(" separator="," close=")">#{cid}::uuid</foreach>
+    </delete>
+
+    <!-- 批量插入（ON CONFLICT DO NOTHING 处理复合 PK 冲突） -->
+    <insert id="insertBatch">
+        INSERT INTO rag_chunk_entity (chunk_id, entity_id)
+        VALUES
+        <foreach collection="list" item="ce" separator=",">
+            (#{ce.chunkId}::uuid, #{ce.entityId})
+        </foreach>
+        ON CONFLICT (chunk_id, entity_id) DO NOTHING
+    </insert>
+
+</mapper>

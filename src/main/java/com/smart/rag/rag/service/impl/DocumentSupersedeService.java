@@ -18,6 +18,7 @@ import com.smart.rag.team.service.TeamMembershipVerifier;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.dao.DuplicateKeyException;
@@ -57,6 +58,9 @@ public class DocumentSupersedeService {
     private final FileStorageService fileStorageService;
     private final TransactionTemplate transactionTemplate;
     private final TeamMembershipVerifier teamMembershipVerifier;
+    @Autowired(required = false)
+    @Nullable
+    private EntityIndexCleanupService entityIndexCleanupService;
 
     /** 待替换关系：newDocId → oldDocId（ETL 完成后执行替换）— 内存加速层 */
     private final ConcurrentHashMap<Long, Long> pendingSupersede = new ConcurrentHashMap<>();
@@ -336,6 +340,15 @@ public class DocumentSupersedeService {
         } catch (Exception e) {
             log.error("Failed to mark old doc as SUPERSEDED: oldDocId={}, skipping cleanup: {}", oldDocId, e.getMessage());
             return;
+        }
+
+        // 步骤 1.5: 清理实体索引（在删向量之前，捕获受影响 entity_id）
+        if (entityIndexCleanupService != null) {
+            try {
+                entityIndexCleanupService.cleanupByDocumentId(oldDocId);
+            } catch (Exception e) {
+                log.error("Failed to cleanup entity index for superseded docId={}: {}", oldDocId, e.getMessage());
+            }
         }
 
         // 步骤 2: 清理旧文档的 vectors

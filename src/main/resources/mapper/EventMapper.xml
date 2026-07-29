@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.smart.rag.rag.mapper.EventMapper">
+
+    <!-- 按 chunk_ids 批量删除 -->
+    <delete id="deleteByChunkIds">
+        DELETE FROM rag_event
+        WHERE chunk_id IN
+        <foreach collection="chunkIds" item="cid" open="(" separator="," close=")">#{cid}::uuid</foreach>
+    </delete>
+
+    <!-- 插入（chunk_id 有唯一约束，冲突时忽略） -->
+    <insert id="insertIgnore">
+        INSERT INTO rag_event (chunk_id, summary, user_id, team_id, document_id)
+        VALUES (#{event.chunkId}::uuid, #{event.summary}, #{event.userId}, #{event.teamId}, #{event.documentId})
+        ON CONFLICT (chunk_id) DO NOTHING
+    </insert>
+
+</mapper>

@@ -232,4 +232,13 @@ public interface VectorStoreMapper {
 
     int countDocsInternal(@Param("isolationField") String isolationField,
                           @Param("isolationValue") String isolationValue);
+    // ======================== Entity Extraction Support ========================
+
+    /**
+     * 查询指定文档的所有 chunk（id + content），按 metadata->>'documentId' 过滤。
+     *
+     * @param documentId 文档 ID
+     * @return chunk 行列表
+     */
+    List<VectorStoreRow> selectChunksByDocumentId(@Param("documentId") String documentId);
 }

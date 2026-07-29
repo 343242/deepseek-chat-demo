@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.smart.rag.rag.mapper.EntityMapper">
+
+    <!-- 批量 UPSERT：冲突时追加 description，保留已有 embedding/degree/scores -->
+    <insert id="upsertByNormUserTeam">
+        INSERT INTO rag_entity (name_norm, name_display, description, user_id, team_id)
+        VALUES
+        <foreach collection="list" item="e" separator=",">
+            (#{e.nameNorm}, #{e.nameDisplay}, #{e.description}, #{e.userId}, #{e.teamId})
+        </foreach>
+        ON CONFLICT (name_norm, user_id, COALESCE(team_id, -1))
+        DO UPDATE SET
+            description = rag_entity.description || '\n' || EXCLUDED.description,
+            name_display = rag_entity.name_display,
+            updated_at = NOW()
+    </insert>
+
+    <!-- 重算 degree：对指定 entity ids 设置 degree = rag_chunk_entity 行数 -->
+    <update id="recalculateDegree">
+        UPDATE rag_entity
+        SET degree = (SELECT count(*) FROM rag_chunk_entity WHERE entity_id = rag_entity.id),
+            updated_at = NOW()
+        WHERE id IN
+        <foreach collection="entityIds" item="id" open="(" separator="," close=")">#{id}</foreach>
+    </update>
+
+    <!-- 删除 degree=0 的孤儿实体 -->
+    <delete id="deleteOrphans">
+        DELETE FROM rag_entity WHERE degree = 0
+    </delete>
+
+    <!-- 标记指定实体 community_stale=TRUE -->
+    <update id="markCommunityStale">
+        UPDATE rag_entity
+        SET community_stale = TRUE
+        WHERE id IN
+        <foreach collection="entityIds" item="id" open="(" separator="," close=")">#{id}</foreach>
+    </update>
+
+    <!-- 批量更新 embedding -->
+    <update id="updateEmbedding">
+        UPDATE rag_entity
+        SET embedding = #{embedding}::vector,
+            updated_at = NOW()
+        WHERE id = #{id}
+    </update>
+
+    <!-- 查询需要 embed 的实体 -->
+    <select id="selectEntitiesNeedingEmbedding" resultType="com.smart.rag.rag.entity.RagEntity">
+        SELECT id, name_norm, name_display, description, user_id, team_id,
+               degree, weak_tie_score, bridge_score, community_id, community_stale,
+               created_at, updated_at
+        FROM rag_entity
+        WHERE description IS NOT NULL
+          AND description != ''
+          AND embedding IS NULL
+        LIMIT #{limit}
+    </select>
+
+</mapper>

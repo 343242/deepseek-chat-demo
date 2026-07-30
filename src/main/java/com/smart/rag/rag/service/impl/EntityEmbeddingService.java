@@ -55,8 +55,8 @@ public class EntityEmbeddingService {
             return;
         }
 
-        int batchSize = properties.getEmbeddingBatchSize();
-        int maxLen = properties.getDescriptionMaxLength();
+        int batchSize = properties.embeddingBatchSize();
+        int maxLen = properties.descriptionMaxLength();
 
         // 过滤有效实体（description 非空）
         List<RagEntity> toEmbed = entities.stream()
@@ -124,8 +124,8 @@ public class EntityEmbeddingService {
             log.warn("Failed to compress entity description, using truncated original: {}", e.getMessage());
         }
         // 回退：截断到 maxLen
-        return text.length() > properties.getDescriptionMaxLength()
-                ? text.substring(0, properties.getDescriptionMaxLength())
+        return text.length() > properties.descriptionMaxLength()
+                ? text.substring(0, properties.descriptionMaxLength())
                 : text;
     }
 

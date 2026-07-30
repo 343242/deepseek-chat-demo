@@ -50,6 +50,19 @@ app:
       enabled: ${RAG_ENTITY_ENABLED:false}
       embedding-batch-size: ${RAG_ENTITY_EMBEDDING_BATCH_SIZE:10}
       description-max-length: ${RAG_ENTITY_DESCRIPTION_MAX_LENGTH:500}
+      # === Path C 在线检索（§7.2）===
+      match-threshold: ${RAG_ENTITY_MATCH_THRESHOLD:0.85}
+      frontier-budget: ${RAG_ENTITY_FRONTIER_BUDGET:50}
+      chunk-top-k: ${RAG_ENTITY_CHUNK_TOP_K:20}
+      expand-chunk-top-k: ${RAG_ENTITY_EXPAND_CHUNK_TOP_K:10}
+      expansion-hops: ${RAG_ENTITY_EXPANSION_HOPS:1}
+      expansion-decay: ${RAG_ENTITY_EXPANSION_DECAY:0.7}
+      alpha: ${RAG_ENTITY_ALPHA:0.5}
+      beta: ${RAG_ENTITY_BETA:0.3}
+      gamma: ${RAG_ENTITY_GAMMA:0.2}
+      weak-tie-enabled: ${RAG_ENTITY_WEAK_TIE_ENABLED:true}
+      extraction-model: ${RAG_ENTITY_EXTRACTION_MODEL:}
+      community-detection-enabled: ${RAG_ENTITY_COMMUNITY_DETECTION_ENABLED:true}
   cag:
     enabled: ${CAG_ENABLED:true}
     inject-prompt: ${CAG_INJECT_PROMPT:true}

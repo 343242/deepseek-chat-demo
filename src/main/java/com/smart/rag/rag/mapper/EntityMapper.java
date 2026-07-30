@@ -7,6 +7,10 @@ import org.apache.ibatis.annotations.Param;
 
 import java.util.List;
 
+import com.smart.rag.rag.retrieval.entity.ExpandedChunk;
+import com.smart.rag.rag.retrieval.entity.ScoredEntity;
+import com.smart.rag.rag.retrieval.entity.VotedChunk;
+
 /**
  * rag_entity 表数据访问
  */
@@ -76,4 +80,38 @@ public interface EntityMapper extends BaseMapper<RagEntity> {
      * 非增量部分清除——degree=0 的新实体也应标记为非 stale。
      */
     void clearStaleFlag(@Param("userId") Long userId, @Param("teamId") Long teamId);
+
+    // ==================== Path C 在线检索查询（§6.2/§6.3/§6.4，仅读取）====================
+
+    /**
+     * 融合排序 frontier（§6.2）：seed embeddings 向量匹配 + window-max 归一化 + composite_score 剪枝。
+     * 归一化在 SQL 内完成，Java 层直接使用 queryRelNorm/bridgeNorm/weakTieNorm/compositeScore。
+     */
+    List<ScoredEntity> findFrontierEntities(@Param("seedEmbeddings") List<float[]> seedEmbeddings,
+                                            @Param("matchThreshold") double matchThreshold,
+                                            @Param("userId") long userId,
+                                            @Param("teamId") Long teamId,
+                                            @Param("frontierBudget") int frontierBudget,
+                                            @Param("alpha") double alpha,
+                                            @Param("beta") double beta,
+                                            @Param("gamma") double gamma);
+
+    /**
+     * 投票回链 chunks（§6.3 UnWeaver）：frontier → rag_chunk_entity → vector_store，max 聚合 + array_agg。
+     * 传入 frontier ScoredEntity 列表（id + composite_score + name_display），SQL 用 VALUES 展开。
+     */
+    List<VotedChunk> voteBacklinkChunks(@Param("frontier") List<ScoredEntity> frontier,
+                                        @Param("chunkTopK") int chunkTopK,
+                                        @Param("userIdStr") String userIdStr);
+
+    /**
+     * SAG 结构扩展（§6.4）：frontier → rag_event → 新 entities → 新 events → 新 chunks，H=1 单跳，纯结构 JOIN。
+     * 传入 frontier ScoredEntity 列表（id + composite_score），δ 衰减后作为结构传递分。
+     */
+    List<ExpandedChunk> expandChunks(@Param("frontier") List<ScoredEntity> frontier,
+                                     @Param("expansionDecay") double expansionDecay,
+                                     @Param("expandChunkTopK") int expandChunkTopK,
+                                     @Param("userId") long userId,
+                                     @Param("teamId") Long teamId,
+                                     @Param("userIdStr") String userIdStr);
 }

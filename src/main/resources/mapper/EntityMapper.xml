@@ -116,4 +116,159 @@
     WHERE user_id = #{userId}
       AND (#{teamId} IS NULL AND team_id IS NULL OR team_id = #{teamId})
 </update>
+
+<!-- ==================== Path C 在线检索查询（§6.2/§6.3/§6.4，仅读取）==================== -->
+
+<resultMap id="scoredEntity" type="com.smart.rag.rag.retrieval.entity.ScoredEntity">
+    <constructor>
+        <arg column="id" javaType="long"/>
+        <arg column="name_display" javaType="java.lang.String"/>
+        <arg column="query_relevance" javaType="double"/>
+        <arg column="bridge" javaType="double"/>
+        <arg column="weak_tie" javaType="double"/>
+        <arg column="degree" javaType="int"/>
+        <arg column="query_rel_norm" javaType="double"/>
+        <arg column="bridge_norm" javaType="double"/>
+        <arg column="weak_tie_norm" javaType="double"/>
+        <arg column="composite_score" javaType="double"/>
+    </constructor>
+</resultMap>
+
+<resultMap id="votedChunk" type="com.smart.rag.rag.retrieval.entity.VotedChunk">
+    <constructor>
+        <arg column="chunk_id" javaType="java.util.UUID"/>
+        <arg column="content" javaType="java.lang.String"/>
+        <arg column="metadata" javaType="java.lang.String"/>
+        <arg column="chunk_score" javaType="double"/>
+        <arg column="voted_by_entities" javaType="java.lang.String"/>
+    </constructor>
+</resultMap>
+
+<resultMap id="expandedChunk" type="com.smart.rag.rag.retrieval.entity.ExpandedChunk">
+    <constructor>
+        <arg column="chunk_id" javaType="java.util.UUID"/>
+        <arg column="content" javaType="java.lang.String"/>
+        <arg column="metadata" javaType="java.lang.String"/>
+        <arg column="chunk_score" javaType="double"/>
+        <arg column="discovered_via_entities" javaType="java.lang.String"/>
+    </constructor>
+</resultMap>
+
+<!-- §6.2 融合排序 frontier：seed embeddings CTE → 向量匹配 → window-max 归一化 → composite_score 剪枝。
+     归一化在 SQL 内用 max() OVER() 完成（剪枝前），保证 α/β/γ 权重语义对称。 -->
+<select id="findFrontierEntities" resultMap="scoredEntity">
+    WITH seed_embeddings(embedding) AS (
+        VALUES
+        <foreach collection="seedEmbeddings" item="emb" separator=",">
+            (#{emb,typeHandler=com.smart.rag.rag.mapper.VectorTypeHandler}::vector)
+        </foreach>
+    ),
+    entity_match AS (
+        SELECT
+            e.id,
+            e.name_display,
+            MAX(1 - (e.embedding &lt;=&gt; se.embedding)) AS query_relevance,
+            COALESCE(e.bridge_score, 0) AS bridge,
+            COALESCE(e.weak_tie_score, 0.5) AS weak_tie,
+            e.degree
+        FROM rag_entity e
+        CROSS JOIN seed_embeddings se
+        WHERE e.user_id = #{userId}
+          AND (#{teamId} IS NULL AND e.team_id IS NULL OR e.team_id = #{teamId})
+          AND e.embedding IS NOT NULL
+          AND (1 - (e.embedding &lt;=&gt; se.embedding)) &gt; #{matchThreshold}
+        GROUP BY e.id, e.name_display, e.bridge_score, e.weak_tie_score, e.degree
+    ),
+    normalized AS (
+        SELECT
+            *,
+            COALESCE(query_relevance / NULLIF(max(query_relevance) OVER (), 0), 0) AS query_rel_norm,
+            COALESCE(bridge / NULLIF(max(bridge) OVER (), 0), 0) AS bridge_norm,
+            COALESCE(weak_tie / NULLIF(max(weak_tie) OVER (), 0), 0) AS weak_tie_norm
+        FROM entity_match
+    ),
+    scored AS (
+        SELECT
+            *,
+            (  #{alpha} * query_rel_norm
+             + #{beta}  * bridge_norm
+             + #{gamma} * weak_tie_norm
+            ) AS composite_score
+        FROM normalized
+    )
+    SELECT * FROM scored ORDER BY composite_score DESC LIMIT #{frontierBudget}
+</select>
+
+<!-- §6.3 投票回链 chunks：frontier JOIN rag_chunk_entity JOIN vector_store，max 聚合 + array_agg。
+     安全隔离：vs.metadata->>'userId' = :userIdStr（字符串双轨）。 -->
+<select id="voteBacklinkChunks" resultMap="votedChunk">
+    WITH frontier(id, name_display, composite_score) AS (
+        VALUES
+        <foreach collection="frontier" item="fe" separator=",">
+            (#{fe.id()}::bigint, #{fe.nameDisplay()}::text, #{fe.compositeScore()}::double precision)
+        </foreach>
+    )
+    SELECT
+        ce.chunk_id,
+        vs.content,
+        vs.metadata::text AS metadata,
+        MAX(f.composite_score) AS chunk_score,
+        array_to_string(array_agg(f.name_display ORDER BY f.composite_score DESC), ',') AS voted_by_entities
+    FROM frontier f
+    JOIN rag_chunk_entity ce ON ce.entity_id = f.id
+    JOIN vector_store vs ON vs.id = ce.chunk_id
+    WHERE vs.metadata->>'userId' = #{userIdStr}
+    GROUP BY ce.chunk_id, vs.content, vs.metadata
+    ORDER BY chunk_score DESC
+    LIMIT #{chunkTopK}
+</select>
+
+<!-- §6.4 SAG 结构扩展（H=1 单跳，纯结构 JOIN）：frontier → events → 新 entities → 新 events → 新 chunks。
+     不施加 query 语义过滤（忠于 SAG §3.4）。chunk_score = δ × composite_score（结构传递分）。 -->
+<select id="expandChunks" resultMap="expandedChunk">
+    WITH frontier_with_score(id, composite_score) AS (
+        VALUES
+        <foreach collection="frontier" item="fe" separator=",">
+            (#{fe.id()}::bigint, #{fe.compositeScore()}::double precision)
+        </foreach>
+    ),
+    seed_events AS (
+        SELECT DISTINCT e.id AS event_id, e.chunk_id
+        FROM rag_event e
+        JOIN rag_chunk_entity ce ON ce.chunk_id = e.chunk_id
+        WHERE ce.entity_id IN (SELECT id FROM frontier_with_score)
+          AND e.user_id = #{userId}
+          AND (#{teamId} IS NULL AND e.team_id IS NULL OR e.team_id = #{teamId})
+    ),
+    expanded_entities AS (
+        SELECT DISTINCT ce.entity_id
+        FROM rag_chunk_entity ce
+        JOIN seed_events se ON se.chunk_id = ce.chunk_id
+        LEFT JOIN frontier_with_score f ON f.id = ce.entity_id
+        JOIN rag_entity e2 ON e2.id = ce.entity_id
+        WHERE f.id IS NULL
+          AND e2.user_id = #{userId}
+    ),
+    expanded_events AS (
+        SELECT DISTINCT e.id AS event_id, e.chunk_id
+        FROM rag_event e
+        JOIN rag_chunk_entity ce ON ce.chunk_id = e.chunk_id
+        WHERE ce.entity_id IN (SELECT entity_id FROM expanded_entities)
+          AND e.user_id = #{userId}
+    )
+    SELECT
+        ee.chunk_id,
+        vs.content,
+        vs.metadata::text AS metadata,
+        #{expansionDecay} * MAX(f.composite_score) AS chunk_score,
+        array_to_string(array_agg(DISTINCT ex.entity_id), ',') AS discovered_via_entities
+    FROM expanded_events ee
+    JOIN vector_store vs ON vs.id = ee.chunk_id
+    JOIN rag_chunk_entity ex ON ex.chunk_id = ee.chunk_id
+    JOIN frontier_with_score f ON f.id = ex.entity_id
+    WHERE vs.metadata->>'userId' = #{userIdStr}
+    GROUP BY ee.chunk_id, vs.content, vs.metadata
+    ORDER BY chunk_score DESC
+    LIMIT #{expandChunkTopK}
+</select>
 </mapper>

@@ -47,7 +47,7 @@ class EntityEmbeddingServiceTest {
 
     @BeforeEach
     void setUp() {
-        properties = new RagEntityProperties();
+        properties = new RagEntityProperties(false, 10, 500, 0.85, 50, 20, 10, 1, 0.7, 0.5, 0.3, 0.2, true, null, true);
         service = new EntityEmbeddingService(llmClientRegistry, entityMapper, properties);
     }
 
@@ -131,7 +131,8 @@ class EntityEmbeddingServiceTest {
             when(embeddingCapable.embedBatch(anyList(), eq(EmbeddingType.DOCUMENT)))
                     .thenReturn(List.of(new float[]{0.3f, 0.7f}));
 
-            properties.setDescriptionMaxLength(10);
+            properties = new RagEntityProperties(false, 10, 10, 0.85, 50, 20, 10, 1, 0.7, 0.5, 0.3, 0.2, true, null, true);
+            service = new EntityEmbeddingService(llmClientRegistry, entityMapper, properties);
 
             RagEntity entity = new RagEntity();
             entity.setId(1L);

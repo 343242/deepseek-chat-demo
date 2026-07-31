@@ -10,14 +10,14 @@
 |---|---|---|
 | §3.1 | 数据模型（4 表 + 1 视图） | 读取/写入 `rag_entity`（weak_tie/bridge/community 列）、`rag_entity_cooccurrence`、`v_entity_neighbors` |
 | §5.1 | weak_tie_score 计算（Jaccard + degree<100 cap） | **核心**：EntityCooccurrenceMapper SQL |
-| §5.2 ①②③ | WeightedGraph / AdjacencyListGraph / LouvainCommunityDetector | **依赖**（ecr-graph-algorithm 提供） |
+| §5.2 ①②③ | WeightedGraph / AdjacencyListGraph / LeidenCommunityDetector | **依赖**（ecr-graph-algorithm 提供） |
 | §5.2 ④ | CooccurrenceGraphLoader | **拥有**：DB → WeightedGraph 加载 |
 | §5.2 ⑤ | CommunityDetectionJob | **拥有**：编排 load→detect→write→bridge→clearStale |
 | §5.3 | 增量维护策略 | 架构决策：全量重投影 vs 增量 |
 | §5.4 | 共现图投影 SQL | **拥有**：EntityCooccurrenceMapper INSERT...ON CONFLICT |
 | §8.1 | ETL 集成点 | CommunityDetectionJob 由 extraction-pipeline Step 6 调用 |
 | §9.2 | community_stale_entity_ratio 指标 | clearStaleFlag 全量清除的监控依据 |
-| §11.3 | Louvain 稳定性 | 种子抖动风险 + 缓解策略 |
+| §11.3 | Leiden 稳定性 | 种子抖动风险 + 缓解策略 |
 | §13 | V21 DDL | v_entity_neighbors 视图定义 |
 
 ## 子任务特有设计
@@ -30,7 +30,7 @@
 |---|---|---|---|
 | `EntityCooccurrenceMapper` | 共现图 CRUD（投影 INSERT、weak_tie UPDATE CTE、边查询） | 依赖 MyBatis，被 GraphLoader/EntityIndexService 调用 | SRP：仅数据访问 |
 | `CooccurrenceGraphLoader` | DB → `WeightedGraph` 转换（SRP：仅加载） | 依赖 EntityCooccurrenceMapper + AdjacencyListGraph（DIP 通过接口） | DIP：依赖 WeightedGraph 接口，不依赖具体算法 |
-| `CommunityDetectionJob` | 编排 load→detect→write→bridge→clearStale（SRP：仅编排） | 依赖 CooccurrenceGraphLoader（合成）+ LouvainCommunityDetector（直接构造）+ EntityMapper（跨子调用） | DIP：Detector 无状态纯算法，构造即用 |
+| `CommunityDetectionJob` | 编排 load→detect→write→bridge→clearStale（SRP：仅编排） | 依赖 CooccurrenceGraphLoader（合成）+ LeidenCommunityDetector（直接构造）+ EntityMapper（跨子调用） | DIP：Detector 无状态纯算法，构造即用 |
 | `EntityIndexService`（§5.1 SQL 容器） | weak_tie_score 计算编排（调用 Mapper SQL） | 依赖 EntityCooccurrenceMapper | SRP：仅编排弱联系计算 |
 
 **注意**：设计文档 §10.2 将 EntityIndexService 定义为"weak_tie_score 计算（纯 SQL 驱动）"。本子任务将其实现为一个薄 Service，封装 weak_tie SQL 调用。bridge_score SQL 由 CommunityDetectionJob 间接调用（通过 EntityMapper）。
@@ -48,7 +48,7 @@
 
 ### 3. clearStaleFlag 必须全量（非增量）
 
-§5.2⑤ 代码注释 `entityMapper.clearStaleFlag(userId, teamId)` + §9.2 指标 `community_stale_entity_ratio`（Louvain 全量刷新后应→0）明确要求：Louvain 运行后对该 scope **全部**实体清除 stale flag。
+§5.2⑤ 代码注释 `entityMapper.clearStaleFlag(userId, teamId)` + §9.2 指标 `community_stale_entity_ratio`（Leiden 全量刷新后应→0）明确要求：Leiden 运行后对该 scope **全部**实体清除 stale flag。
 
 ```
 -- 全量清除（非按 community_id 增量）
@@ -56,7 +56,7 @@ UPDATE rag_entity SET community_stale = FALSE
 WHERE user_id = :userId AND (team_id = :teamId OR (:teamId IS NULL AND team_id IS NULL));
 ```
 
-**不允许** `WHERE community_id IN (检测覆盖的节点集合)`——因为 Louvain 会覆盖所有节点，未被覆盖的节点（如 degree=0 的新实体）仍应标记为非 stale（它们在下一轮检测中不需要重算）。
+**不允许** `WHERE community_id IN (检测覆盖的节点集合)`——因为 Leiden 会覆盖所有节点，未被覆盖的节点（如 degree=0 的新实体）仍应标记为非 stale（它们在下一轮检测中不需要重算）。
 
 ### 4. 共现投影：全量重投影策略（§5.3 增量表对应）
 
@@ -79,6 +79,6 @@ bridge_score UPDATE SQL 定义在 `EntityMapper.xml`（extraction-pipeline 所�
 | 原则 | 落实点 |
 |---|---|
 | SRP | 4 个类各司一职——Mapper（数据访问）、GraphLoader（加载）、CommunityDetectionJob（编排）、EntityIndexService（weak_tie 编排） |
-| DIP | CommunityDetectionJob 通过 CooccurrenceGraphLoader 合成获取 WeightedGraph；LouvainCommunityDetector 直接构造（无状态纯算法） |
-| CARP | Louvain 算法在 `infrastructure/algorithm/graph/`，本子任务仅使用接口 |
+| DIP | CommunityDetectionJob 通过 CooccurrenceGraphLoader 合成获取 WeightedGraph；LeidenCommunityDetector 直接构造（无状态纯算法） |
+| CARP | Leiden 算法在 `infrastructure/algorithm/graph/`，本子任务仅使用接口 |
 | OCP | 新增图类型只需新增 WeightedGraph 实现；新增结构分算法只需新增 Service 类 |

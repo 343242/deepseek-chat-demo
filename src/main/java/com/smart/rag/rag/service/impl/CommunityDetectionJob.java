@@ -1,6 +1,6 @@
 package com.smart.rag.rag.service.impl;
 
-import com.smart.rag.infrastructure.algorithm.graph.LouvainCommunityDetector;
+import com.smart.rag.infrastructure.algorithm.graph.LeidenCommunityDetector;
 import com.smart.rag.infrastructure.algorithm.graph.WeightedGraph;
 import com.smart.rag.rag.mapper.EntityMapper;
 import com.smart.rag.rag.mapper.EntityMapper.CommunityAssignment;
@@ -19,11 +19,11 @@ import java.util.Set;
 /**
  * 离线社区检测编排任务（§5.2 ⑤）。
  * <p>
- * SRP：仅编排"加载 → 检测 → 写回"，不持有算法逻辑（{@link LouvainCommunityDetector}）或
+ * SRP：仅编排"加载 → 检测 → 写回"，不持有算法逻辑（{@link LeidenCommunityDetector}）或
  * 数据加载逻辑（{@link CooccurrenceGraphLoader}）。
  * DIP：Detector 为无状态纯算法，直接 {@code new} 构造即用（§5.2 注释：无需 Factory 抽象）。
  * <p>
- * 编排序列（§5.2⑤）：load → (nodeCount &lt; 2 跳过 Louvain) → batchUpdateCommunities →
+ * 编排序列（§5.2⑤）：load → (nodeCount &lt; 2 跳过 Leiden) → batchUpdateCommunities →
  * updateBridgeScores → clearStaleFlag。
  * <p>
  * 前置条件：调用方须先刷新共现图（{@link EntityIndexService#recomputeWeakTieScores}），
@@ -46,7 +46,7 @@ public class CommunityDetectionJob {
     /**
      * 对作用域执行社区检测 + bridge_score 计算 + stale 清除。
      * <p>
-     * {@code nodeCount < 2}（孤立/单实体共现图）时跳过 Louvain——单实体无社区意义。
+     * {@code nodeCount < 2}（孤立/单实体共现图）时跳过 Leiden——单实体无社区意义。
      * 但仍执行 {@code clearStaleFlag}：孤立实体（degree=0、不在共现图中）也应标记非 stale
      * （§5.2⑤ 注释 + §9.2 community_stale_entity_ratio → 0 目标），避免 perpetual stale 状态。
      * 此处偏离 §5.2⑤ 骨架的字面 {@code return}，但符合其 clearStale 全量语义。
@@ -58,14 +58,14 @@ public class CommunityDetectionJob {
         WeightedGraph graph = graphLoader.load(userId, teamId);
 
         if (graph.nodeCount() >= 2) {
-            Long2IntMap communities = new LouvainCommunityDetector(graph).detect();
+            Long2IntMap communities = new LeidenCommunityDetector(graph).detect();
             entityMapper.batchUpdateCommunities(userId, teamId, toAssignments(communities));
             entityMapper.updateBridgeScores(userId, teamId);
 
             log.info("Community detection completed: {} nodes, {} communities for userId={}, teamId={}",
                     graph.nodeCount(), countCommunities(communities), userId, teamId);
         } else {
-            log.info("Skipping Louvain community detection: nodeCount={} < 2 for userId={}, teamId={}",
+            log.info("Skipping Leiden community detection: nodeCount={} < 2 for userId={}, teamId={}",
                     graph.nodeCount(), userId, teamId);
         }
 
@@ -74,7 +74,7 @@ public class CommunityDetectionJob {
     }
 
     /**
-     * 将 Louvain 输出的 Long2IntMap 转为 MyBatis 可批量写回的列表
+     * 将 Leiden 输出的 Long2IntMap 转为 MyBatis 可批量写回的列表
      * （fastutil 原始类型 map 不直传 MyBatis，避免类型处理器复杂度）。
      */
     private static List<CommunityAssignment> toAssignments(Long2IntMap communities) {

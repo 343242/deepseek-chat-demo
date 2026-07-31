@@ -139,7 +139,7 @@ ETL 管道使用 IO/CPU 双线程池并行处理 chunk（`EtlPipelineServiceImpl
 
 - 结构分计算（weak_tie_score/bridge_score/community_id）— 属 `ecr-structure-scores`
 - 在线检索 Path C（EntitySeedExtractor 等）— 属 `ecr-path-c-retrieval`
-- 图算法（WeightedGraph/Louvain）— 属 `ecr-graph-algorithm`
+- 图算法（WeightedGraph/Leiden）— 属 `ecr-graph-algorithm`
 - Level 2/3 规范化（别名词典、embedding 相似度合并）— 后续迭代
 - `rag_entity_cooccurrence` 表写入 — 属 `ecr-structure-scores` 的 `EntityCooccurrenceMapper`
 - EntityIndexService（§5 weak_tie/bridge SQL）— 属 `ecr-structure-scores`

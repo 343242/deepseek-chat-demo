@@ -20,7 +20,7 @@ import java.util.Set;
  * object-based edge representations.</p>
  *
  * <p>Thread-unsafe — intended for single-threaded batch construction followed by read-only
- * consumption by Louvain community detection.</p>
+ * consumption by Leiden community detection.</p>
  */
 public class AdjacencyListGraph implements WeightedGraph {
 

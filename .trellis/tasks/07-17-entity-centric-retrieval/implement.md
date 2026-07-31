@@ -5,24 +5,26 @@
 ## Execution Waves（按依赖波次推进）
 
 ### Wave 0（并行启动，三者互不依赖）
-- [ ] `ecr-db-migration` — V21 schema 落地，clean DB 迁移通过
-- [ ] `ecr-graph-algorithm` — Louvain 在 Zachary Karate Club ground truth 通过
-- [ ] `ecr-retrieval-path-abstraction` — HybridSearchService 重构后既有 Path A/B 测试全绿（行为保持）
+- [x] `ecr-db-migration` — V21 schema 落地，clean DB 迁移通过
+- [x] `ecr-graph-algorithm` — Leiden 在 Zachary Karate Club ground truth 通过
+- [x] `ecr-retrieval-path-abstraction` — HybridSearchService 重构后既有 Path A/B 测试全绿（行为保持）
 
 **Gate 0**：三者完成后，主干 `agentic-rag-dev` 应处于：迁移可应用、图算法单测绿、hybridSearch 既有行为零回归。任一未过不得进入 Wave 1。
 
+> **执行记录（2026-07-31）**：Wave 0 三项均已完成并提交（`60ab5a3` retrieval-path-abstraction；graph-algorithm 随 `615190d` 落地 Louvain，`079e31e` 之后以 Leiden 替换，见 graph-algorithm implement.md 变更记录；db-migration 含于 `615190d` 前的 V21 提交）。Gate 0 通过。
+
 ### Wave 1（依赖 Wave 0）
-- [ ] `ecr-extraction-pipeline`（依赖 db-migration）— ingest 文档后四表 populated、degree 正确、delete/supersede 清理无孤儿
+- [x] `ecr-extraction-pipeline`（依赖 db-migration）— ingest 文档后四表 populated、degree 正确、delete/supersede 清理无孤儿
 
 **Gate 1**：离线索引端到端可用（实体/event/chunk_entity 落库 + embedding）。
 
 ### Wave 2（依赖 Wave 0 + Wave 1）
-- [ ] `ecr-structure-scores`（依赖 db-migration + graph-algorithm + extraction-pipeline）— 共现图投影正确、weak_tie 手算值匹配、bridge 正确、CommunityDetectionJob 端到端 + clearStaleFlag 全量清除
+- [x] `ecr-structure-scores`（依赖 db-migration + graph-algorithm + extraction-pipeline）— 共现图投影正确、weak_tie 手算值匹配、bridge 正确、CommunityDetectionJob 端到端 + clearStaleFlag 全量清除
 
 **Gate 2**：离线结构分可计算且写入 rag_entity 列。
 
 ### Wave 3（依赖 Wave 0 + Wave 1 + Wave 2 列读取）
-- [ ] `ecr-path-c-retrieval`（依赖 db-migration + retrieval-path-abstraction + extraction-pipeline；读取 structure-scores 列）— EntityRetrievalPath 注册、frontier 融合排序、投票回链、SAG H=1 扩展、trace 输出、entity.enabled=false 时零回归
+- [x] `ecr-path-c-retrieval`（依赖 db-migration + retrieval-path-abstraction + extraction-pipeline；读取 structure-scores 列）— EntityRetrievalPath 注册、frontier 融合排序、投票回链、SAG H=1 扩展、trace 输出、entity.enabled=false 时零回归
 
 **Gate 3**：Path C 端到端在线可用。
 

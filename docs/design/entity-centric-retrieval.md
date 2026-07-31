@@ -70,7 +70,7 @@ flowchart TB
     subgraph BATCH["离线批处理（周期性 / 增量触发）"]
         B1["构建 entity-entity 共现图<br/>rag_entity_cooccurrence"]
         B0["P0: weak_tie_score<br/>邻域 Jaccard 不重叠度"]
-        B2["P1: Louvain 社区检测<br/>→ community_id + bridge_score"]
+        B2["P1: Leiden 社区检测<br/>→ community_id + bridge_score"]
         B3["结构分写回 rag_entity"]
     end
 
@@ -118,7 +118,7 @@ CREATE TABLE rag_entity (
     weak_tie_score  DOUBLE PRECISION DEFAULT 0.5,-- 邻域不重叠度 [0,1]，默认 0.5（未计算时中性）
     -- P1: 桥接分（离线计算）
     bridge_score    DOUBLE PRECISION DEFAULT 0,  -- 跨社区连接数
-    community_id    INTEGER,                     -- Louvain 社区 ID
+    community_id    INTEGER,                     -- Leiden 社区 ID
     community_stale BOOLEAN NOT NULL DEFAULT TRUE, -- 社区信息是否过期（增量写入后标记）
     created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -404,9 +404,9 @@ WHERE e.id = emb.entity_id
 **两步流程**：
 
 ```
-Step 1: Louvain 社区检测
+Step 1: Leiden 社区检测
   从 rag_entity_cooccurrence 加载图（实体=节点，共现=边）
-  运行 Louvain 算法 → 每个实体分配 community_id
+  运行 Leiden 算法 → 每个实体分配 community_id
 
 Step 2: bridge_score 计算
   bridge_score(e) = |{distinct community_id of neighbors(e)}|
@@ -435,7 +435,7 @@ WHERE e.id = sub.entity_id
   AND e.user_id = :userId;
 ```
 
-**Step 1 Louvain 的实现路径**（三层架构，遵循 SRP / DIP / CARP）：
+**Step 1 Leiden 的实现路径**（三层架构，遵循 SRP / DIP / CARP）：
 
 社区检测涉及三类职责，分离到三个包层次，避免单类承担编排+数据加载+算法（原 SRP/DIP/CARP 违反）：
 
@@ -444,7 +444,7 @@ flowchart TB
     subgraph INFRA["infrastructure/algorithm/graph/ — 通用图算法层（无业务依赖）"]
         WG["&lt;&lt;interface&gt;&gt;<br/>WeightedGraph<br/>addNode / edge / neighbors / degree"]
         ALG["AdjacencyListGraph<br/>WeightedGraph 实现<br/>long[] packed 邻接表"]
-        LOU["LouvainCommunityDetector<br/>依赖 WeightedGraph 接口<br/>纯算法，可复用"]
+        LOU["LeidenCommunityDetector<br/>依赖 WeightedGraph 接口<br/>纯算法，可复用"]
     end
     subgraph RAG["rag/service/impl/ — 业务编排层"]
         CGL["CooccurrenceGraphLoader<br/>DB → WeightedGraph（SRP：仅加载）"]
@@ -462,7 +462,7 @@ flowchart TB
 
 | 层 | 包 | 职责 | 依赖方向 |
 |---|---|---|---|
-| 通用算法层 | `infrastructure/algorithm/graph/` | 图抽象 + Louvain 实现，**零业务依赖** | 仅依赖 JDK + fastutil |
+| 通用算法层 | `infrastructure/algorithm/graph/` | 图抽象 + Leiden 实现，**零业务依赖** | 仅依赖 JDK + fastutil |
 | 业务加载层 | `rag/service/impl/CooccurrenceGraphLoader` | DB 读取 → 构造 `WeightedGraph` | 依赖通用算法层 + Mapper |
 | 业务编排层 | `rag/service/impl/CommunityDetectionJob` | 触发加载→检测→写回，**仅编排** | 依赖加载层 + Detector + Mapper |
 
@@ -472,9 +472,9 @@ flowchart TB
 
 ```java
 /**
- * 加权无向图抽象。Louvain / weak_tie_score / bridge_score 所需的全部图操作。
+ * 加权无向图抽象。Leiden / weak_tie_score / bridge_score 所需的全部图操作。
  * <p>
- * 设计目标：让算法（Louvain）与数据结构（邻接表/矩阵）解耦，未来可替换实现而不改算法。
+ * 设计目标：让算法（Leiden）与数据结构（邻接表/矩阵）解耦，未来可替换实现而不改算法。
  * 不继承 JGraphT 等库——共现图是无向加权简单图，三种操作足够表达。
  */
 public interface WeightedGraph {
@@ -503,37 +503,40 @@ public class AdjacencyListGraph implements WeightedGraph {
 }
 ```
 
-**③ `LouvainCommunityDetector` 纯算法**（`infrastructure/algorithm/graph/LouvainCommunityDetector.java`）：
+**③ `LeidenCommunityDetector` 纯算法**（`infrastructure/algorithm/graph/LeidenCommunityDetector.java`）：
 
 ```java
 /**
- * Louvain 社区检测（Blondel et al. 2008 快速版本）。
+ * Leiden 社区检测（Traag, Waltman &amp; van Eck 2019，Louvain 的继任者）。
  * <p>
  * 依赖 {@link WeightedGraph} 接口，不依赖任何业务概念——可被文档相似度图、
  * 用户关系图等任何加权图复用。
  * <p>
- * 两阶段迭代：(1) local moving — 节点贪心移到 ΔQ 最大的邻居社区；
- * (2) aggregation — 同社区节点折叠为超节点，边权相加。重复直到模块度不再提升。
+ * 三阶段迭代：(1) fast local moving — 队列驱动贪心移动（含移入空社区候选）；
+ * (2) refinement — 将每个社区拆为内部连通的子社区（保证社区连通，修复 Louvain
+ * 的 disconnected communities 缺陷，bridge_score 依赖此性质）；
+ * (3) aggregation — 按 refined 划分折叠为超节点，下一层初始划分按未 refined 分组。
+ * 确定性实现（升序 ID 遍历 + 确定性 max-ΔQ 选择替代论文随机 θ），支持 resolution
+ * 参数 γ（默认 1.0）控制社区粒度。
  * <p>
- * 复杂度：每轮 O(E)，平均 <10 轮收敛。smart-rag 单 user/team 共现图
- * （实体百~千级，边万级）单次执行 <100ms。
+ * 复杂度：每轮 O(E)，fast local move 比 Louvain 全量扫描更快。smart-rag 单 user/team
+ * 共现图（实体百~千级，边万级）单次执行 <100ms。
  */
-public class LouvainCommunityDetector {
+public class LeidenCommunityDetector {
 
     private final WeightedGraph graph;
-    private final double m;
+    private final double resolution;  // γ，默认 1.0
 
-    public LouvainCommunityDetector(WeightedGraph graph) {
-        this.graph = graph;
-        this.m = graph.totalWeight();
+    public LeidenCommunityDetector(WeightedGraph graph) {
+        this(graph, 1.0);
     }
 
     /** @return node → community_id 映射 */
     public Long2IntMap detect() { ... }  // 同前述骨架
 
     /**
-     * 模度增量（Blondel 原论文简化式）：
-     *   ΔQ = (k_{i,C} / m) − (Σ_tot,C · k_i) / (2·m²)
+     * 模度增量（节点从旧社区移除后，加入目标社区 C 的增益）：
+     *   ΔQ = (k_{i,C} / m) − γ·(Σ_tot,C · k_i) / (2·m²)
      */
     private double deltaQ(long node, int targetCommunity) { ... }
 }
@@ -570,7 +573,7 @@ public class CooccurrenceGraphLoader {
  * 离线社区检测编排任务（ETL 完成后异步触发 / 定时调度）。
  * <p>
  * SRP：仅编排"加载 → 检测 → 写回"，不持有算法逻辑或数据加载逻辑。
- * DIP：依赖 CooccurrenceGraphLoader（合成）和 LouvainCommunityDetector（直接构造，
+ * DIP：依赖 CooccurrenceGraphLoader（合成）和 LeidenCommunityDetector（直接构造，
  *      因 Detector 是无状态纯算法，构造即用，无需 Factory 抽象）。
  */
 @Component
@@ -583,11 +586,11 @@ public class CommunityDetectionJob {
         WeightedGraph graph = graphLoader.load(userId, teamId);
         if (graph.nodeCount() < 2) return;                  // 单实体无需社区检测
 
-        Long2IntMap communities = new LouvainCommunityDetector(graph).detect();
+        Long2IntMap communities = new LeidenCommunityDetector(graph).detect();
 
         entityMapper.batchUpdateCommunities(userId, teamId, communities);
         entityMapper.updateBridgeScores(userId, teamId);    // bridge_score 纯 SQL（上方 UPDATE）
-        entityMapper.clearStaleFlag(userId, teamId);        // 全量清除（Louvain 覆盖所有节点）
+        entityMapper.clearStaleFlag(userId, teamId);        // 全量清除（Leiden 覆盖所有节点）
     }
 }
 ```
@@ -603,15 +606,15 @@ public class CommunityDetectionJob {
 
 **为什么不引入图库（JGraphT / neil-justice / 其他）：**
 
-1. **用不上通用图抽象**：共现图是无向加权简单图，Louvain 只需"邻接表遍历 + 加权度数 + 模度增量"。`WeightedGraph` 接口 7 个方法足够，JGraphT 的 `SimpleWeightedGraph` / `DefaultWeightedEdge` 是为不存在的需求买单。
-2. **JGraphT 不含 Louvain**：上游 issue [#1272](https://github.com/jgrapht/jgrapht/issues/1272) 至今 Open。引入后仍要自实现，白拖 800KB（+ jheaps）。
+1. **用不上通用图抽象**：共现图是无向加权简单图，Leiden 只需"邻接表遍历 + 加权度数 + 模度增量"。`WeightedGraph` 接口 7 个方法足够，JGraphT 的 `SimpleWeightedGraph` / `DefaultWeightedEdge` 是为不存在的需求买单。
+2. **JGraphT 不含 Louvain 亦不含 Leiden**：上游 issue [#1272](https://github.com/jgrapht/jgrapht/issues/1272)（Louvain）至今 Open，Leiden 同样缺失。引入后仍要自实现，白拖 800KB（+ jheaps）。
 3. **许可证风险**：JGraphT LGPL/EPL、neil-justice 传递 trove4j LGPL——自实现 + 项目内 `infrastructure/algorithm/graph/` 彻底规避。
 4. **针对性优化**：`long[]` packed 邻接表比对象化边减少 GC 压力。
 5. **算法可控**：边缘 case（孤立节点、完全图）可自行修正。
 
-**实现成本**：`WeightedGraph` 接口 + `AdjacencyListGraph` ~150 行 + `LouvainCommunityDetector` ~250 行 + `CooccurrenceGraphLoader` ~30 行 + 测试 ~200 行（Zachary Karate Club 标准图 4 社区 ground truth 验证 + 合成图），总计 ~630 行 Java，2 人日。
+**实现成本**：`WeightedGraph` 接口 + `AdjacencyListGraph` ~150 行 + `LeidenCommunityDetector` ~400 行 + `CooccurrenceGraphLoader` ~30 行 + 测试 ~250 行（Zachary Karate Club 标准图 ground truth 验证 + 连通性保证 + 合成图），总计 ~830 行 Java，3 人日。
 
-**复杂度与性能预算**：Louvain 单轮 $O(E)$，平均 <10 轮收敛 → 总 $O(E \log V)$。smart-rag 单 user/team 共现图典型规模（$V < 10^4$，$E < 10^5$）执行 <100ms，每日/每周批处理毫无压力。
+**复杂度与性能预算**：Leiden 单轮 $O(E)$（fast local move 队列驱动，通常比 Louvain 全量扫描更快），多层级迭代 → 总 $O(E \log V)$。smart-rag 单 user/team 共现图典型规模（$V < 10^4$，$E < 10^5$）执行 <100ms，每日/每周批处理毫无压力。
 
 ### 5.3 增量维护策略
 
@@ -619,7 +622,7 @@ public class CommunityDetectionJob {
 |---|---|---|
 | 新 chunk + 新实体追加 | 只重算受影响实体 ±1 跳邻域（局部） | 新实体暂不分配社区，`community_stale=TRUE` |
 | 新 chunk 连接已有实体 | 重算该实体 ±1 跳邻域的 weak_tie | 可能改变社区边界 → 标记 `community_stale=TRUE` |
-| 定时全量刷新 | 每日/每周一次全量（离线批处理） | 每日/每周一次 Louvain |
+| 定时全量刷新 | 每日/每周一次全量（离线批处理） | 每日/每周一次 Leiden |
 
 **关键原则**：两个分数都是**缓存的离线属性，在线查询只读取不计算**。新数据写入时用旧分数（`weak_tie_score=0.5` 的默认值兜底），后台异步刷新，不阻塞在线查询。
 
@@ -783,7 +786,7 @@ SELECT * FROM frontier;  -- frontier（已剪枝）即 PC4a/PC4b 下游消费的
 | `bridge_norm` | 跨社区桥接（P1） | β = 0.3 | 补全局结构视野——低频但连接不同主题簇 |
 | `weak_tie_norm` | 邻域桥接（P0） | γ = 0.2 | 补局部拓扑——邻居互不相识的实体是信息通道 |
 
-**为什么 β > γ**：bridge_score 基于 Louvain 全局社区划分，比 weak_tie 的纯邻域计算更稳定（抗噪），给更高权重。weak_tie 在小邻域上方差大，作辅助信号。
+**为什么 β > γ**：bridge_score 基于 Leiden 全局社区划分，比 weak_tie 的纯邻域计算更稳定（抗噪），给更高权重。weak_tie 在小邻域上方差大，作辅助信号。
 
 **为什么三项都要 window max 归一化**：`query_relevance` 是原始相似度（实际峰值远不到 1.0），而 `bridge_score`/`weak_tie_score` 可达较大值。若只归一化后两者，结构信号会被相对放大、压过主信号，α=0.5 的"主信号"名不副实。三项统一用 `max() OVER ()` 归一化到 [0,1]（剪枝前计算，frontier 在归一化后再取 top-K），保证 α/β/γ 权重语义对称、可比。
 
@@ -1315,7 +1318,7 @@ Path C 的每一步都输出 trace：
 | `entity_match_avg_frontier_size` | 平均 frontier 实体数 | < 5（召回不足）或 > 45（噪声大） |
 | `entity_path_latency_p99` | Path C 延迟 P99 | > 800ms |
 | `low_freq_entity_survival_rate` | low-degree 实体在 frontier 中的存活率 | < 10%（weak_tie/bridge 未生效） |
-| `community_stale_entity_ratio` | `community_stale=TRUE` 的实体比例（Louvain 全量刷新后应→0，clearStaleFlag 全量清除） | > 30%（Louvain 批处理积压或 clearStaleFlag 未全量执行） |
+| `community_stale_entity_ratio` | `community_stale=TRUE` 的实体比例（Leiden 全量刷新后应→0，clearStaleFlag 全量清除） | > 30%（Leiden 批处理积压或 clearStaleFlag 未全量执行） |
 
 ---
 
@@ -1346,7 +1349,7 @@ Path C 的每一步都输出 trace：
 | `EntityEmbeddingService` | `rag/service/impl/` | 聚合 description 批量 embed（SRP：仅 embedding） |
 | **离线批处理（§5）** | | |
 | `WeightedGraph` 接口 + `AdjacencyListGraph` | `infrastructure/algorithm/graph/` | 图抽象（DIP：算法依赖接口不依赖具体实现） |
-| `LouvainCommunityDetector` | `infrastructure/algorithm/graph/` | Louvain 纯算法（零业务依赖，可复用） |
+| `LeidenCommunityDetector` | `infrastructure/algorithm/graph/` | Leiden 纯算法（零业务依赖，可复用） |
 | `CooccurrenceGraphLoader` | `rag/service/impl/` | DB → WeightedGraph（SRP：仅加载） |
 | `CommunityDetectionJob` | `rag/service/impl/` | 编排：加载→检测→写回（SRP：仅编排） |
 | `EntityIndexService` | `rag/service/impl/` | weak_tie_score 计算（纯 SQL 驱动） |
@@ -1369,7 +1372,7 @@ Path C 的每一步都输出 trace：
 
 | 原则 | 原违反 | 修正 | 章节 |
 |---|---|---|---|
-| **SRP** | `CommunityDetectionJob` 混编排+加载+算法 | 拆为 `CooccurrenceGraphLoader` + `LouvainCommunityDetector` + `CommunityDetectionJob` | §5.2 |
+| **SRP** | `CommunityDetectionJob` 混编排+加载+算法 | 拆为 `CooccurrenceGraphLoader` + `LeidenCommunityDetector` + `CommunityDetectionJob` | §5.2 |
 | **SRP** | `EntityExtractionService` 5+ 职责 | 拆为 `EntityExtractionService`(编排) + `EntityCanonicalizationService` + `EntityEmbeddingService` | §4.4 |
 | **SRP** | `EntityRetrievalService` 5 职责 | 拆为 `EntitySeedExtractor` / `EntityFrontierRanker` / `EntityVoteRetriever` / `EntityExpansionRetriever` + `EntityRetrievalPath`(编排) | §6.1 |
 | **OCP** | `rrfFusion(List,List)` 每加一路改签名 | `RetrievalPath` 接口 + `List<RetrievalPath>` 注入，Service 零改动 | §6.5 |
@@ -1378,7 +1381,7 @@ Path C 的每一步都输出 trace：
 | **LSP** | — | 无继承层级，N/A | — |
 | **ISP** | 实体配置散落在主 record | 收敛到 `EntityRetrievalProperties` 嵌套 record | §7.1 |
 | **ISP** | HybridSearchService 依赖大而全的 Service | 依赖 `RetrievalPath` 小接口 | §6.5 |
-| **DIP** | `new LouvainCommunityDetector(Long2ObjectMap)` 依赖具体类型 | Detector 依赖 `WeightedGraph` 接口 | §5.2 |
+| **DIP** | `new LeidenCommunityDetector(Long2ObjectMap)` 依赖具体类型 | Detector 依赖 `WeightedGraph` 接口 | §5.2 |
 | **DIP** | EntityExtraction 直接依赖具体 LLM 客户端 | 依赖 `ChatCapable` 接口（项目已有 DIP 范例） | §4.4/§6.1 |
 | **LoD** | — | SQL 链式访问为惯例，可接受 | — |
 | **CARP** | 算法与业务同包 | 算法下沉 `infrastructure/algorithm/graph/`，业务层通过合成复用 | §5.2 |
@@ -1409,11 +1412,11 @@ Path C 的每一步都输出 trace：
 
 **缓解**：`entity.extractionModel` 可配置，建议用与 queryRewrite 同档模型。监控 `entity_extraction_success_rate`。
 
-### 11.3 Louvain 稳定性
+### 11.3 Leiden 稳定性
 
 **风险**：增量写入下社区划分可能抖动——同一实体在不同周期被分配到不同社区，导致 `bridge_score` 不稳定。
 
-**缓解**：`community_stale` 标记 + 定时全量刷新。Louvain 对少量增量数据相对稳定（局部社区不会因新数据剧变），只有大规模导入才需立即全量重算。
+**缓解**：`community_stale` 标记 + 定时全量刷新。Leiden 对少量增量数据相对稳定（局部社区不会因新数据剧变），只有大规模导入才需立即全量重算。确定性实现（升序 ID 遍历）已消除运行间随机抖动；剩余抖动来自输入图本身的变化（§5.3 增量策略）。
 
 ### 11.4 延迟预算
 

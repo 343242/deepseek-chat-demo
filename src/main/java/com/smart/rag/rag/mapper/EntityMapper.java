@@ -53,17 +53,17 @@ public interface EntityMapper extends BaseMapper<RagEntity> {
     // ==================== 结构分写回（§5.2，CommunityDetectionJob 调用）====================
 
     /**
-     * 社区分配项（node → community_id）。CommunityDetectionJob 将 Louvain 输出的
+     * 社区分配项（node → community_id）。CommunityDetectionJob 将 Leiden 输出的
      * Long2IntMap 转为此列表后批量写回，避免 fastutil 类型直传 MyBatis。
      */
     record CommunityAssignment(long entityId, int communityId) {}
 
     /**
-     * 批量写回 Louvain 社区分配（单条 UPDATE ... FROM VALUES，按 userId 隔离）。
+     * 批量写回 Leiden 社区分配（单条 UPDATE ... FROM VALUES，按 userId 隔离）。
      *
      * @param userId      用户作用域
      * @param teamId      团队作用域（可为 null）
-     * @param communities Louvain 输出的 node → community_id 列表
+     * @param communities Leiden 输出的 node → community_id 列表
      */
     void batchUpdateCommunities(@Param("userId") Long userId,
                                 @Param("teamId") Long teamId,
@@ -76,7 +76,7 @@ public interface EntityMapper extends BaseMapper<RagEntity> {
     void updateBridgeScores(@Param("userId") Long userId, @Param("teamId") Long teamId);
 
     /**
-     * 全量清除该作用域下所有实体的 community_stale（Louvain 覆盖全部节点，§5.2⑤）。
+     * 全量清除该作用域下所有实体的 community_stale（Leiden 覆盖全部节点，§5.2⑤）。
      * 非增量部分清除——degree=0 的新实体也应标记为非 stale。
      */
     void clearStaleFlag(@Param("userId") Long userId, @Param("teamId") Long teamId);

@@ -62,8 +62,8 @@
 
 <!-- ==================== 结构分写回（§5.2，CommunityDetectionJob 调用）==================== -->
 
-<!-- 批量写回 Louvain 社区分配：单条 UPDATE FROM VALUES，按 userId 隔离。
-     teamId 仅作记录传入（community 归属已由 Louvain 的共现图作用域保证），不参与 WHERE。 -->
+<!-- 批量写回 Leiden 社区分配：单条 UPDATE FROM VALUES，按 userId 隔离。
+     teamId 仅作记录传入（community 归属已由 Leiden 的共现图作用域保证），不参与 WHERE。 -->
 <update id="batchUpdateCommunities">
     UPDATE rag_entity e
     SET community_id = v.community_id,
@@ -107,7 +107,7 @@
     WHERE e.id = sub.entity_id
 </update>
 
-<!-- 全量清除作用域内所有实体的 community_stale（§5.2⑤：Louvain 覆盖全部节点）。
+<!-- 全量清除作用域内所有实体的 community_stale（§5.2⑤：Leiden 覆盖全部节点）。
      非增量部分清除——degree=0 新实体也应标记非 stale（下一轮无需重算）。 -->
 <update id="clearStaleFlag">
     UPDATE rag_entity

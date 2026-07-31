@@ -1,1 +1,2 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": "docs/design/entity-centric-retrieval.md", "reason": "Design conformance — verify §5.2 ①②③ contract (interface methods, packed adjacency semantics, Leiden three-phase algorithm) and AC1-AC9 acceptance criteria"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Code quality check — Java 21 style, SOLID, Forbidden Patterns"}

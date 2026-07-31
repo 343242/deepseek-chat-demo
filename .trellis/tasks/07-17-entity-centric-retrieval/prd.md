@@ -21,7 +21,7 @@
 | 子任务 | 主文档章节 | 拥有的产物 | 不拥有 |
 |---|---|---|---|
 | `ecr-db-migration` | §3, §13 | `db/migration/V21__entity_centric_index.sql`：4 表（rag_entity/rag_chunk_entity/rag_event/rag_entity_cooccurrence）+ `v_entity_neighbors` 视图 + 全部索引（含 `COALESCE`/`LEAST/GREATEST` 表达式唯一索引、HNSW `vector_cosine_ops`） | 任何 Java/mapper |
-| `ecr-graph-algorithm` | §5.2 ①②③ | `infrastructure/algorithm/graph/`：`WeightedGraph` 接口 + `AdjacencyListGraph` + `LouvainCommunityDetector` + 单测 | 任何业务概念、DB/mapper、CooccurrenceGraphLoader/CommunityDetectionJob |
+| `ecr-graph-algorithm` | §5.2 ①②③ | `infrastructure/algorithm/graph/`：`WeightedGraph` 接口 + `AdjacencyListGraph` + `LeidenCommunityDetector` + 单测 | 任何业务概念、DB/mapper、CooccurrenceGraphLoader/CommunityDetectionJob |
 | `ecr-retrieval-path-abstraction` | §6.5 | `RetrievalPath` 接口 + `ScoredDocument` record + `VectorRetrievalPath`/`Bm25RetrievalPath` 适配器 + `HybridSearchService` 重构为依赖 `List<RetrievalPath>` | EntityRetrievalPath（属 path-c-retrieval）、任何实体代码 |
 | `ecr-extraction-pipeline` | §4, §8.2, §8.4 | `EntityExtractionService`/`EntityCanonicalizationService`/`EntityEmbeddingService` + `EntityMapper`/`EventMapper`/`ChunkEntityMapper` + `EtlVectorizedEvent` + FastTrackStrategy 事件发布钩子 + `EntityIndexCleanupService` + DocumentSupersedeService 清理集成 + 抽取 prompt(§4.2) | 结构分（structure-scores）、在线检索（path-c）、图算法 |
 | `ecr-structure-scores` | §5.1, §5.2 ④⑤, §5.4 | `EntityCooccurrenceMapper` + `CooccurrenceGraphLoader` + `CommunityDetectionJob` + `EntityIndexService`（weak_tie SQL + bridge SQL + 共现投影 SQL） | 图算法内部（graph-algorithm）、抽取（extraction-pipeline） |
@@ -39,7 +39,7 @@ ecr-retrieval-path-abstraction ──→ ecr-path-c-retrieval ──────
 
 - **无依赖、可并行启动**：`ecr-db-migration`、`ecr-graph-algorithm`、`ecr-retrieval-path-abstraction`（三者互不依赖）。
 - `ecr-extraction-pipeline` 依赖 `ecr-db-migration`（表必须存在）。
-- `ecr-structure-scores` 依赖 `ecr-db-migration` + `ecr-graph-algorithm`（Louvain）+ `ecr-extraction-pipeline`（需实体数据）。
+- `ecr-structure-scores` 依赖 `ecr-db-migration` + `ecr-graph-algorithm`（Leiden）+ `ecr-extraction-pipeline`（需实体数据）。
 - `ecr-path-c-retrieval` 依赖 `ecr-db-migration` + `ecr-retrieval-path-abstraction` + `ecr-extraction-pipeline`（mapper/数据）；**读取**（不计算）structure-scores 的列。
 
 ## Requirements（父级，跨子任务集成层）

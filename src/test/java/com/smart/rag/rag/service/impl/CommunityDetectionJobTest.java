@@ -25,10 +25,10 @@ import static org.mockito.Mockito.*;
  * <p>
  * 用真实 {@link WeightedGraph}（合成图）+ mock {@link EntityMapper}，验证 §5.2⑤ 编排：
  * load → detect → batchUpdateCommunities → updateBridgeScores → clearStaleFlag。
- * Louvain 是确定性纯算法（节点按升序 ID 访问），故合成图上的社区划分可复现。
+ * Leiden 是确定性纯算法（节点按升序 ID 访问），故合成图上的社区划分可复现。
  */
 @ExtendWith(MockitoExtension.class)
-@DisplayName("CommunityDetectionJob — Louvain + bridge + clearStale 编排")
+@DisplayName("CommunityDetectionJob — Leiden + bridge + clearStale 编排")
 class CommunityDetectionJobTest {
 
     @Mock
@@ -43,7 +43,7 @@ class CommunityDetectionJobTest {
     // ==================== 正常路径：两个三角形 + 桥边 ====================
 
     @Test
-    @DisplayName("双三角形 + 桥 — Louvain 划分 ≥2 社区，社区分配写回，bridge + clearStale 被调用")
+    @DisplayName("双三角形 + 桥 — Leiden 划分 ≥2 社区，社区分配写回，bridge + clearStale 被调用")
     void run_twoTrianglesWithBridge_detectsCommunities() {
         // 两个三角形由一条弱桥连接：A-B-C 三角 + D-E-F 三角 + C-D 桥
         WeightedGraph graph = twoTrianglesBridgeGraph();
@@ -61,7 +61,7 @@ class CommunityDetectionJobTest {
         List<CommunityAssignment> assignments = captor.getValue();
         assertThat(assignments).hasSize(6); // 全部 6 节点被分配
 
-        // 桥接实体 C、D 在不同社区（Louvain 确定性，两三角形应分到不同社区）
+        // 桥接实体 C、D 在不同社区（Leiden 确定性，两三角形应分到不同社区）
         Set<Integer> triangleABC = new HashSet<>();
         Set<Integer> triangleDEF = new HashSet<>();
         for (CommunityAssignment a : assignments) {
@@ -89,8 +89,8 @@ class CommunityDetectionJobTest {
     // ==================== 边界：nodeCount < 2 ====================
 
     @Test
-    @DisplayName("单节点图 — 跳过 Louvain，不写社区，但仍清除 stale（§5.2⑤ 全量语义）")
-    void run_singleNode_skipsLouvain_clearsStale() {
+    @DisplayName("单节点图 — 跳过 Leiden，不写社区，但仍清除 stale（§5.2⑤ 全量语义）")
+    void run_singleNode_skipsLeiden_clearsStale() {
         WeightedGraph single = new AdjacencyListGraph();
         single.addNode(1L);
         when(graphLoader.load(10L, null)).thenReturn(single);
@@ -104,8 +104,8 @@ class CommunityDetectionJobTest {
     }
 
     @Test
-    @DisplayName("空图 — 跳过 Louvain，仍清除 stale")
-    void run_emptyGraph_skipsLouvain_clearsStale() {
+    @DisplayName("空图 — 跳过 Leiden，仍清除 stale")
+    void run_emptyGraph_skipsLeiden_clearsStale() {
         WeightedGraph empty = new AdjacencyListGraph();
         when(graphLoader.load(10L, null)).thenReturn(empty);
 
@@ -141,7 +141,7 @@ class CommunityDetectionJobTest {
      *    \   /             \   /
      *     C(3) ——桥(权重 0.1)—— F(6)
      * </pre>
-     * 三角形内部权重 1.0，桥边权重 0.1（弱连接）。Louvain 应将两三角形分入不同社区。
+     * 三角形内部权重 1.0，桥边权重 0.1（弱连接）。Leiden 应将两三角形分入不同社区。
      */
     private static WeightedGraph twoTrianglesBridgeGraph() {
         AdjacencyListGraph g = new AdjacencyListGraph();

@@ -7,7 +7,7 @@ import java.util.Set;
 /**
  * Undirected weighted simple graph abstraction.
  *
- * <p>Provides the minimal contract consumed by Louvain community detection, weak-tie scoring,
+ * <p>Provides the minimal contract consumed by Leiden community detection, weak-tie scoring,
  * and bridge-score computation. Zero business dependency — depends only on JDK and fastutil.</p>
  *
  * <p>Edge semantics:</p>
@@ -72,7 +72,7 @@ public interface WeightedGraph {
 
     /**
      * Return the total graph weight {@code m = Σ w / 2} (each undirected edge counted once).
-     * This is the Louvain normalization factor.
+     * This is the Leiden normalization factor.
      *
      * @return total weight
      */

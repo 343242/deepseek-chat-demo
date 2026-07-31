@@ -106,7 +106,7 @@ COMMENT ON COLUMN rag_entity.team_id IS '所属团队（可空，个人文档为
 COMMENT ON COLUMN rag_entity.degree IS '实体度数（派生列，由 extraction-pipeline 增量维护/清理时全量重算；仅 WHERE degree<100 性能预算用，不参与打分）';
 COMMENT ON COLUMN rag_entity.weak_tie_score IS 'P0 弱联系分（离线计算缓存，默认 0.5；在线只读，§5.1）';
 COMMENT ON COLUMN rag_entity.bridge_score IS 'P1 桥接分（离线计算缓存，默认 0；在线只读，§5.4）';
-COMMENT ON COLUMN rag_entity.community_id IS 'Louvain 社区编号（离线计算缓存；§5.2）';
+COMMENT ON COLUMN rag_entity.community_id IS 'Leiden 社区编号（离线计算缓存；§5.2）';
 COMMENT ON COLUMN rag_entity.community_stale IS '社区归属是否过期（TRUE=需重算；CommunityDetectionJob 写 FALSE，clearStaleFlag 全量重置）';
 
 COMMENT ON TABLE rag_chunk_entity IS 'chunk ↔ entity 多对多关联表 -- 回链 vector_store.id（chunk_id），应用层保证一致性，无 FK 约束';

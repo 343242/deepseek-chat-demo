@@ -10,7 +10,7 @@
 flowchart TB
     subgraph FOUND["无依赖基础层（可并行）"]
         DB["ecr-db-migration<br/>V21 schema"]
-        ALG["ecr-graph-algorithm<br/>WeightedGraph + Louvain"]
+        ALG["ecr-graph-algorithm<br/>WeightedGraph + Leiden"]
         RPA["ecr-retrieval-path-abstraction<br/>RetrievalPath 接口 + A/B 适配 + HybridSearchService 重构"]
     end
     EXT["ecr-extraction-pipeline<br/>ETL 抽取/规范化/embedding + 清理"]

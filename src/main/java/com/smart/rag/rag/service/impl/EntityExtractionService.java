@@ -187,7 +187,7 @@ public class EntityExtractionService {
                 // Step 6: 标记 community_stale=TRUE
                 entityMapper.markCommunityStale(affectedEntityIds);
 
-                // Step 7: 触发离线结构分批处理（§8.1 Step 6 续：共现图 + weak_tie + Louvain + bridge）
+                // Step 7: 触发离线结构分批处理（§8.1 Step 6 续：共现图 + weak_tie + Leiden + bridge）
                 // failure-isolated（§8.3）：结构分计算失败不影响 Path A/B，下次 ETL 重试
                 recomputeStructureScores(userId, teamId);
             }
@@ -202,9 +202,9 @@ public class EntityExtractionService {
     }
 
     /**
-     * §8.1 Step 6 续：触发作用域结构分重算（共现图投影 + weak_tie + Louvain 社区 + bridge）。
+     * §8.1 Step 6 续：触发作用域结构分重算（共现图投影 + weak_tie + Leiden 社区 + bridge）。
      * 顺序：{@link EntityIndexService#recomputeWeakTieScores}（刷新共现图 + 计算 weak_tie）
-     * → {@link CommunityDetectionJob#run}（Louvain + bridge + clearStale）。
+     * → {@link CommunityDetectionJob#run}（Leiden + bridge + clearStale）。
      * 失败隔离（§8.3）：任一步失败仅记录日志，不影响 Path A/B；entity 层用默认分兜底，下次 ETL 重试。
      */
     private void recomputeStructureScores(Long userId, @Nullable Long teamId) {

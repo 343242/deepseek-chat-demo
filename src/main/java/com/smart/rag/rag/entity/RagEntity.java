@@ -40,7 +40,7 @@ public class RagEntity {
     /** P1: 桥接分（离线计算） */
     private Double bridgeScore;
 
-    /** Louvain 社区 ID */
+    /** Leiden 社区 ID */
     private Integer communityId;
 
     /** 社区信息是否过期 */

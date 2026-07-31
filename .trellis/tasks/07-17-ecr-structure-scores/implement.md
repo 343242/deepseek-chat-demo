@@ -5,7 +5,7 @@
 ## 前置条件（Gate 检查）
 
 - [ ] `ecr-db-migration` 完成：V21 schema 落地（4 表 + v_entity_neighbors 视图 + 全部索引），clean DB 迁移通过
-- [ ] `ecr-graph-algorithm` 完成：`com.smart.rag.infrastructure.algorithm.graph.WeightedGraph` + `AdjacencyListGraph` + `LouvainCommunityDetector` 可编译，Zachary Karate Club 单测通过
+- [ ] `ecr-graph-algorithm` 完成：`com.smart.rag.infrastructure.algorithm.graph.WeightedGraph` + `AdjacencyListGraph` + `LeidenCommunityDetector` 可编译，Zachary Karate Club 单测通过
 - [ ] `ecr-extraction-pipeline` 完成：EntityMapper 定义了 `batchUpdateCommunities(userId, teamId, Long2IntMap)`、`updateBridgeScores(userId, teamId)`、`clearStaleFlag(userId, teamId)` 方法签名
 
 ## 执行清单
@@ -105,17 +105,17 @@
   ```
   WeightedGraph graph = graphLoader.load(userId, teamId);
   if (graph.nodeCount() < 2) return;
-  Long2IntMap communities = new LouvainCommunityDetector(graph).detect();
+  Long2IntMap communities = new LeidenCommunityDetector(graph).detect();
   entityMapper.batchUpdateCommunities(userId, teamId, communities);
   entityMapper.updateBridgeScores(userId, teamId);
   entityMapper.clearStaleFlag(userId, teamId);
   ```
 - [ ] 日志：INFO 级别记录开始/完成/节点数/社区数（`logging-guidelines.md`）
-- [ ] 集成测试（需真实 DB + Louvain）：
+- [ ] 集成测试（需真实 DB + Leiden）：
   - 构造合成共现图（两个三角形 + 一条桥边：A-B-C 三角形 + D-E-F 三角形 + C-D 桥）
   - 调用 `communityDetectionJob.run(userId, teamId)`
-  - 断言：(a) 所有节点 community_id 非 NULL；(b) A/B/C 同社区，D/E/F 同社区（或 Louvain 合理划分），C/D 桥接；(c) C 和 D 的 bridge_score ≥ 1（连接不同社区）；(d) A/B/E/F 的 bridge_score 可能 = 0（纯社区内部）；(e) `community_stale` 全部 = FALSE；(f) `degree` 列不变
-- [ ] 单实体跳过测试：`nodeCount < 2` 时不调用 Louvain，无异常
+  - 断言：(a) 所有节点 community_id 非 NULL；(b) A/B/C 同社区，D/E/F 同社区（或 Leiden 合理划分），C/D 桥接；(c) C 和 D 的 bridge_score ≥ 1（连接不同社区）；(d) A/B/E/F 的 bridge_score 可能 = 0（纯社区内部）；(e) `community_stale` 全部 = FALSE；(f) `degree` 列不变
+- [ ] 单实体跳过测试：`nodeCount < 2` 时不调用 Leiden，无异常
 
 **验证**：
 ```bash
@@ -142,7 +142,7 @@
 | 协调项 | 对方子任务 | 协调内容 |
 |---|---|---|
 | EntityMapper 方法签名 | `ecr-extraction-pipeline` | `batchUpdateCommunities(Long userId, Long teamId, Long2IntMap communities)`、`updateBridgeScores(Long userId, Long teamId)`、`clearStaleFlag(Long userId, Long teamId)` — extraction-pipeline 负责实现（含 bridge_score XML SQL），本子任务仅调用 |
-| WeightedGraph / Louvain API | `ecr-graph-algorithm` | import `com.smart.rag.infrastructure.algorithm.graph.WeightedGraph` + `AdjacencyListGraph` + `LouvainCommunityDetector` — 验证接口签名与 §5.2 一致（`Long2IntMap detect()` 返回 node → community_id） |
+| WeightedGraph / Leiden API | `ecr-graph-algorithm` | import `com.smart.rag.infrastructure.algorithm.graph.WeightedGraph` + `AdjacencyListGraph` + `LeidenCommunityDetector` — 验证接口签名与 §5.2 一致（`Long2IntMap detect()` 返回 node → community_id） |
 | 结构分列所有权 | `ecr-path-c-retrieval` | path-c 仅读取 `weak_tie_score`/`bridge_score`/`community_id`，不写不改 |
 
 ## 验证命令汇总

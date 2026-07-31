@@ -4,17 +4,23 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Map;
 import java.util.Random;
+import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * Unit tests for {@link LouvainCommunityDetector}.
+ * Unit tests for {@link LeidenCommunityDetector}.
  *
  * <p>Covers AC1 (Zachary Karate Club headline), AC4 (K5 edge case),
- * AC5 (modularity range), AC6 (performance budget), plus synthetic and edge cases.</p>
+ * AC5 (modularity range), AC6 (performance budget), the headline Leiden guarantee
+ * (every community internally connected), determinism, and the resolution parameter
+ * (design.md OQ1/OQ2), plus synthetic and edge cases.</p>
  */
-class LouvainCommunityDetectorTest {
+class LeidenCommunityDetectorTest {
 
     // === AC1: Zachary Karate Club headline ===
 
@@ -22,14 +28,14 @@ class LouvainCommunityDetectorTest {
      * Zachary Karate Club standard graph: 34 nodes, 78 edges.
      * Edges are 1-indexed per the standard dataset (Wayne Zachary, 1977).
      *
-     * <p>Full multi-level Louvain (local-moving + aggregation, §5.2 ③) on this canonical
-     * benchmark detects a small number of communities whose count depends on traversal order;
-     * deterministic ascending-ID traversal lands in the 2–7 range (the classic randomized
-     * result is 2). The two structurally-guaranteed properties — the headline acceptance —
-     * are that (a) Mr. Hi (node 1) and John A. (node 34) split into different communities,
-     * and (b) modularity Q is significantly positive (a degenerate all-singletons split would
-     * give Q=0). Per design.md OQ2, AC1 asserts these structural properties rather than a
-     * brittle exact community count.</p>
+     * <p>Deterministic multi-level Leiden on this canonical benchmark detects a small
+     * number of communities: the classic ground-truth result is 2, but the deterministic
+     * θ→0 refinement splits badly-connected sub-structures into well-connected
+     * sub-communities, landing in the 2–7 range (per design.md OQ2, AC1 asserts structural
+     * properties rather than a brittle exact count). The two structurally-guaranteed
+     * properties — the headline acceptance — are that (a) Mr. Hi (node 1) and John A.
+     * (node 34) split into different communities, and (b) modularity Q is significantly
+     * positive (a degenerate all-singletons split would give Q=0).</p>
      */
     @Test
     @DisplayName("AC1: Zachary Karate Club — node 1 vs 34 separate, Q > 0.3")
@@ -37,16 +43,16 @@ class LouvainCommunityDetectorTest {
         var graph = new AdjacencyListGraph();
         loadKarateClub(graph);
 
-        var detector = new LouvainCommunityDetector(graph);
+        var detector = new LeidenCommunityDetector(graph);
         var communities = detector.detect();
 
         // Count unique communities.
-        var uniqueComms = new java.util.HashSet<Integer>();
+        var uniqueComms = new HashSet<Integer>();
         for (int c : communities.values()) {
             uniqueComms.add(c);
         }
 
-        // Deterministic multi-level Louvain produces ≥2 meaningful communities.
+        // Deterministic multi-level Leiden produces ≥2 meaningful communities.
         assertThat(uniqueComms).as("community count").hasSizeBetween(2, 7);
 
         // Mr. Hi and John A. must land in different communities.
@@ -55,22 +61,70 @@ class LouvainCommunityDetectorTest {
 
         // Modularity must be significantly positive — proves the partition is structural,
         // not a degenerate singletons split (which would yield Q=0).
-        double m = graph.totalWeight();
-        double twoM = 2.0 * m;
-        double q = 0.0;
-        for (long node : graph.nodes()) {
-            int ci = communities.get(node);
-            double ki = graph.weightedDegree(node);
-            for (var e : graph.neighbors(node).long2DoubleEntrySet()) {
-                long nb = e.getLongKey();
-                if (communities.get(nb) == ci) {
-                    double kj = graph.weightedDegree(nb);
-                    q += e.getDoubleValue() - (ki * kj) / twoM;
+        double q = modularity(graph, communities);
+        assertThat(q).as("modularity Q significantly positive").isGreaterThan(0.3);
+    }
+
+    // === Headline Leiden guarantee: well-connected communities ===
+
+    /**
+     * The whole point of replacing Louvain with Leiden (§5.2 ③): every detected community
+     * must be internally connected, so {@code bridge_score} (§5.2 ④) counts only genuine
+     * cross-community bridges. Verified by BFS over intra-community edges on a noisy
+     * synthetic graph (3 cliques + bridges + random noise edges).
+     */
+    @Test
+    @DisplayName("well-connectedness — every community is internally connected")
+    void allCommunitiesInternallyConnected() {
+        var graph = new AdjacencyListGraph();
+        var rng = new Random(7);
+
+        // 3 cliques of 10 nodes, intra weight 1.
+        for (int clique = 0; clique < 3; clique++) {
+            int base = clique * 10;
+            for (int i = 0; i < 10; i++) {
+                for (int j = i + 1; j < 10; j++) {
+                    graph.addEdge(base + i, base + j, 1.0);
                 }
             }
         }
-        q /= twoM;
-        assertThat(q).as("modularity Q significantly positive").isGreaterThan(0.3);
+        // Bridge edges between cliques.
+        graph.addEdge(9, 10, 0.1);
+        graph.addEdge(19, 20, 0.1);
+        // Noise edges with low weight — makes the partition non-trivial.
+        for (int e = 0; e < 40; e++) {
+            long a = rng.nextInt(30);
+            long b = rng.nextInt(30);
+            if (a != b) {
+                graph.addEdge(a, b, 0.05);
+            }
+        }
+
+        var detector = new LeidenCommunityDetector(graph);
+        var communities = detector.detect();
+
+        assertThat(communities).isNotEmpty();
+        assertThat(allCommunitiesConnected(graph, communities))
+                .as("every community internally connected")
+                .isTrue();
+    }
+
+    // === Determinism ===
+
+    @Test
+    @DisplayName("determinism — two runs produce identical partitions")
+    void determinism_twoRunsIdentical() {
+        var graph = new AdjacencyListGraph();
+        loadKarateClub(graph);
+        graph.addEdge(100, 101, 3.0);
+        graph.addEdge(101, 102, 3.0);
+        graph.addEdge(100, 102, 3.0);
+        graph.addNode(999); // isolated node
+
+        var first = new LeidenCommunityDetector(graph).detect();
+        var second = new LeidenCommunityDetector(graph).detect();
+
+        assertThat(first).as("identical partitions across runs").isEqualTo(second);
     }
 
     // === Synthetic 3-clique graph ===
@@ -94,15 +148,37 @@ class LouvainCommunityDetectorTest {
         graph.addEdge(9, 10, 0.1);  // clique0 → clique1
         graph.addEdge(19, 20, 0.1); // clique1 → clique2
 
-        var detector = new LouvainCommunityDetector(graph);
+        var detector = new LeidenCommunityDetector(graph);
         var communities = detector.detect();
 
-        var uniqueComms = new java.util.HashSet<Integer>();
+        var uniqueComms = new HashSet<Integer>();
         for (int c : communities.values()) {
             uniqueComms.add(c);
         }
 
         assertThat(uniqueComms).as("community count").hasSizeGreaterThanOrEqualTo(3);
+    }
+
+    // === Resolution parameter (design.md OQ1) ===
+
+    @Test
+    @DisplayName("resolution — γ=2.0 splits K5 into singletons, γ=0.01 merges it into one")
+    void resolution_controlsGranularity() {
+        var graph = new AdjacencyListGraph();
+        for (int i = 1; i <= 5; i++) {
+            for (int j = i + 1; j <= 5; j++) {
+                graph.addEdge(i, j, 1.0);
+            }
+        }
+
+        // High resolution: every node prefers its own community (ΔQ of any merge is
+        // 1/10 − γ·4·4/200 = 0.1 − 0.08·γ < 0 for γ = 2).
+        var fine = new LeidenCommunityDetector(graph, 2.0).detect();
+        assertThat(new HashSet<>(fine.values())).as("γ=2.0 community count").hasSize(5);
+
+        // Low resolution: everything merges into a single community.
+        var coarse = new LeidenCommunityDetector(graph, 0.01).detect();
+        assertThat(new HashSet<>(coarse.values())).as("γ=0.01 community count").hasSize(1);
     }
 
     // === Edge cases ===
@@ -111,7 +187,7 @@ class LouvainCommunityDetectorTest {
     @DisplayName("empty graph — empty result")
     void emptyGraph_emptyResult() {
         var graph = new AdjacencyListGraph();
-        var detector = new LouvainCommunityDetector(graph);
+        var detector = new LeidenCommunityDetector(graph);
 
         var communities = detector.detect();
         assertThat(communities).isEmpty();
@@ -123,7 +199,7 @@ class LouvainCommunityDetectorTest {
         var graph = new AdjacencyListGraph();
         graph.addNode(1);
 
-        var detector = new LouvainCommunityDetector(graph);
+        var detector = new LeidenCommunityDetector(graph);
         var communities = detector.detect();
 
         assertThat(communities).hasSize(1);
@@ -143,7 +219,7 @@ class LouvainCommunityDetectorTest {
         // Isolated node
         graph.addNode(99);
 
-        var detector = new LouvainCommunityDetector(graph);
+        var detector = new LeidenCommunityDetector(graph);
         var communities = detector.detect();
 
         // Should not crash and should assign all nodes
@@ -153,7 +229,7 @@ class LouvainCommunityDetectorTest {
     // === AC4: K5 edge case ===
 
     @Test
-    @DisplayName("AC4: K5 — Louvain does not throw")
+    @DisplayName("AC4: K5 — Leiden does not throw")
     void completeGraph_K5_noException() {
         var graph = new AdjacencyListGraph();
         for (int i = 1; i <= 5; i++) {
@@ -162,9 +238,10 @@ class LouvainCommunityDetectorTest {
             }
         }
 
-        var detector = new LouvainCommunityDetector(graph);
+        var detector = new LeidenCommunityDetector(graph);
         var communities = detector.detect();
 
+        // All 5 nodes assigned, no exception.
         assertThat(communities).hasSize(5);
     }
 
@@ -188,29 +265,10 @@ class LouvainCommunityDetectorTest {
         // Single bridge
         graph.addEdge(3, 4, 0.1);
 
-        var detector = new LouvainCommunityDetector(graph);
+        var detector = new LeidenCommunityDetector(graph);
         var communities = detector.detect();
 
-        // Compute modularity Q
-        double m = graph.totalWeight();
-        double twoM = 2.0 * m;
-        double q = 0.0;
-        for (long node : graph.nodes()) {
-            int ci = communities.get(node);
-            double ki = graph.weightedDegree(node);
-            var neighborMap = graph.neighbors(node);
-            for (var entry : neighborMap.long2DoubleEntrySet()) {
-                long neighbor = entry.getLongKey();
-                int cj = communities.get(neighbor);
-                if (ci == cj) {
-                    double aij = entry.getDoubleValue();
-                    double kj = graph.weightedDegree(neighbor);
-                    q += aij - (ki * kj) / twoM;
-                }
-            }
-        }
-        q /= twoM;
-
+        double q = modularity(graph, communities);
         assertThat(q).as("modularity Q").isBetween(0.0, 1.0);
         // For this clearly 2-community graph, Q should be significantly positive
         assertThat(q).as("modularity Q significantly positive").isGreaterThan(0.1);
@@ -236,7 +294,7 @@ class LouvainCommunityDetectorTest {
             graph.addEdge(a, b, 1.0);
         }
 
-        var detector = new LouvainCommunityDetector(graph);
+        var detector = new LeidenCommunityDetector(graph);
 
         long start = System.nanoTime();
         var communities = detector.detect();
@@ -248,6 +306,58 @@ class LouvainCommunityDetectorTest {
     }
 
     // === Helpers ===
+
+    /**
+     * Modularity Q of the partition on the original graph.
+     */
+    private static double modularity(WeightedGraph graph, Map<Long, Integer> communities) {
+        double m = graph.totalWeight();
+        double twoM = 2.0 * m;
+        double q = 0.0;
+        for (long node : graph.nodes()) {
+            int ci = communities.get(node);
+            double ki = graph.weightedDegree(node);
+            for (var e : graph.neighbors(node).long2DoubleEntrySet()) {
+                long nb = e.getLongKey();
+                if (communities.get(nb) == ci) {
+                    double kj = graph.weightedDegree(nb);
+                    q += e.getDoubleValue() - (ki * kj) / twoM;
+                }
+            }
+        }
+        return q / twoM;
+    }
+
+    /**
+     * True iff every community induces a connected subgraph (BFS over intra-community
+     * edges). Singleton communities are trivially connected.
+     */
+    private static boolean allCommunitiesConnected(WeightedGraph graph, Map<Long, Integer> communities) {
+        Map<Integer, Set<Long>> members = new HashMap<>();
+        for (var e : communities.entrySet()) {
+            members.computeIfAbsent(e.getValue(), k -> new HashSet<>()).add(e.getKey());
+        }
+        for (var entry : members.entrySet()) {
+            Set<Long> comm = entry.getValue();
+            Set<Long> seen = new HashSet<>();
+            java.util.ArrayDeque<Long> stack = new java.util.ArrayDeque<>();
+            long start = comm.iterator().next();
+            stack.push(start);
+            seen.add(start);
+            while (!stack.isEmpty()) {
+                long v = stack.pop();
+                for (long u : graph.neighbors(v).keySet()) {
+                    if (comm.contains(u) && seen.add(u)) {
+                        stack.push(u);
+                    }
+                }
+            }
+            if (!seen.equals(comm)) {
+                return false;
+            }
+        }
+        return true;
+    }
 
     /**
      * Load the canonical Zachary Karate Club edges (34 nodes, 78 edges, unweighted).

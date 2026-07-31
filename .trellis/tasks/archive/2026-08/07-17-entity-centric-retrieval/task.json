@@ -1,0 +1,33 @@
+{
+  "id": "07-17-entity-centric-retrieval",
+  "name": "07-17-entity-centric-retrieval",
+  "title": "Entity-Centric Retrieval Enhancement (parent: 6-subtask integration)",
+  "description": "SAG event-entity hyperedge + UnWeaver equivalence aggregation; weak_tie/bridge fused ranking as hybridSearch Path C. 6 subtasks: db-migration / graph-algorithm / retrieval-path-abstraction / extraction-pipeline / structure-scores / path-c-retrieval.",
+  "status": "completed",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P1",
+  "creator": "instant",
+  "assignee": "instant",
+  "createdAt": "2026-07-17",
+  "completedAt": "2026-08-01",
+  "branch": "agentic-rag-dev",
+  "base_branch": "agentic-rag-dev",
+  "worktree_path": null,
+  "commit": "1bdc318",
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "ecr-db-migration",
+    "ecr-graph-algorithm",
+    "ecr-retrieval-path-abstraction",
+    "ecr-extraction-pipeline",
+    "ecr-structure-scores",
+    "ecr-path-c-retrieval"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "AC1-AC6 verified 2026-08-01; 10 startup/run defects fixed (06b6d09/28c371f); design-principle compliance reviewed (543b41a); Path C SQL P99=438ms < 800ms; entity.enabled=false zero regression (1357 tests).",
+  "meta": {}
+}

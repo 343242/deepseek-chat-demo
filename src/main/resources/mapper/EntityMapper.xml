@@ -75,7 +75,7 @@
         </foreach>
     ) AS v(entity_id, community_id)
     WHERE e.id = v.entity_id
-      AND e.user_id = #{userId}
+      AND e.user_id = #{userId,jdbcType=BIGINT}
 </update>
 
 <!-- bridge_score 计算（§5.2 Step 2）：邻居中属于不同社区的数量（排除自身社区）。
@@ -97,11 +97,11 @@
         FROM rag_entity e0
         LEFT JOIN v_entity_neighbors vn
             ON vn.entity_id = e0.id
-           AND vn.user_id = #{userId}
-           AND (#{teamId} IS NULL AND vn.team_id IS NULL OR vn.team_id = #{teamId})
+           AND vn.user_id = #{userId,jdbcType=BIGINT}
+           AND (#{teamId,jdbcType=BIGINT} IS NULL AND vn.team_id IS NULL OR vn.team_id = #{teamId,jdbcType=BIGINT})
         LEFT JOIN rag_entity e2 ON e2.id = vn.neighbor_id
-        WHERE e0.user_id = #{userId}
-          AND (#{teamId} IS NULL AND e0.team_id IS NULL OR e0.team_id = #{teamId})
+        WHERE e0.user_id = #{userId,jdbcType=BIGINT}
+          AND (#{teamId,jdbcType=BIGINT} IS NULL AND e0.team_id IS NULL OR e0.team_id = #{teamId,jdbcType=BIGINT})
         GROUP BY e0.id
     ) sub
     WHERE e.id = sub.entity_id
@@ -113,43 +113,43 @@
     UPDATE rag_entity
     SET community_stale = FALSE,
         updated_at = NOW()
-    WHERE user_id = #{userId}
-      AND (#{teamId} IS NULL AND team_id IS NULL OR team_id = #{teamId})
+    WHERE user_id = #{userId,jdbcType=BIGINT}
+      AND (#{teamId,jdbcType=BIGINT} IS NULL AND team_id IS NULL OR team_id = #{teamId,jdbcType=BIGINT})
 </update>
 
 <!-- ==================== Path C 在线检索查询（§6.2/§6.3/§6.4，仅读取）==================== -->
 
 <resultMap id="scoredEntity" type="com.smart.rag.rag.retrieval.entity.ScoredEntity">
     <constructor>
-        <arg column="id" javaType="long"/>
+        <arg column="id" javaType="_long"/>
         <arg column="name_display" javaType="java.lang.String"/>
-        <arg column="query_relevance" javaType="double"/>
-        <arg column="bridge" javaType="double"/>
-        <arg column="weak_tie" javaType="double"/>
-        <arg column="degree" javaType="int"/>
-        <arg column="query_rel_norm" javaType="double"/>
-        <arg column="bridge_norm" javaType="double"/>
-        <arg column="weak_tie_norm" javaType="double"/>
-        <arg column="composite_score" javaType="double"/>
+        <arg column="query_relevance" javaType="_double"/>
+        <arg column="bridge" javaType="_double"/>
+        <arg column="weak_tie" javaType="_double"/>
+        <arg column="degree" javaType="_int"/>
+        <arg column="query_rel_norm" javaType="_double"/>
+        <arg column="bridge_norm" javaType="_double"/>
+        <arg column="weak_tie_norm" javaType="_double"/>
+        <arg column="composite_score" javaType="_double"/>
     </constructor>
 </resultMap>
 
 <resultMap id="votedChunk" type="com.smart.rag.rag.retrieval.entity.VotedChunk">
     <constructor>
-        <arg column="chunk_id" javaType="java.util.UUID"/>
+        <arg column="chunk_id" javaType="java.util.UUID" typeHandler="com.smart.rag.rag.mapper.UuidTypeHandler"/>
         <arg column="content" javaType="java.lang.String"/>
         <arg column="metadata" javaType="java.lang.String"/>
-        <arg column="chunk_score" javaType="double"/>
+        <arg column="chunk_score" javaType="_double"/>
         <arg column="voted_by_entities" javaType="java.lang.String"/>
     </constructor>
 </resultMap>
 
 <resultMap id="expandedChunk" type="com.smart.rag.rag.retrieval.entity.ExpandedChunk">
     <constructor>
-        <arg column="chunk_id" javaType="java.util.UUID"/>
+        <arg column="chunk_id" javaType="java.util.UUID" typeHandler="com.smart.rag.rag.mapper.UuidTypeHandler"/>
         <arg column="content" javaType="java.lang.String"/>
         <arg column="metadata" javaType="java.lang.String"/>
-        <arg column="chunk_score" javaType="double"/>
+        <arg column="chunk_score" javaType="_double"/>
         <arg column="discovered_via_entities" javaType="java.lang.String"/>
     </constructor>
 </resultMap>
@@ -173,8 +173,8 @@
             e.degree
         FROM rag_entity e
         CROSS JOIN seed_embeddings se
-        WHERE e.user_id = #{userId}
-          AND (#{teamId} IS NULL AND e.team_id IS NULL OR e.team_id = #{teamId})
+        WHERE e.user_id = #{userId,jdbcType=BIGINT}
+          AND (#{teamId,jdbcType=BIGINT} IS NULL AND e.team_id IS NULL OR e.team_id = #{teamId,jdbcType=BIGINT})
           AND e.embedding IS NOT NULL
           AND (1 - (e.embedding &lt;=&gt; se.embedding)) &gt; #{matchThreshold}
         GROUP BY e.id, e.name_display, e.bridge_score, e.weak_tie_score, e.degree
@@ -205,7 +205,7 @@
     WITH frontier(id, name_display, composite_score) AS (
         VALUES
         <foreach collection="frontier" item="fe" separator=",">
-            (#{fe.id()}::bigint, #{fe.nameDisplay()}::text, #{fe.compositeScore()}::double precision)
+            (#{fe.id}::bigint, #{fe.nameDisplay}::text, #{fe.compositeScore}::double precision)
         </foreach>
     )
     SELECT
@@ -218,7 +218,7 @@
     JOIN rag_chunk_entity ce ON ce.entity_id = f.id
     JOIN vector_store vs ON vs.id = ce.chunk_id
     WHERE vs.metadata->>'userId' = #{userIdStr}
-    GROUP BY ce.chunk_id, vs.content, vs.metadata
+    GROUP BY ce.chunk_id, vs.content, vs.metadata::text
     ORDER BY chunk_score DESC
     LIMIT #{chunkTopK}
 </select>
@@ -229,7 +229,7 @@
     WITH frontier_with_score(id, composite_score) AS (
         VALUES
         <foreach collection="frontier" item="fe" separator=",">
-            (#{fe.id()}::bigint, #{fe.compositeScore()}::double precision)
+            (#{fe.id}::bigint, #{fe.compositeScore}::double precision)
         </foreach>
     ),
     seed_events AS (
@@ -237,8 +237,8 @@
         FROM rag_event e
         JOIN rag_chunk_entity ce ON ce.chunk_id = e.chunk_id
         WHERE ce.entity_id IN (SELECT id FROM frontier_with_score)
-          AND e.user_id = #{userId}
-          AND (#{teamId} IS NULL AND e.team_id IS NULL OR e.team_id = #{teamId})
+          AND e.user_id = #{userId,jdbcType=BIGINT}
+          AND (#{teamId,jdbcType=BIGINT} IS NULL AND e.team_id IS NULL OR e.team_id = #{teamId,jdbcType=BIGINT})
     ),
     expanded_entities AS (
         SELECT DISTINCT ce.entity_id
@@ -247,14 +247,14 @@
         LEFT JOIN frontier_with_score f ON f.id = ce.entity_id
         JOIN rag_entity e2 ON e2.id = ce.entity_id
         WHERE f.id IS NULL
-          AND e2.user_id = #{userId}
+          AND e2.user_id = #{userId,jdbcType=BIGINT}
     ),
     expanded_events AS (
         SELECT DISTINCT e.id AS event_id, e.chunk_id
         FROM rag_event e
         JOIN rag_chunk_entity ce ON ce.chunk_id = e.chunk_id
         WHERE ce.entity_id IN (SELECT entity_id FROM expanded_entities)
-          AND e.user_id = #{userId}
+          AND e.user_id = #{userId,jdbcType=BIGINT}
     )
     SELECT
         ee.chunk_id,
@@ -267,7 +267,7 @@
     JOIN rag_chunk_entity ex ON ex.chunk_id = ee.chunk_id
     JOIN frontier_with_score f ON f.id = ex.entity_id
     WHERE vs.metadata->>'userId' = #{userIdStr}
-    GROUP BY ee.chunk_id, vs.content, vs.metadata
+    GROUP BY ee.chunk_id, vs.content, vs.metadata::text
     ORDER BY chunk_score DESC
     LIMIT #{expandChunkTopK}
 </select>

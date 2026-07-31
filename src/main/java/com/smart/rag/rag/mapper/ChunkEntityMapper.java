@@ -14,9 +14,14 @@ import java.util.List;
 public interface ChunkEntityMapper extends BaseMapper<RagChunkEntity> {
 
     /**
-     * 通过 documentId（经 vector_store 关联）查出受影响的 entity_id 列表
+     * 通过 documentId（经 rag_event 关联）查出受影响的 entity_id 列表
      */
-    List<Long> selectEntityIdsByDocumentId(@Param("documentId") String documentId);
+    List<Long> selectEntityIdsByDocumentId(@Param("documentId") Long documentId);
+
+    /**
+     * 按文档 ID 批量删除 chunk-entity 关联（经 rag_event 关联，覆盖 vector_store 已删的孤儿 chunk）
+     */
+    void deleteByDocumentId(@Param("documentId") Long documentId);
 
     /**
      * 按 chunk_ids 批量删除

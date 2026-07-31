@@ -3,6 +3,13 @@
         "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.smart.rag.rag.mapper.EventMapper">
 
+    <!-- 按文档 ID 删除事件（级联清理用；document_id 是 event 归属的权威记录，
+         不依赖 vector_store 反查——fastTrack 临时行被删后仍能兜底） -->
+    <delete id="deleteByDocumentId">
+        DELETE FROM rag_event
+        WHERE document_id = #{documentId}
+    </delete>
+
     <!-- 按 chunk_ids 批量删除 -->
     <delete id="deleteByChunkIds">
         DELETE FROM rag_event

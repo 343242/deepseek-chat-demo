@@ -191,7 +191,7 @@ public class EntityRetrievalPath implements RetrievalPath {
     @SuppressWarnings("unchecked")
     private <T> T taskResult(Subtask<T> task, String name) {
         if (task.exception() != null) {
-            log.warn("Path C {} subtask failed (degraded to empty): {}", name, task.exception().getMessage());
+            log.warn("Path C {} subtask failed (degraded to empty): {}", name, task.exception().getMessage(), task.exception());
             return (T) List.of();
         }
         return task.result();

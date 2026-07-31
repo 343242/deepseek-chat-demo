@@ -2,6 +2,7 @@ package com.smart.rag.mcp.runtime;
 
 import com.smart.rag.infrastructure.fallback.AbstractCircuitBreakerRegistry;
 import com.smart.rag.infrastructure.fallback.CircuitBreakerProperties;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.time.Clock;
@@ -19,6 +20,7 @@ import java.time.Clock;
 @Component
 public class McpCircuitBreakerRegistry extends AbstractCircuitBreakerRegistry {
 
+    @Autowired
     public McpCircuitBreakerRegistry(McpResilienceProperties properties) {
         super(properties.getCircuitBreaker(), Clock.systemUTC());
     }

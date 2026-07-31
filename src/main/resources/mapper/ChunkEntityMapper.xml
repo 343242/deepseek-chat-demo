@@ -4,11 +4,14 @@
 <mapper namespace="com.smart.rag.rag.mapper.ChunkEntityMapper">
 
     <!-- 通过 documentId（经 vector_store 关联）查出受影响的 entity_id 列表 -->
+    <!-- 按文档 ID 查询受影响实体（级联清理用）。
+         通过 rag_event.document_id 关联（事件表是 chunk 归属的权威记录），
+         不依赖 vector_store——fastTrack 临时行被删后其产生的关联仍能查到。 -->
     <select id="selectEntityIdsByDocumentId" resultType="java.lang.Long">
         SELECT DISTINCT ce.entity_id
         FROM rag_chunk_entity ce
-        INNER JOIN vector_store vs ON ce.chunk_id = vs.id
-        WHERE vs.metadata->>'documentId' = #{documentId}
+        INNER JOIN rag_event e ON ce.chunk_id = e.chunk_id
+        WHERE e.document_id = #{documentId}
     </select>
 
     <!-- 按 chunk_ids 批量删除 -->
@@ -16,6 +19,14 @@
         DELETE FROM rag_chunk_entity
         WHERE chunk_id IN
         <foreach collection="chunkIds" item="cid" open="(" separator="," close=")">#{cid}::uuid</foreach>
+    </delete>
+
+    <!-- 按文档 ID 批量删除（经 rag_event 关联；覆盖 vector_store 已删的孤儿 chunk，AC4） -->
+    <delete id="deleteByDocumentId">
+        DELETE FROM rag_chunk_entity ce
+        USING rag_event e
+        WHERE ce.chunk_id = e.chunk_id
+          AND e.document_id = #{documentId}
     </delete>
 
     <!-- 批量插入（ON CONFLICT DO NOTHING 处理复合 PK 冲突） -->

@@ -16,6 +16,11 @@ public interface EventMapper extends BaseMapper<RagEvent> {
     /**
      * 按 chunk_ids 批量删除
      */
+    /**
+     * 按文档 ID 删除事件（级联清理用）。
+     */
+    void deleteByDocumentId(@Param("documentId") Long documentId);
+
     void deleteByChunkIds(@Param("chunkIds") List<String> chunkIds);
 
     /**

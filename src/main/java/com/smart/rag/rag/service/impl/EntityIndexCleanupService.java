@@ -60,37 +60,29 @@ public class EntityIndexCleanupService {
     public void cleanupByDocumentId(Long documentId) {
         String docIdStr = String.valueOf(documentId);
 
-        // Step 1: 获取受影响的 entity_ids（通过 vector_store -> rag_chunk_entity）
-        List<Long> affectedEntityIds = chunkEntityMapper.selectEntityIdsByDocumentId(docIdStr);
+        // Step 1: 获取受影响的 entity_ids（通过 rag_event.document_id，权威归属记录）
+        // 不再依赖 vector_store 反查：fastTrack 临时行在抽取后被删，反查会漏掉其产生的关联
+        List<Long> affectedEntityIds = chunkEntityMapper.selectEntityIdsByDocumentId(documentId);
 
         if (affectedEntityIds.isEmpty()) {
-            log.debug("No entities affected for documentId={}, skipping cleanup", documentId);
+            // 无 rag_chunk_entity 关联时仍可能残留 rag_event（如 fastTrack 行产生的 event），
+            // 以 event.document_id 兜底删除，保证 AC4 无孤儿。
+            transactionTemplate.executeWithoutResult(status ->
+                    eventMapper.deleteByDocumentId(documentId));
+            log.debug("No chunk-entity refs for documentId={}, event fallback cleanup done", documentId);
             return;
         }
 
-        // Step 2: 获取 chunk_ids（从 vector_store）
-        List<VectorStoreMapper.VectorStoreRow> chunks =
-                vectorStoreMapper.selectChunksByDocumentId(docIdStr);
-        List<String> chunkIds = chunks.stream().map(VectorStoreMapper.VectorStoreRow::id).toList();
-
-        if (chunkIds.isEmpty()) {
-            // chunk_ids 为空但 entity_ids 不为空 → 脏数据，仍重算 degree
-            log.warn("Entity IDs found but no chunk IDs for documentId={}, recalc degree only", documentId);
-            transactionTemplate.executeWithoutResult(status -> {
-                entityMapper.recalculateDegree(affectedEntityIds);
-                entityMapper.deleteOrphans(affectedEntityIds);
-                entityMapper.markCommunityStale(affectedEntityIds);
-            });
-            return;
-        }
+        // Step 2: chunk 数（日志计数用，删除本身按 document_id 经 rag_event 关联完成）
+        int chunkCount = vectorStoreMapper.selectChunksByDocumentId(docIdStr).size();
 
         // Step 3-7: 在事务中执行清理
         transactionTemplate.executeWithoutResult(status -> {
-            // 3. 删除 rag_chunk_entity
-            chunkEntityMapper.deleteByChunkIds(chunkIds);
+            // 3. 删除 rag_chunk_entity（按 document_id 经 rag_event 关联，覆盖孤儿 chunk）
+            chunkEntityMapper.deleteByDocumentId(documentId);
 
-            // 4. 删除 rag_event
-            eventMapper.deleteByChunkIds(chunkIds);
+            // 4. 删除 rag_event（按 document_id，权威归属）
+            eventMapper.deleteByDocumentId(documentId);
 
             // 5. 重算受影响 entity degree
             entityMapper.recalculateDegree(affectedEntityIds);
@@ -103,6 +95,6 @@ public class EntityIndexCleanupService {
         });
 
         log.info("Entity index cleanup completed for documentId={}: {} chunks, {} entities affected",
-                documentId, chunkIds.size(), affectedEntityIds.size());
+                documentId, chunkCount, affectedEntityIds.size());
     }
 }

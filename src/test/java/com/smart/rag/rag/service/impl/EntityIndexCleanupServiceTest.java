@@ -16,14 +16,17 @@ import org.springframework.transaction.TransactionStatus;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.List;
-import java.util.function.Consumer;
 import java.util.Map;
+import java.util.function.Consumer;
 
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 /**
  * EntityIndexCleanupService 单元测试
+ * <p>
+ * 覆盖 §8.4 级联清理：chunk-entity 删除、event 删除（document_id 权威归属）、
+ * degree 重算、孤儿实体清除、community_stale 标记，以及 fastTrack 孤儿兜底分支。
  */
 @ExtendWith(MockitoExtension.class)
 @DisplayName("EntityIndexCleanupService 单元测试")
@@ -59,51 +62,54 @@ class EntityIndexCleanupServiceTest {
     class CleanupSequenceTests {
 
         @Test
-        @DisplayName("正常清理：按正确顺序执行所有步骤")
+        @DisplayName("正常清理：chunk-entity + event 按 document_id 删除，degree 重算 + 孤儿清除")
         void fullCleanupSequence() {
             Long docId = 1L;
-            String docIdStr = "1";
 
-            // 模拟受影响 entity ids
-            when(chunkEntityMapper.selectEntityIdsByDocumentId(docIdStr))
+            when(chunkEntityMapper.selectEntityIdsByDocumentId(docId))
                     .thenReturn(List.of(10L, 20L));
-
-            // 模拟 chunks
-            VectorStoreMapper.VectorStoreRow row1 = new VectorStoreMapper.VectorStoreRow(
-                    "uuid-1", "content1", Map.of());
-            VectorStoreMapper.VectorStoreRow row2 = new VectorStoreMapper.VectorStoreRow(
-                    "uuid-2", "content2", Map.of());
-            when(vectorStoreMapper.selectChunksByDocumentId(docIdStr))
-                    .thenReturn(List.of(row1, row2));
+            when(vectorStoreMapper.selectChunksByDocumentId("1"))
+                    .thenReturn(List.of(
+                            new VectorStoreMapper.VectorStoreRow("uuid-1", "content1", Map.of()),
+                            new VectorStoreMapper.VectorStoreRow("uuid-2", "content2", Map.of())));
 
             service.cleanupByDocumentId(docId);
 
-            // 验证执行顺序
-            verify(chunkEntityMapper).selectEntityIdsByDocumentId(docIdStr);
-            verify(vectorStoreMapper).selectChunksByDocumentId(docIdStr);
-            verify(chunkEntityMapper).deleteByChunkIds(eq(List.of("uuid-1", "uuid-2")));
-            verify(eventMapper).deleteByChunkIds(eq(List.of("uuid-1", "uuid-2")));
+            // 受影响实体经 rag_event 关联查询（document_id 权威归属）
+            verify(chunkEntityMapper).selectEntityIdsByDocumentId(eq(1L));
+
+            // chunk-entity 关联按 document_id 删除（覆盖孤儿 chunk，非按 chunkIds）
+            verify(chunkEntityMapper).deleteByDocumentId(eq(1L));
+            // event 按 document_id 删除（权威归属）
+            verify(eventMapper).deleteByDocumentId(eq(1L));
+            // 旧的按 chunkIds 删除路径不再使用
+            verify(chunkEntityMapper, never()).deleteByChunkIds(anyList());
+            verify(eventMapper, never()).deleteByChunkIds(anyList());
+
             verify(entityMapper).recalculateDegree(eq(List.of(10L, 20L)));
             verify(entityMapper).deleteOrphans(eq(List.of(10L, 20L)));
             verify(entityMapper).markCommunityStale(eq(List.of(10L, 20L)));
         }
 
         @Test
-        @DisplayName("无受影响实体 → 跳过清理")
-        void noAffectedEntitiesSkips() {
-            when(chunkEntityMapper.selectEntityIdsByDocumentId(anyString()))
+        @DisplayName("无受影响实体 → event 兜底删除仍执行（fastTrack 孤儿场景）")
+        void noAffectedEntitiesStillCleansEvents() {
+            when(chunkEntityMapper.selectEntityIdsByDocumentId(1L))
                     .thenReturn(List.of());
 
             service.cleanupByDocumentId(1L);
 
+            // 无 chunk-entity 关联时仍删除残留 event（如 fastTrack 行产生的 event）
+            verify(eventMapper).deleteByDocumentId(eq(1L));
+            verify(transactionTemplate).executeWithoutResult(any());
+            verify(chunkEntityMapper, never()).deleteByDocumentId(anyLong());
             verify(vectorStoreMapper, never()).selectChunksByDocumentId(anyString());
-            verify(chunkEntityMapper, never()).deleteByChunkIds(anyList());
         }
 
         @Test
-        @DisplayName("有 entity 但无 chunks → 仍重算 degree（脏数据修复）")
-        void dirtyDataRecalcDegree() {
-            when(chunkEntityMapper.selectEntityIdsByDocumentId("1"))
+        @DisplayName("有 entity 但 vector_store 无现存 chunk → 仍按 document_id 完整清理（脏数据修复）")
+        void dirtyDataStillCleansByDocumentId() {
+            when(chunkEntityMapper.selectEntityIdsByDocumentId(1L))
                     .thenReturn(List.of(10L));
             when(vectorStoreMapper.selectChunksByDocumentId("1"))
                     .thenReturn(List.of());
@@ -111,16 +117,17 @@ class EntityIndexCleanupServiceTest {
             service.cleanupByDocumentId(1L);
 
             verify(transactionTemplate).executeWithoutResult(any());
+            verify(chunkEntityMapper).deleteByDocumentId(eq(1L));
+            verify(eventMapper).deleteByDocumentId(eq(1L));
             verify(entityMapper).recalculateDegree(eq(List.of(10L)));
             verify(entityMapper).deleteOrphans(eq(List.of(10L)));
             verify(entityMapper).markCommunityStale(eq(List.of(10L)));
-            verify(chunkEntityMapper, never()).deleteByChunkIds(anyList());
         }
 
         @Test
-        @DisplayName("degree 重算 + orphan 删除 + community stale 标记在事务中执行")
+        @DisplayName("清理步骤在事务中执行")
         void allStepsInTransaction() {
-            when(chunkEntityMapper.selectEntityIdsByDocumentId("1"))
+            when(chunkEntityMapper.selectEntityIdsByDocumentId(1L))
                     .thenReturn(List.of(10L, 20L));
             when(vectorStoreMapper.selectChunksByDocumentId("1"))
                     .thenReturn(List.of(
@@ -128,7 +135,6 @@ class EntityIndexCleanupServiceTest {
 
             service.cleanupByDocumentId(1L);
 
-            // TransactionTemplate 被调用一次（包裹清理操作）
             verify(transactionTemplate).executeWithoutResult(any());
         }
     }

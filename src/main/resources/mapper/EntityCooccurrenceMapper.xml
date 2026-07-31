@@ -5,9 +5,9 @@
 
     <resultMap id="cooccurrenceRow" type="com.smart.rag.rag.mapper.EntityCooccurrenceMapper$CooccurrenceRow">
         <constructor>
-            <arg column="entity_a" javaType="long"/>
-            <arg column="entity_b" javaType="long"/>
-            <arg column="co_count" javaType="int"/>
+            <arg column="entity_a" javaType="_long"/>
+            <arg column="entity_b" javaType="_long"/>
+            <arg column="co_count" javaType="_int"/>
         </constructor>
     </resultMap>
 
@@ -15,15 +15,15 @@
     <select id="selectByScope" resultMap="cooccurrenceRow">
         SELECT entity_a, entity_b, co_count
         FROM rag_entity_cooccurrence
-        WHERE user_id = #{userId}
-          AND (#{teamId} IS NULL AND team_id IS NULL OR team_id = #{teamId})
+        WHERE user_id = #{userId,jdbcType=BIGINT}
+          AND (#{teamId,jdbcType=BIGINT} IS NULL AND team_id IS NULL OR team_id = #{teamId,jdbcType=BIGINT})
     </select>
 
     <!-- 清除作用域内全部共现边（全量重投影前置，去除失效边 §5.3） -->
     <delete id="deleteByScope">
         DELETE FROM rag_entity_cooccurrence
-        WHERE user_id = #{userId}
-          AND (#{teamId} IS NULL AND team_id IS NULL OR team_id = #{teamId})
+        WHERE user_id = #{userId,jdbcType=BIGINT}
+          AND (#{teamId,jdbcType=BIGINT} IS NULL AND team_id IS NULL OR team_id = #{teamId,jdbcType=BIGINT})
     </delete>
 
     <!-- 共现图投影（§5.4）：从 rag_chunk_entity 自连接投影，LEAST/GREATEST 规范边方向。
@@ -44,8 +44,8 @@
         JOIN rag_entity re2 ON re2.id = e2.entity_id
         WHERE re1.user_id = re2.user_id
           AND COALESCE(re1.team_id, -1) = COALESCE(re2.team_id, -1)
-          AND re1.user_id = #{userId}
-          AND (#{teamId} IS NULL AND re1.team_id IS NULL OR re1.team_id = #{teamId})
+          AND re1.user_id = #{userId,jdbcType=BIGINT}
+          AND (#{teamId,jdbcType=BIGINT} IS NULL AND re1.team_id IS NULL OR re1.team_id = #{teamId,jdbcType=BIGINT})
         GROUP BY LEAST(e1.entity_id, e2.entity_id),
                  GREATEST(e1.entity_id, e2.entity_id),
                  re1.user_id, re1.team_id
@@ -62,8 +62,8 @@
                 array_agg(vn.neighbor_id) AS neighbors
             FROM v_entity_neighbors vn
             JOIN rag_entity re ON re.id = vn.entity_id
-            WHERE vn.user_id = #{userId}
-              AND (#{teamId} IS NULL AND vn.team_id IS NULL OR vn.team_id = #{teamId})
+            WHERE vn.user_id = #{userId,jdbcType=BIGINT}
+              AND (#{teamId,jdbcType=BIGINT} IS NULL AND vn.team_id IS NULL OR vn.team_id = #{teamId,jdbcType=BIGINT})
               AND re.degree &lt; 100
             GROUP BY vn.entity_id
         ),
@@ -85,8 +85,8 @@
             JOIN v_entity_neighbors n1 ON n1.entity_id = ns.entity_id
             JOIN v_entity_neighbors n2 ON n2.entity_id = ns.entity_id
             WHERE n1.neighbor_id &lt; n2.neighbor_id
-              AND n1.user_id = #{userId}
-              AND (#{teamId} IS NULL AND n1.team_id IS NULL OR n1.team_id = #{teamId})
+              AND n1.user_id = #{userId,jdbcType=BIGINT}
+              AND (#{teamId,jdbcType=BIGINT} IS NULL AND n1.team_id IS NULL OR n1.team_id = #{teamId,jdbcType=BIGINT})
         ),
         embeddedness AS (
             SELECT
@@ -100,7 +100,7 @@
             updated_at = NOW()
         FROM embeddedness emb
         WHERE e.id = emb.entity_id
-          AND e.user_id = #{userId}
+          AND e.user_id = #{userId,jdbcType=BIGINT}
     </update>
 
 </mapper>

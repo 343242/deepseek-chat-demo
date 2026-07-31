@@ -108,5 +108,6 @@
         SELECT id, content, metadata
         FROM vector_store
         WHERE metadata->>'documentId' = #{documentId}
+          AND COALESCE(metadata->>'fastTrack', '') &lt;&gt; 'true'
     </select>
 </mapper>

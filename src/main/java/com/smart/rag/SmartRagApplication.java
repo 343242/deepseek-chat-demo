@@ -20,14 +20,19 @@ import org.springframework.scheduling.annotation.EnableAsync;
         }
 )
 @ConfigurationPropertiesScan("com.smart.rag")
-@MapperScan({
+@MapperScan(
+        annotationClass = org.apache.ibatis.annotations.Mapper.class,
+        basePackages = {
         "com.smart.rag.user.mapper",
         "com.smart.rag.chat.mapper",
         "com.smart.rag.conversation.mapper",
         "com.smart.rag.rag.mapper",
         "com.smart.rag.agent.event",
         "com.smart.rag.team.mapper",
-        "com.smart.rag.modelconfig.mapper"
+        "com.smart.rag.modelconfig.mapper",
+        "com.smart.rag.mcp.admin.mapper",
+        "com.smart.rag.infrastructure.audit.mapper",
+        "com.smart.rag.infrastructure.trace"
 })
 public class SmartRagApplication {
 

@@ -63,7 +63,7 @@ public class DocumentLifecycleService {
             try {
                 entityIndexCleanupService.cleanupByDocumentId(id);
             } catch (Exception e) {
-                log.error("Failed to cleanup entity index for deleted docId={}: {}", id, e.getMessage());
+                log.error("Failed to cleanup entity index for deleted docId={}: {}", id, e.getMessage(), e);
             }
         }
 

@@ -14,13 +14,18 @@ public class MyBatisPlusMetaHandler implements MetaObjectHandler {
         // createdAt 与 updatedAt 同源，避免两次 now() 产生微小差异
         OffsetDateTime now = OffsetDateTime.now();
         this.strictInsertFill(metaObject, "createdAt", OffsetDateTime.class, now);
-        // updatedAt 标的是 FieldFill.INSERT_UPDATE，insert 时必须一并填充；
-        // 否则 MyBatis-Plus 会把该字段以 null 纳入 INSERT，覆盖 DB 的 DEFAULT now() 而触发 NOT NULL 违约
         this.strictInsertFill(metaObject, "updatedAt", OffsetDateTime.class, now);
+        // RagDocument 使用 createTime/updateTime 命名（DB 列 create_time/update_time），
+        // 与 Spring 风格 createdAt/updatedAt 并存；两者都需填充，否则逻辑删除/更新
+        // 会以 null 覆盖 NOT NULL 列触发约束违约
+        this.strictInsertFill(metaObject, "createTime", OffsetDateTime.class, now);
+        this.strictInsertFill(metaObject, "updateTime", OffsetDateTime.class, now);
     }
 
     @Override
     public void updateFill(MetaObject metaObject) {
-        this.strictUpdateFill(metaObject, "updatedAt", OffsetDateTime.class, OffsetDateTime.now());
+        OffsetDateTime now = OffsetDateTime.now();
+        this.strictUpdateFill(metaObject, "updatedAt", OffsetDateTime.class, now);
+        this.strictUpdateFill(metaObject, "updateTime", OffsetDateTime.class, now);
     }
 }

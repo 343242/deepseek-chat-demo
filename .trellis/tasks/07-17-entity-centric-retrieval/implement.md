@@ -35,7 +35,7 @@
 - [x] **AC4 清理无孤儿**（2026-08-01）：delete 与 supersede 双路径验证——文档删除后 rag_chunk_entity/rag_event 零残留、degree=0 孤儿清除；supersede v1→v2 旧版本实体索引完全清理
 - [x] **AC5 延迟**（2026-08-01）：Path C SQL 路径（fusion+vote+expand+merge）P50=236ms / P99=438ms < 800ms 达标；总延迟受独立 LLM seed extraction（P99≈4.6s）主导——§11.4/OQ2 已明示合并优化为首优缓解项，本阶段独立调用属设计决定
 - [x] **AC6 跨用户隔离**（2026-08-01）：双用户（A: PostgreSQL 文档 / B: Redis 文档）实体/event/共现图完全按 user_id 隔离，跨用户边=0；A 查 Redis 与 B 查 PostgreSQL 时 Path C frontier=0 无泄漏
-- [ ] 设计原则合规复核（父 design.md 表）——无子任务越界（待复核）
+- [x] 设计原则合规复核（父 design.md 表，2026-08-01 核验）——无子任务越界：mapper 归属正确（Entity/Event/ChunkEntityMapper 属 extraction，EntityCooccurrenceMapper 属 structure-scores，无重定义）；weak_tie/bridge 仅 structure-scores（EntityIndexService/CommunityDetectionJob）写入、path-c 只读；Path C 五组件在 rag/retrieval/{entity,path}/ 包内；图算法下沉 infrastructure/algorithm/graph/（CARP）；RetrievalPath 接口+适配器在 rag/retrieval/（OCP 注册）；实体链路零 TODO/FIXME 残留
 
 ## AC 验证修复清单（2026-08-01，AC 验证暴露的启动/运行缺陷，均已修复并回归）
 

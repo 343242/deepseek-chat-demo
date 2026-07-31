@@ -1,6 +1,9 @@
 package com.smart.rag.evaluation.runner;
 
 import com.smart.rag.rag.retrieval.HybridSearchService;
+import com.smart.rag.rag.retrieval.RetrievalPath;
+import com.smart.rag.rag.retrieval.VectorRetrievalPath;
+import com.smart.rag.rag.retrieval.Bm25RetrievalPath;
 import com.smart.rag.rag.chunk.ParentDocumentPostProcessor;
 import com.smart.rag.evaluation.config.EvaluationProperties;
 import com.smart.rag.evaluation.dataset.DatasetRepository;
@@ -194,10 +197,15 @@ public class EvaluationRunner {
         Long userId = config.getTestUserId() != null
                 ? config.getTestUserId() : this.evalProps.getTestUserId();
         // 用 Spring 管理的 ScopedTasks 构造，复用其虚拟线程作用域执行器。
-        // 原先用 Executors.newVirtualThreadPerTaskExecutor() 会每 item 创建并泄漏一个 executor，
-        // 且 HybridSearchService 的 5-arg 构造会丢弃该参数（legacy 死代码）。
+        // 显式构建 RetrievalPath 列表（与旧 buildPaths 工厂等价）：恒含向量路径，
+        // hybridRetrievalEnabled=true 时追加 BM25 路径。
+        List<RetrievalPath> paths = new java.util.ArrayList<>();
+        paths.add(new VectorRetrievalPath(vectorStore, evalProps));
+        if (evalProps.hybridRetrievalEnabled()) {
+            paths.add(new Bm25RetrievalPath(vectorStoreMapper, queryNormalizer, evalProps));
+        }
         HybridSearchService evalSearchService = new HybridSearchService(
-                vectorStore, vectorStoreMapper, evalProps, queryNormalizer, scopedTasks);
+                paths, evalProps, queryNormalizer, scopedTasks);
         return new HybridDocumentRetriever(evalSearchService, userId, null);
     }
 

@@ -16,6 +16,7 @@ import org.springframework.ai.rag.Query;
 import org.springframework.ai.vectorstore.SearchRequest;
 import org.springframework.ai.vectorstore.VectorStore;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -87,7 +88,14 @@ class HybridDocumentRetrieverTest {
     }
 
     private HybridDocumentRetriever createRetriever(RagRetrievalProperties props, Long userId, Long teamId) {
-        HybridSearchService service = new HybridSearchService(vectorStore, vectorStoreMapper, props, queryNormalizer,
+        // 显式构建 RetrievalPath 列表（与旧 buildPaths 工厂等价）：
+        // 恒含向量路径；hybridRetrievalEnabled=true 时追加 BM25 路径。
+        List<RetrievalPath> paths = new ArrayList<>();
+        paths.add(new VectorRetrievalPath(vectorStore, props));
+        if (props.hybridRetrievalEnabled()) {
+            paths.add(new Bm25RetrievalPath(vectorStoreMapper, new QueryNormalizer(), props));
+        }
+        HybridSearchService service = new HybridSearchService(paths, props, queryNormalizer,
                 new DefaultScopedTasks());
         return new HybridDocumentRetriever(service, userId, teamId);
     }

@@ -8,18 +8,15 @@ import com.smart.rag.infrastructure.concurrent.TaskState;
 import com.smart.rag.infrastructure.exception.ServiceException;
 import com.smart.rag.infrastructure.exception.errorcode.ServiceErrorCode;
 import com.smart.rag.rag.config.RagRetrievalProperties;
-import com.smart.rag.rag.mapper.VectorStoreMapper;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.document.Document;
-import org.springframework.ai.vectorstore.VectorStore;
 
 import org.springframework.stereotype.Service;
 
 import java.time.Duration;
 import java.util.*;
-import java.util.concurrent.Executor;
 import java.util.concurrent.TimeoutException;
 
 /**
@@ -48,15 +45,9 @@ public class HybridSearchService {
     private final ScopedTasks scopedTasks;
 
     // ========================================================================
-    // Production constructors (List<RetrievalPath> based)
+    // 唯一构造器：RetrievalPath 列表由 Spring 注入（OCP：新路径注册即生效），
+    // ScopedTasks 由 {@code ScopedTaskAutoConfiguration} 提供。
     // ========================================================================
-
-    public HybridSearchService(List<RetrievalPath> paths,
-                               RagRetrievalProperties properties,
-                               QueryNormalizer queryNormalizer,
-                               Executor searchExecutor) {
-        this(paths, properties, queryNormalizer, new com.smart.rag.infrastructure.concurrent.DefaultScopedTasks());
-    }
 
     public HybridSearchService(List<RetrievalPath> paths,
                                RagRetrievalProperties properties,
@@ -66,56 +57,6 @@ public class HybridSearchService {
         this.properties = properties;
         this.queryNormalizer = queryNormalizer;
         this.scopedTasks = scopedTasks;
-    }
-
-    // ========================================================================
-    // Backward-compat constructors (for existing tests — DO NOT REMOVE until
-    // HybridDocumentRetrieverTest is migrated to the new API)
-    // ========================================================================
-
-    /**
-     * @deprecated Use the {@code List<RetrievalPath>} constructor instead.
-     * Retained solely for backward compatibility with existing tests.
-     */
-    @Deprecated
-    public HybridSearchService(VectorStore vectorStore,
-                               VectorStoreMapper vectorStoreMapper,
-                               RagRetrievalProperties properties,
-                               QueryNormalizer queryNormalizer,
-                               Executor searchExecutor) {
-        this(buildPaths(vectorStore, vectorStoreMapper, properties),
-                properties, queryNormalizer, searchExecutor);
-    }
-
-    /**
-     * @deprecated Use the {@code List<RetrievalPath>} constructor instead.
-     * Retained solely for backward compatibility with existing tests.
-     */
-    @Deprecated
-    public HybridSearchService(VectorStore vectorStore,
-                               VectorStoreMapper vectorStoreMapper,
-                               RagRetrievalProperties properties,
-                               QueryNormalizer queryNormalizer,
-                               ScopedTasks scopedTasks) {
-        this(buildPaths(vectorStore, vectorStoreMapper, properties),
-                properties, queryNormalizer, scopedTasks);
-    }
-
-    /**
-     * Static factory that builds the RetrievalPath list from legacy deps.
-     * Mirrors the old hybridRetrievalEnabled conditional logic:
-     * - Always includes vector-search.
-     * - Includes bm25-search only when hybridRetrievalEnabled=true.
-     */
-    private static List<RetrievalPath> buildPaths(VectorStore vectorStore,
-                                                  VectorStoreMapper vectorStoreMapper,
-                                                  RagRetrievalProperties properties) {
-        List<RetrievalPath> result = new ArrayList<>();
-        result.add(new VectorRetrievalPath(vectorStore, properties));
-        if (properties.hybridRetrievalEnabled()) {
-            result.add(new Bm25RetrievalPath(vectorStoreMapper, new QueryNormalizer(), properties));
-        }
-        return result;
     }
 
     // ========================================================================

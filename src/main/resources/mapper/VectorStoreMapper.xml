@@ -110,4 +110,30 @@
         WHERE metadata->>'documentId' = #{documentId}
           AND COALESCE(metadata->>'fastTrack', '') &lt;&gt; 'true'
     </select>
+
+    <!-- ======================== Chunk 内容查看（REST）======================== -->
+    <!-- 与 selectChunksByDocumentId 同 WHERE（排除 fastTrack），但分页 + ORDER BY id 稳定排序 -->
+
+    <select id="selectChunksByDocumentIdPaged" resultMap="vectorStoreRow">
+        SELECT id, content, metadata
+        FROM vector_store
+        WHERE metadata->>'documentId' = #{documentId}
+          AND COALESCE(metadata->>'fastTrack', '') &lt;&gt; 'true'
+        ORDER BY id
+        LIMIT #{size} OFFSET #{offset}
+    </select>
+
+    <select id="countChunksByDocumentId" resultType="int">
+        SELECT COUNT(*) FROM vector_store
+        WHERE metadata->>'documentId' = #{documentId}
+          AND COALESCE(metadata->>'fastTrack', '') &lt;&gt; 'true'
+    </select>
+
+    <!-- id 列是 UUID，#{chunkId}::uuid 显式转型避免 "operator does not exist: uuid = text" (PG 42883) -->
+    <select id="selectChunkById" resultMap="vectorStoreRow">
+        SELECT id, content, metadata
+        FROM vector_store
+        WHERE id = #{chunkId}::uuid
+          AND COALESCE(metadata->>'fastTrack', '') &lt;&gt; 'true'
+    </select>
 </mapper>

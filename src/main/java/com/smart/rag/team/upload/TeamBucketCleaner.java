@@ -2,7 +2,6 @@ package com.smart.rag.team.upload;
 
 import com.smart.rag.team.service.TeamStatusService;
 import com.smart.rag.rag.upload.BucketResolver;
-import com.smart.rag.rag.upload.OrphanChunkCleaner;
 import io.minio.*;
 import io.minio.messages.Item;
 import io.minio.messages.ListAllMyBucketsResult;
@@ -28,7 +27,7 @@ import java.util.List;
  * 活跃团队的空桶不会被删除——即使暂时没有文档，
  * 下次上传时也需要 bucket 存在。
  * <p>
- * 孤儿分片的清理由 {@link OrphanChunkCleaner} 负责。
+ * 孤儿分片的清理由 OrphanChunkCleaner 负责。
  */
 @Component
 public class TeamBucketCleaner {

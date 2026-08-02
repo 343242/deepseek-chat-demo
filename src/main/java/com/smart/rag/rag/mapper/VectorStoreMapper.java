@@ -241,4 +241,44 @@ public interface VectorStoreMapper {
      * @return chunk 行列表
      */
     List<VectorStoreRow> selectChunksByDocumentId(@Param("documentId") String documentId);
+
+    // ======================== Chunk 内容查看（REST）========================
+
+    /**
+     * 分页查询指定文档的 chunk（REST 内容查看用）。
+     * <p>
+     * 与 {@link #selectChunksByDocumentId} 同 WHERE 条件（排除 fastTrack 行），
+     * 但增加 {@code ORDER BY id}（UUID 字典序保证分页稳定）+ {@code LIMIT/OFFSET}。
+     * <p>
+     * 不复用 {@code selectChunksByDocumentId} 是为了避免影响实体抽取/清理等
+     * 需要「全量 chunk」的内部调用方（见 GitNexus impact：delete 路径 HIGH risk）。
+     *
+     * @param documentId 文档 ID（String）
+     * @param offset     偏移量 (page-1)*size
+     * @param size       每页大小
+     * @return 分页后的 chunk 行
+     */
+    List<VectorStoreRow> selectChunksByDocumentIdPaged(@Param("documentId") String documentId,
+                                                       @Param("offset") int offset,
+                                                       @Param("size") int size);
+
+    /**
+     * 统计指定文档的 chunk 数（REST 分页 total）。
+     *
+     * @param documentId 文档 ID（String）
+     * @return chunk 总数（排除 fastTrack 行）
+     */
+    int countChunksByDocumentId(@Param("documentId") String documentId);
+
+    /**
+     * 按 chunk ID 查询单个 chunk（REST 内容查看用）。
+     * <p>
+     * {@code id} 列为 UUID，需 {@code #{chunkId}::uuid} 显式转型
+     * （避免 PostgreSQL 42883 "operator does not exist: uuid = text"）。
+     * 排除 fastTrack 临时行。
+     *
+     * @param chunkId chunk UUID（vector_store.id）
+     * @return chunk 行；不存在返回 null
+     */
+    VectorStoreRow selectChunkById(@Param("chunkId") String chunkId);
 }

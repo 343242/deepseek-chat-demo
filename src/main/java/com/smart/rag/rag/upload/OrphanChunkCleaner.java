@@ -1,6 +1,5 @@
 package com.smart.rag.rag.upload;
 
-import com.smart.rag.team.upload.TeamBucketCleaner;
 import io.minio.*;
 import io.minio.messages.DeleteRequest;
 import io.minio.messages.DeleteResult;
@@ -30,7 +29,7 @@ import java.util.concurrent.TimeUnit;
  *   <li>仍有活跃 Redis session 的分片跳过</li>
  * </ol>
  * <p>
- * 团队 Bucket 的生命周期管理由 {@link TeamBucketCleaner} 负责。
+ * 团队 Bucket 的生命周期管理由 TeamBucketCleaner 负责。
  */
 @Component
 public class OrphanChunkCleaner {

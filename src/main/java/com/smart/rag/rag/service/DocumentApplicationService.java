@@ -1,6 +1,7 @@
 package com.smart.rag.rag.service;
 
 import com.smart.rag.infrastructure.response.PagedResult;
+import com.smart.rag.rag.dto.ChunkDTO;
 import com.smart.rag.rag.dto.DocumentDTO;
 import com.smart.rag.rag.dto.DocumentUploadResponse;
 import org.jspecify.annotations.Nullable;
@@ -55,4 +56,28 @@ public interface DocumentApplicationService {
 
     /** 获取文档版本历史 */
     List<DocumentDTO> getHistory(Long id);
+
+    /**
+     * 分页查询文档的所有 chunk（片段内容查看）。
+     * <p>
+     * 复用 {@link #getById} 的文档归属校验：个人文档需 owner；团队文档需成员
+     * （非 owner/管理员仅 COMPLETED 可见，R1-M1 可见性分层）。
+     *
+     * @param documentId 文档 ID
+     * @param page       页码（从 1 开始，&lt; 1 归一化为 1）
+     * @param size       每页大小（钳制到 [1, 100]）
+     * @return 分页 chunk 列表
+     */
+    PagedResult<ChunkDTO> listChunks(Long documentId, int page, int size);
+
+    /**
+     * 按 chunk UUID 查询单个 chunk（引用卡片点击查看内容）。
+     * <p>
+     * chunkId 全局唯一（vector_store.id UUID），归属校验通过其 metadata.documentId
+     * 解析后复用 {@link #getById} 同一套文档权限逻辑。不存在或无权访问时抛相应异常。
+     *
+     * @param chunkId chunk UUID（vector_store.id）
+     * @return chunk DTO
+     */
+    ChunkDTO getChunk(String chunkId);
 }

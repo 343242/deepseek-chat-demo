@@ -8,18 +8,18 @@ import com.smart.rag.infrastructure.exception.ClientException;
 import com.smart.rag.infrastructure.exception.ServiceException;
 import com.smart.rag.infrastructure.request.PageRequest;
 import com.smart.rag.infrastructure.response.PagedResult;
+import com.smart.rag.rag.dto.ChunkDTO;
 import com.smart.rag.rag.dto.DocumentDTO;
 import com.smart.rag.rag.dto.DocumentUploadResponse;
 import com.smart.rag.rag.etl.EtlStatus;
 import com.smart.rag.rag.entity.RagDocument;
 import com.smart.rag.rag.mapper.RagDocumentMapper;
+import com.smart.rag.rag.mapper.VectorStoreMapper;
 import com.smart.rag.rag.service.DocumentApplicationService;
 import com.smart.rag.rag.service.EtlDispatchService;
+import com.smart.rag.rag.service.TeamAccessGate;
+import com.smart.rag.rag.upload.UploadStrategyRouter;
 import com.smart.rag.infrastructure.web.util.SecurityUtils;
-import com.smart.rag.team.entity.TeamMember;
-import com.smart.rag.team.enums.TeamMemberRole;
-import com.smart.rag.team.service.TeamMembershipVerifier;
-import com.smart.rag.team.upload.UploadStrategyFactory;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -28,15 +28,16 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 文档应用服务实现
  * <p>
  * 职责：编排文档的前端操作（上传 → 查询 → 删除 → 重试）。
  * <p>
- * 上传链路委托给 {@link UploadStrategyFactory}（策略模式），
+ * 上传链路委托给 {@link UploadStrategyRouter}（策略模式），
  * 删除的级联清理委托给 {@link DocumentLifecycleService}。
- * 权限校验委托给 {@link TeamMembershipVerifier}（团队文档）
+ * 权限校验委托给 {@link TeamAccessGate}（团队文档）
  * 和简单的 userId 比对（个人文档）。
  */
 @Service
@@ -49,19 +50,22 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
     private final EtlDispatchService etlDispatchService;
     private final RagDocumentMapper ragDocumentMapper;
     private final DocumentLifecycleService documentLifecycleService;
-    private final UploadStrategyFactory uploadStrategyFactory;
-    private final TeamMembershipVerifier teamMembershipVerifier;
+    private final UploadStrategyRouter uploadStrategyRouter;
+    private final TeamAccessGate teamAccessGate;
+    private final VectorStoreMapper vectorStoreMapper;
 
     public DocumentApplicationServiceImpl(EtlDispatchService etlDispatchService,
                                           RagDocumentMapper ragDocumentMapper,
                                           DocumentLifecycleService documentLifecycleService,
-                                          UploadStrategyFactory uploadStrategyFactory,
-                                          TeamMembershipVerifier teamMembershipVerifier) {
+                                          UploadStrategyRouter uploadStrategyRouter,
+                                          TeamAccessGate teamAccessGate,
+                                          VectorStoreMapper vectorStoreMapper) {
         this.etlDispatchService = etlDispatchService;
         this.ragDocumentMapper = ragDocumentMapper;
         this.documentLifecycleService = documentLifecycleService;
-        this.uploadStrategyFactory = uploadStrategyFactory;
-        this.teamMembershipVerifier = teamMembershipVerifier;
+        this.uploadStrategyRouter = uploadStrategyRouter;
+        this.teamAccessGate = teamAccessGate;
+        this.vectorStoreMapper = vectorStoreMapper;
     }
 
     @Override
@@ -73,14 +77,14 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
     public DocumentUploadResponse upload(MultipartFile file, @Nullable Long teamId) {
         Long currentUserId = SecurityUtils.getCurrentUserId();
         verifyTeamAccess(teamId, currentUserId);
-        return uploadStrategyFactory.route(teamId).upload(file, teamId, null, currentUserId);
+        return uploadStrategyRouter.route(teamId).upload(file, teamId, null, currentUserId);
     }
 
     @Override
     public DocumentUploadResponse upload(MultipartFile file, @Nullable Long teamId, @Nullable Long replaceDocumentId) {
         Long currentUserId = SecurityUtils.getCurrentUserId();
         verifyTeamAccess(teamId, currentUserId);
-        return uploadStrategyFactory.route(teamId).upload(file, teamId, replaceDocumentId, currentUserId);
+        return uploadStrategyRouter.route(teamId).upload(file, teamId, replaceDocumentId, currentUserId);
     }
 
     @Override
@@ -92,7 +96,7 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
     public List<DocumentUploadResponse> uploadBatch(MultipartFile[] files, @Nullable Long teamId) {
         Long currentUserId = SecurityUtils.getCurrentUserId();
         verifyTeamAccess(teamId, currentUserId);
-        return uploadStrategyFactory.route(teamId).uploadBatch(Arrays.asList(files), teamId, null, currentUserId);
+        return uploadStrategyRouter.route(teamId).uploadBatch(Arrays.asList(files), teamId, null, currentUserId);
     }
 
     @Override
@@ -112,7 +116,7 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
     @Override
     public PagedResult<DocumentDTO> listByTeam(Long teamId, int page, int size) {
         Long currentUserId = SecurityUtils.getCurrentUserId();
-        TeamMember member = teamMembershipVerifier.verifyMember(teamId, currentUserId);
+        TeamAccessGate.TeamAccess access = teamAccessGate.verifyAccess(teamId, currentUserId);
 
         int[] normalized = normalizePaging(page, size);
         Page<RagDocument> mpPage = new Page<>(normalized[0], normalized[1]);
@@ -123,8 +127,7 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
 
         // R1-M1 可见性分层（方案 B）：非 ADMIN/CREATOR 成员只看到
         // （自己上传的任意状态）OR（全队 COMPLETED）；管理员/创建者看全队全部
-        TeamMemberRole role = member.getRole();
-        if (role != TeamMemberRole.ADMIN && role != TeamMemberRole.CREATOR) {
+        if (!access.manager()) {
             wrapper.and(w -> w.eq(RagDocument::getUserId, currentUserId)
                     .or().eq(RagDocument::getStatus, EtlStatus.COMPLETED));
         }
@@ -194,6 +197,40 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
         ).stream().map(this::toDTO).toList();
     }
 
+    @Override
+    public PagedResult<ChunkDTO> listChunks(Long documentId, int page, int size) {
+        // 复用文档归属校验（个人文档 owner / 团队文档成员 + R1-M1 可见性分层）
+        verifyAccess(documentId);
+        int[] normalized = normalizePaging(page, size);
+        int p = normalized[0];
+        int s = normalized[1];
+        String docIdStr = String.valueOf(documentId);
+        int offset = (p - 1) * s;
+        List<VectorStoreMapper.VectorStoreRow> rows =
+                vectorStoreMapper.selectChunksByDocumentIdPaged(docIdStr, offset, s);
+        long total = vectorStoreMapper.countChunksByDocumentId(docIdStr);
+        List<ChunkDTO> content = rows.stream().map(this::toChunkDTO).toList();
+        int totalPages = s > 0 ? (int) ((total + s - 1) / s) : 0;
+        return new PagedResult<>(content, p, s, total, totalPages);
+    }
+
+    @Override
+    public ChunkDTO getChunk(String chunkId) {
+        VectorStoreMapper.VectorStoreRow row = vectorStoreMapper.selectChunkById(chunkId);
+        if (row == null) {
+            throw new ServiceException(ServiceErrorCode.NOT_FOUND, "片段不存在: " + chunkId);
+        }
+        Long documentId = parseDocumentId(row.metadata());
+        if (documentId == null) {
+            // 脏数据防御：无 documentId 的 chunk 拒绝访问，不泄露存在性
+            log.warn("Chunk {} has no parseable documentId in metadata, denying access", chunkId);
+            throw new ServiceException(ServiceErrorCode.NOT_FOUND, "片段不存在: " + chunkId);
+        }
+        // 复用文档归属校验：个人文档需 owner；团队文档需成员（R1-M1 可见性分层）
+        verifyAccess(documentId);
+        return toChunkDTO(row);
+    }
+
     // === 私有方法 ===
 
     /**
@@ -201,7 +238,7 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
      */
     private void verifyTeamAccess(@Nullable Long teamId, Long userId) {
         if (teamId != null) {
-            teamMembershipVerifier.verifyMember(teamId, userId);
+            teamAccessGate.verifyAccess(teamId, userId);
         }
     }
 
@@ -251,10 +288,10 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
             }
         } else {
             // 团队文档 — 必须是成员
-            TeamMember member = teamMembershipVerifier.verifyMember(doc.getTeamId(), currentUserId);
+            TeamAccessGate.TeamAccess access = teamAccessGate.verifyAccess(doc.getTeamId(), currentUserId);
             // R1-M1 可见性分层（方案 B）：非 owner/ADMIN/CREATOR 只能访问 COMPLETED 文档；
             // 中间态/失败/被替代等对其他成员不可见，返回 NOT_FOUND（不泄露存在性）。
-            if (!isOwnerOrManager(doc.getUserId(), currentUserId, member)
+            if (!isOwnerOrManager(doc.getUserId(), currentUserId, access)
                     && doc.getStatus() != EtlStatus.COMPLETED) {
                 log.warn("Visibility denied (R1-M1): userId={} accessed non-completed team doc id={} status={}",
                         currentUserId, id, doc.getStatus());
@@ -276,8 +313,8 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
             return; // 个人文档：verifyAccess 已校验 owner
         }
         Long currentUserId = SecurityUtils.getCurrentUserId();
-        TeamMember member = teamMembershipVerifier.verifyMember(doc.getTeamId(), currentUserId);
-        if (!isOwnerOrManager(doc.getUserId(), currentUserId, member)) {
+        TeamAccessGate.TeamAccess access = teamAccessGate.verifyAccess(doc.getTeamId(), currentUserId);
+        if (!isOwnerOrManager(doc.getUserId(), currentUserId, access)) {
             log.warn("Mutation denied (R1-M1): userId={} attempted to mutate team doc id={} owned by {}",
                     currentUserId, doc.getId(), doc.getUserId());
             throw new ServiceException(ServiceErrorCode.DOCUMENT_OWNERSHIP_DENIED,
@@ -286,12 +323,8 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
     }
 
     /** 文档所有者本人 或 团队 ADMIN / CREATOR */
-    private static boolean isOwnerOrManager(Long ownerId, Long currentUserId, TeamMember member) {
-        if (currentUserId.equals(ownerId)) {
-            return true;
-        }
-        TeamMemberRole role = member.getRole();
-        return role == TeamMemberRole.ADMIN || role == TeamMemberRole.CREATOR;
+    private static boolean isOwnerOrManager(Long ownerId, Long currentUserId, TeamAccessGate.TeamAccess access) {
+        return currentUserId.equals(ownerId) || access.manager();
     }
 
     private DocumentDTO toDTO(RagDocument doc) {
@@ -310,5 +343,32 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
                 doc.getDocumentGroupId(),
                 doc.getCreateTime()
         );
+    }
+
+    private ChunkDTO toChunkDTO(VectorStoreMapper.VectorStoreRow row) {
+        Map<String, Object> metadata = row.metadata() != null ? row.metadata() : Map.of();
+        Long documentId = parseDocumentId(metadata);
+        String fileName = metadata.get("fileName") instanceof String s ? s : null;
+        return new ChunkDTO(row.id(), row.content(), documentId, fileName, metadata);
+    }
+
+    /**
+     * 从 metadata 解析 documentId（Long）。metadata 中 documentId 存为字符串。
+     *
+     * @return documentId；缺失或不可解析返回 null
+     */
+    private static Long parseDocumentId(Map<String, Object> metadata) {
+        if (metadata == null) {
+            return null;
+        }
+        Object raw = metadata.get("documentId");
+        if (raw == null) {
+            return null;
+        }
+        try {
+            return Long.valueOf(raw.toString());
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 }

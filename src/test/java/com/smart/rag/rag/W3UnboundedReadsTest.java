@@ -6,14 +6,13 @@ import com.smart.rag.rag.dto.DocumentDTO;
 import com.smart.rag.rag.entity.RagDocument;
 import com.smart.rag.rag.etl.EtlStatus;
 import com.smart.rag.rag.mapper.RagDocumentMapper;
+import com.smart.rag.rag.mapper.VectorStoreMapper;
 import com.smart.rag.rag.service.DocumentDedupService;
 import com.smart.rag.rag.service.EtlDispatchService;
+import com.smart.rag.rag.service.TeamAccessGate;
 import com.smart.rag.rag.service.impl.DocumentApplicationServiceImpl;
 import com.smart.rag.rag.service.impl.DocumentLifecycleService;
-import com.smart.rag.team.entity.TeamMember;
-import com.smart.rag.team.enums.TeamMemberRole;
-import com.smart.rag.team.service.TeamMembershipVerifier;
-import com.smart.rag.team.upload.UploadStrategyFactory;
+import com.smart.rag.rag.upload.UploadStrategyRouter;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -63,8 +62,9 @@ class W3UnboundedReadsTest {
         @Mock private EtlDispatchService etlDispatchService;
         @Mock private RagDocumentMapper ragDocumentMapper;
         @Mock private DocumentLifecycleService documentLifecycleService;
-        @Mock private UploadStrategyFactory uploadStrategyFactory;
-        @Mock private TeamMembershipVerifier teamMembershipVerifier;
+        @Mock private UploadStrategyRouter uploadStrategyRouter;
+        @Mock private TeamAccessGate teamAccessGate;
+        @Mock private VectorStoreMapper vectorStoreMapper;
 
         private DocumentApplicationServiceImpl service;
 
@@ -72,7 +72,7 @@ class W3UnboundedReadsTest {
         void setUp() {
             service = new DocumentApplicationServiceImpl(
                     etlDispatchService, ragDocumentMapper, documentLifecycleService,
-                    uploadStrategyFactory, teamMembershipVerifier);
+                    uploadStrategyRouter, teamAccessGate, vectorStoreMapper);
         }
 
         @AfterEach
@@ -167,16 +167,14 @@ class W3UnboundedReadsTest {
         @DisplayName("listByTeam: 返回分页结果且校验团队成员身份")
         void listByTeam_returns_paged_result_and_verifies_membership() {
             loginAs(1L);
-            TeamMember member = new TeamMember();
-            member.setRole(TeamMemberRole.MEMBER);
-            when(teamMembershipVerifier.verifyMember(7L, 1L)).thenReturn(member);
+            when(teamAccessGate.verifyAccess(7L, 1L)).thenReturn(new TeamAccessGate.TeamAccess(false));
             stubSelectPage(2, 4L, List.of(doc(1), doc(2)));
 
             PagedResult<DocumentDTO> result = service.listByTeam(7L, 1, 2);
 
             assertThat(result.content()).hasSize(2);
             assertThat(result.total()).isEqualTo(4L);
-            verify(teamMembershipVerifier, times(1)).verifyMember(7L, 1L);
+            verify(teamAccessGate, times(1)).verifyAccess(7L, 1L);
         }
     }
 

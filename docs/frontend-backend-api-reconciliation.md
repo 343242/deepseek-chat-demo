@@ -156,18 +156,50 @@ app.jwt.cookie-same-site: None
 
 ## 四、暂不做（待讨论方案）
 
-### T2 · chunks 内容查看端点
+### T2 · chunks 内容查看端点 ✅ 已实现
 
 **前端诉求**：知识库文档卡片和聊天中的引用卡片需要展示文档片段内容。
 
-**后端现状**：
-- `DocumentController` 没有 chunks 端点；
-- 底层 `vector_store` 表（Spring AI 的 chunk 存储）通过 `VectorStoreMapper.xml` 已有 `vectorStoreRow` resultMap，但**缺按 `documentId` 查 chunks 的 SQL**。
+**后端改动**：新增两个端点，复用底层已有的 `vector_store` 数据（`VectorStoreMapper` 的 `vectorStoreRow`），
+归属校验复用 `DocumentApplicationServiceImpl#verifyAccess`（个人文档 owner / 团队文档成员 + R1-M1 可见性分层）。
 
-**待讨论**：
-- 端点形状：`GET /api/documents/{id}/chunks?page=&size=` 还是 `GET /api/chunks/{chunkId}`？
-- 权限：`isAuthenticated()` 够吗？还是要校验文档归属（个人/团队）？
-- 字段裁剪：返回 content 全文还是预览？分页？
+**API 契约**：
+```jsonc
+// 1) 按文档列出片段（分页）
+// GET /api/documents/{id}/chunks?page=1&size=20
+{
+  "code": 0, "message": "ok",
+  "data": {
+    "content": [
+      {
+        "id": "uuid-...",           // chunk UUID（vector_store.id，即引用卡片 chunkId）
+        "content": "片段全文...",    // 完整 chunk 文本
+        "documentId": 10,           // 所属文档 ID（从 metadata 解析）
+        "fileName": "handbook.pdf", // 源文件名（从 metadata）
+        "metadata": { ... }         // 完整 metadata（前端按需取 page / teamId 等）
+      }
+    ],
+    "page": 1, "size": 20, "total": 12, "totalPages": 1
+  }
+}
+
+// 2) 按 chunk UUID 直接寻址（引用卡片点击）
+// GET /api/chunks/{chunkId}
+{
+  "code": 0, "message": "ok",
+  "data": {
+    "id": "uuid-...", "content": "片段全文...",
+    "documentId": 10, "fileName": "handbook.pdf", "metadata": { ... }
+  }
+}
+```
+
+**设计决策**：
+- 端点形状：两个都提供——`/api/documents/{id}/chunks`（文档详情列表）+ `/api/chunks/{chunkId}`（引用卡片直达）。
+- 权限：复用 `verifyAccess`（非 `isAuthenticated()` 裸放行）。个人文档需 owner；团队文档需成员（非 owner/管理员仅 COMPLETED 可见，R1-M1）。无权访问返回 FORBIDDEN/NOT_FOUND，不泄露存在性。
+- 字段裁剪：返回 content 全文（本端点专为查看内容设计；引用卡片预览仍用 T4 的 800 字截断 content）。分页 size 钳制到 [1,100]。
+- 数据隔离：`ORDER BY id` + `LIMIT/OFFSET`，并复用 `selectChunksByDocumentId` 同款 `fastTrack` 排除条件，避免把 FastTrack BM25 临时行当 chunk 返回。
+- 不修改 `selectChunksByDocumentId`（实体抽取/删除清理等内部全量路径，GitNexus impact=HIGH），新增独立的 `selectChunksByDocumentIdPaged` / `countChunksByDocumentId` / `selectChunkById`。
 
 ### T3 · Agent 事件历史 REST 端点
 
@@ -206,6 +238,6 @@ app.jwt.cookie-same-site: None
 | T5 | ⚠️ 前端理解错误 | `/api/models` 不存在 | 无（待讨论是否新增 catalog 端点） |
 | T8 | ⚠️ 前端描述错误 | prod overlay 自 stable 继承 | 无 |
 | T6 | 🚫 设计有意为之 | token-in-body 会放大 XSS 风险 | 无 |
-| T2 | 🕐 待讨论 | chunks 端点 | 无 |
+| T2 | ✅ 已实现 | chunks 内容查看端点 | `ChunkDTO.java`、`VectorStoreMapper.java`(+XML)、`DocumentApplicationService(Impl).java`、`DocumentController.java`、`ChunkController.java` + 4 测试 |
 | T3 | 🕐 待讨论 | Agent/Trace 事件端点 | 无 |
 | IA-1 | 🕐 暂不做 | 评估模块 | 无 |

@@ -1,6 +1,5 @@
 package com.smart.rag.rag;
 
-import com.smart.rag.team.service.TeamStatusService;
 import com.smart.rag.infrastructure.exception.ClientException;
 import com.smart.rag.infrastructure.exception.ServiceException;
 import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;
@@ -12,8 +11,10 @@ import com.smart.rag.rag.dto.DocumentDTO;
 import com.smart.rag.rag.entity.RagDocument;
 import com.smart.rag.rag.etl.EtlStatus;
 import com.smart.rag.rag.mapper.RagDocumentMapper;
+import com.smart.rag.rag.mapper.VectorStoreMapper;
 import com.smart.rag.rag.service.EtlDispatchService;
 import com.smart.rag.rag.service.FileStorageService;
+import com.smart.rag.rag.service.TeamAccessGate;
 import com.smart.rag.rag.service.impl.DocumentApplicationServiceImpl;
 import com.smart.rag.rag.service.impl.DocumentLifecycleService;
 import com.smart.rag.rag.service.impl.DocumentValidator;
@@ -22,8 +23,7 @@ import com.smart.rag.rag.upload.ChunkUploadInitRequest;
 import com.smart.rag.rag.upload.ChunkUploadResult;
 import com.smart.rag.rag.upload.ChunkUploadServiceImpl;
 import com.smart.rag.rag.upload.ChunkSizeStrategy;
-import com.smart.rag.team.service.TeamMembershipVerifier;
-import com.smart.rag.team.upload.UploadStrategyFactory;
+import com.smart.rag.rag.upload.UploadStrategyRouter;
 import io.minio.MinioClient;
 import org.apache.commons.codec.digest.DigestUtils;
 import org.junit.jupiter.api.AfterEach;
@@ -80,8 +80,9 @@ class W2CorrectnessQuickWinsTest {
         @Mock private EtlDispatchService etlDispatchService;
         @Mock private RagDocumentMapper ragDocumentMapper;
         @Mock private DocumentLifecycleService documentLifecycleService;
-        @Mock private UploadStrategyFactory uploadStrategyFactory;
-        @Mock private TeamMembershipVerifier teamMembershipVerifier;
+        @Mock private UploadStrategyRouter uploadStrategyRouter;
+        @Mock private TeamAccessGate teamAccessGate;
+        @Mock private VectorStoreMapper vectorStoreMapper;
 
         private DocumentApplicationServiceImpl service;
 
@@ -89,7 +90,7 @@ class W2CorrectnessQuickWinsTest {
         void setUp() {
             service = new DocumentApplicationServiceImpl(
                     etlDispatchService, ragDocumentMapper, documentLifecycleService,
-                    uploadStrategyFactory, teamMembershipVerifier);
+                    uploadStrategyRouter, teamAccessGate, vectorStoreMapper);
         }
 
         @AfterEach
@@ -227,7 +228,7 @@ class W2CorrectnessQuickWinsTest {
         @Mock private FileStorageService fileStorageService;
         @Mock private RagDocumentMapper ragDocumentMapper;
         @Mock private EtlDispatchService etlDispatchService;
-        @Mock private TeamStatusService teamStatusService;
+        @Mock private TeamAccessGate teamAccessGate;
         @Mock private ApplicationEventPublisher eventPublisher;
         @Mock private StringRedisTemplate redisTemplate;
         @Mock private HashOperations<String, Object, Object> hashOperations;
@@ -248,7 +249,7 @@ class W2CorrectnessQuickWinsTest {
             service = new ChunkUploadServiceImpl(
                     redisTemplate, minioClient, bucketResolver, chunkSizeStrategy,
                     props, validator, fileStorageService, ragDocumentMapper,
-                    etlDispatchService, teamStatusService, Runnable::run,
+                    etlDispatchService, teamAccessGate, Runnable::run,
                     eventPublisher, null);
         }
 
@@ -302,7 +303,7 @@ class W2CorrectnessQuickWinsTest {
         @Mock private FileStorageService fileStorageService;
         @Mock private RagDocumentMapper ragDocumentMapper;
         @Mock private EtlDispatchService etlDispatchService;
-        @Mock private TeamStatusService teamStatusService;
+        @Mock private TeamAccessGate teamAccessGate;
         @Mock private ApplicationEventPublisher eventPublisher;
         @Mock private StringRedisTemplate redisTemplate;
         @Mock private HashOperations<String, Object, Object> hashOperations;
@@ -319,7 +320,7 @@ class W2CorrectnessQuickWinsTest {
             service = new ChunkUploadServiceImpl(
                     redisTemplate, minioClient, bucketResolver, chunkSizeStrategy,
                     props, validator, fileStorageService, ragDocumentMapper,
-                    etlDispatchService, teamStatusService, Runnable::run,
+                    etlDispatchService, teamAccessGate, Runnable::run,
                     eventPublisher, null);
         }
 

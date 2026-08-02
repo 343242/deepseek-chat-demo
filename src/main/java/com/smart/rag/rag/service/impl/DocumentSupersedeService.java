@@ -11,10 +11,8 @@ import com.smart.rag.rag.mapper.RagDocumentMapper;
 import com.smart.rag.rag.mapper.VectorStoreMapper;
 import com.smart.rag.rag.entity.RagDocument;
 import com.smart.rag.rag.service.FileStorageService;
+import com.smart.rag.rag.service.TeamAccessGate;
 import com.smart.rag.infrastructure.exception.ServiceException;
-import com.smart.rag.team.entity.TeamMember;
-import com.smart.rag.team.enums.TeamMemberRole;
-import com.smart.rag.team.service.TeamMembershipVerifier;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -57,7 +55,7 @@ public class DocumentSupersedeService {
     private final Loader vectorStoreLoader;
     private final FileStorageService fileStorageService;
     private final TransactionTemplate transactionTemplate;
-    private final TeamMembershipVerifier teamMembershipVerifier;
+    private final TeamAccessGate teamAccessGate;
     @Autowired(required = false)
     @Nullable
     private EntityIndexCleanupService entityIndexCleanupService;
@@ -70,13 +68,13 @@ public class DocumentSupersedeService {
                                     Loader vectorStoreLoader,
                                     FileStorageService fileStorageService,
                                     TransactionTemplate transactionTemplate,
-                                    TeamMembershipVerifier teamMembershipVerifier) {
+                                    TeamAccessGate teamAccessGate) {
         this.ragDocumentMapper = ragDocumentMapper;
         this.vectorStoreMapper = vectorStoreMapper;
         this.vectorStoreLoader = vectorStoreLoader;
         this.fileStorageService = fileStorageService;
         this.transactionTemplate = transactionTemplate;
-        this.teamMembershipVerifier = teamMembershipVerifier;
+        this.teamAccessGate = teamAccessGate;
     }
 
     /**
@@ -234,9 +232,7 @@ public class DocumentSupersedeService {
                 return false;
             }
             try {
-                TeamMember member = teamMembershipVerifier.verifyMember(teamId, userId);
-                return member.getRole() == TeamMemberRole.CREATOR
-                        || member.getRole() == TeamMemberRole.ADMIN
+                return teamAccessGate.verifyAccess(teamId, userId).manager()
                         || userId.equals(doc.getUserId());
             } catch (ServiceException e) {
                 return false;

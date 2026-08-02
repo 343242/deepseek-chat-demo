@@ -13,10 +13,10 @@ import com.smart.rag.rag.mapper.RagDocumentMapper;
 import com.smart.rag.rag.service.FileStorageService;
 import com.smart.rag.rag.service.EtlDispatchService;
 import com.smart.rag.rag.service.DocumentDedupService;
+import com.smart.rag.rag.service.TeamAccessGate;
 import com.smart.rag.rag.service.impl.DocumentValidator;
 import com.smart.rag.infrastructure.web.util.SecurityUtils;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import com.smart.rag.team.service.TeamStatusService;
 import io.minio.*;
 import io.minio.SourceObject;
 import org.apache.commons.codec.digest.DigestUtils;
@@ -64,7 +64,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
     private final FileStorageService fileStorageService;
     private final RagDocumentMapper ragDocumentMapper;
     private final EtlDispatchService etlDispatchService;
-    private final TeamStatusService teamStatusService;
+    private final TeamAccessGate teamAccessGate;
     private final DefaultRedisScript<List> atomicChunkUploadScript;
     private final Executor mergeExecutor;
     private final ApplicationEventPublisher eventPublisher;
@@ -80,7 +80,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
             FileStorageService fileStorageService,
             RagDocumentMapper ragDocumentMapper,
             EtlDispatchService etlDispatchService,
-            TeamStatusService teamStatusService,
+            TeamAccessGate teamAccessGate,
             Executor mergeExecutor,
             ApplicationEventPublisher eventPublisher,
             @Nullable DocumentDedupService documentDedupService
@@ -94,7 +94,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         this.fileStorageService = fileStorageService;
         this.ragDocumentMapper = ragDocumentMapper;
         this.etlDispatchService = etlDispatchService;
-        this.teamStatusService = teamStatusService;
+        this.teamAccessGate = teamAccessGate;
         this.mergeExecutor = mergeExecutor;
         this.eventPublisher = eventPublisher;
         this.documentDedupService = documentDedupService;
@@ -364,7 +364,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         Long teamId = null;
         if (teamIdStr != null) {
             teamId = parseNullableLong(teamIdStr, "teamId");
-            if (!teamStatusService.isTeamActive(teamId)) {
+            if (!teamAccessGate.isTeamActive(teamId)) {
                 log.warn("Merge rejected: team dissolved, teamId={}, uploadId={}", teamId, uploadId);
                 String bucket = session.get("bucket");
                 cleanupTempChunks(bucket, session.get("objectName"), parseSessionInt(session, "totalChunks"));

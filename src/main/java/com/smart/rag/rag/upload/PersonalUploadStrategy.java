@@ -69,6 +69,11 @@ public class PersonalUploadStrategy implements UploadStrategy {
     }
 
     @Override
+    public boolean supports(@Nullable Long teamId) {
+        return teamId == null;
+    }
+
+    @Override
     public DocumentUploadResponse upload(MultipartFile file, @Nullable Long teamId, @Nullable Long replaceDocumentId, Long userId) {
         documentValidator.validate(file);
 

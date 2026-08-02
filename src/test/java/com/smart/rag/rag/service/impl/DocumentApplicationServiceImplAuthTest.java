@@ -8,11 +8,10 @@ import com.smart.rag.rag.dto.DocumentDTO;
 import com.smart.rag.rag.entity.RagDocument;
 import com.smart.rag.rag.etl.EtlStatus;
 import com.smart.rag.rag.mapper.RagDocumentMapper;
+import com.smart.rag.rag.mapper.VectorStoreMapper;
 import com.smart.rag.rag.service.EtlDispatchService;
-import com.smart.rag.team.entity.TeamMember;
-import com.smart.rag.team.enums.TeamMemberRole;
-import com.smart.rag.team.service.TeamMembershipVerifier;
-import com.smart.rag.team.upload.UploadStrategyFactory;
+import com.smart.rag.rag.service.TeamAccessGate;
+import com.smart.rag.rag.upload.UploadStrategyRouter;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -47,12 +46,13 @@ class DocumentApplicationServiceImplAuthTest {
     @Mock private EtlDispatchService etlDispatchService;
     @Mock private RagDocumentMapper ragDocumentMapper;
     @Mock private DocumentLifecycleService documentLifecycleService;
-    @Mock private UploadStrategyFactory uploadStrategyFactory;
-    @Mock private TeamMembershipVerifier teamMembershipVerifier;
+    @Mock private UploadStrategyRouter uploadStrategyRouter;
+    @Mock private TeamAccessGate teamAccessGate;
+    @Mock private VectorStoreMapper vectorStoreMapper;
 
     private DocumentApplicationServiceImpl service() {
         return new DocumentApplicationServiceImpl(etlDispatchService, ragDocumentMapper,
-                documentLifecycleService, uploadStrategyFactory, teamMembershipVerifier);
+                documentLifecycleService, uploadStrategyRouter, teamAccessGate, vectorStoreMapper);
     }
 
     private static RagDocument doc(Long teamId, Long ownerId, EtlStatus status) {
@@ -65,10 +65,8 @@ class DocumentApplicationServiceImplAuthTest {
         return d;
     }
 
-    private static TeamMember member(TeamMemberRole role) {
-        TeamMember m = new TeamMember();
-        m.setRole(role);
-        return m;
+    private static TeamAccessGate.TeamAccess access(boolean manager) {
+        return new TeamAccessGate.TeamAccess(manager);
     }
 
     // ==================== delete 授权 ====================
@@ -79,7 +77,7 @@ class DocumentApplicationServiceImplAuthTest {
         try (MockedStatic<SecurityUtils> sec = mockStatic(SecurityUtils.class)) {
             sec.when(SecurityUtils::getCurrentUserId).thenReturn(1L);
             when(ragDocumentMapper.selectById(anyLong())).thenReturn(doc(5L, 1L, EtlStatus.FAILED));
-            when(teamMembershipVerifier.verifyMember(5L, 1L)).thenReturn(member(TeamMemberRole.MEMBER));
+            when(teamAccessGate.verifyAccess(5L, 1L)).thenReturn(access(false));
             when(documentLifecycleService.cascadeDelete(any())).thenReturn(true);
 
             assertThat(service().delete(10L)).isTrue();
@@ -93,7 +91,7 @@ class DocumentApplicationServiceImplAuthTest {
         try (MockedStatic<SecurityUtils> sec = mockStatic(SecurityUtils.class)) {
             sec.when(SecurityUtils::getCurrentUserId).thenReturn(1L);
             when(ragDocumentMapper.selectById(anyLong())).thenReturn(doc(5L, 2L, EtlStatus.FAILED));
-            when(teamMembershipVerifier.verifyMember(5L, 1L)).thenReturn(member(TeamMemberRole.ADMIN));
+            when(teamAccessGate.verifyAccess(5L, 1L)).thenReturn(access(true));
             when(documentLifecycleService.cascadeDelete(any())).thenReturn(true);
 
             assertThat(service().delete(10L)).isTrue();
@@ -106,7 +104,7 @@ class DocumentApplicationServiceImplAuthTest {
         try (MockedStatic<SecurityUtils> sec = mockStatic(SecurityUtils.class)) {
             sec.when(SecurityUtils::getCurrentUserId).thenReturn(1L);
             when(ragDocumentMapper.selectById(anyLong())).thenReturn(doc(5L, 2L, EtlStatus.COMPLETED));
-            when(teamMembershipVerifier.verifyMember(5L, 1L)).thenReturn(member(TeamMemberRole.MEMBER));
+            when(teamAccessGate.verifyAccess(5L, 1L)).thenReturn(access(false));
 
             assertThatThrownBy(() -> service().delete(10L)).isInstanceOf(ServiceException.class);
             verify(documentLifecycleService, never()).cascadeDelete(any());
@@ -122,7 +120,7 @@ class DocumentApplicationServiceImplAuthTest {
             when(documentLifecycleService.cascadeDelete(any())).thenReturn(true);
 
             assertThat(service().delete(10L)).isTrue();
-            verify(teamMembershipVerifier, never()).verifyMember(anyLong(), anyLong());
+            verify(teamAccessGate, never()).verifyAccess(anyLong(), anyLong());
         }
     }
 
@@ -134,7 +132,7 @@ class DocumentApplicationServiceImplAuthTest {
         try (MockedStatic<SecurityUtils> sec = mockStatic(SecurityUtils.class)) {
             sec.when(SecurityUtils::getCurrentUserId).thenReturn(1L);
             when(ragDocumentMapper.selectById(anyLong())).thenReturn(doc(5L, 2L, EtlStatus.FAILED));
-            when(teamMembershipVerifier.verifyMember(5L, 1L)).thenReturn(member(TeamMemberRole.MEMBER));
+            when(teamAccessGate.verifyAccess(5L, 1L)).thenReturn(access(false));
 
             assertThatThrownBy(() -> service().getById(10L)).isInstanceOf(ServiceException.class);
         }
@@ -146,7 +144,7 @@ class DocumentApplicationServiceImplAuthTest {
         try (MockedStatic<SecurityUtils> sec = mockStatic(SecurityUtils.class)) {
             sec.when(SecurityUtils::getCurrentUserId).thenReturn(1L);
             when(ragDocumentMapper.selectById(anyLong())).thenReturn(doc(5L, 2L, EtlStatus.COMPLETED));
-            when(teamMembershipVerifier.verifyMember(5L, 1L)).thenReturn(member(TeamMemberRole.MEMBER));
+            when(teamAccessGate.verifyAccess(5L, 1L)).thenReturn(access(false));
 
             DocumentDTO dto = service().getById(10L);
             assertThat(dto).isNotNull();
@@ -160,7 +158,7 @@ class DocumentApplicationServiceImplAuthTest {
         try (MockedStatic<SecurityUtils> sec = mockStatic(SecurityUtils.class)) {
             sec.when(SecurityUtils::getCurrentUserId).thenReturn(1L);
             when(ragDocumentMapper.selectById(anyLong())).thenReturn(doc(5L, 1L, EtlStatus.FAILED));
-            when(teamMembershipVerifier.verifyMember(5L, 1L)).thenReturn(member(TeamMemberRole.MEMBER));
+            when(teamAccessGate.verifyAccess(5L, 1L)).thenReturn(access(false));
 
             assertThat(service().getById(10L)).isNotNull();
         }
@@ -174,7 +172,7 @@ class DocumentApplicationServiceImplAuthTest {
         try (MockedStatic<SecurityUtils> sec = mockStatic(SecurityUtils.class)) {
             sec.when(SecurityUtils::getCurrentUserId).thenReturn(1L);
             when(ragDocumentMapper.selectById(anyLong())).thenReturn(doc(5L, 1L, EtlStatus.FAILED));
-            when(teamMembershipVerifier.verifyMember(5L, 1L)).thenReturn(member(TeamMemberRole.MEMBER));
+            when(teamAccessGate.verifyAccess(5L, 1L)).thenReturn(access(false));
 
             assertThat(service().retry(10L).status()).isEqualTo(EtlStatus.PROCESSING);
         }
@@ -186,7 +184,7 @@ class DocumentApplicationServiceImplAuthTest {
         try (MockedStatic<SecurityUtils> sec = mockStatic(SecurityUtils.class)) {
             sec.when(SecurityUtils::getCurrentUserId).thenReturn(1L);
             when(ragDocumentMapper.selectById(anyLong())).thenReturn(doc(5L, 2L, EtlStatus.FAILED));
-            when(teamMembershipVerifier.verifyMember(5L, 1L)).thenReturn(member(TeamMemberRole.MEMBER));
+            when(teamAccessGate.verifyAccess(5L, 1L)).thenReturn(access(false));
 
             assertThatThrownBy(() -> service().retry(10L)).isInstanceOf(ServiceException.class);
         }
@@ -199,7 +197,7 @@ class DocumentApplicationServiceImplAuthTest {
     void listByTeamMemberAppliesVisibilityFilter() {
         try (MockedStatic<SecurityUtils> sec = mockStatic(SecurityUtils.class)) {
             sec.when(SecurityUtils::getCurrentUserId).thenReturn(1L);
-            when(teamMembershipVerifier.verifyMember(5L, 1L)).thenReturn(member(TeamMemberRole.MEMBER));
+            when(teamAccessGate.verifyAccess(5L, 1L)).thenReturn(access(false));
             when(ragDocumentMapper.selectPage(any(), any())).thenReturn(new Page<RagDocument>(1, 10));
 
             PagedResult<DocumentDTO> result = service().listByTeam(5L, 1, 10);

@@ -1,6 +1,6 @@
 package com.smart.rag.rag.upload;
 
-import com.smart.rag.team.service.TeamStatusService;
+import com.smart.rag.rag.service.TeamAccessGate;
 import com.smart.rag.infrastructure.exception.ClientException;
 import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;
 import com.smart.rag.rag.config.DocumentProperties;
@@ -71,7 +71,7 @@ class ChunkUploadServiceImplTest {
     @Mock private FileStorageService fileStorageService;
     @Mock private RagDocumentMapper ragDocumentMapper;
     @Mock private EtlDispatchService etlDispatchService;
-    @Mock private TeamStatusService teamStatusService;
+    @Mock private TeamAccessGate teamAccessGate;
     @Mock private ApplicationEventPublisher eventPublisher;
     @Mock private StringRedisTemplate redisTemplate;
     @Mock private HashOperations<String, Object, Object> hashOperations;
@@ -145,7 +145,7 @@ class ChunkUploadServiceImplTest {
         service = new ChunkUploadServiceImpl(
                 redisTemplate, minioClient, bucketResolver, chunkSizeStrategy,
                 props, documentValidator, fileStorageService, ragDocumentMapper,
-                etlDispatchService, teamStatusService, DIRECT_EXECUTOR,
+                etlDispatchService, teamAccessGate, DIRECT_EXECUTOR,
                 eventPublisher, null);
     }
 

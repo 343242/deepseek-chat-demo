@@ -2,6 +2,7 @@ package com.smart.rag.rag.controller;
 
 import com.smart.rag.infrastructure.response.GlobalResponse;
 import com.smart.rag.infrastructure.response.PagedResult;
+import com.smart.rag.rag.dto.ChunkDTO;
 import com.smart.rag.rag.dto.DocumentDTO;
 import com.smart.rag.rag.dto.DocumentUploadResponse;
 import com.smart.rag.rag.service.DocumentApplicationService;
@@ -67,6 +68,14 @@ public class DocumentController {
     @GetMapping("/{id}/history")
     public GlobalResponse<List<DocumentDTO>> history(@PathVariable Long id) {
         return GlobalResponse.ok(documentService.getHistory(id));
+    }
+
+    @GetMapping("/{id}/chunks")
+    public GlobalResponse<PagedResult<ChunkDTO>> chunks(
+            @PathVariable Long id,
+            @RequestParam(value = "page", defaultValue = "1") int page,
+            @RequestParam(value = "size", defaultValue = "20") int size) {
+        return GlobalResponse.ok(documentService.listChunks(id, page, size));
     }
 
     @PostMapping("/{id}/delete")

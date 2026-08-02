@@ -4,15 +4,13 @@ import com.smart.rag.rag.entity.RagDocument;
 import com.smart.rag.rag.etl.EtlStatus;
 import com.smart.rag.rag.etl.Loader;
 import com.smart.rag.rag.event.DocumentCreatedEvent;
-import com.smart.rag.team.entity.TeamMember;
-import com.smart.rag.team.enums.TeamMemberRole;
-import com.smart.rag.team.service.TeamMembershipVerifier;
 import com.smart.rag.rag.event.DocumentDeletedEvent;
 import com.smart.rag.rag.event.EtlCompletedEvent;
 import com.smart.rag.rag.event.EtlFailedEvent;
 import com.smart.rag.rag.mapper.RagDocumentMapper;
 import com.smart.rag.rag.mapper.VectorStoreMapper;
 import com.smart.rag.rag.service.FileStorageService;
+import com.smart.rag.rag.service.TeamAccessGate;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -55,7 +53,7 @@ class DocumentSupersedeServiceTest {
     @Mock
     private TransactionTemplate transactionTemplate;
     @Mock
-    private TeamMembershipVerifier teamMembershipVerifier;
+    private TeamAccessGate teamAccessGate;
 
     @InjectMocks
     private DocumentSupersedeService service;
@@ -241,9 +239,7 @@ class DocumentSupersedeServiceTest {
         void linkVersion_sameOwner_team() {
             RagDocument oldDoc = buildDoc(50L, "group-abc", 1, 1L, 777L);
             when(ragDocumentMapper.selectById(50L)).thenReturn(oldDoc);
-            TeamMember adminMember = new TeamMember();
-            adminMember.setRole(TeamMemberRole.ADMIN);
-            when(teamMembershipVerifier.verifyMember(777L, 2L)).thenReturn(adminMember);
+            when(teamAccessGate.verifyAccess(777L, 2L)).thenReturn(new TeamAccessGate.TeamAccess(true));
 
             DocumentCreatedEvent event = new DocumentCreatedEvent(100L, 50L, 2L, 777L);
 

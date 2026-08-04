@@ -26,4 +26,26 @@
         SELECT COUNT(*) FROM message WHERE conversation_id = #{conversationId}
     </select>
 
+    <!-- 游标分页查根消息：id 倒序，可选 before 游标 -->
+    <select id="selectRootsPage" resultType="com.smart.rag.conversation.entity.Message">
+        SELECT id, conversation_id, parent_id, role, content, status, model_id, thinking_enabled, token_usage, duration_ms, created_at, updated_at FROM message
+        WHERE conversation_id = #{conversationId} AND parent_id IS NULL
+        <if test="before != null">
+            AND id &lt; #{before}
+        </if>
+        ORDER BY id DESC
+        LIMIT #{limit}
+    </select>
+
+    <!-- 批量查子消息：parent_id IN (rootIds)，作用域限 conversation_id -->
+    <select id="selectChildrenOfRoots" resultType="com.smart.rag.conversation.entity.Message">
+        SELECT id, conversation_id, parent_id, role, content, status, model_id, thinking_enabled, token_usage, duration_ms, created_at, updated_at FROM message
+        WHERE conversation_id = #{conversationId}
+        AND parent_id IN
+        <foreach collection="rootIds" item="rid" open="(" separator="," close=")">
+            #{rid}
+        </foreach>
+        ORDER BY created_at ASC
+    </select>
+
 </mapper>

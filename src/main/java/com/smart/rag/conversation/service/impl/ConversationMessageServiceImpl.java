@@ -1,11 +1,13 @@
 package com.smart.rag.conversation.service.impl;
 
 import com.smart.rag.conversation.dto.MessageVO;
+import com.smart.rag.conversation.dto.MessageCursorPage;
 import com.smart.rag.conversation.entity.Message;
 import com.smart.rag.conversation.mapper.MessageMapper;
 import com.smart.rag.conversation.service.ConversationMessageService;
 import org.springframework.stereotype.Service;
 
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -52,6 +54,34 @@ public class ConversationMessageServiceImpl implements ConversationMessageServic
                 .filter(m -> m.getParentId() == null)
                 .map(root -> toTreeVO(root, childrenMap))
                 .toList();
+    }
+
+    @Override
+    public MessageCursorPage buildMessageTreePaged(String conversationId, Long before, int limit) {
+        // 多取 1 条根消息用于判断 hasMore
+        List<Message> roots = messageMapper.selectRootsPage(conversationId, before, limit + 1);
+        if (roots.isEmpty()) {
+            return new MessageCursorPage(Collections.emptyList(), null, false);
+        }
+
+        boolean hasMore = roots.size() > limit;
+        // 截取本页根消息（id DESC = 最新在前），复制后反转为时间升序
+        List<Message> paged = new ArrayList<>(hasMore ? roots.subList(0, limit) : roots);
+        Collections.reverse(paged);
+
+        // 查这些根消息的子消息（ASSISTANT 回复）
+        List<Long> rootIds = paged.stream().map(Message::getId).toList();
+        Map<Long, List<Message>> childrenMap = messageMapper.selectChildrenOfRoots(conversationId, rootIds)
+                .stream()
+                .collect(Collectors.groupingBy(Message::getParentId));
+
+        List<MessageVO> tree = paged.stream()
+                .map(root -> toTreeVO(root, childrenMap))
+                .toList();
+
+        // nextCursor = 本页最早的根消息 id（反转后第一个）；无更多历史时为 null
+        Long nextCursor = hasMore ? paged.get(0).getId() : null;
+        return new MessageCursorPage(tree, nextCursor, hasMore);
     }
 
     @Override

@@ -3,11 +3,10 @@ package com.smart.rag.conversation.controller;
 import com.smart.rag.infrastructure.response.GlobalResponse;
 import com.smart.rag.infrastructure.response.PagedResult;
 import com.smart.rag.conversation.dto.ConversationCreateRequest;
-import java.util.List;
 import com.smart.rag.conversation.dto.ConversationDetail;
 import com.smart.rag.conversation.dto.ConversationSummary;
 import com.smart.rag.conversation.dto.ConversationUpdateRequest;
-import com.smart.rag.conversation.dto.MessageVO;
+import com.smart.rag.conversation.dto.MessageCursorPage;
 import com.smart.rag.conversation.service.ConversationService;
 import com.smart.rag.common.util.ConversationIdUtil;
 import com.smart.rag.infrastructure.web.util.SecurityUtils;
@@ -58,10 +57,13 @@ public class ConversationController {
     }
 
     @GetMapping("/{conversationId}/messages")
-    public GlobalResponse<List<MessageVO>> listMessages(@PathVariable String conversationId) {
+    public GlobalResponse<MessageCursorPage> listMessages(
+            @PathVariable String conversationId,
+            @RequestParam(value = "limit", defaultValue = "20") @Min(1) @Max(50) int limit,
+            @RequestParam(value = "before", required = false) Long before) {
         Long userId = SecurityUtils.getCurrentUserId();
         String isolatedId = ConversationIdUtil.buildIsolatedId(userId, conversationId);
-        return GlobalResponse.ok(conversationService.listMessages(userId, isolatedId));
+        return GlobalResponse.ok(conversationService.listMessagesPaged(userId, isolatedId, before, limit));
     }
 
     @PostMapping("/{conversationId}/update")

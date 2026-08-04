@@ -10,6 +10,7 @@ import com.smart.rag.conversation.dto.ConversationDetail;
 import com.smart.rag.conversation.dto.ConversationSummary;
 import com.smart.rag.conversation.dto.ConversationUpdateRequest;
 import com.smart.rag.conversation.dto.MessageVO;
+import com.smart.rag.conversation.dto.MessageCursorPage;
 import com.smart.rag.conversation.entity.Conversation;
 import com.smart.rag.conversation.enums.ConversationStatus;
 import com.smart.rag.conversation.enums.TitleSource;
@@ -176,6 +177,12 @@ public class ConversationServiceImpl implements ConversationService {
     public List<MessageVO> listMessages(Long userId, String conversationId) {
         findAndVerify(userId, conversationId);
         return messageService.buildMessageTree(conversationId);
+    }
+
+    @Override
+    public MessageCursorPage listMessagesPaged(Long userId, String conversationId, Long before, int limit) {
+        findAndVerify(userId, conversationId);
+        return messageService.buildMessageTreePaged(conversationId, before, limit);
     }
 
     @Override

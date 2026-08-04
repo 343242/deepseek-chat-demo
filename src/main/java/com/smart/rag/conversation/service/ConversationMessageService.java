@@ -2,6 +2,7 @@ package com.smart.rag.conversation.service;
 
 import com.smart.rag.conversation.entity.Message;
 import com.smart.rag.conversation.dto.MessageVO;
+import com.smart.rag.conversation.dto.MessageCursorPage;
 
 import java.util.List;
 
@@ -35,6 +36,18 @@ public interface ConversationMessageService {
      * @return 消息树列表
      */
     List<MessageVO> buildMessageTree(String conversationId);
+
+    /**
+     * 游标分页构建消息树（最近 N 轮 / 向上翻历史）。
+     * <p>
+     * 游标粒度为根消息 id，方向从最新向最早。返回的消息树按时间升序排列。
+     *
+     * @param conversationId 隔离后的 conversation_id
+     * @param before         游标（根消息 id），{@code null} = 从最新开始
+     * @param limit          每页轮数（根消息条数）
+     * @return 游标分页结果
+     */
+    MessageCursorPage buildMessageTreePaged(String conversationId, Long before, int limit);
 
     /**
      * 软删除会话下的所有消息

@@ -6,6 +6,7 @@ import com.smart.rag.conversation.dto.ConversationDetail;
 import com.smart.rag.conversation.dto.ConversationSummary;
 import com.smart.rag.conversation.dto.ConversationUpdateRequest;
 import com.smart.rag.conversation.dto.MessageVO;
+import com.smart.rag.conversation.dto.MessageCursorPage;
 
 import java.util.List;
 
@@ -46,6 +47,18 @@ public interface ConversationService {
 
     /** 获取会话的消息列表（树形） */
     List<MessageVO> listMessages(Long userId, String conversationId);
+
+    /**
+     * 游标分页获取会话消息（最近 N 轮 / 向上翻历史）。
+     * <p>
+     * 内部复用 {@link #listMessages} 的归属校验。
+     *
+     * @param userId          当前用户 ID
+     * @param conversationId  隔离后的 conversation_id
+     * @param before          游标（根消息 id），{@code null} = 从最新开始
+     * @param limit           每页轮数（1-50）
+     */
+    MessageCursorPage listMessagesPaged(Long userId, String conversationId, Long before, int limit);
 
     /**
      * 通知会话有新消息（由 ChatService 调用）

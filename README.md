@@ -1,4 +1,4 @@
-# Smart RAG
+# Smart-RAG
 
 基于 **Spring Boot 3.5 + Spring AI 1.1 + MyBatis-Plus 3.5** 的生产级 Agentic RAG 系统。核心能力包括：**统一 LLM SPI**（`infrastructure/llm/` 中 `LlmClientRegistry` + `CapabilityClient` 抽象 Chat / Embedding / Rerank 三类能力，覆盖阿里百炼 / DeepSeek / 智谱 / MiniMax，Retry + Circuit Breaker 内建，与 Spring AI `ChatClient.Builder` 自动配置解耦）、**Agentic RAG**（意图识别驱动 Agent 主循环 + RAG 工具族 + Guardrail + Trace）、**六阶段 RAG Pipeline**（查询改写 → 混合检索 → MMR 去冗余 → Rerank 精排 → 父文档回查 → LLM 生成）、**Tool Calling 代码沙箱执行**、RBAC 权限、团队协作与文档增量更新。
 

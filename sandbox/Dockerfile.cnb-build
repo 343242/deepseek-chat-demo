@@ -1,0 +1,12 @@
+# CNB 流水线构建环境镜像：JDK 21 + Maven 3.9 + Docker CLI
+# 用途：.cnb.yml 中 docker.build 动态构建的流水线执行环境
+#   - 构建/测试（./mvnw test）→ JDK 21 + Maven
+#   - docker build/push       → Docker CLI（daemon 由流水线 services: docker 的 DinD 提供）
+# 变更本文件内容后，CNB 会按内容哈希自动重建并缓存该环境镜像
+
+FROM maven:3.9-eclipse-temurin-21
+
+# docker.io 提供 CLI（也含 daemon 二进制，但不会启动；daemon 用平台的 DinD 服务）
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends docker.io \
+    && rm -rf /var/lib/apt/lists/*

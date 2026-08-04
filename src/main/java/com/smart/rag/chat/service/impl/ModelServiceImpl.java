@@ -4,10 +4,12 @@ import com.smart.rag.infrastructure.llm.CapabilityClient;
 import com.smart.rag.infrastructure.llm.LlmCapability;
 import com.smart.rag.infrastructure.llm.registry.LlmClientRegistry;
 import com.smart.rag.chat.service.ModelService;
+import com.smart.rag.chat.dto.ModelVO;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import java.util.Comparator;
 import java.util.List;
 
 /**
@@ -46,5 +48,18 @@ public class ModelServiceImpl implements ModelService {
             log.warn("Model refresh failed: {}", e.getMessage());
             return false;
         }
+    }
+
+    @Override
+    public List<ModelVO> listModelDetails(String capability) {
+        var snapshot = llmRegistry.snapshot();
+        return snapshot.clientsById().values().stream()
+                .filter(c -> capability == null || capability.isBlank()
+                        || (c.capability() != null && c.capability().name().equalsIgnoreCase(capability)))
+                .map(c -> ModelVO.of(c, !snapshot.isDisabled(c.candidateId())))
+                .sorted(Comparator.comparing(ModelVO::capability)
+                        .thenComparing(ModelVO::provider)
+                        .thenComparing(ModelVO::id))
+                .toList();
     }
 }

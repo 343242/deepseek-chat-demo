@@ -2,6 +2,7 @@ package com.smart.rag.chat.controller;
 
 import com.smart.rag.mode.ChatRequest;
 import com.smart.rag.chat.dto.ChatResponse;
+import com.smart.rag.chat.dto.ModelVO;
 import com.smart.rag.chat.service.ChatService;
 import com.smart.rag.chat.service.ModelService;
 import com.smart.rag.infrastructure.response.GlobalResponse;
@@ -34,6 +35,12 @@ public class ChatController {
     @GetMapping("/models")
     public GlobalResponse<List<String>> listModels() {
         return GlobalResponse.ok(modelService.listModelIds());
+    }
+
+    @GetMapping("/models/detail")
+    public GlobalResponse<List<ModelVO>> listModelDetails(
+            @RequestParam(value = "capability", required = false) String capability) {
+        return GlobalResponse.ok(modelService.listModelDetails(capability));
     }
 
     @PostMapping("/chat")

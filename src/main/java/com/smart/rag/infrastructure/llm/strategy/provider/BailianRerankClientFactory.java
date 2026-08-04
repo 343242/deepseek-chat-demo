@@ -27,6 +27,9 @@ public class BailianRerankClientFactory implements ProviderClientFactory {
 
     @Override
     public CapabilityClient create(String baseUrl, String endpoint, String apiKey, ModelCandidate candidate) {
-        return new BailianRerankClient(baseUrl, endpoint, apiKey, candidate);
+        // 百炼 rerank 端点已迁移到 workspace 级 MaaS 域名（与 embedding 一致）。WorkspaceId 后续改为配置项。
+        String rerankBaseUrl = "https://llm-l3buonxbvhgk4qiy.cn-beijing.maas.aliyuncs.com";
+        String rerankEndpoint = "/compatible-api/v1/reranks";
+        return new BailianRerankClient(rerankBaseUrl, rerankEndpoint, apiKey, candidate);
     }
 }

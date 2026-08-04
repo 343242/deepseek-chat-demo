@@ -24,9 +24,10 @@ RUN chmod +x mvnw && sed -i 's/\r$//' mvnw
 # - mount type=cache 让 /root/.m2 在多次构建间持久化，首次下载后续命中缓存
 # - 不单独跑 dependency:go-offline：Spring Boot BOM 下它无法 100% 预热传递依赖，
 #   与 package 步骤重复下载，省掉这步反而更快（少一次 JVM 冷启动）
+# - 不用 -q：CI（CNB）对 10 分钟无输出的 Job 强杀；Maven 下载进度即心跳输出
 # - layertools extract 按依赖/loader/snapshot/application 拆分，供 runtime 阶段分层 COPY
 RUN --mount=type=cache,target=/root/.m2 \
-    ./mvnw -B -q -DskipTests clean package \
+    ./mvnw -B -DskipTests clean package \
     && java -Djarmode=layertools -jar target/smart-rag-*.jar extract --destination target/extracted
 
 # ========== Stage 2: runtime ==========

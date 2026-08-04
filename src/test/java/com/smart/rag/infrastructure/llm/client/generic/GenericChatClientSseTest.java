@@ -55,6 +55,11 @@ class GenericChatClientSseTest {
         return "{\"choices\":[{\"index\":0,\"delta\":{\"content\":" + q(content) + "},\"finish_reason\":null}]}";
     }
 
+    /** delta.reasoning_content 思考片段 chunk。 */
+    private static String reasoning(String content) {
+        return "{\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":" + q(content) + "},\"finish_reason\":null}]}";
+    }
+
     /** tool_call 首片（index/id/name + arguments 首段）。 */
     private static String tcFirst(int idx, String id, String name, String argsPart) {
         return "{\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":" + idx
@@ -156,5 +161,80 @@ class GenericChatClientSseTest {
         // 只有汇总包 1 个（finish_reason 后 return，不再读）
         assertThat(chunks).hasSize(1);
         assertThat(chunks.get(0).finishReason()).isEqualTo(StreamChunk.FinishReason.TOOL_CALLS);
+    }
+
+    @Test
+    @DisplayName("AC6：reasoning_content delta 以独立 chunk 即时下发，先于 content")
+    void reasoningContentStreamed() {
+        List<StreamChunk> chunks = parse(
+            reasoning("首先分析问题"),
+            txt("量子计算"),
+            finish("stop", null));
+
+        // reasoning chunk（仅 reasoningContent 非空，无 text）+ text chunk + STOP 汇总包
+        assertThat(chunks).hasSize(3);
+        StreamChunk r = chunks.get(0);
+        assertThat(r.hasReasoning()).isTrue();
+        assertThat(r.hasText()).isFalse();
+        assertThat(r.reasoningContent()).isEqualTo("首先分析问题");
+        assertThat(chunks.get(1).hasText()).isTrue();
+        assertThat(chunks.get(1).text()).isEqualTo("量子计算");
+        // 轮末汇总包携带累积 reasoning（供 R6 回传）
+        assertThat(chunks.get(2).reasoningContent()).isEqualTo("首先分析问题");
+    }
+
+    @Test
+    @DisplayName("AC6 扩展：多帧 reasoning delta 各自即时下发，轮末汇总包携带完整拼接值（非最后片段）")
+    void reasoningAccumulatedInToolCallSummary() {
+        List<StreamChunk> chunks = parse(
+            reasoning("第1段"),
+            reasoning("第2段"),
+            tcFirst(0, "c0", "search", "{}"),
+            finish("tool_calls", null));
+
+        // 2 个即时 reasoning 片段 + 1 个轮末汇总包（toolCalls + 完整累积 reasoning）
+        assertThat(chunks).hasSize(3);
+        assertThat(chunks.get(0).reasoningContent()).isEqualTo("第1段");
+        assertThat(chunks.get(1).reasoningContent()).isEqualTo("第2段");
+
+        StreamChunk end = roundSummary(chunks);
+        assertThat(end.finishReason()).isEqualTo(StreamChunk.FinishReason.TOOL_CALLS);
+        assertThat(end.toolCalls()).hasSize(1);
+        // 完整拼接，而非 last-writer-wins 的最后一个片段
+        assertThat(end.reasoningContent()).isEqualTo("第1段第2段");
+    }
+
+    @Test
+    @DisplayName("AC6 扩展：[DONE] 兜底路径同样携带完整累积 reasoning（guard 不跳过）")
+    void reasoningAccumulatedThroughDoneFallback() {
+        List<StreamChunk> chunks = parse(
+            reasoning("A段"),
+            reasoning("B段"),
+            "[DONE]");
+
+        // 2 个即时片段 + 1 个 [DONE] 轮末汇总包（fr/usage/toolCalls 皆 null，但 reasoning 非空 → guard 不跳过）
+        assertThat(chunks).hasSize(3);
+        StreamChunk end = chunks.get(2);
+        assertThat(end.finishReason()).isNull();
+        assertThat(end.usage()).isNull();
+        assertThat(end.hasToolCall()).isFalse();
+        assertThat(end.reasoningContent()).isEqualTo("A段B段");
+    }
+
+    @Test
+    @DisplayName("AC6 扩展：同一 delta 同时含 reasoning_content 与 content → 两者都被提取")
+    void reasoningAndContentSameFrame() {
+        String frame = "{\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\"思考\","
+            + "\"content\":\"回答\"},\"finish_reason\":null}]}";
+        List<StreamChunk> chunks = parse(frame, finish("stop", null));
+
+        // reasoning chunk（即时，先于 content）+ text chunk + STOP 汇总包（携带累积 reasoning）
+        assertThat(chunks).hasSize(3);
+        assertThat(chunks.get(0).hasReasoning()).isTrue();
+        assertThat(chunks.get(0).reasoningContent()).isEqualTo("思考");
+        assertThat(chunks.get(0).hasText()).isFalse();
+        assertThat(chunks.get(1).text()).isEqualTo("回答");
+        assertThat(chunks.get(1).hasReasoning()).isFalse();
+        assertThat(chunks.get(2).reasoningContent()).isEqualTo("思考");
     }
 }

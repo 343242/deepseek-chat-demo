@@ -133,6 +133,11 @@ app:
             provider: bailian
             model: qwen3-max
             supports-thinking: true
+            params:
+              thinking:
+                dialect: budget
+                enabled: true
+                thinking-budget: 16000
             priority: 4
       embedding:
         default-model: qwen-emb-8b

@@ -157,6 +157,63 @@ class ChatModelAdapterTest {
             ChatRequest captured = captureChatRequest();
             assertThat(captured.extraParams()).isEmpty();
         }
+
+        @Test
+        @DisplayName("AC10：历史 AssistantMessage 携 reasoning_content metadata → extractHistory 提取进 MessageInformation.metadata（供请求体回传）")
+        void reasoningContentExtractedFromToolCallHistory() {
+            when(delegate.chat(any())).thenReturn(simpleResponse("ok"));
+
+            AssistantMessage prev = AssistantMessage.builder()
+                .content("搜索中")
+                .properties(Map.of("reasoning_content", "完整思考"))
+                .toolCalls(List.of(new AssistantMessage.ToolCall(
+                    "call_1", "function", "hybridSearch", "{\"q\":\"Paris\"}")))
+                .build();
+            Prompt prompt = new Prompt(List.of(
+                new UserMessage("earlier question"),
+                prev,
+                org.springframework.ai.chat.messages.ToolResponseMessage.builder()
+                    .responses(List.of(new org.springframework.ai.chat.messages.ToolResponseMessage.ToolResponse(
+                        "call_1", "function", "Paris 25°C")))
+                    .build(),
+                new UserMessage("follow-up")));
+
+            adapter.call(prompt);
+
+            ChatRequest captured = captureChatRequest();
+            MessageInformation assistantInfo = captured.history().stream()
+                .filter(m -> "assistant".equals(m.role()))
+                .findFirst().orElseThrow();
+            assertThat(assistantInfo.metadata()).containsEntry("reasoning_content", "完整思考");
+            assertThat(assistantInfo.metadata()).containsKey("tool_calls");
+        }
+
+        @Test
+        @DisplayName("AC10：无 reasoning_content metadata 的 tool_call 历史 → 不写入该字段（纯多轮不回传）")
+        void toolCallHistoryWithoutReasoningNotEchoed() {
+            when(delegate.chat(any())).thenReturn(simpleResponse("ok"));
+
+            AssistantMessage prev = AssistantMessage.builder()
+                .content("搜索中")
+                .toolCalls(List.of(new AssistantMessage.ToolCall(
+                    "call_1", "function", "hybridSearch", "{\"q\":\"Paris\"}")))
+                .build();
+            Prompt prompt = new Prompt(List.of(
+                prev,
+                org.springframework.ai.chat.messages.ToolResponseMessage.builder()
+                    .responses(List.of(new org.springframework.ai.chat.messages.ToolResponseMessage.ToolResponse(
+                        "call_1", "function", "Paris 25°C")))
+                    .build(),
+                new UserMessage("follow-up")));
+
+            adapter.call(prompt);
+
+            ChatRequest captured = captureChatRequest();
+            MessageInformation assistantInfo = captured.history().stream()
+                .filter(m -> "assistant".equals(m.role()))
+                .findFirst().orElseThrow();
+            assertThat(assistantInfo.metadata()).doesNotContainKey("reasoning_content");
+        }
     }
 
     // ==================== call (LlmResponse → ChatResponse) ====================
@@ -237,6 +294,29 @@ class ChatModelAdapterTest {
             // Should not throw NPE; metadata is built without usage
             assertThat(response).isNotNull();
             // getUsage() may return null or DefaultUsage(null,null,null) — either is acceptable
+        }
+
+        @Test
+        @DisplayName("AC7：阻塞响应 reasoningContent → AssistantMessage.metadata.reasoning_content")
+        void reasoningContentExposedInMetadata() {
+            when(delegate.chat(any())).thenReturn(
+                new LlmResponse("answer", false, null, List.of(), Map.of(), "完整思考过程"));
+
+            ChatResponse response = adapter.call(new Prompt(List.of(new UserMessage("hi"))));
+
+            assertThat(response.getResult().getOutput().getMetadata())
+                .containsEntry("reasoning_content", "完整思考过程");
+        }
+
+        @Test
+        @DisplayName("AC7：无 reasoningContent → metadata 不含 reasoning_content")
+        void emptyReasoningContentNoMetadata() {
+            when(delegate.chat(any())).thenReturn(simpleResponse("answer"));
+
+            ChatResponse response = adapter.call(new Prompt(List.of(new UserMessage("hi"))));
+
+            assertThat(response.getResult().getOutput().getMetadata())
+                .doesNotContainKey("reasoning_content");
         }
     }
 
@@ -320,6 +400,56 @@ class ChatModelAdapterTest {
             assertThat(end.getResult().getMetadata().getFinishReason()).isEqualTo("stop");
             assertThat(end.getMetadata().getUsage()).isNotNull();
             assertThat(end.getMetadata().getUsage().getTotalTokens()).isEqualTo(30);
+        }
+
+        @Test
+        @DisplayName("AC7：reasoning-only chunk → ChatResponse 仅 metadata 携 reasoning_content，content 为空，无 finishReason")
+        void reasoningOnlyChunkExposed() {
+            when(delegate.chatStream(any())).thenReturn(reactor.core.publisher.Flux.just(
+                new StreamChunk(null, null, null, null, "思考中")));
+
+            java.util.List<ChatResponse> responses =
+                adapter.stream(new Prompt(List.of(new UserMessage("hi")))).collectList().block();
+
+            assertThat(responses).hasSize(1);
+            assertThat(responses.get(0).getResult().getOutput().getText()).isEmpty();
+            assertThat(responses.get(0).getResult().getOutput().getMetadata())
+                .containsEntry("reasoning_content", "思考中");
+            assertThat(responses.get(0).getResult().getMetadata().getFinishReason()).isNull();
+        }
+
+        @Test
+        @DisplayName("AC7：text + reasoning 同 chunk → 两者都暴露")
+        void textAndReasoningChunkExposed() {
+            when(delegate.chatStream(any())).thenReturn(reactor.core.publisher.Flux.just(
+                new StreamChunk("回答", null, null, null, "思考")));
+
+            java.util.List<ChatResponse> responses =
+                adapter.stream(new Prompt(List.of(new UserMessage("hi")))).collectList().block();
+
+            assertThat(responses).hasSize(1);
+            assertThat(responses.get(0).getResult().getOutput().getText()).isEqualTo("回答");
+            assertThat(responses.get(0).getResult().getOutput().getMetadata())
+                .containsEntry("reasoning_content", "思考");
+        }
+
+        @Test
+        @DisplayName("AC10：toolCall 汇总包携完整累积 reasoning → AssistantMessage.metadata 保留完整值")
+        void toolCallSummaryCarriesReasoning() {
+            when(delegate.chatStream(any())).thenReturn(reactor.core.publisher.Flux.just(
+                new StreamChunk(null,
+                    List.of(new StreamChunk.ToolCallDelta(0, "call_1", "hybridSearch", "{\"q\":\"Paris\"}")),
+                    StreamChunk.FinishReason.TOOL_CALLS, null, "完整累积思考")));
+
+            java.util.List<ChatResponse> responses =
+                adapter.stream(new Prompt(List.of(new UserMessage("search Paris")))).collectList().block();
+
+            assertThat(responses).hasSize(1);
+            ChatResponse r = responses.get(0);
+            AssistantMessage msg = (AssistantMessage) r.getResult().getOutput();
+            assertThat(msg.getToolCalls()).hasSize(1);
+            assertThat(msg.getMetadata()).containsEntry("reasoning_content", "完整累积思考");
+            assertThat(r.getResult().getMetadata().getFinishReason()).isEqualTo("tool_calls");
         }
     }
 

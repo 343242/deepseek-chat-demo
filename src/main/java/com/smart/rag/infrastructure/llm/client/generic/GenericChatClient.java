@@ -149,6 +149,7 @@ public class GenericChatClient extends AbstractChatClient {
 
     static void readSse(ObjectMapper objectMapper, BufferedSource source, Call call, FluxSink<StreamChunk> sink) throws IOException {
         ToolCallAccumulator acc = new ToolCallAccumulator();
+        StringBuilder reasoningBuf = new StringBuilder(); // 累积 reasoning 片段（工具调用多轮回传需完整值）
         while (!source.exhausted()) {
             if (sink.isCancelled()) {
                 call.cancel();
@@ -160,8 +161,8 @@ public class GenericChatClient extends AbstractChatClient {
 
             String data = line.substring(5).trim();
             if ("[DONE]".equals(data)) {
-                // [DONE] 兜底：finish_reason 未到的极端情况也发轮末汇总包
-                emitRoundEnd(sink, acc, null, null);
+                // [DONE] 兜底：finish_reason 未到的极端情况也发轮末汇总包（必须携带累积 reasoning，勿漏）
+                emitRoundEnd(sink, acc, null, null, reasoningBuf.toString());
                 return;
             }
             try {
@@ -170,6 +171,13 @@ public class GenericChatClient extends AbstractChatClient {
                 if (!choices.isArray() || choices.isEmpty()) continue;
                 JsonNode choice0 = choices.get(0);
                 JsonNode delta = choice0.path("delta");
+
+                // 0) reasoning_content delta → 即时下发（保 TTFT）+ 累积（轮末汇总包携带完整值供 R6 回传）
+                JsonNode reasoningNode = delta.path("reasoning_content");
+                if (reasoningNode.isTextual() && !reasoningNode.asText().isEmpty()) {
+                    reasoningBuf.append(reasoningNode.asText());
+                    sink.next(new StreamChunk(null, null, null, null, reasoningNode.asText()));
+                }
 
                 // 1) content → text chunk（即时发，保 TTFT）
                 JsonNode contentNode = delta.path("content");
@@ -190,11 +198,11 @@ public class GenericChatClient extends AbstractChatClient {
                     }
                 }
 
-                // 3) finish_reason → 轮末汇总包（完整 toolCalls + finishReason + usage）
+                // 3) finish_reason → 轮末汇总包（完整 toolCalls + finishReason + usage + 完整累积 reasoning）
                 JsonNode frNode = choice0.path("finish_reason");
                 if (frNode.isTextual() && !"null".equals(frNode.asText())) {
                     LlmResponse.TokenUsage usage = parseTokenUsage(root.path("usage"));
-                    emitRoundEnd(sink, acc, frNode.asText(), usage);
+                    emitRoundEnd(sink, acc, frNode.asText(), usage, reasoningBuf.toString());
                     return;
                 }
             } catch (IOException e) {
@@ -203,13 +211,16 @@ public class GenericChatClient extends AbstractChatClient {
         }
     }
 
-    /** 轮末汇总包：完整 toolCalls（若累积到）+ finishReason + usage。Poc6 防御式契约，供 ChatModelAdapter 检测工具调用。 */
+    /** 轮末汇总包：完整 toolCalls（若累积到）+ finishReason + usage + 完整累积 reasoning（R6 回传）。Poc6 防御式契约，供 ChatModelAdapter 检测工具调用。 */
     private static void emitRoundEnd(FluxSink<StreamChunk> sink, ToolCallAccumulator acc,
-                                     String finishReason, LlmResponse.TokenUsage usage) {
+                                     String finishReason, LlmResponse.TokenUsage usage,
+                                     String accumulatedReasoning) {
         java.util.List<StreamChunk.ToolCallDelta> toolCalls = acc.drain();
         StreamChunk.FinishReason fr = mapFinishReason(finishReason);
-        if (toolCalls.isEmpty() && fr == null && usage == null) return;
-        sink.next(new StreamChunk(null, toolCalls.isEmpty() ? null : toolCalls, fr, usage));
+        boolean noReasoning = accumulatedReasoning == null || accumulatedReasoning.isEmpty();
+        // guard 含 reasoning：[DONE] 场景下 fr/usage/toolCalls 皆 null 但 accumulatedReasoning 可能非空，不能跳过
+        if (toolCalls.isEmpty() && fr == null && usage == null && noReasoning) return;
+        sink.next(new StreamChunk(null, toolCalls.isEmpty() ? null : toolCalls, fr, usage, accumulatedReasoning));
     }
 
     private static StreamChunk.FinishReason mapFinishReason(String raw) {
@@ -229,7 +240,7 @@ public class GenericChatClient extends AbstractChatClient {
         return base + ep;
     }
 
-    private Map<String, Object> buildRequestBody(ChatRequest request, boolean stream) {
+    Map<String, Object> buildRequestBody(ChatRequest request, boolean stream) {
         List<Map<String, Object>> messages = new ArrayList<>();
         if (request.systemPrompt() != null) {
             Map<String, Object> sys = new LinkedHashMap<>();
@@ -247,6 +258,10 @@ public class GenericChatClient extends AbstractChatClient {
                 } else if ("assistant".equals(msg.role()) && msg.metadata() != null && msg.metadata().containsKey("tool_calls")) {
                     m.put("content", msg.content() != null ? msg.content() : "");
                     m.put("tool_calls", msg.metadata().get("tool_calls"));
+                    // R6 回传：工具调用多轮中完整回传上一轮 reasoning_content（DeepSeek 要求，否则 400）。
+                    // 仅 tool_calls 分支回传——纯多轮对话中该字段被 API 忽略（DeepSeek 文档确认），不注入避免冗余。
+                    Object rc = msg.metadata().get("reasoning_content");
+                    if (rc instanceof String s && !s.isEmpty()) m.put("reasoning_content", s);
                 } else {
                     m.put("content", msg.content() != null ? msg.content() : "");
                 }
@@ -283,14 +298,25 @@ public class GenericChatClient extends AbstractChatClient {
             }
             body.put("tools", tools);
         }
+        // 思考参数注入：per-request > candidate.params > 不注入（AC3/AC4/R5）。
+        // 不以 candidate.supportsThinking() 为门槛——支持思考是能力声明，注入与否完全由
+        // params.thinking / per-request 决定。
+        ThinkingConfig cfg = request.thinking() != null
+            ? request.thinking()
+            : ThinkingBodyResolver.extractDefault(candidate.params());
+        if (cfg != null) {
+            ThinkingDialect dialect = ThinkingBodyResolver.extractDialect(candidate.params());
+            body.putAll(ThinkingBodyResolver.resolve(cfg, dialect));
+        }
         return body;
     }
 
-    private LlmResponse parseResponse(String json) {
+    LlmResponse parseResponse(String json) {
         try {
             JsonNode root = objectMapper.readTree(json);
             JsonNode choices = root.path("choices");
             String content = "";
+            String reasoning = "";
             boolean truncated = false;
             List<LlmResponse.ToolCall> toolCalls = List.of();
 
@@ -299,10 +325,11 @@ public class GenericChatClient extends AbstractChatClient {
                 content = message.path("content").asText("");
                 truncated = "length".equals(choices.get(0).path("finish_reason").asText(""));
                 toolCalls = parseToolCalls(message);
+                reasoning = message.path("reasoning_content").asText("");
             }
 
             LlmResponse.TokenUsage tokenUsage = parseTokenUsage(root.path("usage"));
-            return new LlmResponse(content, truncated, tokenUsage, toolCalls, Map.of());
+            return new LlmResponse(content, truncated, tokenUsage, toolCalls, Map.of(), reasoning);
         } catch (IOException e) {
             throw new RemoteException(RemoteErrorCode.LLM_RESPONSE_PARSE_ERROR,
                 "Failed to parse chat response: " + e.getMessage(), e);

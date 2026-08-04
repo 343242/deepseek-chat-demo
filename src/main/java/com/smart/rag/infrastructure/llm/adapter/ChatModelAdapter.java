@@ -67,16 +67,32 @@ public class ChatModelAdapter implements ChatModel {
         //  - 文本 chunk → AssistantMessage(content) 透传（保 TTFT）；STOP/LENGTH 末包携带 finishReason + usage。
         return delegate.chatStream(request)
             .map(chunk -> {
+                // 1) tool_call 轮末汇总包（完整 toolCalls + 可能携带完整累积 reasoning）——必须最先判，
+                //    汇总包可能同时 hasReasoning() 为 true，reasoning-only 分支在前会错误截获它。
                 if (chunk.hasToolCall()) {
                     String content = chunk.text() != null ? chunk.text() : "";
-                    AssistantMessage msg = new ToolCallAssistantMessage(content,
+                    Map<String, Object> meta = chunk.hasReasoning()
+                        ? Map.of("reasoning_content", chunk.reasoningContent())
+                        : Map.of();
+                    AssistantMessage msg = new ToolCallAssistantMessage(content, meta,
                         toSpringToolCallsFromDeltas(chunk.toolCalls()));
                     Generation gen = new Generation(msg, ChatGenerationMetadata.builder()
                         .finishReason("tool_calls").build());
                     return new ChatResponse(List.of(gen), buildResponseMetadata(chunk));
                 }
+                // 2) reasoning-only chunk（无 text、无 tool、有 reasoning）→ 即时片段，仅 metadata（供前端展示）
+                if (chunk.hasReasoning() && !chunk.hasText()) {
+                    AssistantMessage msg = new ReasoningAssistantMessage("",
+                        Map.of("reasoning_content", chunk.reasoningContent()));
+                    return new ChatResponse(List.of(new Generation(msg)),
+                        buildResponseMetadata(chunk));
+                }
+                // 3) text chunk 或 STOP/LENGTH 末包（携带完整累积 reasoning 时一并入 metadata）
                 String content = chunk.hasText() ? chunk.text() : "";
-                AssistantMessage msg = new AssistantMessage(content);
+                Map<String, Object> meta = chunk.hasReasoning()
+                    ? Map.of("reasoning_content", chunk.reasoningContent())
+                    : Map.of();
+                AssistantMessage msg = new ReasoningAssistantMessage(content, meta);
                 Generation gen = new Generation(msg, buildGenerationMetadata(chunk.finishReason()));
                 return new ChatResponse(List.of(gen), buildResponseMetadata(chunk));
             });
@@ -85,9 +101,14 @@ public class ChatModelAdapter implements ChatModel {
     private ChatResponse wrapAsChatResponse(LlmResponse llmResp) {
         String content = llmResp.content() != null ? llmResp.content() : "";
         List<AssistantMessage.ToolCall> springToolCalls = toSpringToolCalls(llmResp.toolCalls());
+        // R4/AC7：思考内容经 AssistantMessage.metadata 暴露（key=reasoning_content），
+        // 供 ToolCallingManager.buildConversationHistoryBeforeToolExecution 经 .properties() 保留并回传。
+        Map<String, Object> msgMeta = llmResp.reasoningContent() != null && !llmResp.reasoningContent().isEmpty()
+            ? Map.of("reasoning_content", llmResp.reasoningContent())
+            : Map.of();
         AssistantMessage assistantMsg = springToolCalls.isEmpty()
-            ? new AssistantMessage(content)
-            : new ToolCallAssistantMessage(content, springToolCalls);
+            ? new ReasoningAssistantMessage(content, msgMeta)
+            : new ToolCallAssistantMessage(content, msgMeta, springToolCalls);
         Generation generation = new Generation(assistantMsg,
             ChatGenerationMetadata.builder()
                 .finishReason(llmResp.truncated() ? "length" : "stop")
@@ -152,10 +173,17 @@ public class ChatModelAdapter implements ChatModel {
         return b.build();
     }
 
-    /** 子类访问 AssistantMessage 的 protected 四参构造器，用于回灌 toolCalls */
+    /** 子类访问 AssistantMessage 的 protected 四参构造器，用于回灌 toolCalls + metadata（reasoning_content） */
     private static final class ToolCallAssistantMessage extends AssistantMessage {
-        ToolCallAssistantMessage(String content, List<AssistantMessage.ToolCall> toolCalls) {
-            super(content, Map.of(), toolCalls, List.of());
+        ToolCallAssistantMessage(String content, Map<String, Object> metadata, List<AssistantMessage.ToolCall> toolCalls) {
+            super(content, metadata != null ? metadata : Map.of(), toolCalls, List.of());
+        }
+    }
+
+    /** 带 metadata 的普通 AssistantMessage（承载 reasoning_content；AC7 边界暴露） */
+    private static final class ReasoningAssistantMessage extends AssistantMessage {
+        ReasoningAssistantMessage(String content, Map<String, Object> metadata) {
+            super(content, metadata != null ? metadata : Map.of(), List.of(), List.of());
         }
     }
 
@@ -164,7 +192,7 @@ public class ChatModelAdapter implements ChatModel {
         List<MessageInformation> history = extractHistory(prompt);
         List<ChatTool> tools = extractTools(prompt);
         return new ChatRequest(prompt.getContents(), systemPrompt, history,
-            null, null, null, Map.of(), tools);
+            null, null, null, Map.of(), tools, null);
     }
 
     /** Fix B-i 请求侧：从 ToolCallingChatOptions 提取 ToolCallback 转 ChatTool */
@@ -217,7 +245,13 @@ public class ChatModelAdapter implements ChatModel {
                     entry.put("function", fn);
                     tcs.add(entry);
                 }
-                builder.add(MessageInformation.assistant(am.getText() != null ? am.getText() : "", Map.of("tool_calls", tcs)));
+                // R6/AC10 回传断点 1：从 AssistantMessage.metadata 提取完整 reasoning_content，
+                // 与 tool_calls 一并写入 MessageInformation.metadata（buildRequestBody 断点 2 输出到请求体）。
+                Map<String, Object> meta = new java.util.LinkedHashMap<>();
+                meta.put("tool_calls", tcs);
+                Object rc = am.getMetadata() != null ? am.getMetadata().get("reasoning_content") : null;
+                if (rc instanceof String s && !s.isEmpty()) meta.put("reasoning_content", s);
+                builder.add(MessageInformation.assistant(am.getText() != null ? am.getText() : "", meta));
             } else if (m instanceof org.springframework.ai.chat.messages.ToolResponseMessage trm) {
                 for (org.springframework.ai.chat.messages.ToolResponseMessage.ToolResponse tr : trm.getResponses()) {
                     builder.add(MessageInformation.tool(tr.id(), tr.responseData()));

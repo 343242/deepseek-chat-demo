@@ -300,10 +300,50 @@ ChatClient client = ChatClient.builder(new ChatModelAdapter(chatCapable)).build(
 
 ---
 
+## 思考参数契约（thinking / reasoning_content）
+
+> task `08-04-thinking-effort-adapter`。改动全在 `infrastructure/llm` 包内：`ThinkingConfig` / `ThinkingDialect` / `ThinkingBodyResolver` + `GenericChatClient` / `ChatModelAdapter`。
+
+### 请求侧注入
+
+- **触发条件**：候选 `params.thinking` 已配置，或 `ChatRequest.thinking` 非空。两者皆无 → 不注入任何思考参数（零行为变更，字节级不变）。
+- **优先级**：`ChatRequest.thinking`（per-request）> 候选 `params.thinking` 默认 > 不注入。per-request 仅覆盖参数，**方言始终由候选声明**。
+- **`supports-thinking: true` 仅是能力声明，不触发注入**（与 `supportsStreaming` 同语义，fail-fast）。
+- **YAML 键名必须 kebab-case**：`params.thinking.{dialect,enabled,reasoning-effort,thinking-budget}`。Spring Boot `Map<String,Object>` 绑定保留原始键名，camelCase（`reasoningEffort`）会被**静默忽略**——配置失效无报错。
+
+### 方言映射（由候选显式声明，禁止按 provider/model 推断）
+
+| 方言 | 请求体字段 | 代表厂商 |
+|---|---|---|
+| `effort` | `thinking: {type: enabled\|disabled}` + `reasoning_effort`（可选） | DeepSeek、智谱 GLM |
+| `budget` | `enable_thinking: bool` + `thinking_budget`（可选） | 百炼 Qwen |
+
+### 响应侧暴露
+
+- SPI：阻塞 `LlmResponse.reasoningContent()`；流式 `StreamChunk.reasoningContent()`（reasoning delta 以独立 chunk 即时下发，先于 content，保 TTFT）。
+- Spring AI 边界：`AssistantMessage.getMetadata().get("reasoning_content")`。**不得**放 `ChatResponse.metadata`（该槽位被 usage 占用语义）。
+- 流式路径中，轮末汇总包（finish_reason / `[DONE]` 兜底）必须携带**完整累积** reasoning——`MessageAggregator` 对 metadata 是 `putAll`（last-writer-wins，非拼接），累积必须在 `readSse` 层完成。
+
+### 工具调用多轮回传（DeepSeek 400 规避）
+
+- 上一轮 assistant 消息（含 tool_calls）的完整 `reasoning_content` 必须回传到下一轮请求体：`extractHistory`（AssistantMessage.metadata → `MessageInformation.metadata`）→ `buildRequestBody`（assistant+tool_calls 分支输出 `reasoning_content` 字段）。
+- **仅工具调用场景回传**：无 tool_calls 的 assistant 消息不注入（纯多轮对话中该字段被 API 忽略，避免冗余）。
+- 阻塞路径经 `parseResponse` 一次性提取；流式路径经 `readSse` 累积 → 轮末汇总包 → `MessageAggregator.putAll` 保留 last-winner。
+
+### 禁止（Anti-patterns）
+
+- ❌ YAML 用 camelCase 键（`reasoningEffort`/`thinkingBudget`）——静默失效。
+- ❌ 以 `supports-thinking` 为注入门槛或自动注入"开启思考 + 厂商默认档"——掩盖配置缺失，违反 fail-fast。
+- ❌ 按 provider/model 名推断方言（同一模型跨平台方言不同，如 GLM-5.2 智谱=EFFORT / 百炼=BUDGET）。
+- ❌ 流式路径在 `MessageAggregator` 之后拼接 reasoning 片段——`putAll` 非拼接，轮末只剩最后片段，回传不完整 → DeepSeek 400。
+
+---
+
 ## Related
 
 - 任务记录：
   - `.trellis/tasks/archive/2026-06/06-14-decouple-spring-ai-chatclient-builder-injection/prd.md`（基础解耦）
   - `.trellis/tasks/06-14-fix-chatmodeladapter-default-options-toolcallingchatoptions/prd.md`（getDefaultOptions 修复）
+  - `.trellis/tasks/08-04-thinking-effort-adapter/`（思考参数统一适配，2026-08）
 - 异常体系：[Error Handling](./error-handling.md)
 - 设计原则：[Quality Guidelines](./quality-guidelines.md)

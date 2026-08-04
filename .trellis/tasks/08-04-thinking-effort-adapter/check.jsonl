@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/llm-spi.md", "reason": "校验 SPI 契约未被破坏：思考参数注入路径是否绕过 Registry、是否在 adapter 包内桥接、reasoning_content 边界暴露是否符合 ISP"}
+{"file": ".trellis/spec/backend/code-review-checklist.md", "reason": "按 Review 维度核查 record 字段扩展的向后兼容、测试覆盖、异常处理"}

@@ -13,6 +13,8 @@ import com.smart.rag.infrastructure.llm.CapabilityClient;
 import com.smart.rag.infrastructure.llm.ChatCapable;
 import com.smart.rag.infrastructure.llm.adapter.ChatModelAdapter;
 import com.smart.rag.infrastructure.llm.LlmCapability;
+import com.smart.rag.infrastructure.exception.ClientException;
+import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;
 import com.smart.rag.infrastructure.llm.resilience.FallbackExecutor;
 import com.smart.rag.infrastructure.llm.registry.LlmClientRegistry;
 import com.smart.rag.mode.ChatModeStrategy;
@@ -173,6 +175,14 @@ public class ChatServiceImpl implements ChatService {
             // 指定模型不在 registry 中（无效 ID），用原始链兜底
             log.warn("Requested model '{}' not found in registry, using default fallback chain", requestedId);
             return baseChain;
+        }
+
+        // 能力校验：聊天链路只接受 CHAT 能力模型。
+        // 防止前端被绕过后直传 embedding/reranking candidateId（运行时强转 ClassCastException 才暴露，
+        // 错误信息不友好且非业务语义）。此处显式拒绝，返回业务码 103004。
+        if (requestedClient.capability() != LlmCapability.CHAT) {
+            log.warn("Requested model '{}' has capability {}, chat requires CHAT", requestedId, requestedClient.capability());
+            throw new ClientException(ClientErrorCode.MODEL_CAPABILITY_NOT_CHAT);
         }
 
         // 把用户指定模型放到链首，其余去重追加

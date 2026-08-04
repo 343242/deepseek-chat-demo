@@ -10,6 +10,13 @@ public interface ModelService {
 
     List<String> listModelIds();
 
+    /**
+     * 仅列出 CHAT 能力模型的候选 ID（供聊天端点 /api/models 使用）。
+     * <p>
+     * 普通用户在使用时只能选 CHAT 模型；Embedding/Rerank 不对聊天场景暴露。
+     */
+    List<String> listChatModelIds();
+
     boolean isModelAvailable(String candidateId);
 
     /**

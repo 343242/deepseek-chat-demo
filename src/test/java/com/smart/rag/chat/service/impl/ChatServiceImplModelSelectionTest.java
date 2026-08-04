@@ -4,6 +4,8 @@ import com.smart.rag.chat.context.CagProperties;
 import com.smart.rag.chat.context.RequestContextManager;
 import com.smart.rag.mode.ChatRequest;
 import com.smart.rag.chat.dto.ChatResponse;
+import com.smart.rag.infrastructure.exception.ClientException;
+import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;
 import com.smart.rag.infrastructure.fallback.FallbackEligibility;
 import com.smart.rag.infrastructure.llm.CapabilityClient;
 import com.smart.rag.infrastructure.llm.ChatCapable;
@@ -94,6 +96,7 @@ class ChatServiceImplModelSelectionTest {
             if ("candidateId".equals(invocation.getMethod().getName())) return candidateId;
             if ("providerId".equals(invocation.getMethod().getName())) return "test-provider";
             if ("modelName".equals(invocation.getMethod().getName())) return candidateId;
+            if ("capability".equals(invocation.getMethod().getName())) return LlmCapability.CHAT;
             if ("isAvailable".equals(invocation.getMethod().getName())) return true;
             if ("supportsStreaming".equals(invocation.getMethod().getName())) return false;
             return null;
@@ -211,5 +214,69 @@ class ChatServiceImplModelSelectionTest {
         assertNull(response.fallback());
         // Verify find() was not called (optimization)
         verify(llmRegistry, never()).find(anyString());
+    }
+
+    /**
+     * 构造一个指定 capability 的 CapabilityClient mock（非 ChatCapable）。
+     * 用于测试用户传 embedding/reranking candidateId 被拒绝。
+     */
+    private CapabilityClient mockClientWithCapability(String candidateId, LlmCapability capability) {
+        CapabilityClient client = mock(CapabilityClient.class, invocation -> {
+            switch (invocation.getMethod().getName()) {
+                case "candidateId": return candidateId;
+                case "providerId": return "test-provider";
+                case "modelName": return candidateId;
+                case "capability": return capability;
+                case "isAvailable": return true;
+                default: return null;
+            }
+        });
+        return client;
+    }
+
+    @Test
+    @DisplayName("Requested embedding model is rejected with MODEL_CAPABILITY_NOT_CHAT")
+    void requestedModel_embeddingCapability_rejected() {
+        String embeddingModel = "bailian-embed";
+        String byokDefault = "qwen-plus";
+
+        ChatRequest request = new ChatRequest(embeddingModel, "hello", RAW_CONV_ID, false, "SIMPLE", false, null);
+        setupCommonMocks(embeddingModel);
+
+        ChatCapable byokClient = mockChatClient(byokDefault);
+        when(llmRegistry.getUserChain(LlmCapability.CHAT, USER_ID))
+                .thenReturn(List.of(byokClient));
+        // find() 返回一个 EMBEDDING 能力的 client（前端被绕过后直传 embedding id）
+        when(llmRegistry.find(embeddingModel))
+                .thenReturn(mockClientWithCapability(embeddingModel, LlmCapability.EMBEDDING));
+
+        ChatServiceImpl service = createService();
+
+        ClientException ex = assertThrows(ClientException.class, () -> service.chat(request));
+        assertEquals(ClientErrorCode.MODEL_CAPABILITY_NOT_CHAT.getCode(), ex.getErrorCode().getCode());
+        // 不应进入 strategy 执行
+        verify(modeStrategy, never()).execute(any(StrategyExecutionContext.class));
+    }
+
+    @Test
+    @DisplayName("Requested reranking model is rejected with MODEL_CAPABILITY_NOT_CHAT")
+    void requestedModel_rerankingCapability_rejected() {
+        String rerankingModel = "bge-reranker";
+        String byokDefault = "qwen-plus";
+
+        ChatRequest request = new ChatRequest(rerankingModel, "hello", RAW_CONV_ID, false, "SIMPLE", false, null);
+        setupCommonMocks(rerankingModel);
+
+        ChatCapable byokClient = mockChatClient(byokDefault);
+        when(llmRegistry.getUserChain(LlmCapability.CHAT, USER_ID))
+                .thenReturn(List.of(byokClient));
+        when(llmRegistry.find(rerankingModel))
+                .thenReturn(mockClientWithCapability(rerankingModel, LlmCapability.RERANKING));
+
+        ChatServiceImpl service = createService();
+
+        ClientException ex = assertThrows(ClientException.class, () -> service.chat(request));
+        assertEquals(ClientErrorCode.MODEL_CAPABILITY_NOT_CHAT.getCode(), ex.getErrorCode().getCode());
+        verify(modeStrategy, never()).execute(any(StrategyExecutionContext.class));
     }
 }

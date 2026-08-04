@@ -128,4 +128,30 @@ class ModelServiceImplDetailTest {
         assertThat(result).hasSize(1);
         assertThat(result.get(0).capability()).isEqualTo("CHAT");
     }
+
+    @Test
+    @DisplayName("listChatModelIds 仅返回 CHAT 模型 id，过滤 embedding/reranking")
+    void listChatModelIdsFiltersNonChat() {
+        Map<String, CapabilityClient> clients = new LinkedHashMap<>();
+        clients.put("deepseek-chat", client("deepseek-chat", "deepseek", "deepseek-chat", LlmCapability.CHAT));
+        clients.put("glm-4-air", client("glm-4-air", "zhipu", "glm-4-air", LlmCapability.CHAT));
+        clients.put("bailian-embed", client("bailian-embed", "bailian", "text-embedding-v3", LlmCapability.EMBEDDING));
+        clients.put("bge-reranker", client("bge-reranker", "baidu", "bge-reranker-base", LlmCapability.RERANKING));
+        stubSnapshot(clients, Set.of());
+
+        List<String> result = modelService.listChatModelIds();
+
+        assertThat(result).containsExactlyInAnyOrder("deepseek-chat", "glm-4-air");
+        assertThat(result).doesNotContain("bailian-embed", "bge-reranker");
+    }
+
+    @Test
+    @DisplayName("listChatModelIds 空注册表返回空列表")
+    void listChatModelIdsEmpty() {
+        stubSnapshot(new LinkedHashMap<>(), Set.of());
+
+        List<String> result = modelService.listChatModelIds();
+
+        assertThat(result).isEmpty();
+    }
 }

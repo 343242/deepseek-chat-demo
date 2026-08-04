@@ -47,6 +47,7 @@ public enum ClientErrorCode implements IErrorCode {
     MODEL_EMPTY(103001, "模型不能为空"),
     USAGE_PARAM_MISSING(103002, "请指定 model 或 conversation 参数"),
     UNSUPPORTED_OPERATION(103003, "当前版本不支持此操作"),
+    MODEL_CAPABILITY_NOT_CHAT(103004, "所选模型不支持对话，请选择 CHAT 能力模型"),
 
     // ==================== RAG 上传校验 104001–104999 ====================
     UPLOAD_FILE_EMPTY(104001, "上传文件不能为空"),

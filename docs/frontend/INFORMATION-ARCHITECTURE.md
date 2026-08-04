@@ -593,7 +593,7 @@
 - 成功：Toast success"模型列表已刷新"
 - 部分失败：Toast warning"部分厂商刷新失败，已保留可用模型"
 
-> 普通用户在聊天页可见刷新按钮但需 `model:config` 权限；无权限则按钮不显示（PermissionGuard 隐藏）。
+> 刷新按钮需 `model:config` 权限（后端 `@PreAuthorize` 强制，与代码对齐）。普通用户（USER）无此权限，聊天页 ModelSelector 旁**不显示**刷新按钮（PermissionGuard 隐藏）；仅 ADMIN 在模型配置页可见。
 
 ---
 

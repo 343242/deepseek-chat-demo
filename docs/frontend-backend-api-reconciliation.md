@@ -108,19 +108,33 @@ app.jwt.cookie-same-site: None
 
 ---
 
-### T5 · `/api/models` 只返回 ID
+### T5 · 模型目录端点（USER 仅可见 CHAT）
 
-**前端描述**："/api/models 只返回 ID 字符串列表，模型选择器需要展示 provider 名称、能力标签等信息。"
+**前端诉求**：ModelSelector 需展示 provider 名称、能力标签；普通用户在使用时只能选 CHAT 模型，Embedding/Rerank 只对管理界面暴露。
 
-**后端事实**：**`/api/models` 端点不存在**。
-- `grep "/api/models"` 在整个后端无命中；
-- 模型配置走的是 **BYOK（Bring Your Own Key）模式**：
-  - `GET /api/user/llm-config`（owner 自服务，返回 `LlmConfigVO` 脱敏 VO）
-  - `GET /api/admin/llm-config?userId=...`（admin 只读审计，需 `user:manage` 权限）
-- 返回的 `LlmConfigVO` **不是 ID 字符串**，而是脱敏后的完整配置对象（capability/provider/modelId/参数等）。
-- 后端有 `ProviderModelInfo` 实体（聚合多厂商模型展示数据），但**没有暴露成 REST 端点**。
+**后端现状**：**已实现**（提交 `030763a` + 本次可见性约束）。
+- `GET /api/models`（`ChatController.java`，类级 `chat:send`）：**仅返回 CHAT 能力模型的 candidate ID**（`ModelService.listChatModelIds()`，过滤掉 Embedding/Rerank）。USER 调用只见 CHAT。
+- `GET /api/models/detail?capability=X`（`ChatController.java`）：返回 `ModelVO { id, provider, model, capability, available }`，含 provider/能力标签/可用状态。
+  - **能力可见性按用途分流**（方法级 `@PreAuthorize` SpEL 守卫）：
+    - `capability` 为空或 `CHAT` —— 任何 `chat:send` 用户可见（供 ModelSelector）
+    - `capability=EMBEDDING` 或 `RERANKING` —— **仅 `model:config` 持有者可见**（USER 调用 403，非空列表）
+- `POST /api/models/refresh`：方法级 `@PreAuthorize("hasAuthority('model:config')")`（修正：原类级 `chat:send` 与文档标注不符，刷新是管理操作）。
+- **chat 入口能力校验**（真安全边界）：`ChatServiceImpl.buildChain` 校验 `requestedClient.capability() == CHAT`，非 CHAT 抛 `ClientException(MODEL_CAPABILITY_NOT_CHAT)`（code 103004），防前端被绕过后直传 embedding id。
+- BYOK 配置接口（与模型目录是两套不同接口，勿混）：
+  - `GET /api/user/llm-config`（owner 自服务，返回脱敏 `LlmConfigVO`）
+  - `GET /api/admin/llm-config?userId=...`（admin 只读审计，需 `user:manage`）
 
-**结论**：前端把 BYOK 配置接口误解成了"可用模型清单"。若前端需要"可选模型目录"（provider 名称 + 能力标签），需后端**新增** `GET /api/models/catalog` 类端点 —— 本轮未做，待讨论方案。
+**API 契约**（`GET /api/models/detail` 响应）：
+```jsonc
+[
+  { "id": "deepseek-v4-flash", "provider": "deepseek", "model": "deepseek-chat", "capability": "CHAT", "available": true }
+]
+```
+
+**前端使用建议**：
+- ModelSelector（USER）调 `GET /api/models/detail`（不传或传 `capability=CHAT`），用 `provider` 字段分组渲染，**无需前端维护 provider 映射表**。
+- 管理界面（`model:config`）需配置 Embedding/Rerank 时调 `GET /api/models/detail?capability=EMBEDDING`。
+- 前端可省略 provider 前缀映射逻辑（DS 11.2 旧设计的"前端维护映射表"已废弃）。
 
 ---
 
@@ -235,9 +249,9 @@ app.jwt.cookie-same-site: None
 | T4 | ✅ 已修复 | Reference 加 score/source/content | `Reference.java`、`AgentModeStrategy.java`、`ChatReferenceCollector.java` |
 | T7 | ✅ 已修复 | SameSite 参数化 + None 强制 Secure | `JwtProperties.java`、`CookieTokenManager.java`、`application-dev.yml`、`application-stable.yml` |
 | T1 | ⚠️ 前端认知过时 | V9 已有种子 | 无 |
-| T5 | ⚠️ 前端理解错误 | `/api/models` 不存在 | 无（待讨论是否新增 catalog 端点） |
+| T5 | ✅ 已实现 | `/api/models/detail` + USER 仅可见 CHAT | `ChatController.java`、`ModelService(Impl).java`、`ChatServiceImpl.java`、`ClientErrorCode.java` + 测试 |
 | T8 | ⚠️ 前端描述错误 | prod overlay 自 stable 继承 | 无 |
 | T6 | 🚫 设计有意为之 | token-in-body 会放大 XSS 风险 | 无 |
 | T2 | ✅ 已实现 | chunks 内容查看端点 | `ChunkDTO.java`、`VectorStoreMapper.java`(+XML)、`DocumentApplicationService(Impl).java`、`DocumentController.java`、`ChunkController.java` + 4 测试 |
-| T3 | 🕐 待讨论 | Agent/Trace 事件端点 | 无 |
-| IA-1 | 🕐 暂不做 | 评估模块 | 无 |
+| T3 | ✅ 已实现（管理员审计） | Agent/Trace 事件端点（`trace:view`，仅 ADMIN） | `AdminTraceController.java`、`AdminTraceService.java`、`AgentEventVO.java`、`TraceEventVO.java`、`V22__trace_view_permission.sql` + 测试。注：普通用户不看 Agent 推理详情，无需额开端点 |
+| IA-1 | 🚫 撤销 | 评估模块预留即可，前端不探测 | 无 |

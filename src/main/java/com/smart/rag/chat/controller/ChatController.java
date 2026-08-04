@@ -34,10 +34,23 @@ public class ChatController {
 
     @GetMapping("/models")
     public GlobalResponse<List<String>> listModels() {
-        return GlobalResponse.ok(modelService.listModelIds());
+        // 聊天端点仅暴露 CHAT 模型；Embedding/Rerank 通过 /api/admin/llm-config（user:manage）审计
+        return GlobalResponse.ok(modelService.listChatModelIds());
     }
 
+    /**
+     * 模型目录详情（含 provider / 能力标签 / 可用状态）。
+     * <p>
+     * 能力可见性按用途分流：
+     * <ul>
+     *   <li>CHAT（含不传 capability）—— 任何能聊天的用户（chat:send）可见，供 ModelSelector 使用</li>
+     *   <li>EMBEDDING / RERANKING —— 仅 model:config 持有者可见，供管理界面配置向量/重排模型</li>
+     * </ul>
+     * 普通用户传非 CHAT capability 会被 Spring Security 拒绝（403），而非返回空列表——
+     * 显式拒绝比静默空结果更安全，避免误导前端以为是「暂时无模型」。
+     */
     @GetMapping("/models/detail")
+    @PreAuthorize("#capability == null or #capability.isBlank() or #capability.equalsIgnoreCase('CHAT') or hasAuthority('model:config')")
     public GlobalResponse<List<ModelVO>> listModelDetails(
             @RequestParam(value = "capability", required = false) String capability) {
         return GlobalResponse.ok(modelService.listModelDetails(capability));
@@ -57,6 +70,7 @@ public class ChatController {
     }
 
     @PostMapping("/models/refresh")
+    @PreAuthorize("hasAuthority('model:config')")
     public GlobalResponse<Void> refreshModels() {
         boolean success = modelService.refreshModels();
         if (success) {

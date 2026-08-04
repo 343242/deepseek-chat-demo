@@ -1339,9 +1339,16 @@ line-height: 1.5;            /* 中文行距需大于西文 */
 
 ### 11.2 ModelSelector 模型选择器
 
-**契约**：`GET /api/models` → `List<String>`（registry candidate IDs）；当前后端仅返回 ID 字符串列表，不含 providerName/ownedBy。⚠️ 4.4 设计需对齐：前端缓存 provider 映射（deepseek→DeepSeek 等），按 provider 首段分组。
+**契约**：`GET /api/models/detail` → `List<ModelVO>`，每项 `{ id, provider, model, capability, available }`：
+- `id` — 候选唯一标识（请求 `/api/chat` 时传此值）
+- `provider` — 供应商 ID（`deepseek`/`zhipu`/`MiniMax` …），前端用它**分组**（无需再维护前缀映射表）
+- `model` — 原始模型名（发给 LLM API 的）
+- `capability` — `CHAT`/`EMBEDDING`/`RERANKING`
+- `available` — 是否可用（未被运行时禁用）
 
-**用途**：聊天模式选择、会话创建、Agent 配置。
+> **能力可见性**：本端点对普通用户（`chat:send`）**强制只返 CHAT**（后端按用途分流，非 CHAT 需 `model:config` 权限）。普通用户的 ModelSelector 永远只看到对话模型，Embedding/Rerank 仅管理界面可见。旧的 `GET /api/models`（返回 `List<String>`）仍保留但仅返 CHAT id，无 provider 信息——新前端优先用 `/models/detail`。
+
+**用途**：聊天模式选择、会话创建、Agent 配置（均为 CHAT 语境）。
 
 📐 触发器：Select 样式（36px 高），显示当前模型 ID + provider 小标签。
 📐 下拉面板（宽 280px）：
@@ -1349,7 +1356,7 @@ line-height: 1.5;            /* 中文行距需大于西文 */
 ┌────────────────────────────────┐
 │ 🔍 搜索模型...                  │
 ├────────────────────────────────┤
-│ DeepSeek                        │  ← provider 分组标题
+│ DeepSeek                        │  ← provider 分组标题（取 ModelVO.provider）
 │   ◉ deepseek-v4-flash           │
 │     DeepSeek · 推荐              │
 │   ○ deepseek-reasoner           │
@@ -1362,12 +1369,13 @@ line-height: 1.5;            /* 中文行距需大于西文 */
 └────────────────────────────────┘
 ```
 
-**分组规则**：按 candidate ID 推断 provider（前缀匹配：`deepseek-*`→DeepSeek，`qwen-*`/`glm-*`→按实际，`MiniMax-*`→MiniMax）。⚠️ 候选 ID 规则见 `app.llm.capabilities.*.candidates`，前端需维护一张映射表，未知 provider 归入"其他"。
+**分组规则**：直接用后端返回的 `ModelVO.provider` 字段分组，**无需前端维护前缀映射表**（旧设计因后端只返 ID 字符串而存在，现后端已提供 provider 字段，该映射表废弃）。
 
 **校验提示**（关键）：
 - ⚠️ 后端 fail-fast：`model` 字段**禁止包含 `/`**（如 `deepseek/deepseek-chat`），否则返回 400 + code 100001
-- 前端 ModelSelector 只暴露 candidate ID，**不暴露 provider/modelId 复合形式**
+- 前端 ModelSelector 只暴露 candidate ID（`ModelVO.id`），**不暴露 provider/modelId 复合形式**
 - 若输入框手动输入带 `/` 的值，前端立即拦截并提示"请从下拉选择模型"
+- ⚠️ 后端校验能力：传非 CHAT 能力的 candidateId（如 embedding 模型 id）会被拒绝，返回 code **103004**「所选模型不支持对话，请选择 CHAT 能力模型」。这是后端真安全边界，前端隐藏非 CHAT 只是体验优化
 
 ### 11.3 ChatMessageBubble 聊天消息气泡 ⭐
 

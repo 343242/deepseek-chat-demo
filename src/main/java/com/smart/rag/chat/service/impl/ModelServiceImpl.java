@@ -34,6 +34,15 @@ public class ModelServiceImpl implements ModelService {
     }
 
     @Override
+    public List<String> listChatModelIds() {
+        return llmRegistry.snapshot().clientsById().values().stream()
+                .filter(c -> c.capability() == LlmCapability.CHAT)
+                .map(CapabilityClient::candidateId)
+                .sorted()
+                .toList();
+    }
+
+    @Override
     public boolean isModelAvailable(String candidateId) {
         CapabilityClient client = llmRegistry.find(candidateId);
         return client != null && client.isAvailable();

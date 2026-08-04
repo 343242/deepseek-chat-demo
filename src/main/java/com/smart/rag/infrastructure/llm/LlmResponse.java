@@ -27,12 +27,22 @@ public record LlmResponse(
     List<ToolCall> toolCalls,
 
     /** 供应商原始响应元数据（调试用，不暴露未类型化对象） */
-    Map<String, Object> responseMetadata
+    Map<String, Object> responseMetadata,
+
+    /** 思考过程文本（reasoning_content）；无思考内容时为空串 */
+    String reasoningContent
 ) {
     public LlmResponse {
         content = content != null ? content : "";
         toolCalls = toolCalls != null ? List.copyOf(toolCalls) : List.of();
         responseMetadata = responseMetadata != null ? Map.copyOf(responseMetadata) : Map.of();
+        reasoningContent = reasoningContent != null ? reasoningContent : "";
+    }
+
+    /** 向后兼容：旧 5 参签名（无 reasoningContent） */
+    public LlmResponse(String content, boolean truncated, TokenUsage tokenUsage,
+                       List<ToolCall> toolCalls, Map<String, Object> responseMetadata) {
+        this(content, truncated, tokenUsage, toolCalls, responseMetadata, "");
     }
 
     public record TokenUsage(int promptTokens, int completionTokens, int totalTokens,

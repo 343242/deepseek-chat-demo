@@ -9,6 +9,8 @@ import java.util.Map;
 /**
  * Chat 请求。新增 {@link ChatTool} tools 字段（Fix B-i），由 ChatModelAdapter
  * 从 Spring AI ToolCallingChatOptions 提取后透传给厂商。
+ * 新增 {@link ThinkingConfig} thinking 字段：每请求覆盖候选 {@code params.thinking}
+ * 默认的思考程度；为 null 时回落候选默认，两者皆无时不注入。
  */
 public record ChatRequest(
     String input,
@@ -18,7 +20,8 @@ public record ChatRequest(
     Integer maxTokens,
     Double topP,
     Map<String, Object> extraParams,
-    List<ChatTool> tools
+    List<ChatTool> tools,
+    ThinkingConfig thinking
 ) {
     public ChatRequest {
         if (input == null) {
@@ -31,12 +34,12 @@ public record ChatRequest(
 
     public static ChatRequest of(String input) {
         return new ChatRequest(input, null, List.of(),
-            null, null, null, Map.of(), List.of());
+            null, null, null, Map.of(), List.of(), null);
     }
 
     public static ChatRequest withSystem(String systemPrompt, String input) {
         return new ChatRequest(input, systemPrompt, List.of(),
-            null, null, null, Map.of(), List.of());
+            null, null, null, Map.of(), List.of(), null);
     }
 
     public static Builder builder(String input) {
@@ -70,6 +73,7 @@ public record ChatRequest(
         private Double topP;
         private Map<String, Object> extraParams = Map.of();
         private List<ChatTool> tools = List.of();
+        private ThinkingConfig thinking;
 
         private Builder(String input) { this.input = input; }
 
@@ -80,11 +84,12 @@ public record ChatRequest(
         public Builder topP(Double tp) { this.topP = tp; return this; }
         public Builder extraParams(Map<String, Object> ep) { this.extraParams = ep != null ? Map.copyOf(ep) : Map.of(); return this; }
         public Builder tools(List<ChatTool> t) { this.tools = t != null ? List.copyOf(t) : List.of(); return this; }
+        public Builder thinking(ThinkingConfig tc) { this.thinking = tc; return this; }
 
         public ChatRequest build() {
             if (input == null || input.isBlank()) throw new ClientException(ClientErrorCode.BAD_REQUEST, "ChatRequest.input 不能为空");
             return new ChatRequest(input, systemPrompt, history,
-                temperature, maxTokens, topP, extraParams, tools);
+                temperature, maxTokens, topP, extraParams, tools, thinking);
         }
     }
 }

@@ -21,12 +21,21 @@ public record StreamChunk(
     @Nullable String text,
     @Nullable List<ToolCallDelta> toolCalls,
     @Nullable FinishReason finishReason,
-    @Nullable LlmResponse.TokenUsage usage
+    @Nullable LlmResponse.TokenUsage usage,
+    @Nullable String reasoningContent
 ) {
+
+    /** 向后兼容：旧 4 参签名（无 reasoningContent） */
+    public StreamChunk(@Nullable String text, @Nullable List<ToolCallDelta> toolCalls,
+                       @Nullable FinishReason finishReason, @Nullable LlmResponse.TokenUsage usage) {
+        this(text, toolCalls, finishReason, usage, null);
+    }
 
     public boolean hasText() { return text != null && !text.isEmpty(); }
 
     public boolean hasToolCall() { return toolCalls != null && !toolCalls.isEmpty(); }
+
+    public boolean hasReasoning() { return reasoningContent != null && !reasoningContent.isEmpty(); }
 
     /** 单个 tool call 的流式分片（OpenAI 按 index 分片，arguments 为流式 JSON 片段）。 */
     public record ToolCallDelta(int index, @Nullable String id,

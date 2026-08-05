@@ -450,6 +450,18 @@ consumer（`ChatMessageSaveConsumer`/`UsageRecordConsumer`/`EtlDocumentConsumer`
 sweeper 在 consumer 关闭后停止，避免向已关 pool 派发（PelRecoverySweeper 的 processingPool 即 consumer
 的 pool，故 sweeper 必须先于 consumer stop）。
 
+### MessageBusManagement — child 2 契约（跨 child 冻结点）
+
+`RedisStreamMessageBus` 实现（或装配为单独 bean）既有 `MessageBusManagement` SPI，新增：
+- `boolean isCircuitBreakerOpen(String topic)`：返回 `circuitBreakerFor(topic).state() == OPEN`
+  （暴露 per-topic `SendCircuitBreaker` 状态）。
+- 既有 `Map<String,String> circuitBreakerState()`（topic→state 名）保留，作为 child 2
+  `SharedCircuitBreakerGate` 的防御性二级回退。
+
+**用途**：child 2 `SharedCircuitBreakerGate.isOpen(topic)` 在 Redis 不可用（共享信号 RBucket 读失败）时，
+回退调 `busManagement.isCircuitBreakerOpen(topic)`（本实例本地熔断态）。这是 child 2 design §3.4 依赖的
+冻结点，本任务必须落地（prd R7）。`circuitBreakerFor(topic)` 的 per-topic 实例缓存须可被本方法遍历查询。
+
 ## 8. 与既有 RocketMQ 类的映射（重构参照）
 
 | RocketMQ 实现 | Redis 对应 | 复用程度 |
@@ -464,13 +476,16 @@ sweeper 在 consumer 关闭后停止，避免向已关 pool 派发（PelRecovery
 
 ## 9. 错误码与可观测扩展
 
-`MessagingErrorCode` 新增（400012 起）：
+`MessagingErrorCode` 新增（400012；**400013 预留给 child 2 `OUTBOX_INSERT_FAILED`**，码段协调见 child 2 design §8）：
 
 | 码 | 常量 | 场景 |
 |----|------|------|
 | 400012 | `STREAM_OPERATION_FAILED` | XADD/XREADGROUP 等操作失败（transport 错误，非业务） |
-| 400013 | `GROUP_CREATE_FAILED` | XGROUP CREATE 失败（非 BUSYGROUP） |
-| 400014 | `STREAM_TRIM_EXCEEDED` | 主 stream lag（XLEN−ΣXPENDING）超阈值告警码（运维可观测） |
+
+> **码段协调修正**：GROUP_CREATE 失败（非 BUSYGROUP）属装配期/自治失败，`STREAM_TRIM_EXCEEDED`
+> 属运维告警——两者均**不抛业务异常、不占 MessagingErrorCode 码段**（改记 metric，见下）。原评审
+> 误将它们编入 400013/400014 会与 child 2 的 `OUTBOX_INSERT_FAILED`(400013) **码段冲突**，已收回
+> （跨 child 一致性比对发现——两任务都动 `MessagingErrorCode`，码段必须单点协调）。
 
 DLQ/retry sweeper 内部失败**不抛业务异常**（自治），但必须记 metric：
 - `messaging.retry.orphan.count`（zset/hash 不一致孤儿清理）
@@ -479,6 +494,8 @@ DLQ/retry sweeper 内部失败**不抛业务异常**（自治），但必须记 
 - `messaging.stream.lag`（gauge：XLEN − Σ各组 XPENDING）
 - `messaging.retry.unknown.failure`（handle 未知异常直接 DLQ）
 - `messaging.consume.connection.failure`（pollLoop XREADGROUP 连接级失败，退避重连中，§3 Redis 故障韧性）
+- `messaging.stream.group.create.failed`（XGROUP CREATE 失败非 BUSYGROUP；原拟占 400013，改记 metric，见上码段协调修正）
+- `messaging.stream.trim.threshold.exceeded`（lag 超 trim-threshold 告警 counter；trim 告警改用 metric 而非错误码）
 
 ## 10. 配置
 

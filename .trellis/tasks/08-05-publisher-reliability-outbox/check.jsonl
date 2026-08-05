@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "校验：Flyway 幂等、TIMESTAMPTZ、TransactionTemplate（非 @Transactional）、JSONB 列处理"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "校验：MessagingErrorCode 段位正确、MessagePublishException 用法、不在 Controller try-catch"}
+{"file": ".trellis/spec/backend/code-review-checklist.md", "reason": "校验：线程池 shutdown 策略（retryExecutor/relay scheduler/cleanup 的 @PreDestroy）、临时文件（无）、RocketMQ 生命周期"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "校验：日志级别与脱敏（conversationId mask）、无堆栈暴露给用户"}
+{"file": ".trellis/tasks/08-05-publisher-reliability-outbox/prd.md", "reason": "对照验收条件逐项核验（10 项 Acceptance Criteria）"}
+{"file": ".trellis/tasks/08-05-publisher-reliability-outbox/design.md", "reason": "对照设计约束：装饰器边界、relay FOR UPDATE SKIP LOCKED、退避表、熔断器交互"}

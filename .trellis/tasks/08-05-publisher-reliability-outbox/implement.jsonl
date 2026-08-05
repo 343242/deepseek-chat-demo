@@ -1,0 +1,18 @@
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Flyway 命名/列定义/事务规范（TransactionTemplate 非 @Transactional、TIMESTAMPTZ、JSONB 处理）"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "MessagingErrorCode 段位（400001-400011，新增从 400012）、MessagingException 体系用法"}
+{"file": ".trellis/spec/backend/code-review-checklist.md", "reason": "RocketMQ Producer/Consumer 生命周期 + 线程池 shutdown 策略（retryExecutor/relay scheduler 的 @PreDestroy 要求）"}
+{"file": ".trellis/tasks/08-05-publisher-reliability-outbox/design.md", "reason": "本任务技术设计：OutboxMessageBus 装饰器边界、relay 时序、outbox 表 DDL、退避表、Bean 装配变更"}
+{"file": ".trellis/tasks/08-05-publisher-reliability-outbox/prd.md", "reason": "需求与验收条件：5 个 R 项 + 移除项清单"}
+{"file": "src/main/java/com/smart/rag/infrastructure/messaging/RocketMQMessageBus.java", "reason": "被装饰的真实 bus：send() 含熔断器逻辑、buildRocketMQMessage、MessageBusManagement 扩展点"}
+{"file": "src/main/java/com/smart/rag/infrastructure/messaging/MessageBus.java", "reason": "SPI 接口：确认 OutboxMessageBus 需托管 send()、委托 subscribe/sendAsync/shutdown/deadLetterOperations"}
+{"file": "src/main/java/com/smart/rag/infrastructure/messaging/MessagingAutoConfiguration.java", "reason": "Bean 装配变更点：真实 bus 降级为内部 bean、OutboxMessageBus @Primary、OutboxRelay bean"}
+{"file": "src/main/java/com/smart/rag/infrastructure/messaging/MessagingProperties.java", "reason": "新增 OutboxConfig record 的配置载体（topicPrefix/orderedTopics 等现有字段参考）"}
+{"file": "src/main/java/com/smart/rag/chat/service/ChatMessagePublisher.java", "reason": "移除 saveWithBoundedRetry/reportFallbackFailure；catch 改 publish_failed counter（Step 7）"}
+{"file": "src/main/java/com/smart/rag/rag/service/impl/EtlDispatchServiceImpl.java", "reason": "移除 dispatchViaThreadPool；catch 改 publish_failed counter（Step 7）"}
+{"file": "src/main/java/com/smart/rag/chat/service/ChatUsageTracker.java", "reason": "catch 新增 chat.usage.publish_failed counter（Step 7）"}
+{"file": "src/main/java/com/smart/rag/infrastructure/messaging/JacksonMessageCodec.java", "reason": "OutboxMessageBus/Rely 复用的 MessagePayloadCodec 实现，payload JSONB 编解码参考"}
+{"file": "src/main/java/com/smart/rag/infrastructure/messaging/idempotent/IdempotentHandler.java", "reason": "消费端 SETNX 幂等——relay 与即时投递并发竞态的兜底层（design.md §11 幂等安全）"}
+{"file": "src/main/java/com/smart/rag/infrastructure/messaging/SendCircuitBreaker.java", "reason": "共享 OPEN 熔断接入点：tripOpen()/recordSuccess() 需调 SharedCircuitBreakerGate 广播；当前纯内存态需改造"}
+{"file": "src/main/java/com/smart/rag/rag/service/impl/EtlDispatchServiceImpl.java", "reason": "Redisson RLock 看门狗模式参考（tryLock(wait,-1)），relay leader election 复用此惯例（:82-94）"}
+{"file": "src/main/java/com/smart/rag/infrastructure/advisor/FallbackRateLimiter.java", "reason": "RedissonClient @Nullable 注入 + 降级模式参考（redissonClient 不可用时的兜底写法）"}
+{"file": "src/main/java/com/smart/rag/rag/service/DocumentDedupService.java", "reason": "@Nullable RedissonClient 降级惯例（bloomFilter=null 时透传），OutboxRelay/SharedCircuitBreakerGate 同模式"}

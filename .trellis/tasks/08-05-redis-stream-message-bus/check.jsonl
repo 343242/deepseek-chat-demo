@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "校验 MessagingErrorCode 段位、MessagingException 体系用法、不在 Controller try-catch"}
+{"file": ".trellis/spec/backend/code-review-checklist.md", "reason": "校验线程池 shutdown 策略（ConsumerRunner/Sweeper 的 SmartLifecycle.stop）、结构化并发"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "校验日志级别与脱敏（conversationId mask）"}
+{"file": ".trellis/tasks/08-05-redis-stream-message-bus/prd.md", "reason": "对照验收条件逐项核验（11 项 Acceptance Criteria）"}
+{"file": ".trellis/tasks/08-05-redis-stream-message-bus/design.md", "reason": "对照设计约束：Stream 命名、send/subscribe 时序、RetrySweeper Lua 原子、PelRecoverySweeper minIdle、DLQ 实现"}

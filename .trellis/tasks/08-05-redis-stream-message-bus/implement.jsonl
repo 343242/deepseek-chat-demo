@@ -1,0 +1,18 @@
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Redis key 规范（虽 MQ 用 Redis，但 DLQ/sweeper 命名需符合项目 key 惯例）；错误码段位参考"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "MessagingErrorCode 段位（新增 400012）、MessagePublishException/PermanentConsumeException 体系用法"}
+{"file": ".trellis/spec/backend/code-review-checklist.md", "reason": "线程池 shutdown 策略（ConsumerRunner/Sweeper 的 @PreDestroy/SmartLifecycle.stop）、结构化并发"}
+{"file": ".trellis/tasks/08-05-redis-stream-message-bus/design.md", "reason": "本任务技术设计：Stream 模型、send/subscribe 时序、RetrySweeper ZSET、PelRecoverySweeper XAUTOCLAIM、DLQ"}
+{"file": ".trellis/tasks/08-05-redis-stream-message-bus/prd.md", "reason": "RocketMQ 三特性 → Redis 等价物映射、8 个 R 项、验收条件"}
+{"file": "src/main/java/com/smart/rag/infrastructure/messaging/MessageBus.java", "reason": "SPI 接口：RedisStreamMessageBus 需实现的全部方法（send/sendAsync/subscribe/shutdown/deadLetterOperations）"}
+{"file": "src/main/java/com/smart/rag/infrastructure/messaging/RocketMQMessageBus.java", "reason": "被取代的实现：send() 熔断器、buildRocketMQMessage、DLQ sendToDeadLetter、MessageBusManagement 扩展点——重写参照"}
+{"file": "src/main/java/com/smart/rag/infrastructure/messaging/SimpleConsumerReceiveLoop.java", "reason": "Caffeine AtomicInteger 重试计数 + DLQ 逻辑骨架，RedisStreamConsumerRunner.handle() 复用此结构"}
+{"file": "src/main/java/com/smart/rag/infrastructure/messaging/PushConsumerListener.java", "reason": "decode→handler→success/permanent/retryable 逻辑骨架，Redis 消费循环的 handle() 参照"}
+{"file": "src/main/java/com/smart/rag/infrastructure/messaging/SendCircuitBreaker.java", "reason": "per-topic 熔断器（传输无关），RedisStreamMessageBus 直接复用；state() 暴露给 MessageBusManagement"}
+{"file": "src/main/java/com/smart/rag/infrastructure/messaging/idempotent/IdempotentHandler.java", "reason": "消费端 SETNX 幂等包装，对 bus 透明复用；Lua SETNX 脚本风格参考（RetrySweeper 的 ZREM Lua 同模式）"}
+{"file": "src/main/java/com/smart/rag/infrastructure/messaging/MessageEnvelope.java", "reason": "消息模型：hashKey/dedupKey/headers 字段映射到 XADD stream 字段"}
+{"file": "src/main/java/com/smart/rag/infrastructure/messaging/JacksonMessageCodec.java", "reason": "payload 编解码，send/subscribe 复用"}
+{"file": "src/main/java/com/smart/rag/infrastructure/messaging/DeadLetterOperations.java", "reason": "SPI 定义（当前 UNSUPPORTED 桩），RedisStreamDeadLetterOperations 首次真正实现 scan/replay/count"}
+{"file": "src/main/java/com/smart/rag/infrastructure/messaging/MessagingProperties.java", "reason": "新增 Backend 枚举 + RedisStreamConfig record 的配置载体"}
+{"file": "src/main/java/com/smart/rag/infrastructure/messaging/MessagingAutoConfiguration.java", "reason": "两实现并存 + backend 开关装配；RedisStreamMessageBus/Sweeper bean 注册"}
+{"file": "src/main/java/com/smart/rag/rag/service/impl/EtlDispatchServiceImpl.java", "reason": "rag_index_document FIFO 由其 RLock(documentId) 保证（:82-94），RedisStreamMessageBus 不分区——契约边界"}
+{"file": "src/main/java/com/smart/rag/rag/etl/EtlDocumentConsumer.java", "reason": "SimpleConsumer 模式消费组（index-group, invisibleDuration=30min），Redis 下 PelRecoverySweeper minIdleMs 需 > 30min"}

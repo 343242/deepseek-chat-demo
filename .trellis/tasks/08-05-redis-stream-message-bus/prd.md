@@ -75,11 +75,11 @@ DLQ（独立 stream）。
 ### R4 — PEL 崩溃恢复（PelRecoverySweeper）
 - 实例崩溃时持消息（已 XREADGROUP 未 XACK）→ 留 PEL。
 - `PelRecoverySweeper`（SmartLifecycle）：`XAUTOCLAIM {stream} {group} {consumer}
-  {minIdleMs} 0 COUNT {batch}`，`minIdleMs` > 最大处理时长（ETL 30min → 配 35min）。
+  {minIdleMs} 0 COUNT {batch}`，`minIdleMs` > 最大处理时长（ETL 30min → 配 40min）。
 - 多实例并发安全（XAUTOCLAIM 原子转移归属）。
 - claim 后**异步派发**到该 subscription 的 processingPool（P1-6，不在 sweeper 调度线程同步 handle，
   避免 ETL 长任务阻塞 sweeper；与 RetrySweeper 各用独立线程池）。
-- 启动期断言 `pelMinIdleMs > max(各 consumer invisibleDuration) + 5min`（当前 35min vs ETL 30min margin 仅 5min，建议提到 40min）。
+- 启动期断言 `pelMinIdleMs > max(各 consumer invisibleDuration) + 5min`（当前 40min vs ETL 30min，margin 10min ✓）。
 
 ### R5 — DLQ + DeadLetterOperations（首次落地）
 - 死信独立 stream：`dlq:{prefix}{topic}:{group}`（key 含 group，多组不串扰）。
@@ -111,7 +111,8 @@ DLQ（独立 stream）。
   - `consumer.connection`（P1-4，**独立连接池**：`share-native-connection=false` + pool，避免 XREADGROUP BLOCK 占共享连接拖垮全站 Redis）。
   - `reconnect-backoff`（§3 Redis 故障韧性，pollLoop 退避重连：`initial-ms`=1s、`multiplier`=2、`max-ms`=30s、`jitter-factor`=0.2）。
 - **启动期断言**（fail-fast）：`maxAttempts <= backoff-ms.size()`；`pelMinIdleMs > max(invisibleDuration)+5min`；
-  `retry-poll-interval < 最小退避档`。
+  `dlq-trim-threshold > 0`、`read-batch >= 1`。
+  （`retry-poll-interval` 与首档退避的关系非 fail-fast：sweep 粒度 5s 下首档 1s 实际生效 ≤5s，见 design §10。）
 - **BackoffSchedule（共享组件，评审"通用性"P1）**：新增 `app.messaging.backoff-ms`（`long[]`，
   16 级默认值）+ `infrastructure/messaging/BackoffSchedule.java`（`@Component`，`next(attempt)`）。
   `RetrySweeper` 注入复用，**child 2 OutboxRelay 同 bean 复用**，退避策略单点配置（消除多份硬编码）。
@@ -161,7 +162,7 @@ DLQ（独立 stream）。
 - [ ] `subscribe()` 返回 `RedisStreamSubscription`，`close()` 幂等关停线程池。
 - [ ] send → XREADGROUP → handler → XACK 正常路径跑通（单测 + Testcontainers Redis）。
 - [ ] RetrySweeper：失败消息按 16 级退避回灌主 stream；maxAttempts 耗尽进 DLQ（单测）。
-- [ ] PelRecoverySweeper：模拟 consumer 崩溃（未 XACK），35min idle 后 XAUTOCLAIM 回收（Testcontainers）。
+- [ ] PelRecoverySweeper：模拟 consumer 崩溃（未 XACK），40min idle 后 XAUTOCLAIM 回收（Testcontainers）。
 - [ ] `DeadLetterOperations` 三方法（scan/replay/count）真正实现，单测覆盖。
 - [ ] rag_index_document FIFO：同 documentId 两消息并发，`EtlDispatchServiceImpl` RLock 串行（集成测试）。
 - [ ] `MessageBusManagement.isCircuitBreakerOpen(topic)` 实现，供 child 2 用。

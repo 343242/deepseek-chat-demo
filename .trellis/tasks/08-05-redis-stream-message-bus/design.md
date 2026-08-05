@@ -175,7 +175,7 @@ RedisStreamConsumerRunner(topic, group, consumerName, config, handler, codec, ..
 
 **P0-1 修订（统一 XACK 语义）**：可重试失败**统一走"XACK 移出 PEL + 转延迟队列"**
 （见 §4 失败分支），**不留 PEL**。原 §3 "留 PEL 由 RetrySweeper 回灌"的措辞已删除——
-RetrySweeper 只扫 ZSET，留 PEL 的消息只有 PelRecoverySweeper 处理，且需等 pelMinIdleMs（默认 35min），
+RetrySweeper 只扫 ZSET，留 PEL 的消息只有 PelRecoverySweeper 处理，且需等 pelMinIdleMs（默认 40min），
 会使首档 1s 退避失效。语义收敛为："PUSH/SIMPLE 两条路径在 Redis 下统一为 XACK+ZSET 延迟重试"。
 
 > 与 RocketMQ 的对照：RocketMQ PUSH 靠 broker 重投、SIMPLE 靠 invisibleDuration 重现；
@@ -380,10 +380,10 @@ PelRecoverySweeper.drain()（独立调度器，见 §7）:
 > 若 PelRecoverySweeper 与 RetrySweeper 共调度器，需用**独立线程池**（各 sweeper 自带单线程
 > scheduled executor），避免长任务互相阻塞。handle() 走正常路径（成功 XACK / 永久→DLQ / 可重试→§4）。
 
-**minIdleMs** = `pelMinIdleMs`（默认 35min）> 最大处理时长（ETL `invisibleDuration`，默认 10min，
-ETL 实际 30min）。**启动期断言**：`pelMinIdleMs > max(各 consumer invisibleDuration) + margin`，
-margin ≥ 5min；避免有人调大 ETL 超时而忘记同步 pel-min-idle-ms（当前 35min vs 30min margin 仅 5min）。
-多实例并发：XAUTOCLAIM 原子转移归属，天然安全。
+**minIdleMs** = `pelMinIdleMs`（默认 40min）> 最大处理时长（ETL `invisibleDuration`，默认 10min，
+ETL 实际 30min），避免抢走正在处理的消息。多实例并发：XAUTOCLAIM 原子转移归属，天然安全。
+**启动期断言**：`pelMinIdleMs > max(各 consumer invisibleDuration) + margin`，
+margin ≥ 5min；40min − 30min = 10min margin，断言通过（§10）。
 
 **与 RetrySweeper 的关系**：RetrySweeper 处理"已 XACK 转延迟队列"的消息（正常重试）；
 PelRecoverySweeper 处理"未 XACK 留 PEL"的消息（崩溃场景）。两者互补，不重叠。
@@ -514,7 +514,7 @@ app.messaging:
     dlq-trim-threshold: 50000           # P2-8：DLQ MAXLEN
     read-block-ms: 2000                 # XREADGROUP BLOCK（配合独立连接池，§3 P1-4）
     read-batch: 32                      # COUNT
-    pel-min-idle-ms: 2100000            # 35min，> ETL invisibleDuration 30min（启动期断言）
+    pel-min-idle-ms: 2400000            # 40min，> ETL invisibleDuration 30min + 10min margin（启动期断言；与 prd R8 一致）
     retry-poll-interval: 5s             # RetrySweeper/PelRecoverySweeper 扫描间隔
     trim-poll-interval: 60s             # P1-5：StreamTrimTask 周期
     max-attempts: 16                    # 消费端 RetrySweeper 重试窗口
@@ -537,9 +537,13 @@ app.messaging:
 `MessagingProperties` 校验（失败即启动失败，fail-fast）：
 1. `maxAttempts <= backoff-ms.size()`（或显式声明"超出档位=末档"，二选一写死）。当前 16=16，OK。
 2. `pelMinIdleMs > max(各 consumer invisibleDuration) + 5min`。当前 ETL invisibleDuration 默认 10min
-   （`ConsumerConfig.java#6B44:34`），ETL 实际配 30min；35min − 30min = 5min = margin，**恰为下限**，
-   断言用 ">=" 不通过 → 需把 pel-min-idle-ms 提到 40min 或在断言里取 ETL 实际值。**建议提升到 40min**。
-3. `dlq-trim-threshold > 0`、`read-batch >= 1`、`retry-poll-interval < 最小退避档(1s)`（否则首档退避失效）。
+   （`ConsumerConfig.java#6B44:34`），ETL 实际配 30min；config 已配 40min（2400000ms），
+   40min − 30min = 10min > 5min margin，断言通过。
+3. `dlq-trim-threshold > 0`、`read-batch >= 1`。
+   **sweep 粒度说明（非 fail-fast）**：`retry-poll-interval`（默认 5s）是 RetrySweeper drain 的调度粒度，
+   首档退避 1s 在 5s sweep 下实际生效为"≤5s"（消息到期后等下一次 sweep）。这是可接受的精度（16 级退避
+   总和 ~106min，5s 粒度仅影响首档）。若需首档精确 1s，把 `retry-poll-interval` 调到 ≤1s（代价：sweeper 更频繁）。
+   不再强制 `retry-poll-interval < backoff[0]`（与默认 5s/1s 矛盾，会让启动 fail-fast）。
 
 ### 内存预估（P2-13）
 
@@ -557,7 +561,7 @@ app.messaging:
 | `RedisStreamMessageBusTest` | send 返回 entry ID；XADD 写入正确字段（含 `attempt=0`）；熔断 OPEN 抛异常 |
 | `RedisStreamConsumerRunnerTest` | XREADGROUP→handle→XACK；PermanentConsume→DLQ（带 MAXLEN）；可重试→XACK+ZSET（P0-1）；未知异常→DLQ；pollLoop 失败后指数退避重连（成功即 reset）；多 consumer 退避不同步（jitter）；退避期不丢 PEL/retry（Testcontainers redis pause/resume） |
 | `RetrySweeperTest` | 失败转 ZSET；退避计算；attempt 字段跨回灌累加（P0-2）；maxAttempts→DLQ；单 Lua 原子回灌（P1-3）；HGET null 孤儿清理（P2-7）；Testcontainers |
-| `PelRecoverySweeperTest` | 模拟未 XACK，35min idle 后 XAUTOCLAIM 回收且**异步派发**（P1-6）（Testcontainers，短 minIdle 加速） |
+| `PelRecoverySweeperTest` | 模拟未 XACK，40min idle 后 XAUTOCLAIM 回收且**异步派发**（P1-6）（Testcontainers，短 minIdle 加速） |
 | `RedisStreamDeadLetterOperationsTest` | scan/replay/count 三方法；DLQ MAXLEN 生效（P2-8）；多组扩展点（§6） |
 | `BackoffScheduleTest` | next(attempt) 封顶最后一档；配置驱动（child 2 共用）；maxAttempts<=size 断言 |
 | `ZSetDelayQueueTest` | enqueue/drain 原子抢占；多实例只一个 drain 成功（P2-11） |

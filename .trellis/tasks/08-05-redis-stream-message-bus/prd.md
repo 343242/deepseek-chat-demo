@@ -48,6 +48,11 @@ DLQ（独立 stream）。
 - 未知异常（非业务可重试白名单）直接 DLQ + 告警，不进入重试循环（避免 bug 被放大）。
 - 复用 `MessageHandler` + `IdempotentHandler`（SETNX 包装，对 bus 透明）。
 - consumer name = `app:{instanceId}`（便于 PEL 归属追踪；instanceId 来自 hostname/pod）。
+- **pollLoop 连接级失败退避重连**（§3 Redis 故障韧性）：XREADGROUP 抛异常（Redis 宕机/主从切换/网络分区）
+  时 try/catch + 指数退避（`initial-ms`=1s，`multiplier`=2，`max-ms`=30s，±20% jitter 防多实例同步重连风暴），
+  成功（含空拉取）即 reset。退避 sleep 只阻塞 poll 线程自身，不影响业务线程（P1-4 独立连接池）；
+  退避期间消息不丢（PEL/retry-zset 兜底）。记 `messaging.consume.connection.failure` metric。
+  **不设本地降级**——Redis 是 Stream 存储，无 Redis 即无 MQ，刻意 fallback 会丢消息/双写不一致。
 
 ### R3 — 退避重试（RetrySweeper，ZSET 延迟队列）
 - 失败时：**XACK 原消息** + 单 Lua 原子 `HSET retry:{stream}:{group} {retryId} payload attempt nextRetryAt` +
@@ -104,6 +109,7 @@ DLQ（独立 stream）。
   - `pel-min-idle-ms`（默认 **40min**，> ETL 30min + 10min margin，P1-6/R4 启动断言）。
   - `retry-hash-ttl`（默认 2h，P2-14，覆盖最大退避窗口 ×2）。
   - `consumer.connection`（P1-4，**独立连接池**：`share-native-connection=false` + pool，避免 XREADGROUP BLOCK 占共享连接拖垮全站 Redis）。
+  - `reconnect-backoff`（§3 Redis 故障韧性，pollLoop 退避重连：`initial-ms`=1s、`multiplier`=2、`max-ms`=30s、`jitter-factor`=0.2）。
 - **启动期断言**（fail-fast）：`maxAttempts <= backoff-ms.size()`；`pelMinIdleMs > max(invisibleDuration)+5min`；
   `retry-poll-interval < 最小退避档`。
 - **BackoffSchedule（共享组件，评审"通用性"P1）**：新增 `app.messaging.backoff-ms`（`long[]`，

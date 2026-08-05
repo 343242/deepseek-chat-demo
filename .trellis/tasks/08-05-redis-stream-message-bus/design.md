@@ -21,6 +21,7 @@
 | P2-13 | 🟡 | payload 三处驻留（stream+retry hash+dlq）内存放大 | §10 内存预估 + 持久化要求 |
 | P2-14 | 🟡 | retry hash 残留泄漏 | §4 HSET+ZADD 单 Lua + hash TTL |
 | 启动期断言 | 🟡 | maxAttempts/backoff/pel-min-idle 无校验 | §10 "启动期断言" 段 |
+| consume 退避 | 🟡 | pollLoop 无 try/catch，XREADGROUP 失败线程静默退出；Redis 故障期狂打 | §3 pollLoop + "Redis 故障韧性" 段（指数退避+jitter）、§9 metric、§10 reconnect-backoff 配置 |
 
 ---
 
@@ -140,12 +141,20 @@ RedisStreamConsumerRunner(topic, group, consumerName, config, handler, codec, ..
     else:  // SIMPLE
       receiveThread + processingPool(Semaphore)  // 镜像 SimpleConsumerReceiveLoop 结构
   pollLoop():
+    reconnectBackoff = ReconnectBackoff(initial=1s, factor=2, cap=30s, jitter=±20%)
     while running:
-      messages = xreadGroup(group, consumer, COUNT batch, BLOCK readBlockMs, ">")
-      for msg in messages:
-        if PUSH: executor.process(() -> handle(msg))  // 并发
-        else:    semaphore.acquire(); processingPool.process(() -> handle(msg))
-
+      try:
+        messages = xreadGroup(group, consumer, COUNT batch, BLOCK readBlockMs, ">")
+        reconnectBackoff.reset()            // 成功即重置（空拉取也算成功）
+        for msg in messages:
+          if PUSH: executor.process(() -> handle(msg))  // 并发
+          else:    semaphore.acquire(); processingPool.process(() -> handle(msg))
+      catch Exception e:                    // XREADGROUP/XADD 连接级失败（Redis 宕机/主从切换/网络分区）
+        metrics.recordConsumeConnectionFailure(topic, group)
+        if !running: break                  // 关停中不退避
+        sleep = reconnectBackoff.nextSleep()    // 1s→2s→4s→…→30s 封顶，带 ±20% jitter（防同步重连风暴）
+        log.warn("XREADGROUP failed, backing off {topic={}, group={}, sleepMs={}}", topic, group, sleep, e)
+        Thread.sleep(sleep)                 // 阻塞 poll 线程自身，不占用业务线程；全 BLOCK 线程各自独立退避
   handle(msg):
     envelope = decode(msg)            // 还原 payload + headers + propagator.restore
     try:
@@ -195,6 +204,32 @@ app.messaging.redis.consumer:
 - 该 factory 仅用于 `StreamOperations` 的 XREADGROUP/XACK，与业务用的 `redisTemplate`（共享连接）分离。
 - 或改用 Redisson `RStream`（自带独立连接池），二选一。design 阶段已确认为强制项，不可省略。
 - `read-block-ms` 可进一步调小（如 500ms）以缩短单次占用，但根本解法仍是连接隔离。
+
+### Redis 故障韧性（新增，补 consume 侧重连退避）
+
+本任务不设消息总线本地降级路径——**Redis 是 Stream 存储本身，无 Redis 即无 MQ**，与可降级的
+`FallbackRateLimiter`（Redis 挂 → 本地 token bucket）不同，刻意 fallback 会丢消息/双写不一致，是错误架构。
+正确的姿态是"快速失败 + 不阻塞业务 + 健康探活"，send 侧已由 `SendCircuitBreaker` + 命令超时(3s) 覆盖，
+consume 侧由 pollLoop 退避重连（见上）覆盖。三者职责对照：
+
+| 故障面 | 机制 | 覆盖位置 |
+|--------|------|---------|
+| send 端 Redis 不可达 | `SendCircuitBreaker` 失败累计 → OPEN → `send()` 快速抛 `MessagePublishException`，不阻塞调用线程（命令超时 3s 兜底） | §2、prd R1 |
+| consume 端 XREADGROUP 失败 | pollLoop try/catch + `ReconnectBackoff`（1s→30s 指数退避 + ±20% jitter），阻塞 poll 线程自身 | 本节 |
+| Redis 主从切换/短暂网络抖动 | `BUSYGROUP`/连接异常自动重连；Lettuce 自带连接池重连 | pollLoop catch |
+
+**`ReconnectBackoff` 设计要点**：
+- **指数退避 + 封顶**：`initial=1s, factor=2, cap=30s`，避免 Redis 恢复后瞬时大量重连压垮。
+- **jitter 抖动**：每次 sleep 加 ±20% 随机偏移，防止多 consumer/多实例在同一时刻同步重连形成"重连风暴"。
+  （多实例同时启动或 Redis 同时恢复时，无 jitter 的固定退避会产生同步重连尖峰。）
+- **成功即重置**：任何一次成功的 XREADGROUP（含空拉取）→ `reset()` 回 1s，确保稳定期不保留放大退避。
+- **退避期间不丢 PEL/retry 消息**：消息要么已在 PEL（PelRecoverySweeper 兜底）、要么在 retry-zset（RetrySweeper 兜底），
+  poll 线程退避不影响这两条独立恢复链路。
+- **不阻塞业务线程**：退避 sleep 只阻塞该 poll 线程自身（消费线程池内的 worker）；业务的 `redisTemplate` 操作走独立连接池（P1-4），不受影响。
+
+**`MessagingHealthIndicator` 探活**（复用既有类，改探测目标，§8 已列）：health 检查 = Redis `PING` + 活跃订阅数 > 0。
+注意：pollLoop 退避期间活跃订阅数仍 > 0（线程未退出），故 health 不反映"是否在退避"——
+`metrics.recordConsumeConnectionFailure` 作为补充观测点，运维可据此告警"持续退避未恢复"。
 
 ## 4. RetrySweeper — 退避重试（ZSET 延迟队列）
 
@@ -443,6 +478,7 @@ DLQ/retry sweeper 内部失败**不抛业务异常**（自治），但必须记 
 - `messaging.deadletter.count`（进 DLQ）
 - `messaging.stream.lag`（gauge：XLEN − Σ各组 XPENDING）
 - `messaging.retry.unknown.failure`（handle 未知异常直接 DLQ）
+- `messaging.consume.connection.failure`（pollLoop XREADGROUP 连接级失败，退避重连中，§3 Redis 故障韧性）
 
 ## 10. 配置
 
@@ -465,6 +501,11 @@ app.messaging:
     retry-poll-interval: 5s             # RetrySweeper/PelRecoverySweeper 扫描间隔
     trim-poll-interval: 60s             # P1-5：StreamTrimTask 周期
     max-attempts: 16                    # 消费端 RetrySweeper 重试窗口
+    reconnect-backoff:                   # §3 Redis 故障韧性（pollLoop 退避重连）
+      initial-ms: 1000                   # 首次失败后 sleep
+      multiplier: 2.0                    # 指数因子
+      max-ms: 30000                      # 封顶 30s
+      jitter-factor: 0.2                 # ±20% 抖动，防多实例同步重连风暴
     retry-hash-ttl: 2h                  # P2-14：retry hash 字段 TTL（覆盖 max 退避窗口 ×2）
     consumer:                           # P1-4：独立连接池
       connection:
@@ -497,7 +538,7 @@ app.messaging:
 | 测试类 | 覆盖 |
 |--------|------|
 | `RedisStreamMessageBusTest` | send 返回 entry ID；XADD 写入正确字段（含 `attempt=0`）；熔断 OPEN 抛异常 |
-| `RedisStreamConsumerRunnerTest` | XREADGROUP→handle→XACK；PermanentConsume→DLQ（带 MAXLEN）；可重试→XACK+ZSET（P0-1）；未知异常→DLQ |
+| `RedisStreamConsumerRunnerTest` | XREADGROUP→handle→XACK；PermanentConsume→DLQ（带 MAXLEN）；可重试→XACK+ZSET（P0-1）；未知异常→DLQ；pollLoop 失败后指数退避重连（成功即 reset）；多 consumer 退避不同步（jitter）；退避期不丢 PEL/retry（Testcontainers redis pause/resume） |
 | `RetrySweeperTest` | 失败转 ZSET；退避计算；attempt 字段跨回灌累加（P0-2）；maxAttempts→DLQ；单 Lua 原子回灌（P1-3）；HGET null 孤儿清理（P2-7）；Testcontainers |
 | `PelRecoverySweeperTest` | 模拟未 XACK，35min idle 后 XAUTOCLAIM 回收且**异步派发**（P1-6）（Testcontainers，短 minIdle 加速） |
 | `RedisStreamDeadLetterOperationsTest` | scan/replay/count 三方法；DLQ MAXLEN 生效（P2-8）；多组扩展点（§6） |

@@ -273,10 +273,15 @@ drainUntilEmpty():                         // 评审"性能"P1：单次 poll 内
     processBatch(rows)
 
 claimBatch():
-  // Step A: claim（短事务，持锁 ~1ms）
+  // Step A: claim（短事务，持锁 ~1ms）——SELECT + UPDATE 两步，与 §4 claimPending 查询一致
   tx1 = TransactionTemplate
-  rows = tx1.execute(status -> mapper.claimPending(batchSize, now, claimingTimeoutSeconds))
-       // FOR UPDATE SKIP LOCKED + UPDATE status='claiming', updated_at=now
+  rows = tx1.execute(status -> {
+      List rs = mapper.claimPending(batchSize, now, claimingTimeoutSeconds)
+                     // SELECT ... FOR UPDATE SKIP LOCKED（§4，纯查询，绑定 claimingTimeoutSeconds）
+      if (!rs.isEmpty()) mapper.markClaiming(ids(rs), now)
+                     // UPDATE status='claiming', updated_at=now（刷新 updated_at，供超时回收）
+      return rs
+  })
   tx1.commit()                             // 行锁释放
 
 processBatch(rows):
@@ -518,8 +523,9 @@ MessageEnvelope<?> envelope = new MessageEnvelope<>(
 
 ## 5. traceId 传播修正
 
-**问题**（`RocketMQMessageBus:502-503`）：headers.forEach(addProperty) 之后执行
-propagator.inject()——relay 线程注入的是 relay 自己的 trace context，覆盖 publisher 存的 traceparent。
+**问题**（原 RocketMQ 实现的通病，触发源已随 child 1 删除 RocketMQ 一并消除）：原实现中
+headers.forEach(addProperty) 之后执行 propagator.inject()，relay 线程注入的是 relay 自己的 trace
+context，覆盖 publisher 存的 traceparent。本任务引入 outbox 后必须避免同类问题，故冻结以下契约。
 
 **修正方案**：
 - **outbox INSERT 时**：headers JSONB 存储的是 publisher 线程的 `propagator.inject()` 结果
@@ -618,13 +624,14 @@ outbox 正常时 `send()` 不抛（失败留行），catch 几乎不触发——
 | **400013** | `OUTBOX_INSERT_FAILED` | outbox 行 INSERT 失败（DB 硬故障），抛给 publisher catch |
 
 > child 1 `08-05-redis-stream-message-bus` design §9 已声明 `400012 = STREAM_OPERATION_FAILED`。
-> 两任务都动 `MessagingErrorCode` 枚举，码段必须协调——本任务用 **400013**。
 
 ## 9. 清理任务 + 索引
 
 `OutboxCleanupScheduler`（`@Scheduled(cron = "${app.messaging.outbox.cleanup-cron:0 0 4 * * *}")`，
 cron 外部化，评审"扩展性"硬编码）：
-`DELETE FROM outbox WHERE status='dead' AND created_at < now() - INTERVAL '7 days'`（`7` 来自 `dead-retention-days`）。
+`DELETE FROM outbox WHERE status='dead' AND created_at < now() - (#{deadRetentionDays} || ' days')::interval`
+（`deadRetentionDays` 来自配置 `dead-retention-days`，**单一来源**——与 §4 claimPending 绑定
+`claimingTimeoutSeconds` 同原则，不再 SQL 内硬编码 `'7 days'` 双源）。
 走 `idx_outbox_dead_cleanup`（§4 新增的部分索引，避免 dead 行全表扫）。
 （claiming 超时行由 relay 的 claimPending 查询自动回收，不归此清理任务。）
 
@@ -637,11 +644,12 @@ cron 外部化，评审"扩展性"硬编码）：
 ```yaml
 app.messaging:
   backoff-ms: [1000,5000,10000,30000,60000,120000,180000,240000,300000,
-               360000,420000,480000,540000,600000,1200000,1800000]   # BackoffSchedule 共享（§3.3）——【此配置段由 child 1 定义，此处仅展示完整 app.messaging 视图；本任务不重复声明默认值（见 prd R8）】
+               360000,420000,480000,540000,600000,1200000,1800000]   # BackoffSchedule 共享（§3.3）；【权威定义在 child 1（app.messaging.backoff-ms）；此处镜像展示完整 app.messaging 视图，默认值与 §3.3/child 1 一致，本任务不另设覆盖】
   outbox:
     enabled: true                  # false 时 OutboxMessageBus 透传 delegate（灰度回退）
     poll-interval: 5s              # relay 扫描间隔
     batch-size: 32
+    max-batches-per-poll: 10       # §3.2 drain-until-empty 单 poll 内 claim 批数上限（防饿死；prd R6）
     max-attempts: 16               # 评审"扩展性"：与消费端重试窗口相互独立（非"对齐"）；仅统计真实投递尝试（§3.2）
     immediate-retry-count: 2       # 即时投递重试次数
     immediate-retry-interval-ms: 100

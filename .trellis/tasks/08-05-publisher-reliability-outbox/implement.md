@@ -199,12 +199,13 @@ new MessageEnvelope<>(null, row.topic(), row.tag(),
 **文件 3**：`ChatUsageTracker.java`
 - catch 内加 `counter("chat.usage.publish_failed")`。
 
-**验证**：`grep -rn 'saveWithBoundedRetry\|dispatchViaThreadPool\|reportFallbackFailure\|DEFAULT_BACKOFF_MS' src/main` = 0。
 ## Step 9 — OutboxCleanupScheduler
 
-`@Scheduled(cron = "${app.messaging.outbox.cleanup-cron:0 0 4 * * *}")`（cron 外部化，评审"扩展性"硬编码）删 `status='dead' AND created_at < now()-${dead-retention-days} days`，
-走 `idx_outbox_dead_cleanup`（Step 1 已建）。claiming 超时行由 relay 的 `claimPending` 查询
-自动回收，不归此任务。
+`@Scheduled(cron = "${app.messaging.outbox.cleanup-cron:0 0 4 * * *}")`（cron 外部化，评审"扩展性"硬编码）。
+SQL 绑定参数（design §9 单源原则，与 claimPending 绑定 claimingTimeoutSeconds 同）：
+`DELETE FROM outbox WHERE status='dead' AND created_at < now() - (#{deadRetentionDays} || ' days')::interval`
+（`deadRetentionDays` 来自配置 `dead-retention-days`，默认 7）。
+走 `idx_outbox_dead_cleanup`（Step 1 已建）。claiming 超时行由 relay 的 `claimPending` 查询自动回收，不归此任务。
 
 ## Step 10 — MessagingErrorCode 扩展
 

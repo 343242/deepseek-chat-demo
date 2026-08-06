@@ -75,6 +75,13 @@
             <version>${redisson.version}</version>
         </dependency>
 
+        <!-- Lettuce 连接池（P1-4：XREADGROUP BLOCK 消费连接隔离需要独立 pool；
+            同时也激活 application.yml 已声明的 spring.data.redis.lettuce.pool.*） -->
+        <dependency>
+            <groupId>org.apache.commons</groupId>
+            <artifactId>commons-pool2</artifactId>
+        </dependency>
+
         <!-- Spring Security（排除默认 Logback） -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
@@ -128,12 +135,6 @@
             <groupId>com.github.ben-manes.caffeine</groupId>
             <artifactId>caffeine</artifactId>
         </dependency>
-
-	<dependency>
-            <groupId>org.apache.rocketmq</groupId>
-            <artifactId>rocketmq-client-java</artifactId>
-            <version>5.2.0</version>
-	</dependency>
 
 	<dependency>
     	    <groupId>org.springframework.boot</groupId>

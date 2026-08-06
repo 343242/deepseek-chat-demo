@@ -8,7 +8,8 @@ import java.util.List;
 /**
  * Dead letter operations — ops interface for dead letter viewing and replay.
  * <p>
- * RocketMQ implementation delegates to Broker's %DLQ% management.
+ * Redis Stream implementation: independent dlq stream per (topic, group)，见
+ * {@link com.smart.rag.infrastructure.messaging.redis.RedisStreamDeadLetterOperations}.
  */
 public interface DeadLetterOperations {
     /** Scan dead letter messages for a topic */

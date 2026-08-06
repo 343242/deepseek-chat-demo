@@ -23,8 +23,7 @@ class MessageValidatorTest {
     @BeforeEach
     void setUp() {
         properties = new MessagingProperties("T_", Duration.ofSeconds(30),
-            null, null, null,
-            new MessagingProperties.RocketMQConfig(null, null, null, 0, 128, null, null, null));
+            null, null, null, null, null);
         codec = mock(MessagePayloadCodec.class);
         validator = new MessageValidator(properties, codec);
     }
@@ -80,14 +79,6 @@ class MessageValidatorTest {
             var msg = new MessageEnvelope<>(null, "t", "valid_tag", "data",
                 null, null, Map.of(), 0);
             assertDoesNotThrow(() -> validator.validateAndEncode(msg));
-        }
-
-        @Test
-        @DisplayName("payload exceeding maxMessageSize throws ClientException")
-        void payloadTooLarge_throws() {
-            when(codec.encode("big")).thenReturn(new byte[256]);
-            assertThrows(ClientException.class,
-                () -> validator.validateAndEncode(MessageEnvelope.of("t", "big")));
         }
     }
 

@@ -15,6 +15,8 @@ public enum MessagingErrorCode implements IErrorCode {
     MESSAGE_TOO_LARGE(400009, "消息体超限"),
     INVALID_CONFIG(400010, "消费配置无效"),
     UNSUPPORTED_OPERATION(400011, "不支持的操作"),
+    /** XADD/XREADGROUP 等 Stream 操作失败（transport 错误，非业务）。400013 预留给 child 2 OUTBOX_INSERT_FAILED。 */
+    STREAM_OPERATION_FAILED(400012, "消息流操作失败"),
     ;
 
     private final int code;

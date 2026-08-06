@@ -22,7 +22,7 @@ public class MessagingMetrics {
     /** O-03: 每 (topic,group) 最近一次成功 receive 的 epoch ms。receive 抛异常时不更新 → 监控据此检测消费者卡死。 */
     private final Map<String, AtomicLong> lastReceiveSuccess = new ConcurrentHashMap<>();
 
-    MessagingMetrics(@Nullable MeterRegistry registry) {
+    public MessagingMetrics(@Nullable MeterRegistry registry) {
         this.registry = registry;
     }
 
@@ -96,6 +96,42 @@ public class MessagingMetrics {
     public void recordDeadLetter(String topic, String group) {
         if (registry == null) return;
         registry.counter("messaging.dead.count", "topic", topic, "group", group).increment();
+    }
+
+    // ==================== Redis Stream（design §9） ====================
+
+    /** pollLoop XREADGROUP 连接级失败（Redis 宕机/主从切换/网络分区，退避重连中）。 */
+    public void recordConsumeConnectionFailure(String topic, String group) {
+        if (registry == null) return;
+        registry.counter("messaging.consume.connection.failure",
+            "topic", topic, "group", group).increment();
+    }
+
+    /** RetrySweeper 回灌成功（ZSET → 主 stream）。 */
+    public void recordRetryRedelivered(String topic, String group, int count) {
+        if (registry == null) return;
+        registry.counter("messaging.retry.redelivered",
+            "topic", topic, "group", group).increment(count);
+    }
+
+    /** RetrySweeper 孤儿清理（zset/hash 不一致）。 */
+    public void recordRetryOrphan(String topic, String group, int count) {
+        if (registry == null) return;
+        registry.counter("messaging.retry.orphan.count",
+            "topic", topic, "group", group).increment(count);
+    }
+
+    /** XGROUP CREATE 失败（非 BUSYGROUP）。 */
+    public void recordGroupCreateFailed(String topic, String group) {
+        if (registry == null) return;
+        registry.counter("messaging.stream.group.create.failed",
+            "topic", topic, "group", group).increment();
+    }
+
+    /** 主 stream lag（XLEN − ΣXPENDING）超 trim-threshold 告警阈值。 */
+    public void recordTrimThresholdExceeded(String streamKey) {
+        if (registry == null) return;
+        registry.counter("messaging.stream.trim.threshold.exceeded", "stream", streamKey).increment();
     }
 
     // ==================== Idempotent ====================

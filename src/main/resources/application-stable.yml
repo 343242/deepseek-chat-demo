@@ -4,7 +4,7 @@ server:
   # 仅在部署于受信反向代理（nginx/ALB）后启用，否则客户端可伪造 IP
   forward-headers-strategy: framework
   # 优雅停机：docker stop / SIGTERM 时不立即关 socket，让 in-flight 请求处理完
-  # 配合 app.messaging.shutdown-timeout (RocketMQ consumer) + log4j2 shutdownHook=disable 形成完整链路
+  # 配合 app.messaging.shutdown-timeout (Redis Stream consumer) + log4j2 shutdownHook=disable 形成完整链路
   shutdown: graceful
 
 spring:

@@ -18,7 +18,7 @@ import org.springframework.stereotype.Component;
  * <p>
  * <b>幂等</b>：publisher 端 {@link ChatUsageTracker} 已为每条消息设置稳定的
  * {@code deduplicationKey}（见 messaging-bus.md §7.2）；订阅时由
- * {@link com.smart.rag.infrastructure.messaging.RocketMQMessageBus} 自动用
+ * {@link com.smart.rag.infrastructure.messaging.redis.RedisStreamMessageBus} 自动用
  * {@link com.smart.rag.infrastructure.messaging.idempotent.IdempotentHandler}
  * （Redis SETNX，默认开启、TTL 900s 覆盖 16 次重试窗口）包装 handler，故同一记录的
  * broker 重投递会被去重。这是 at-least-once 语义下的尽力去重：当 Redis 在重投递窗口内

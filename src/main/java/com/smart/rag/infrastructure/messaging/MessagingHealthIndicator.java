@@ -27,7 +27,7 @@ public class MessagingHealthIndicator extends AbstractHealthIndicator {
         if (!producerHealthy) {
             builder.down()
                 .withDetail("producer", "unreachable")
-                .withDetail("action", "Check RocketMQ Broker/Proxy connectivity");
+                .withDetail("action", "Check Redis connectivity / messaging bus");
             return;
         }
 

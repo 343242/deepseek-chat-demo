@@ -21,11 +21,11 @@ public class SendCircuitBreaker {
     private long openedAtMs = 0;
     private int activeHalfOpenProbes = 0;
 
-    SendCircuitBreaker(MessagingProperties.CircuitBreakerConfig config) {
+    public SendCircuitBreaker(MessagingProperties.CircuitBreakerConfig config) {
         this(config, Clock.systemUTC());
     }
 
-    SendCircuitBreaker(MessagingProperties.CircuitBreakerConfig config, Clock clock) {
+    public SendCircuitBreaker(MessagingProperties.CircuitBreakerConfig config, Clock clock) {
         this.config = config;
         this.clock = clock;
     }
@@ -34,7 +34,7 @@ public class SendCircuitBreaker {
      * Pre-send check: CLOSED allows, OPEN fast-fails, HALF_OPEN allows 1 probe.
      * Does NOT affect sendToDeadLetter() — DLQ must bypass circuit breaker.
      */
-    synchronized boolean isCallAllowed() {
+    public synchronized boolean isCallAllowed() {
         refreshState();
         if (state == MessagingCircuitBreakerState.OPEN) {
             return false;
@@ -48,7 +48,7 @@ public class SendCircuitBreaker {
         return true;
     }
 
-    synchronized void recordSuccess() {
+    public synchronized void recordSuccess() {
         MessagingCircuitBreakerState prev = state;
         if (state == MessagingCircuitBreakerState.HALF_OPEN) {
             activeHalfOpenProbes--;
@@ -60,7 +60,7 @@ public class SendCircuitBreaker {
         }
     }
 
-    synchronized void recordFailure() {
+    public synchronized void recordFailure() {
         if (state == MessagingCircuitBreakerState.HALF_OPEN) {
             activeHalfOpenProbes--;
             tripOpen();
@@ -72,7 +72,7 @@ public class SendCircuitBreaker {
         }
     }
 
-    synchronized MessagingCircuitBreakerState state() {
+    public synchronized MessagingCircuitBreakerState state() {
         refreshState();
         return state;
     }

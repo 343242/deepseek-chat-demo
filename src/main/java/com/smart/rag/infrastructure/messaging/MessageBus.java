@@ -8,7 +8,7 @@ import java.util.concurrent.CompletableFuture;
 /**
  * Message bus SPI — unified entry point for all messaging operations.
  * <p>
- * Implementations: RocketMQMessageBus (Phase 1), extensible to other backends.
+ * Implementation: RedisStreamMessageBus（Redis 8 Stream 消息总线）。
  * All thrown exceptions must be {@link MessagingException} subclasses.
  */
 public interface MessageBus {
@@ -16,7 +16,7 @@ public interface MessageBus {
     /** Synchronous send, returns transport-level message ID */
     String send(MessageEnvelope<?> messageEnvelope);
 
-    /** Asynchronous send using 5.x native sendAsync (gRPC async stub) */
+    /** Asynchronous send, returns transport-level message ID */
     CompletableFuture<String> sendAsync(MessageEnvelope<?> messageEnvelope);
 
     /**

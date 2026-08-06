@@ -16,4 +16,10 @@ public interface MessageBusManagement {
 
     /** Circuit breaker state per topic: topic → state name (closed/open/half_open) */
     Map<String, String> circuitBreakerState();
+
+    /**
+     * Per-topic send circuit breaker open check（R7，child 2 SharedCircuitBreakerGate 读——
+     * Redis 共享信号不可用时回退本实例本地熔断态）。
+     */
+    boolean isCircuitBreakerOpen(String topic);
 }

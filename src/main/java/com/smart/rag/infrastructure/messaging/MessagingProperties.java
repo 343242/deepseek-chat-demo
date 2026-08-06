@@ -25,7 +25,8 @@ public record MessagingProperties(
     IdempotentConfig idempotent,
     CircuitBreakerConfig circuitBreaker,
     long[] backoffMs,
-    RedisStreamConfig redis
+    RedisStreamConfig redis,
+    OutboxConfig outbox
 ) {
     /** 最大预期业务处理时长（ETL invisibleDuration 30min，见 EtlDocumentConsumer）——pel-min-idle 断言基准。 */
     static final Duration MAX_EXPECTED_INVISIBLE_DURATION = Duration.ofMinutes(30);
@@ -53,6 +54,9 @@ public record MessagingProperties(
         }
         if (redis == null) {
             redis = new RedisStreamConfig();
+        }
+        if (outbox == null) {
+            outbox = new OutboxConfig();
         }
     }
 
@@ -220,6 +224,96 @@ public record MessagingProperties(
             }
             if (poolMaxIdle <= 0) {
                 poolMaxIdle = 32;
+            }
+        }
+    }
+
+    /**
+     * Publisher outbox 配置（child 2，design §10）——OutboxMessageBus / OutboxRelay 共用。
+     * <p>
+     * 关键语义：
+     * <ul>
+     *   <li>{@code immediateRetryCount}/{@code immediateRetryIntervalMs}：即时投递路径有限重试
+     *       （仅覆盖 MQ 瞬时抖动），硬故障由 relay 退避兜底；</li>
+     *   <li>即时投递 executor 必须有界（core/max/queue），拒绝 = 行留 relay，天然不丢；</li>
+     *   <li>{@code maxAttempts} 仅统计"对看似可达 MQ 的真实投递尝试"（P1-7 冻结语义）——
+     *       gate OPEN 时 relay 不 send 不递增，只顺延 {@code gateDeferInterval}；</li>
+     *   <li>{@code claimingTimeoutSeconds}/{@code deadRetentionDays} 绑定 SQL 参数（单源，
+     *       不硬编码 INTERVAL）。</li>
+     * </ul>
+     */
+    public record OutboxConfig(
+        boolean enabled,
+        Duration pollInterval,
+        int batchSize,
+        int maxBatchesPerPoll,
+        int maxAttempts,
+        int immediateRetryCount,
+        long immediateRetryIntervalMs,
+        int immediateExecutorCore,
+        int immediateExecutorMax,
+        int immediateExecutorQueue,
+        int deadRetentionDays,
+        String cleanupCron,
+        String leaderLockKey,
+        String cbSignalPrefix,
+        long cbLocalCacheTtlMs,
+        long claimingTimeoutSeconds,
+        Duration gateDeferInterval
+    ) {
+        /** 全默认构造（compact 构造器补齐默认值）。 */
+        public OutboxConfig() {
+            this(true, null, 0, 0, 0, 0, 0, 0, 0, 0, 0, null, null, null, 0, 0, null);
+        }
+
+        public OutboxConfig {
+            if (pollInterval == null || pollInterval.isZero() || pollInterval.isNegative()) {
+                pollInterval = Duration.ofSeconds(5);
+            }
+            if (batchSize <= 0) {
+                batchSize = 32;
+            }
+            if (maxBatchesPerPoll <= 0) {
+                maxBatchesPerPoll = 10;
+            }
+            if (maxAttempts <= 0) {
+                maxAttempts = 16;
+            }
+            if (immediateRetryCount <= 0) {
+                immediateRetryCount = 2;
+            }
+            if (immediateRetryIntervalMs <= 0) {
+                immediateRetryIntervalMs = 100;
+            }
+            if (immediateExecutorCore <= 0) {
+                immediateExecutorCore = 2;
+            }
+            if (immediateExecutorMax <= 0 || immediateExecutorMax < immediateExecutorCore) {
+                immediateExecutorMax = 8;
+            }
+            if (immediateExecutorQueue <= 0) {
+                immediateExecutorQueue = 64;
+            }
+            if (deadRetentionDays <= 0) {
+                deadRetentionDays = 7;
+            }
+            if (cleanupCron == null || cleanupCron.isEmpty()) {
+                cleanupCron = "0 0 4 * * *";
+            }
+            if (leaderLockKey == null || leaderLockKey.isEmpty()) {
+                leaderLockKey = "outbox:relay:leader";
+            }
+            if (cbSignalPrefix == null || cbSignalPrefix.isEmpty()) {
+                cbSignalPrefix = "messaging:cb:";
+            }
+            if (cbLocalCacheTtlMs <= 0) {
+                cbLocalCacheTtlMs = 2000;
+            }
+            if (claimingTimeoutSeconds <= 0) {
+                claimingTimeoutSeconds = 300;
+            }
+            if (gateDeferInterval == null || gateDeferInterval.isZero() || gateDeferInterval.isNegative()) {
+                gateDeferInterval = Duration.ofSeconds(5);
             }
         }
     }

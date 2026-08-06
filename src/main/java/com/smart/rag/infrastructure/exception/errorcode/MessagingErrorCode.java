@@ -17,6 +17,8 @@ public enum MessagingErrorCode implements IErrorCode {
     UNSUPPORTED_OPERATION(400011, "不支持的操作"),
     /** XADD/XREADGROUP 等 Stream 操作失败（transport 错误，非业务）。400013 预留给 child 2 OUTBOX_INSERT_FAILED。 */
     STREAM_OPERATION_FAILED(400012, "消息流操作失败"),
+    /** outbox 行 INSERT 失败（DB 硬故障）——publisher catch 兜底告警用（child 2，P1-5 避让 400012）。 */
+    OUTBOX_INSERT_FAILED(400013, "消息持久化缓冲写入失败"),
     ;
 
     private final int code;

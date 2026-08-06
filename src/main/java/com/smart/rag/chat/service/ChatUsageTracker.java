@@ -3,9 +3,12 @@ package com.smart.rag.chat.service;
 import com.smart.rag.common.util.ConversationIdUtil;
 import com.smart.rag.infrastructure.messaging.MessageBus;
 import com.smart.rag.infrastructure.messaging.MessageEnvelope;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.metadata.Usage;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Component;
 
 import java.util.function.Function;
@@ -19,10 +22,8 @@ import java.util.function.Function;
  * 不再直接引用 {@link UsageService}。
  *
  * <p><b>非关键路径</b>：发布失败仅记日志，不影响主对话流程（与改造前的 try/catch 吞咽语义一致）。
- *
- * <p><b>非关键路径（见 messaging-bus.md §7.2、§9 Phase C）</b>：Phase 0 后消息总线 always-on，
- * {@code send} 失败仅记日志、不影响主对话流程（与改造前 try/catch 吞咽语义一致）。usage 不做同步降级
- * fallback——降级是 chat save 的职责（见 §7.1）；usage 偶发丢失可接受。
+ * 投递经 {@code OutboxMessageBus}（child 2）——{@code send()} 仅 outbox INSERT 失败（DB 硬故障）
+ * 才抛；catch 记 {@code chat.usage.publish_failed} 告警计数（R4 可观测性）。
  */
 @Component
 public class ChatUsageTracker {
@@ -33,9 +34,12 @@ public class ChatUsageTracker {
     static final String TOPIC = "chat_usage_record";
 
     private final MessageBus messageBus;
+    private final @Nullable MeterRegistry meterRegistry;
 
-    public ChatUsageTracker(MessageBus messageBus) {
+    public ChatUsageTracker(MessageBus messageBus,
+                            @Autowired(required = false) @Nullable MeterRegistry meterRegistry) {
         this.messageBus = messageBus;
+        this.meterRegistry = meterRegistry;
     }
 
     /**
@@ -62,6 +66,7 @@ public class ChatUsageTracker {
         } catch (Exception e) {
             log.error("Failed to publish usage: conversationId={}, candidate={}",
                     ConversationIdUtil.mask(conversationId), candidateId, e);
+            recordPublishFailed();
         }
     }
 
@@ -78,6 +83,14 @@ public class ChatUsageTracker {
         } catch (Exception e) {
             log.error("Failed to publish usage (no-response): conversationId={}, candidate={}",
                     ConversationIdUtil.mask(conversationId), candidateId, e);
+            recordPublishFailed();
+        }
+    }
+
+    /** R4：usage 发布失败告警计数（MQ/outbox 故障期间可观测）。 */
+    private void recordPublishFailed() {
+        if (meterRegistry != null) {
+            meterRegistry.counter("chat.usage.publish_failed").increment();
         }
     }
 

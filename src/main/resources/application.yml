@@ -142,6 +142,31 @@ app:
           pool:
             max-active: ${MESSAGING_CONSUMER_POOL_MAX_ACTIVE:32}
             max-idle: ${MESSAGING_CONSUMER_POOL_MAX_IDLE:32}
+    # Publisher outbox（child 2：OutboxMessageBus / OutboxRelay）——DB 事务级最终一致投递
+    outbox:
+      enabled: ${MESSAGING_OUTBOX_ENABLED:true}
+      poll-interval: ${MESSAGING_OUTBOX_POLL_INTERVAL:5s}
+      batch-size: ${MESSAGING_OUTBOX_BATCH_SIZE:32}
+      # drain-until-empty：单 poll 内 claim 批数上限（防饿死；峰值恢复 ~64 msg/s）
+      max-batches-per-poll: ${MESSAGING_OUTBOX_MAX_BATCHES_PER_POLL:10}
+      # 与消费端重试窗口相互独立；仅统计真实投递尝试（gate OPEN 时冻结，P1-7）
+      max-attempts: ${MESSAGING_OUTBOX_MAX_ATTEMPTS:16}
+      immediate-retry-count: ${MESSAGING_OUTBOX_IMMEDIATE_RETRY_COUNT:2}
+      immediate-retry-interval-ms: ${MESSAGING_OUTBOX_IMMEDIATE_RETRY_INTERVAL_MS:100}
+      # 即时投递有界 executor（拒绝 = 行留 relay，天然不丢）
+      immediate-executor-core: ${MESSAGING_OUTBOX_IMMEDIATE_EXECUTOR_CORE:2}
+      immediate-executor-max: ${MESSAGING_OUTBOX_IMMEDIATE_EXECUTOR_MAX:8}
+      immediate-executor-queue: ${MESSAGING_OUTBOX_IMMEDIATE_EXECUTOR_QUEUE:64}
+      dead-retention-days: ${MESSAGING_OUTBOX_DEAD_RETENTION_DAYS:7}
+      cleanup-cron: ${MESSAGING_OUTBOX_CLEANUP_CRON:0 0 4 * * *}
+      leader-lock-key: ${MESSAGING_OUTBOX_LEADER_LOCK_KEY:outbox:relay:leader}
+      cb-signal-prefix: ${MESSAGING_OUTBOX_CB_SIGNAL_PREFIX:messaging:cb:}
+      # isOpen() 本地缓存 TTL（热路径不每消息一次 Redis RTT）
+      cb-local-cache-ttl-ms: ${MESSAGING_OUTBOX_CB_LOCAL_CACHE_TTL_MS:2000}
+      # claiming 行超时回收阈值（绑定 claimPending SQL 参数，单源）
+      claiming-timeout-seconds: ${MESSAGING_OUTBOX_CLAIMING_TIMEOUT_SECONDS:300}
+      # gate OPEN 时顺延 next_retry_at 的间隔（冻结 attempts，P1-7）
+      gate-defer-interval: ${MESSAGING_OUTBOX_GATE_DEFER_INTERVAL:5s}
   llm:
     byok:
       # BYOK 总开关；基础默认 false（避免未配 master-key 时 fail-fast 阻断启动，P0-3）。

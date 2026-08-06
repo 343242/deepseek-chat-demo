@@ -7,6 +7,12 @@ import com.smart.rag.infrastructure.messaging.redis.RedisStreamKeys;
 import com.smart.rag.infrastructure.messaging.redis.RedisStreamMessageBus;
 import com.smart.rag.infrastructure.messaging.redis.RetrySweeper;
 import com.smart.rag.infrastructure.messaging.redis.StreamTrimTask;
+import com.smart.rag.infrastructure.messaging.outbox.OutboxMapper;
+import com.smart.rag.infrastructure.messaging.outbox.OutboxMessageBus;
+import com.smart.rag.infrastructure.messaging.outbox.OutboxMetrics;
+import com.smart.rag.infrastructure.messaging.outbox.OutboxRelay;
+import com.smart.rag.infrastructure.messaging.outbox.RedissonLeadership;
+import com.smart.rag.infrastructure.messaging.outbox.SharedCircuitBreakerGate;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.opentelemetry.api.OpenTelemetry;
 import org.slf4j.Logger;
@@ -23,10 +29,15 @@ import org.springframework.lang.Nullable;
 /**
  * Messaging bus auto-configuration — Redis Stream 唯一后端（无 backend 开关、无并存实现）。
  * <p>
- * 装配：{@link RedisStreamMessageBus}（destroyMethod="shutdown"，唯一 MessageBus 实现）、
+ * 装配：{@link RedisStreamMessageBus}（destroyMethod="shutdown"，内部 MessageBus 实现）、
  * 独立消费连接池（P1-4）、RetrySweeper / PelRecoverySweeper / StreamTrimTask（SmartLifecycle，
  * phase DEFAULT-200 先于 consumer pool 关闭，P2-9）、共享组件（RedisStreamKeys / BackoffSchedule /
- * ZSetDelayQueue，child 2 OutboxRelay 复用）、MessagingHealthIndicator、TracePropagator（D-6）。
+ * ZSetDelayQueue，OutboxRelay 复用）、MessagingHealthIndicator、TracePropagator（D-6）。
+ * <p>
+ * Outbox（child 2）：{@code @Primary} {@link OutboxMessageBus} 装饰内部 bus（publisher 注入
+ * MessageBus 即得装饰器），{@link SharedCircuitBreakerGate}（广播钩子注入 bus + ObjectProvider
+ * 懒解析 MessageBusManagement 防循环）、{@link RedissonLeadership} + {@link OutboxRelay}
+ * （SmartLifecycle，phase DEFAULT-50）。
  */
 @Configuration
 @EnableConfigurationProperties(MessagingProperties.class)
@@ -95,6 +106,9 @@ public class MessagingAutoConfiguration {
     /**
      * 唯一 MessageBus 实现（Redis Stream）。bean 类型用具体类：同一实例同时满足
      * {@link MessageBus} 与 {@link MessageBusManagement} 注入（health indicator 需要后者）。
+     * <p>
+     * P1-6.2（child 2 跨 child 契约）：注入 {@link SharedCircuitBreakerGate} 广播钩子——
+     * SendCircuitBreaker trip OPEN / HALF_OPEN→CLOSED 时经 Redis 同步其它实例。
      */
     @Bean(destroyMethod = "shutdown")
     RedisStreamMessageBus messageBus(MessagingProperties properties,
@@ -106,12 +120,86 @@ public class MessagingAutoConfiguration {
                                      RetrySweeper retrySweeper,
                                      PelRecoverySweeper pelRecoverySweeper,
                                      StreamTrimTask streamTrimTask,
+                                     SharedCircuitBreakerGate sharedCircuitBreakerGate,
                                      @Autowired(required = false) MeterRegistry meterRegistry,
                                      @Autowired(required = false) @Nullable TracePropagator propagator) {
         validateMessagingConfig(properties);
         return new RedisStreamMessageBus(properties, redisTemplate, codec, null,
             propagator, meterRegistry, connections, keys, deadLetterWriter,
-            retrySweeper, pelRecoverySweeper, streamTrimTask);
+            retrySweeper, pelRecoverySweeper, streamTrimTask, sharedCircuitBreakerGate);
+    }
+
+    // ==================== Outbox（child 2：publisher 投递可靠性） ====================
+
+    /**
+     * 共享 OPEN 熔断门控（design §3.4）。{@code MessageBusManagement} 经 {@link ObjectProvider}
+     * 懒解析——bus 实现该接口，直引会成构造循环（bus → gate → bus）。
+     */
+    @Bean
+    SharedCircuitBreakerGate sharedCircuitBreakerGate(
+            @Autowired(required = false) @Nullable org.redisson.api.RedissonClient redisson,
+            org.springframework.beans.factory.ObjectProvider<MessageBusManagement> busManagementProvider,
+            MessagingProperties properties) {
+        return new SharedCircuitBreakerGate(redisson, busManagementProvider, properties);
+    }
+
+    /** Outbox 指标（counters + relay 侧 gauges 注册）。 */
+    @Bean
+    OutboxMetrics outboxMetrics(@Autowired(required = false) MeterRegistry meterRegistry) {
+        return new OutboxMetrics(meterRegistry);
+    }
+
+    /**
+     * Relay leader election（design §3.1）。RedissonClient 缺失（未配置 redisson）→ 组件降级
+     * 每实例都扫（正确性不变，仅 DB 压力回升）。
+     */
+    @Bean
+    RedissonLeadership outboxLeadership(
+            @Autowired(required = false) @Nullable org.redisson.api.RedissonClient redisson,
+            MessagingProperties properties) {
+        return new RedissonLeadership(redisson,
+            properties.outbox().leaderLockKey(), properties.outbox().pollInterval());
+    }
+
+    /**
+     * OutboxRelay（SmartLifecycle，phase DEFAULT-50 先于 destroyMethod 关闭）——仅 leader 实例
+     * 跑 drain。注入 delegate 用 {@code @Qualifier("messageBus")} 显式取内部 bus 而非 {@code @Primary}。
+     */
+    @Bean
+    OutboxRelay outboxRelay(OutboxMapper outboxMapper,
+                            org.springframework.transaction.support.TransactionTemplate transactionTemplate,
+                            @org.springframework.beans.factory.annotation.Qualifier("messageBus") MessageBus delegateBus,
+                            MessagePayloadCodec codec,
+                            SharedCircuitBreakerGate sharedCircuitBreakerGate,
+                            BackoffSchedule backoffSchedule,
+                            MessagingProperties properties,
+                            RedissonLeadership outboxLeadership,
+                            OutboxMetrics outboxMetrics,
+                            @Autowired(required = false) MeterRegistry meterRegistry) {
+        return new OutboxRelay(outboxMapper, transactionTemplate, delegateBus, codec,
+            sharedCircuitBreakerGate, backoffSchedule, properties, outboxLeadership,
+            outboxMetrics, meterRegistry);
+    }
+
+    /**
+     * {@code @Primary} MessageBus 装饰器（design §6.2）。
+     * <p>
+     * <b>构造顺序约束</b>：delegate 形参用 {@code @Qualifier("messageBus")} 显式注入内部 bean——
+     * 不能字段注入 {@code @Autowired MessageBus}（会注入 {@code @Primary} 自己 → 循环）；
+     * 单参 {@code MessageBus} 形参也会被 Spring 解析到非 {@code @Primary} 的候选，但显式
+     * {@code @Qualifier} 更防误配。publisher 注入 {@code MessageBus} → 得到本装饰器。
+     */
+    @Bean
+    @org.springframework.context.annotation.Primary
+    MessageBus outboxMessageBus(
+            @org.springframework.beans.factory.annotation.Qualifier("messageBus") MessageBus delegateBus,
+            OutboxMapper outboxMapper,
+            MessagePayloadCodec codec,
+            SharedCircuitBreakerGate sharedCircuitBreakerGate,
+            MessagingProperties properties,
+            OutboxMetrics outboxMetrics) {
+        return new OutboxMessageBus(delegateBus, outboxMapper, codec,
+            sharedCircuitBreakerGate, properties, outboxMetrics);
     }
 
     /**

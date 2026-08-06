@@ -14,7 +14,7 @@ import static org.junit.jupiter.api.Assertions.*;
 class RedisStreamKeysTest {
 
     private final MessagingProperties properties = new MessagingProperties(
-        "SMART_RAG_", Duration.ofSeconds(30), null, null, null, null, null);
+        "SMART_RAG_", Duration.ofSeconds(30), null, null, null, null, null, null);
 
     @Test
     @DisplayName("默认前缀：主 stream 不含 group，retry/dlq 含 group")
@@ -49,7 +49,7 @@ class RedisStreamKeysTest {
         MessagingProperties.RedisStreamConfig config = new MessagingProperties.RedisStreamConfig(
             "s:", "d:", "r:", "rz:", "c:", 0, 0, null, 0, null, null, null, 0, null, null, null);
         MessagingProperties customProps = new MessagingProperties(
-            "PRE_", Duration.ofSeconds(30), null, null, null, null, config);
+            "PRE_", Duration.ofSeconds(30), null, null, null, null, config, null);
         RedisStreamKeys keys = new RedisStreamKeys(customProps);
 
         assertEquals("s:PRE_t", keys.streamKey("t"));

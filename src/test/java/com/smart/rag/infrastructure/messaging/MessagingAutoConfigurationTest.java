@@ -13,7 +13,7 @@ import static org.junit.jupiter.api.Assertions.*;
 class MessagingAutoConfigurationTest {
 
     private MessagingProperties defaults() {
-        return new MessagingProperties("T_", Duration.ofSeconds(30), null, null, null, null, null);
+        return new MessagingProperties("T_", Duration.ofSeconds(30), null, null, null, null, null, null);
     }
 
     @Test
@@ -28,7 +28,7 @@ class MessagingAutoConfigurationTest {
         MessagingProperties.RedisStreamConfig config = new MessagingProperties.RedisStreamConfig(
             null, null, null, null, null, 0, 0, null, 0, null, null, null, 17, null, null, null);
         MessagingProperties properties = new MessagingProperties(
-            "T_", Duration.ofSeconds(30), null, null, null, null, config);
+            "T_", Duration.ofSeconds(30), null, null, null, null, config, null);
 
         IllegalStateException e = assertThrows(IllegalStateException.class,
             () -> MessagingAutoConfiguration.validateMessagingConfig(properties));
@@ -41,7 +41,7 @@ class MessagingAutoConfigurationTest {
         MessagingProperties.RedisStreamConfig config = new MessagingProperties.RedisStreamConfig(
             null, null, null, null, null, 0, 0, null, 0, Duration.ofMinutes(30), null, null, 0, null, null, null);
         MessagingProperties properties = new MessagingProperties(
-            "T_", Duration.ofSeconds(30), null, null, null, null, config);
+            "T_", Duration.ofSeconds(30), null, null, null, null, config, null);
 
         IllegalStateException e = assertThrows(IllegalStateException.class,
             () -> MessagingAutoConfiguration.validateMessagingConfig(properties));

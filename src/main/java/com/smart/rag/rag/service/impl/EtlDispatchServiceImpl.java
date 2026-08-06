@@ -12,20 +12,18 @@ import com.smart.rag.rag.etl.EtlRouteStrategy;
 import com.smart.rag.rag.etl.EtlRouteStrategyFactory;
 import com.smart.rag.rag.etl.EtlStatus;
 import com.smart.rag.rag.etl.Loader;
-import com.smart.rag.rag.event.EtlCompletedEvent;
 import com.smart.rag.rag.service.EtlDispatchService;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.jspecify.annotations.Nullable;
 import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -44,24 +42,21 @@ public class EtlDispatchServiceImpl implements EtlDispatchService {
     private static final long LOCK_WAIT_SECONDS = 30;
 
     private final EtlRouteStrategyFactory strategyFactory;
-    private final Executor etlIoExecutor;
     private final Loader loader;
-    private final ApplicationEventPublisher eventPublisher;
     private final @Nullable RedissonClient redissonClient;
     private final MessageBus messageBus;
+    private final @Nullable MeterRegistry meterRegistry;
 
     public EtlDispatchServiceImpl(EtlRouteStrategyFactory strategyFactory,
-                                  @Qualifier("etlIoExecutor") Executor etlIoExecutor,
                                   Loader loader,
-                                  ApplicationEventPublisher eventPublisher,
                                   @Nullable RedissonClient redissonClient,
-                                  MessageBus messageBus) {
+                                  MessageBus messageBus,
+                                  @Autowired(required = false) @Nullable MeterRegistry meterRegistry) {
         this.strategyFactory = strategyFactory;
-        this.etlIoExecutor = etlIoExecutor;
         this.loader = loader;
-        this.eventPublisher = eventPublisher;
         this.redissonClient = redissonClient;
         this.messageBus = messageBus;
+        this.meterRegistry = meterRegistry;
     }
 
     @Override
@@ -129,28 +124,20 @@ public class EtlDispatchServiceImpl implements EtlDispatchService {
         EtlCandidate candidate = new EtlCandidate(documentId, bucket, objectKey, fileName, mimeType, fileSize, userId, teamId);
         log.info("ETL dispatchAsync: documentId={}, file={}, userId={}, teamId={}", documentId, fileName, userId, teamId);
 
-        // Phase 0：消息总线 always-on，始终经 bus 投递；send 抛 MessagingException 时降级到线程池。
+        // 单一投递路径：outbox（child 2）→ relay → RedisStream → consumer，保留 FIFO/重试/DLQ 语义。
+        // send() 仅 outbox INSERT 失败（DB 硬故障）才抛——catch 记 rag.etl.publish_failed 告警计数；
+        // 线程池兜底（dispatchViaThreadPool）已随 outbox 删除（R2：单一投递路径，不与正常 ETL 抢资源）。
         try {
             String dedupKey = String.valueOf(documentId);
             messageBus.send(new MessageEnvelope<>(null, EtlDocumentConsumer.TOPIC, null, candidate,
                 dedupKey, dedupKey, Map.of(), System.currentTimeMillis()));
         } catch (MessagingException e) {
-            log.warn("Message bus send failed, falling back to thread pool: documentId={}, file={}", documentId, fileName, e);
-            dispatchViaThreadPool(candidate, documentId, fileName);
-        }
-    }
-
-    private void dispatchViaThreadPool(EtlCandidate candidate, Long documentId, String fileName) {
-        etlIoExecutor.execute(() -> {
-            try {
-                List<EtlResult> results = dispatch(List.of(candidate));
-                if (!results.isEmpty() && EtlStatus.COMPLETED.equals(results.getFirst().status())) {
-                    eventPublisher.publishEvent(new EtlCompletedEvent(candidate.documentId(), candidate.userId(), candidate.teamId()));
-                }
-            } catch (Exception e) {
-                log.error("ETL dispatchAsync failed: documentId={}, file={}", documentId, fileName, e);
+            log.error("Outbox persist failed for ETL dispatch (message lost): documentId={}, file={}",
+                documentId, fileName, e);
+            if (meterRegistry != null) {
+                meterRegistry.counter("rag.etl.publish_failed").increment();
             }
-        });
+        }
     }
 
     @Override

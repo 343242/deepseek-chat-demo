@@ -391,6 +391,13 @@
             <version>1.21.1</version>
             <scope>test</scope>
         </dependency>
+        <!-- Outbox relay tests（PostgreSQL container + Flyway baseline） -->
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>postgresql</artifactId>
+            <version>1.21.4</version>
+            <scope>test</scope>
+        </dependency>
 
         <!-- OpenDataLoader PDF Core — 结构化 PDF 解析（保留标题层级/表格/阅读顺序） -->
         <dependency>

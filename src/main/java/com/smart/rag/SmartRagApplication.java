@@ -32,7 +32,8 @@ import org.springframework.scheduling.annotation.EnableAsync;
         "com.smart.rag.modelconfig.mapper",
         "com.smart.rag.mcp.admin.mapper",
         "com.smart.rag.infrastructure.audit.mapper",
-        "com.smart.rag.infrastructure.trace"
+        "com.smart.rag.infrastructure.trace",
+        "com.smart.rag.infrastructure.messaging.outbox"
 })
 public class SmartRagApplication {
 

@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.smart.rag.infrastructure.messaging.outbox.OutboxMapper">
+
+    <!-- INSERT（覆盖 BaseMapper.insert：payload/headers 为 JSONB 列，String 参数需显式 CAST，项目惯例见 LlmModelConfigMapper.xml） -->
+    <insert id="insert" useGeneratedKeys="true" keyProperty="id">
+        INSERT INTO outbox
+            (topic, payload, payload_type, tag, dedup_key, hash_key, headers,
+             status, attempts, next_retry_at, created_at, updated_at)
+        VALUES
+            (#{topic}, CAST(#{payload} AS jsonb), #{payloadType}, #{tag}, #{dedupKey}, #{hashKey},
+             CAST(#{headers} AS jsonb), #{status}, #{attempts}, #{nextRetryAt}, #{createdAt}, #{updatedAt})
+    </insert>
+
+    <!-- claimPending：pending 到期 + claiming 超时回收；FOR UPDATE SKIP LOCKED 防并发 claim。
+         claimingTimeoutSeconds 绑定配置（单源，不硬编码 INTERVAL）。 -->
+    <select id="claimPending" resultType="com.smart.rag.infrastructure.messaging.outbox.OutboxEntry">
+        SELECT *
+        FROM outbox
+        WHERE (status = 'pending' AND next_retry_at &lt;= #{now})
+           OR (status = 'claiming' AND #{now} - updated_at &gt; (#{claimingTimeoutSeconds} || ' seconds')::interval)
+        ORDER BY created_at
+        LIMIT #{limit}
+        FOR UPDATE SKIP LOCKED
+    </select>
+
+    <!-- markClaiming：claim 事务内标记 + 刷新 updated_at（否则超时回收的时间依据停留在 INSERT 时间）。 -->
+    <update id="markClaiming">
+        UPDATE outbox
+        SET status = 'claiming',
+            updated_at = #{now}
+        WHERE id IN
+        <foreach collection="ids" item="id" open="(" separator="," close=")">
+            #{id}
+        </foreach>
+    </update>
+
+    <!-- 投递成功批量删除。 -->
+    <delete id="deleteByIds">
+        DELETE FROM outbox
+        WHERE id IN
+        <foreach collection="ids" item="id" open="(" separator="," close=")">
+            #{id}
+        </foreach>
+    </delete>
+
+    <!-- 真实投递失败：释放回 pending + 递增 attempts + 退避 next_retry_at（清 failure_reason）。 -->
+    <update id="bumpAttempts">
+        UPDATE outbox
+        SET status = 'pending',
+            attempts = #{attempts},
+            next_retry_at = #{nextRetryAt},
+            failure_reason = NULL,
+            updated_at = now()
+        WHERE id = #{id}
+    </update>
+
+    <!-- gate OPEN 冻结 attempts：仅顺延 next_retry_at（评审 P1-7）。 -->
+    <update id="deferForRetry">
+        UPDATE outbox
+        SET status = 'pending',
+            next_retry_at = #{nextRetryAt},
+            updated_at = now()
+        WHERE id IN
+        <foreach collection="ids" item="id" open="(" separator="," close=")">
+            #{id}
+        </foreach>
+    </update>
+
+    <!-- 重试耗尽 → dead（毒消息）。 -->
+    <update id="markDead">
+        UPDATE outbox
+        SET status = 'dead',
+            failure_reason = #{reason},
+            updated_at = now()
+        WHERE id = #{id}
+    </update>
+
+    <!-- pending gauge：按 topic 计数。 -->
+    <select id="selectPendingCountByTopic" resultType="com.smart.rag.infrastructure.messaging.outbox.OutboxMapper$TopicCount">
+        SELECT topic, count(*) AS count
+        FROM outbox
+        WHERE status = 'pending'
+        GROUP BY topic
+    </select>
+
+    <!-- oldest_age gauge：最早待投递行创建时间。 -->
+    <select id="selectOldestCreatedAt" resultType="java.time.Instant">
+        SELECT min(created_at)
+        FROM outbox
+        WHERE status IN ('pending', 'claiming')
+    </select>
+
+    <!-- dead 清理（dead-retention-days 绑定配置，走 idx_outbox_dead_cleanup 部分索引）。 -->
+    <delete id="deleteDeadBefore">
+        DELETE FROM outbox
+        WHERE status = 'dead'
+          AND created_at &lt; #{deadline}
+    </delete>
+
+</mapper>

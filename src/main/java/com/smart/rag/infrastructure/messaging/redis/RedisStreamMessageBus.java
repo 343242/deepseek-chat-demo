@@ -20,6 +20,7 @@ import com.smart.rag.infrastructure.messaging.Subscription;
 import com.smart.rag.infrastructure.messaging.TracePropagator;
 import com.smart.rag.infrastructure.messaging.ZSetDelayQueue;
 import com.smart.rag.infrastructure.messaging.idempotent.IdempotentHandler;
+import com.smart.rag.infrastructure.messaging.outbox.SharedCircuitBreakerGate;
 import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.annotation.Nullable;
 import org.slf4j.Logger;
@@ -30,6 +31,7 @@ import org.springframework.data.redis.core.RedisCallback;
 import org.springframework.data.redis.core.StringRedisTemplate;
 
 import java.nio.charset.StandardCharsets;
+import java.time.Clock;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -89,6 +91,8 @@ public class RedisStreamMessageBus implements MessageBus, MessageBusManagement {
     /** topic → group（当前 1:1 拓扑，DLQ SPI 的 group 解析用；多组扩展点见 RedisStreamDeadLetterOperations）。 */
     private final ConcurrentMap<String, String> topicToGroup = new ConcurrentHashMap<>();
     private final CopyOnWriteArrayList<RedisStreamSubscription> activeSubscriptions = new CopyOnWriteArrayList<>();
+    /** P1-6.2（child 2 跨 child 契约）：广播钩子——tripOpen/CLOSED 经 SharedCircuitBreakerGate 同步其它实例。 */
+    private final @Nullable SharedCircuitBreakerGate cbGate;
 
     private static final ExecutorService ASYNC_SEND_EXECUTOR = Executors.newCachedThreadPool(r -> {
         Thread t = new Thread(r, "redis-send-async");
@@ -110,6 +114,24 @@ public class RedisStreamMessageBus implements MessageBus, MessageBusManagement {
                                  RetrySweeper retrySweeper,
                                  PelRecoverySweeper pelRecoverySweeper,
                                  StreamTrimTask streamTrimTask) {
+        this(properties, businessTemplate, codec, validator, propagator, meterRegistry, connections,
+            keys, deadLetterWriter, retrySweeper, pelRecoverySweeper, streamTrimTask, null);
+    }
+
+    /** 广播钩子装配点（P1-6.2）：{@code cbGate} 为 null 时 SendCircuitBreaker 无广播（既有语义不变）。 */
+    public RedisStreamMessageBus(MessagingProperties properties,
+                                 StringRedisTemplate businessTemplate,
+                                 MessagePayloadCodec codec,
+                                 @Nullable MessageValidator validator,
+                                 @Nullable TracePropagator propagator,
+                                 @Nullable MeterRegistry meterRegistry,
+                                 RedisStreamConsumerConnections connections,
+                                 RedisStreamKeys keys,
+                                 RedisStreamDeadLetterWriter deadLetterWriter,
+                                 RetrySweeper retrySweeper,
+                                 PelRecoverySweeper pelRecoverySweeper,
+                                 StreamTrimTask streamTrimTask,
+                                 @Nullable SharedCircuitBreakerGate cbGate) {
         this.properties = properties;
         this.businessTemplate = businessTemplate;
         this.codec = codec;
@@ -122,6 +144,7 @@ public class RedisStreamMessageBus implements MessageBus, MessageBusManagement {
         this.retrySweeper = retrySweeper;
         this.pelRecoverySweeper = pelRecoverySweeper;
         this.streamTrimTask = streamTrimTask;
+        this.cbGate = cbGate;
         this.consumerName = RedisStreamInstance.consumerName(properties);
         this.deadLetterOps = new RedisStreamDeadLetterOperations(
             deadLetterWriter, businessTemplate, codec, keys, properties, topicToGroup::get);
@@ -336,10 +359,10 @@ public class RedisStreamMessageBus implements MessageBus, MessageBusManagement {
 
     // ==================== Private Helpers ====================
 
-    /** per-topic 熔断实例化点（child 2 扩展装配注入 SharedCircuitBreakerGate 的位置，见 design §2 冻结点）。 */
+    /** per-topic 熔断实例化点（P1-6.2：注入 SharedCircuitBreakerGate 广播钩子）。 */
     private SendCircuitBreaker circuitBreakerFor(String topic) {
         return circuitBreakers.computeIfAbsent(topic,
-            k -> new SendCircuitBreaker(properties.circuitBreaker()));
+            k -> new SendCircuitBreaker(properties.circuitBreaker(), Clock.systemUTC(), cbGate, topic));
     }
 
     private static String nvl(String s) {

@@ -102,10 +102,10 @@ public class ChatConversationHelper {
                                       int totalTokens,
                                       long durationMs) {
         // Phase D D-4：落库失败时异常向上传播（不再 catch + enqueue legacy DLQ + 吞咽）。
-        //  - bus consumer 路径：PushConsumerListener 捕获 → ConsumeResult.FAILURE → broker 按 maxDeliveryAttempts 重试 → %DLQ%{save-group}
-        //  - 同步降级路径：ChatMessagePublisher.saveWithBoundedRetry 做有限重试覆盖瞬时 DB 故障
-        //  - legacy retry scheduler：自带 catch，D-3 才删
-        // 事务模板失败已自动回滚（无半写入），broker 重试干净。
+        //  - bus consumer 路径：RedisStreamConsumerRunner 捕获 → XACK + ZSET 退避重试 → 耗尽进 DLQ
+        //  - publisher 侧降级：child 2 已删除 ChatMessagePublisher.saveWithBoundedRetry——
+        //    outbox 行即为持久化保证（INSERT 后 relay 补投，见 OutboxMessageBus）
+        // 事务模板失败已自动回滚（无半写入），重试干净。
         transactionTemplate.executeWithoutResult(status -> {
             // 写入 USER 消息
             Message userMsg = Message.userMessage(conversationId, null, userContent);

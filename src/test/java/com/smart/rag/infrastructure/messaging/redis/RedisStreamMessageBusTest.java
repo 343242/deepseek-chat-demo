@@ -38,7 +38,7 @@ class RedisStreamMessageBusTest {
     @SuppressWarnings("unchecked")
     void setUp() {
         properties = new MessagingProperties("T_", Duration.ofSeconds(30), null, null,
-            new MessagingProperties.CircuitBreakerConfig(1, 30_000), null, null);
+            new MessagingProperties.CircuitBreakerConfig(1, 30_000), null, null, null);
         businessTemplate = mock(StringRedisTemplate.class);
         streamOps = mock(StreamOperations.class);
         when(businessTemplate.opsForStream()).thenReturn(streamOps);

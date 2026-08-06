@@ -55,7 +55,7 @@ public abstract class AbstractRedisStreamTest {
         redisProperties.setPort(port);
         redisProperties.setTimeout(Duration.ofSeconds(3));
 
-        properties = new MessagingProperties("SMART_RAG_", Duration.ofSeconds(30), null, null, null, null, null);
+        properties = new MessagingProperties("SMART_RAG_", Duration.ofSeconds(30), null, null, null, null, null, null);
         consumerConnections = new RedisStreamConsumerConnections(redisProperties, properties);
         keys = new RedisStreamKeys(properties);
         deadLetterWriter = new RedisStreamDeadLetterWriter(businessTemplate, properties);
@@ -124,6 +124,6 @@ public abstract class AbstractRedisStreamTest {
 
     /** 构造带自定义 redis 配置的 properties（启动期断言在 auto-config 层，测试直构不受限）。 */
     static MessagingProperties customProps(MessagingProperties.RedisStreamConfig config) {
-        return new MessagingProperties("SMART_RAG_", Duration.ofSeconds(30), null, null, null, null, config);
+        return new MessagingProperties("SMART_RAG_", Duration.ofSeconds(30), null, null, null, null, config, null);
     }
 }

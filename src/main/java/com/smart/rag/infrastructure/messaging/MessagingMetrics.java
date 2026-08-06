@@ -121,6 +121,13 @@ public class MessagingMetrics {
             "topic", topic, "group", group).increment(count);
     }
 
+    /** handle 未知异常（非项目可重试白名单）直接 DLQ（design §9，避免 bug 被重试放大）。 */
+    public void recordUnknownFailure(String topic, String group) {
+        if (registry == null) return;
+        registry.counter("messaging.retry.unknown.failure",
+            "topic", topic, "group", group).increment();
+    }
+
     /** XGROUP CREATE 失败（非 BUSYGROUP）。 */
     public void recordGroupCreateFailed(String topic, String group) {
         if (registry == null) return;

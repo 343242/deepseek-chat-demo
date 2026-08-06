@@ -104,11 +104,11 @@ class RedisStreamConsumerRunnerTest extends AbstractRedisStreamTest {
     }
 
     @Test
-    @DisplayName("可重试失败 → XACK + ZSET（P0-1 不留 PEL），不进 DLQ")
+    @DisplayName("可重试失败（TransientDataAccessException，chat-save 落库路径）→ XACK + ZSET（P0-1 不留 PEL）")
     void retryableFailure_acksAndQueuesRetry() {
         MessageHandler<String> handler = msg -> {
             handlerCalls.incrementAndGet();
-            throw new RuntimeException("transient db failure");
+            throw new org.springframework.dao.DataAccessResourceFailureException("db connection down");
         };
         startRunner(ConsumerConfig.builder().consumerMode(ConsumerMode.SIMPLE).concurrency(1).build(), handler);
         sendMessage("k2", "\"x\"");
@@ -122,6 +122,73 @@ class RedisStreamConsumerRunnerTest extends AbstractRedisStreamTest {
                 assertEquals(1, business().opsForZSet().size(keys().retryZsetKey(TOPIC, GROUP)));
             });
         assertEquals(0, business().opsForStream().size(keys().dlqKey(TOPIC, GROUP)));
+    }
+
+    @Test
+    @DisplayName("可重试白名单：ServiceException / RemoteException / MessageConsumeException → 转 ZSET")
+    void whitelistedExceptions_retry() throws Exception {
+        for (Throwable failure : java.util.List.of(
+                new com.smart.rag.infrastructure.exception.ServiceException(
+                    com.smart.rag.infrastructure.exception.errorcode.ServiceErrorCode.ETL_FAILED, "etl transient"),
+                new com.smart.rag.infrastructure.exception.RemoteException(
+                    com.smart.rag.infrastructure.exception.errorcode.RemoteErrorCode.VECTOR_DB_UNAVAILABLE, "vector db down"),
+                new com.smart.rag.infrastructure.exception.MessageConsumeException("consume failed", null))) {
+            flushAll();
+            handlerCalls.set(0);
+            MessageHandler<String> handler = msg -> {
+                handlerCalls.incrementAndGet();
+                throw (RuntimeException) failure;
+            };
+            startRunner(ConsumerConfig.builder().consumerMode(ConsumerMode.SIMPLE).concurrency(1).build(), handler);
+            sendMessage("w-" + failure.getClass().getSimpleName(), "\"x\"");
+            await().atMost(15, java.util.concurrent.TimeUnit.SECONDS)
+                .untilAsserted(() -> assertEquals(1, business().opsForZSet().size(keys().retryZsetKey(TOPIC, GROUP))));
+            assertEquals(0, business().opsForStream().size(keys().dlqKey(TOPIC, GROUP)),
+                failure.getClass().getSimpleName() + " 不应进 DLQ");
+            await().atMost(5, java.util.concurrent.TimeUnit.SECONDS)
+                .untilAsserted(() -> assertEquals(0, pendingCount()));
+            runner.stop();
+            runner = null;
+        }
+    }
+
+    @Test
+    @DisplayName("非重试：ClientException（A 类消息内容坏）→ 直接 DLQ，不进 ZSET")
+    void clientException_goesToDlq() {
+        MessageHandler<String> handler = msg -> {
+            handlerCalls.incrementAndGet();
+            throw new com.smart.rag.infrastructure.exception.ClientException(
+                com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode.USAGE_PARAM_MISSING, "bad usage record");
+        };
+        startRunner(ConsumerConfig.builder().consumerMode(ConsumerMode.SIMPLE).concurrency(1).build(), handler);
+        sendMessage("k-client", "\"x\"");
+
+        await().atMost(15, java.util.concurrent.TimeUnit.SECONDS).untilAsserted(() -> {
+            assertEquals(1, business().opsForStream().size(keys().dlqKey(TOPIC, GROUP)));
+            assertEquals(0, business().opsForZSet().size(keys().retryZsetKey(TOPIC, GROUP)));
+        });
+        List<MapRecord<String, Object, Object>> dlq = business().opsForStream()
+            .range(keys().dlqKey(TOPIC, GROUP), Range.unbounded());
+        assertEquals("CLIENT_ERROR", dlq.getFirst().getValue().get("reason"));
+    }
+
+    @Test
+    @DisplayName("未知异常（IllegalStateException，白名单外）→ 直接 DLQ + 告警，不进重试循环")
+    void unknownException_goesToDlq() {
+        MessageHandler<String> handler = msg -> {
+            handlerCalls.incrementAndGet();
+            throw new IllegalStateException("bug: unclassified state");
+        };
+        startRunner(ConsumerConfig.builder().consumerMode(ConsumerMode.SIMPLE).concurrency(1).build(), handler);
+        sendMessage("k-unknown", "\"x\"");
+
+        await().atMost(15, java.util.concurrent.TimeUnit.SECONDS).untilAsserted(() -> {
+            assertEquals(1, business().opsForStream().size(keys().dlqKey(TOPIC, GROUP)));
+            assertEquals(0, business().opsForZSet().size(keys().retryZsetKey(TOPIC, GROUP)));
+        });
+        List<MapRecord<String, Object, Object>> dlq = business().opsForStream()
+            .range(keys().dlqKey(TOPIC, GROUP), Range.unbounded());
+        assertEquals("UNKNOWN", dlq.getFirst().getValue().get("reason"));
     }
 
     @Test

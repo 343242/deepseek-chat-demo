@@ -1,6 +1,12 @@
 package com.smart.rag.infrastructure.messaging.redis;
 
+import com.smart.rag.infrastructure.exception.BusinessException;
+import com.smart.rag.infrastructure.exception.ClientException;
+import com.smart.rag.infrastructure.exception.MessageConsumeException;
+import com.smart.rag.infrastructure.exception.MessagingException;
 import com.smart.rag.infrastructure.exception.PermanentConsumeException;
+import com.smart.rag.infrastructure.exception.RemoteException;
+import com.smart.rag.infrastructure.exception.ServiceException;
 import com.smart.rag.infrastructure.messaging.ConsumerConfig;
 import com.smart.rag.infrastructure.messaging.ConsumerMode;
 import com.smart.rag.infrastructure.messaging.MessageEnvelope;
@@ -286,10 +292,18 @@ public class RedisStreamConsumerRunner<T> {
     // ==================== Handle ====================
 
     /**
-     * 消息处理主路径（P0-1 统一 XACK 语义）：
-     * 成功 → XACK；{@link PermanentConsumeException} → XACK + DLQ；其它异常（业务可重试）→
-     * XACK + 转 ZSET 延迟队列（RetrySweeper）。未知异常与既有语义一致视为可重试
-     * （有界：maxAttempts 后进 DLQ，避免 bug 被无限放大）。
+     * 消息处理主路径（P0-1 统一 XACK 语义），异常分类复用项目异常体系
+     * （{@code infrastructure/exception/}，A/B/C 类 + Messaging 系）：
+     * <ul>
+     *   <li>{@link PermanentConsumeException}（400003）→ XACK + DLQ（消息本身不可处理）；</li>
+     *   <li><b>可重试白名单</b>（业务瞬态）→ XACK + 转 ZSET 延迟队列（RetrySweeper）：
+     *       {@link RemoteException}（C 类第三方服务瞬态）、{@link ServiceException}（B 类服务端错误）、
+     *       {@link MessageConsumeException}（400002 消费处理失败）、其它 {@link MessagingException}
+     *       （传输层）、Spring {@code TransientDataAccessException}（DB 连接/锁等基础设施瞬态）；</li>
+     *   <li><b>非重试 → 直接 DLQ</b>：{@link ClientException}（A 类——消息内容触发客户端错误，
+     *       重试无意义）、legacy {@link BusinessException}、以及<b>未知异常</b>
+     *       （白名单之外——NPE/非法状态/非瞬态数据错误等，design R2：避免 bug 被重试循环放大）。</li>
+     * </ul>
      */
     void handle(MapRecord<String, ?, ?> record) {
         String msgId = record.getId().getValue();
@@ -306,18 +320,61 @@ public class RedisStreamConsumerRunner<T> {
             metrics.recordConsumeFailure(topic, group, modeName());
             log.error("Permanent consume error, forwarding to DLQ: topic={}, group={}, msgId={}",
                 topic, group, msgId, e);
-            if (deadLetterWriter.sendToDeadLetter(keys.dlqKey(topic, group), topic, group,
-                RedisStreamFields.toStringMap(fields), "PERMANENT")) {
-                ack(record.getId());
-                metrics.recordDeadLetter(topic, group);
-            }
-            // DLQ XADD 失败：不 XACK——消息留 PEL，PelRecoverySweeper 兜底（自治，不抛业务异常）
+            sendToDlq(fields, msgId, "PERMANENT");
         } catch (Exception e) {
             metrics.recordConsumeFailure(topic, group, modeName());
-            retrySweeper.routeToRetry(this, record, e);
+            if (isRetryable(e)) {
+                retrySweeper.routeToRetry(this, record, e);
+            } else {
+                String reason = dlqReason(e);
+                log.error("Non-retryable consume error ({}), forwarding to DLQ: topic={}, group={}, msgId={}",
+                    reason, topic, group, msgId, e);
+                sendToDlq(fields, msgId, reason);
+                if (isUnknown(e)) {
+                    metrics.recordUnknownFailure(topic, group);
+                }
+            }
         } finally {
             propagator.clear();
         }
+    }
+
+    /** DLQ 写入成功才 XACK（失败留 PEL，PelRecoverySweeper 兜底，自治不抛业务异常）。 */
+    private void sendToDlq(Map<?, ?> fields, String msgId, String reason) {
+        if (deadLetterWriter.sendToDeadLetter(keys.dlqKey(topic, group), topic, group,
+            RedisStreamFields.toStringMap(fields), reason)) {
+            ack(RecordId.of(msgId));
+            metrics.recordDeadLetter(topic, group);
+        }
+    }
+
+    /**
+     * 可重试白名单（项目异常体系 + Spring 基础设施瞬态）：
+     * RemoteException（C 类第三方瞬态）/ ServiceException（B 类服务端错误）/
+     * MessageConsumeException（400002）/ 其它 MessagingException（传输层）/
+     * TransientDataAccessException + DataAccessResourceFailureException
+     * （DB 连接/锁等基础设施故障——chat-save/usage 落库主故障路径；后者虽归 Spring
+     * NonTransient 类，但资源恢复后重试可成功，属可重试瞬态）。
+     */
+    private static boolean isRetryable(Throwable e) {
+        return e instanceof RemoteException
+            || e instanceof ServiceException
+            || e instanceof MessageConsumeException
+            || e instanceof MessagingException
+            || e instanceof org.springframework.dao.TransientDataAccessException
+            || e instanceof org.springframework.dao.DataAccessResourceFailureException;
+    }
+
+    /** DLQ reason：A 类/legacy 业务异常归为客户端错误，其余为未知。 */
+    private static String dlqReason(Throwable e) {
+        if (e instanceof ClientException || e instanceof BusinessException) {
+            return "CLIENT_ERROR";
+        }
+        return "UNKNOWN";
+    }
+
+    private static boolean isUnknown(Throwable e) {
+        return !(e instanceof ClientException) && !(e instanceof BusinessException);
     }
 
     /** XACK（消费连接池）。失败仅记日志：消息留 PEL，PelRecoverySweeper 兜底。 */

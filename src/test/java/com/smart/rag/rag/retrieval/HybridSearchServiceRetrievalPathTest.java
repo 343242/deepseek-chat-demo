@@ -121,15 +121,14 @@ class HybridSearchServiceRetrievalPathTest {
         void three_paths_all_used() {
             var props = defaultProperties();
             var stubA = new StubRetrievalPath("stub-a", RetrievalPath.RrfWeighting.SCORE_WEIGHTED,
-                    List.of(new ScoredDocument(doc("d1", "c1"), 1, 0.8)));
+                    List.of(new ScoredDocument(doc("d1", "c1"), 1, 0.8, "test-path")));
             var stubB = new StubRetrievalPath("stub-b", RetrievalPath.RrfWeighting.RANK_ONLY,
-                    List.of(new ScoredDocument(doc("d2", "c2"), 1, 0.0)));
+                    List.of(new ScoredDocument(doc("d2", "c2"), 1, 0.0, "test-path")));
             var stubC = new StubRetrievalPath("stub-c", RetrievalPath.RrfWeighting.SCORE_WEIGHTED,
                     List.of());
 
             ScopedTasks scopedTasks = new DefaultScopedTasks();
-            var service = new HybridSearchService(List.of(stubA, stubB, stubC),
-                    props, new QueryNormalizer(), scopedTasks);
+            var service = new HybridSearchService(List.of(stubA, stubB, stubC), props, new QueryNormalizer(), scopedTasks, null);
 
             List<Document> result = service.hybridSearch("test query", 1L, null);
 
@@ -144,13 +143,12 @@ class HybridSearchServiceRetrievalPathTest {
             var props = defaultProperties();
             var vectorPath = new StubRetrievalPath("vector-search",
                     RetrievalPath.RrfWeighting.SCORE_WEIGHTED,
-                    List.of(new ScoredDocument(doc("d1", "c1"), 1, 0.9)));
+                    List.of(new ScoredDocument(doc("d1", "c1"), 1, 0.9, "test-path")));
             var bm25Path = new StubRetrievalPath("bm25-search",
                     RetrievalPath.RrfWeighting.RANK_ONLY,
-                    List.of(new ScoredDocument(doc("d2", "c2"), 1, 0.0)));
+                    List.of(new ScoredDocument(doc("d2", "c2"), 1, 0.0, "test-path")));
 
-            var service = new HybridSearchService(List.of(vectorPath, bm25Path),
-                    props, new QueryNormalizer(), new DefaultScopedTasks());
+            var service = new HybridSearchService(List.of(vectorPath, bm25Path), props, new QueryNormalizer(), new DefaultScopedTasks(), null);
 
             List<Document> result = service.hybridSearch("test", 1L, null);
 
@@ -165,12 +163,11 @@ class HybridSearchServiceRetrievalPathTest {
             var vectorPath = new StubRetrievalPath("vector-search",
                     RetrievalPath.RrfWeighting.SCORE_WEIGHTED,
                     List.of(
-                            new ScoredDocument(doc("d1", "content1"), 1, 0.9),
-                            new ScoredDocument(doc("d2", "content2"), 2, 0.5)
+                            new ScoredDocument(doc("d1", "content1"), 1, 0.9, "test-path"),
+                            new ScoredDocument(doc("d2", "content2"), 2, 0.5, "test-path")
                     ));
 
-            var service = new HybridSearchService(List.of(vectorPath),
-                    props, new QueryNormalizer(), new DefaultScopedTasks());
+            var service = new HybridSearchService(List.of(vectorPath), props, new QueryNormalizer(), new DefaultScopedTasks(), null);
 
             List<Document> result = service.hybridSearch("test", 1L, null);
 
@@ -196,10 +193,9 @@ class HybridSearchServiceRetrievalPathTest {
             var d1 = doc("d1", "c1");
             // score=0.6, rank=1 → contribution = 0.6 * 1/(60+1) = 0.6/61
             var path = new StubRetrievalPath("weighted", RetrievalPath.RrfWeighting.SCORE_WEIGHTED,
-                    List.of(new ScoredDocument(d1, 1, 0.6)));
+                    List.of(new ScoredDocument(d1, 1, 0.6, "test-path")));
 
-            var service = new HybridSearchService(List.of(path),
-                    props, new QueryNormalizer(), new DefaultScopedTasks());
+            var service = new HybridSearchService(List.of(path), props, new QueryNormalizer(), new DefaultScopedTasks(), null);
 
             List<Document> result = service.hybridSearch("test", 1L, null);
 
@@ -216,10 +212,9 @@ class HybridSearchServiceRetrievalPathTest {
             var d1 = doc("d1", "c1");
             // rank=2 → contribution = 1/(60+2) = 1/62
             var path = new StubRetrievalPath("rank-only", RetrievalPath.RrfWeighting.RANK_ONLY,
-                    List.of(new ScoredDocument(d1, 2, 0.0)));
+                    List.of(new ScoredDocument(d1, 2, 0.0, "test-path")));
 
-            var service = new HybridSearchService(List.of(path),
-                    props, new QueryNormalizer(), new DefaultScopedTasks());
+            var service = new HybridSearchService(List.of(path), props, new QueryNormalizer(), new DefaultScopedTasks(), null);
 
             List<Document> result = service.hybridSearch("test", 1L, null);
 
@@ -240,16 +235,15 @@ class HybridSearchServiceRetrievalPathTest {
             var vectorPath = new StubRetrievalPath("vector-search",
                     RetrievalPath.RrfWeighting.SCORE_WEIGHTED,
                     List.of(
-                            new ScoredDocument(d1, 1, 0.5),
-                            new ScoredDocument(d2, 2, 0.3)
+                            new ScoredDocument(d1, 1, 0.5, "test-path"),
+                            new ScoredDocument(d2, 2, 0.3, "test-path")
                     ));
             // BM25: d2 at rank 1
             var bm25Path = new StubRetrievalPath("bm25-search",
                     RetrievalPath.RrfWeighting.RANK_ONLY,
-                    List.of(new ScoredDocument(d2, 1, 0.0)));
+                    List.of(new ScoredDocument(d2, 1, 0.0, "test-path")));
 
-            var service = new HybridSearchService(List.of(vectorPath, bm25Path),
-                    props, new QueryNormalizer(), new DefaultScopedTasks());
+            var service = new HybridSearchService(List.of(vectorPath, bm25Path), props, new QueryNormalizer(), new DefaultScopedTasks(), null);
 
             List<Document> result = service.hybridSearch("test", 1L, null);
 
@@ -277,8 +271,7 @@ class HybridSearchServiceRetrievalPathTest {
             var failPath = new FailingRetrievalPath("fail",
                     RetrievalPath.RrfWeighting.SCORE_WEIGHTED);
 
-            var service = new HybridSearchService(List.of(failPath),
-                    props, new QueryNormalizer(), new DefaultScopedTasks());
+            var service = new HybridSearchService(List.of(failPath), props, new QueryNormalizer(), new DefaultScopedTasks(), null);
 
             assertThatThrownBy(() -> service.hybridSearch("test", 1L, null))
                     .isInstanceOf(ServiceException.class)
@@ -291,12 +284,11 @@ class HybridSearchServiceRetrievalPathTest {
             var props = defaultProperties();
             var d1 = doc("d1", "c1");
             var okPath = new StubRetrievalPath("ok", RetrievalPath.RrfWeighting.SCORE_WEIGHTED,
-                    List.of(new ScoredDocument(d1, 1, 0.8)));
+                    List.of(new ScoredDocument(d1, 1, 0.8, "test-path")));
             var failPath = new FailingRetrievalPath("fail",
                     RetrievalPath.RrfWeighting.RANK_ONLY);
 
-            var service = new HybridSearchService(List.of(okPath, failPath),
-                    props, new QueryNormalizer(), new DefaultScopedTasks());
+            var service = new HybridSearchService(List.of(okPath, failPath), props, new QueryNormalizer(), new DefaultScopedTasks(), null);
 
             List<Document> result = service.hybridSearch("test", 1L, null);
 

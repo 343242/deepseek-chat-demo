@@ -96,7 +96,7 @@ class HybridDocumentRetrieverTest {
             paths.add(new Bm25RetrievalPath(vectorStoreMapper, new QueryNormalizer(), props));
         }
         HybridSearchService service = new HybridSearchService(paths, props, queryNormalizer,
-                new DefaultScopedTasks());
+                new DefaultScopedTasks(), null);
         return new HybridDocumentRetriever(service, userId, teamId);
     }
 

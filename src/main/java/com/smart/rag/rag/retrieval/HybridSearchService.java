@@ -180,6 +180,7 @@ public class HybridSearchService {
                                   Map<RetrievalPath, Subtask<List<ScoredDocument>>> tasks) {
         String traceId = mdcTraceId();
         String sessionId = mdcSessionId();
+        String mode = mdcMode();
         for (var entry : tasks.entrySet()) {
             RetrievalPath path = entry.getKey();
             Subtask<List<ScoredDocument>> task = entry.getValue();
@@ -214,7 +215,7 @@ public class HybridSearchService {
                     .toList());
 
             if (traceRecorder != null) {
-                traceRecorder.record(traceId, sessionId, userId, "PATH_RECALL", path.name(),
+                traceRecorder.record(traceId, sessionId, userId, "PATH_RECALL", mode, path.name(),
                         success, null, queryText, null,
                         docs.size(), null, documents);
             }
@@ -239,6 +240,11 @@ public class HybridSearchService {
     private static String mdcSessionId() {
         String sid = MDC.get("ragSessionId");
         return (sid != null && !sid.isBlank()) ? sid : "unknown";
+    }
+
+    private static String mdcMode() {
+        String m = MDC.get("ragMode");
+        return (m != null && !m.isBlank()) ? m : "UNKNOWN";
     }
 
     // ========================================================================

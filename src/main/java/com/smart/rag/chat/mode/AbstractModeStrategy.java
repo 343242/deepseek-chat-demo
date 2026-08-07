@@ -40,6 +40,8 @@ public abstract class AbstractModeStrategy implements ChatModeStrategy {
 
     /** MDC key：把 conversationId 注入 MDC，供 RAG trace 切面（Chat 路径）兜底取 sessionId */
     private static final String MDC_RAG_SESSION_ID = "ragSessionId";
+    /** MDC key：检索路径模式（注入 CHAT，供 trace 切面 + PATH_RECALL 兜底取 mode） */
+    private static final String MDC_RAG_MODE = "ragMode";
 
     protected final AdvisorInfrastructure infra;
     protected final ChatRequestSpecFactory requestSpecFactory;
@@ -71,10 +73,12 @@ public abstract class AbstractModeStrategy implements ChatModeStrategy {
     @Override
     public final StrategyExecuteResult execute(StrategyExecutionContext ctx) {
         MDC.put(MDC_RAG_SESSION_ID, ctx.conversationId());
+        MDC.put(MDC_RAG_MODE, "CHAT");
         try {
             return doExecute(ctx);
         } finally {
             MDC.remove(MDC_RAG_SESSION_ID);
+            MDC.remove(MDC_RAG_MODE);
         }
     }
 
@@ -118,10 +122,12 @@ public abstract class AbstractModeStrategy implements ChatModeStrategy {
     @Override
     public StreamResult executeStream(StrategyExecutionContext ctx) {
         MDC.put(MDC_RAG_SESSION_ID, ctx.conversationId());
+        MDC.put(MDC_RAG_MODE, "CHAT");
         try {
             return doExecuteStream(ctx);
         } finally {
             MDC.remove(MDC_RAG_SESSION_ID);
+            MDC.remove(MDC_RAG_MODE);
         }
     }
 

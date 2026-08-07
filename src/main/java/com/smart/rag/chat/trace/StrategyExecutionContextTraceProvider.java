@@ -23,6 +23,11 @@ public class StrategyExecutionContextTraceProvider implements TraceContextProvid
     }
 
     @Override
+    public String mode() {
+        return MODE_CHAT;
+    }
+
+    @Override
     public @Nullable String extractSessionId(Object arg) {
         return ((StrategyExecutionContext) arg).conversationId();
     }

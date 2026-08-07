@@ -64,6 +64,10 @@ public class TraceEvent {
     @TableField("documents")
     private @Nullable String documents;
 
+    /** 检索路径模式：CHAT / AGENT / UNKNOWN */
+    @TableField("mode")
+    private String mode;
+
     @TableField("created_at")
     private Instant createdAt;
 
@@ -74,7 +78,7 @@ public class TraceEvent {
                       @Nullable String toolName, boolean success, @Nullable Long durationMs,
                       @Nullable String inputSummary, @Nullable String outputSummary,
                       @Nullable Integer docCount, @Nullable Double topScore,
-                      @Nullable String documents, Instant createdAt) {
+                      @Nullable String documents, String mode, Instant createdAt) {
         this.traceId = traceId;
         this.sessionId = sessionId;
         this.userId = userId;
@@ -87,6 +91,7 @@ public class TraceEvent {
         this.docCount = docCount;
         this.topScore = topScore;
         this.documents = documents;
+        this.mode = mode;
         this.createdAt = createdAt;
     }
 
@@ -130,5 +135,6 @@ public class TraceEvent {
     public void setDocuments(@Nullable String documents) { this.documents = documents; }
 
     public Instant getCreatedAt() { return createdAt; }
-    public void setCreatedAt(Instant createdAt) { this.createdAt = createdAt; }
+    public String getMode() { return mode; }
+    public void setMode(String mode) { this.mode = mode; }
 }

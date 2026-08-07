@@ -6,7 +6,7 @@ import org.jspecify.annotations.Nullable;
  * 链路追踪上下文提取 SPI。
  * <p>
  * 定义在 infrastructure.trace，由持有业务类型知识的模块（agent / chat）实现并注入，
- * 让 {@link TraceAspect} 能从方法参数中提取 sessionId / userId，而无需 infrastructure
+ * 让 {@link TraceAspect} 能从方法参数中提取 sessionId / userId / mode，而无需 infrastructure
  * 反向依赖业务包（DIP）。
  * <p>
  * 参照 {@code UserPermissionProvider} 的同款 SPI 模式：接口在基础设施层，
@@ -34,4 +34,20 @@ public interface TraceContextProvider {
      * 无法提取时返回 null。
      */
     @Nullable Long extractUserId(Object arg);
+
+    /**
+     * 返回本 provider 对应的检索路径模式标识（写入 {@code trace_event.mode}）。
+     *
+     * @return 模式常量（{@link #MODE_AGENT} / {@link #MODE_CHAT}）
+     */
+    default String mode() {
+        return MODE_UNKNOWN;
+    }
+
+    /** Agent 路径模式常量 */
+    String MODE_AGENT = "AGENT";
+    /** Chat 路径模式常量 */
+    String MODE_CHAT = "CHAT";
+    /** 未知路径模式（无法判定时的兜底） */
+    String MODE_UNKNOWN = "UNKNOWN";
 }

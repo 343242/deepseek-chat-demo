@@ -1339,14 +1339,14 @@ line-height: 1.5;            /* 中文行距需大于西文 */
 
 ### 11.2 ModelSelector 模型选择器
 
-**契约**：`GET /api/models/detail` → `List<ModelVO>`，每项 `{ id, provider, model, capability, available }`：
+**契约**：`GET /api/models/detail` → `List<ModelVO>`，每项 `{ id, provider, model, capability, available }`（`chat/dto/ModelVO.java`）：
 - `id` — 候选唯一标识（请求 `/api/chat` 时传此值）
 - `provider` — 供应商 ID（`deepseek`/`zhipu`/`MiniMax` …），前端用它**分组**（无需再维护前缀映射表）
 - `model` — 原始模型名（发给 LLM API 的）
 - `capability` — `CHAT`/`EMBEDDING`/`RERANKING`
 - `available` — 是否可用（未被运行时禁用）
 
-> **能力可见性**：本端点对普通用户（`chat:send`）**强制只返 CHAT**（后端按用途分流，非 CHAT 需 `model:config` 权限）。普通用户的 ModelSelector 永远只看到对话模型，Embedding/Rerank 仅管理界面可见。旧的 `GET /api/models`（返回 `List<String>`）仍保留但仅返 CHAT id，无 provider 信息——新前端优先用 `/models/detail`。
+> **能力可见性**：本端点对普通用户（`chat:send`）**强制只返 CHAT**（后端按用途分流，非 CHAT 需 `model:config` 权限）。普通用户的 ModelSelector 永远只看到对话模型，Embedding/Rerank 仅管理界面可见。旧的 `GET /api/models`（返回 `List<String>` 仅 CHAT id）仍保留但无 provider 信息——新前端一律用 `/models/detail`。
 
 **用途**：聊天模式选择、会话创建、Agent 配置（均为 CHAT 语境）。
 
@@ -1381,9 +1381,9 @@ line-height: 1.5;            /* 中文行距需大于西文 */
 
 **契约**：
 - 发送：`POST /api/chat` / `POST /api/chat/stream`
-- 消息：`MessageVO { id, parentId, role, content, status, modelId?, thinkingEnabled?, tokenUsage?, durationMs?, createdAt, children[] }`
+- 消息：`MessageVO { id, parentId, role, content, status, modelId?, enableThinking?, tokenUsage?, durationMs?, createdAt, children[] }`
 - 流式片段：SSE `data:` 行（纯文本片段）+ 终止 `references` 事件
-- RAG 引用：`List<Reference> { refNumber, chunkId, documentId, fileName, page? }`
+- RAG 引用：`List<Reference> { refNumber, chunkId, documentId, fileName, page?, score, source?, content? }`
 - Agent 元数据：`agentMetadata: Map { intent?, confidence?, retrievalRounds?, agentDegraded?, degradedTo? }`
 - 降级：`fallback: FallbackMeta { requestedModel, fallback }`
 
@@ -1434,13 +1434,13 @@ line-height: 1.5;            /* 中文行距需大于西文 */
 
 ```
 ─── 引用来源 ───
-[1] report.pdf · 第3页      ▸  [展开片段]
-[2] manual.pdf              ▸  [展开片段]
+[1] report.pdf · 第3页   混合检索 0.87   ▸  [展开片段]
+[2] manual.pdf           向量检索 0.82   ▸  [展开片段]
 ```
 
-- 每条引用：序号（`--brand-600` 圆形）+ fileName + 可选页码 + 展开按钮
+- 每条引用：序号（`--brand-600` 圆形）+ fileName + 可选页码 + 来源 Tool（source，中文映射）+ 相关性得分（score）+ 展开按钮
 - 点击正文 `[1]` → 滚动到对应引用卡并高亮
-- ⚠️ 当前 Reference **不含 chunk 文本内容**（仅 fileName/page/chunkId/documentId），无法展示片段正文。展开按钮暂时禁用或显示"片段内容暂不可查看"，待后端补 chunk 查看端点（见后续阶段）。
+- "展开片段"：卡片内 `content` 是截断预览，点击展开按钮调 `GET /api/chunks/{chunkId}` 取全文 `ChunkDTO.content`（见 11.8）。source/score 为 null 时（agent 路径常见）隐藏对应行，仅保留文件名 + 页码
 
 #### 11.3.5 Agent 元数据条（agentMetadata）— Agent 模式
 
@@ -1505,9 +1505,11 @@ deepseek-v4-flash · ↑120 ↓80 · 1.5s · 2026-06-20 14:30
 
 ### 11.4 AgentTraceTimeline Agent 推理时间线 ⭐
 
-**契约**：⚠️ **v0.3.1 修正**——Agent 模式支持流式（与 SIMPLE/MULTI_TURN 统一），`agentMetadata` 随流式最终响应返回。完整事件流（6 种 AgentEventType）后端**持久化了但无 REST 端点暴露**。
+**契约**：⚠️ **v0.3.1 修正**——Agent 模式支持流式（与 SIMPLE/MULTI_TURN 统一），`agentMetadata` 随流式最终响应返回。
 
-> 因此本组件当前版本**在流式完成后，从最终响应的 agentMetadata 渲染汇总**；完整时间线（6 事件逐项回放）留作"后端补端点后启用"的占位规范。下面给出完整规范，待端点就绪即可实现。
+> **完整事件流（6 种 AgentEventType）后端已持久化（`agent_session_event` 表 + `AgentEventStore`），但目前仅暴露**管理员侧**端点：`GET /api/admin/agent-events?sessionId=...`（需 `trace:view` 权限）。面向**普通用户**的会话级事件历史端点（如 `GET /api/agent/sessions/{id}/events`）**尚未提供**，当前迭代**不开发**——本组件按"预留"处理。
+>
+> 因此本组件当前版本**在流式完成后，从最终响应的 agentMetadata 渲染汇总**；完整时间线（6 事件逐项回放）留作"后端补用户态端点后启用"的占位规范。下面给出完整规范，待端点就绪即可实现。
 
 📐 右侧抽屉 / 面板，宽 360px，从消息流右侧滑入。**触发**：流式生成完成后，点击消息底部的"查看推理"入口（11.3.5）。
 
@@ -1533,7 +1535,7 @@ deepseek-v4-flash · ↑120 ↓80 · 1.5s · 2026-06-20 14:30
 └─────────────────────────────┘
 ```
 
-**完整时间线视图（待端点）：** 按 AgentEventType 6 类（4.4.11）从上到下时间序展示，每项：
+**完整时间线视图（待用户态端点，当前不开发）：** 按 AgentEventType 6 类（4.4.11）从上到下时间序展示，每项：
 
 | 事件 | 展示内容（来自 payload） |
 |------|-------------------------|
@@ -1642,7 +1644,7 @@ deepseek-v4-flash · ↑120 ↓80 · 1.5s · 2026-06-20 14:30
 
 ### 11.8 ReferenceCard 引用来源卡
 
-**契约**：`Reference { refNumber, chunkId, documentId, fileName, page? }`
+**契约**：`Reference { refNumber, chunkId, documentId, fileName, page?, score, source?, content? }`（`mode/Reference.java`，agent + chat 双路径统一）
 
 📐 用于 ChatMessageBubble 的引用来源区（11.3.4）和 AgentTraceTimeline 的检索结果展示。
 
@@ -1650,15 +1652,21 @@ deepseek-v4-flash · ↑120 ↓80 · 1.5s · 2026-06-20 14:30
 ```
 ┌─────────────────────────────────┐
 │ [1]  report.pdf · 第3页          │  ← 序号圆 + 文件名 + 页码
-│ 来自: hybridSearch · 0.87        │  ← 来源工具 + 相似度（RetrievedDocument.score）
-│ "片段文本预览..."                │  ← ⚠️ 当前不可用（无端点）
-│                          [跳转]  │  ← 跳转文档详情（如可）
+│ 来自: hybridSearch · 0.87        │  ← source（来源 Tool）+ score（相关性）
+│ "片段文本预览..."                │  ← content（截断的 chunk 内容，可空）
+│                          [跳转]  │  ← 跳转文档详情
 └─────────────────────────────────┘
 ```
 
-- ⚠️ Reference 当前**无 score / source / 片段文本**，仅有 refNumber/chunkId/documentId/fileName/page。RetrievedDocument（Agent 内部）才含 score/source/content。
-- 当前版本：ReferenceCard 只展示 fileName + page，不展示分数和片段（标注"待后端补字段"）
-- Agent 模式（若有 RetrievedDocument）：展示 score 进度条 + source Badge + 片段预览（折叠）
+- 字段说明（全部来自 `Reference`）：
+  - `refNumber` — 稳定编号 [n]，与正文脚注一致
+  - `chunkId` — vector_store UUID，点击"查看完整片段"调 `GET /api/chunks/{chunkId}` 取全量 content（见下）
+  - `documentId` / `fileName` / `page` — 文档定位
+  - `score` — 相关性得分（向量相似度 / RRF 融合分 / rerank 分，取决于检索路径）。前端据此排序、高亮、置信度展示
+  - `source` — 检索来源 Tool 名（如 `hybridSearch` / `vectorSearch`），前端映射为中文（混合检索 / 向量检索）。**可空**——agent 路径未参与打分时为 null
+  - `content` — 截断的 chunk 内容预览，**可空**（agent 路径在注入 prompt 后未单独保留）
+- **完整片段查看**：卡内 content 是截断预览，点击"查看完整片段"调 `GET /api/chunks/{chunkId}` → `ChunkDTO { id, content, documentId, fileName, metadata }` 取全文展开（归属校验复用文档权限逻辑）
+- source 为 null 时隐藏"来自"行；content 为 null 时隐藏预览区仅保留文件名行（agent 路径常见）
 
 ### 11.9 ApprovalCard 审批卡
 
@@ -2260,11 +2268,11 @@ module.exports = {
 
 | 编号 | 事项 | 影响 | 后续动作 |
 |------|------|------|---------|
-| T1 | `team:manage` 权限被代码引用但不在 8 权限种子内 | 团队额度设置入口的权限判断 | 与后端确认是否补种子 / 改用 ADMIN 角色 |
-| T2 | 文档无 chunk 内容查看端点 | 11.5 文档卡 / 11.8 ReferenceCard 无法展示片段 | 后端补 `GET /api/documents/{id}/chunks` 或 `GET /api/chunks/{chunkId}` |
-| T3 | Agent 事件历史无 REST 端点 | 11.4 AgentTraceTimeline 完整视图无法实现 | 后端补 `GET /api/agent/sessions/{id}/events` |
-| T4 | Reference 不含 score/source/片段 | 11.8 引用卡信息不全 | 后端在 Reference 或单独端点补字段 |
-| T5 | `/api/models` 仅返回 ID 字符串列表 | 11.2 ModelSelector 需前端维护 provider 映射表 | 后端返回 ProviderModelInfo（已有实体） |
+| T1 | ~~`team:manage` 权限被代码引用但不在 8 权限种子内~~ | 团队额度设置入口的权限判断 | ✅ 已解决：`team:manage` 经 `V9__add_team.sql:88` 种子化并绑定 ADMIN（另有 `team:view` 供查看）。前端按"是否拥有该权限码"判断即可 |
+| T2 | ~~文档无 chunk 内容查看端点~~ | 11.5 文档卡 / 11.8 ReferenceCard 展示片段 | ✅ 已实现：`GET /api/documents/{id}/chunks`（分页）+ `GET /api/chunks/{chunkId}`（`ChunkController`，返回 `ChunkDTO { id, content, documentId, fileName, metadata }`，归属校验复用文档权限逻辑） |
+| T3 | Agent 事件历史 REST 端点（用户态） | 11.4 AgentTraceTimeline 完整 6 事件视图 | ⏸️ 当前不开发（预留）：后端已持久化（`agent_session_event` + `AgentEventStore`），但仅暴露**管理员侧** `GET /api/admin/agent-events`（需 `trace:view`）。面向普通用户的会话级端点尚未提供。当前用 `agentMetadata` 汇总视图兜底 |
+| T4 | ~~Reference 不含 score/source/片段~~ | 11.8 引用卡信息不全 | ✅ 已实现：`mode/Reference.java` 含 8 字段（refNumber, chunkId, documentId, fileName, page, **score**, **source**, **content**），agent + chat 双路径统一。score/source/content 可空（agent 路径常见） |
+| T5 | ~~`/api/models` 仅返回 ID 字符串列表~~ | 11.2 ModelSelector 需前端维护 provider 映射表 | ✅ 已实现：`GET /api/models/detail` 返回 `List<ModelVO>`（id/provider/model/capability/available）。新前端一律用 `/models/detail`，旧的 `/api/models`（仅 CHAT id 字符串）不再用 |
 | T6 | 登录响应不返回 token（纯 Cookie） | 跨域部署时 Cookie SameSite=Lax 可能失效 | 后端评估加 token-in-body 开关（见阶段一调研） |
 | T7 | Cookie SameSite 硬编码 Lax | 跨域部署受影响 | 后端参数化 SameSite（`CookieTokenManager.java:65,74`） |
 | T8 | Cookie Secure 无 profile 设置 | HTTPS 生产必须手动设 | 后端在 prod profile 设 `app.jwt.cookie-secure=true` |

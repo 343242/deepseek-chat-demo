@@ -55,6 +55,7 @@ public class HybridSearchTool implements RagTool {
             if (workspace.getSessionId() != null) {
                 MDC.put("ragSessionId", workspace.getSessionId());
             }
+            MDC.put("ragMode", "AGENT");
 
             List<Document> docs = hybridSearchService.hybridSearch(
                 queryText, workspace.getUserId(), workspace.getTeamId());

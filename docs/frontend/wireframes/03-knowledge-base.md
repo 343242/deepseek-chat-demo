@@ -251,7 +251,8 @@
 
 点击文档行或"查看详情" → 右侧滑入抽屉（400px 宽）。
 
-⚠️ **无内容预览、无下载**（后端无对应端点，DocumentDTO 仅元数据）。
+✅ **可查看分块内容**：`GET /api/documents/{id}/chunks`（分页）返回 `ChunkDTO { id, content, documentId, fileName, metadata }`，content 为片段全文。
+⚠️ **无原文件预览、无下载**（后端无对应端点，DocumentDTO 仅元数据；如需原文件预览/下载需后端补端点）。
 
 ### 6.1 抽屉结构
 
@@ -269,6 +270,11 @@
 │ 文档组: doc-group-abc123                │  ← documentGroupId
 │ 创建时间: 2026-06-20 14:30              │
 │ 上传者: alice                           │  ← 团队文档显示
+│                                        │
+│ ── 分块内容 ──（GET /{id}/chunks，分页） │  ← 仅 COMPLETED 可看
+│ [1] "片段1全文..."                       │  ← ChunkDTO.content
+│ [2] "片段2全文..."                       │
+│                    < 1 2 3 > 每页 20 ▾  │
 │                                        │
 │ ── 错误信息 ──（仅失败状态）              │
 │ ⚠️ 解析失败：PDF 加密，无法读取           │  ← errorMessage
@@ -416,8 +422,8 @@ Toast error：
 
 | 编号 | 事项 | 影响 |
 |------|------|------|
-| KB-1 | 文档列表搜索是否做？ | 后端不支持服务端搜索。当前方案不做搜索框（避免误导）。可推动后端加 keyword 参数，或前端过滤已加载列表（标注限制） |
-| KB-2 | 文档内容预览 | 后端无端点。当前详情页只有元数据。若产品需要预览，需后端补 T2 端点（chunk 内容）或文件预览端点 |
+| KB-1 | ~~文档列表搜索是否做？~~ | 已知限制：`GET /api/documents`（及 `?teamId=`）仅 page/size，无 keyword/status/date。当前方案不做服务端搜索框（避免误导），可选前端过滤已加载列表（标注"仅已加载"）。如需服务端搜索，需后端在 DocumentController 加 keyword 参数 |
+| KB-2 | ~~文档内容预览~~ | ✅ 分块内容可看：`GET /api/documents/{id}/chunks` + `GET /api/chunks/{chunkId}` 返回 `ChunkDTO.content`（片段全文）。详情抽屉展示分块列表（§6.1）。⚠️ 原文件全文预览/渲染仍无端点（仅有 chunk 文本，非原文件排版） |
 | KB-3 | 文档下载 | 后端无端点。当前不画下载按钮。若需要，后端补下载端点 |
 | KB-4 | 批量操作 | 当前方案支持多选（checkbox）。批量删除/批量重试是否需要？后端 `/upload/batch` 支持批量上传，但删除/重试是单个端点，批量需前端循环 |
 | KB-5 | 拖拽上传的 dropzone 范围 | 当前方案是整个内容区支持拖拽。也可限定为顶部 dropzone 区域。需定 |

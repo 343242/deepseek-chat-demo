@@ -62,6 +62,7 @@ public class TraceRecorder {
      * @param sessionId     会话标识（conversationId）
      * @param userId        用户 ID
      * @param stepType      步骤类型（见 {@code TraceEvent} javadoc）
+     * @param mode          检索路径模式（AGENT / CHAT / UNKNOWN，见 {@code TraceContextProvider} 常量）
      * @param toolName      工具/服务名（可空）
      * @param success       是否成功
      * @param durationMs    耗时 ms（可空）
@@ -72,7 +73,7 @@ public class TraceRecorder {
      * @param documents     文档明细（List of metadata map，可空；内部序列化为 JSONB）
      */
     public void record(@Nullable String traceId, String sessionId, Long userId, String stepType,
-                       @Nullable String toolName, boolean success, @Nullable Long durationMs,
+                       String mode, @Nullable String toolName, boolean success, @Nullable Long durationMs,
                        @Nullable String inputSummary, @Nullable String outputSummary,
                        @Nullable Integer docCount, @Nullable Double topScore,
                        @Nullable List<Map<String, Object>> documents) {
@@ -90,6 +91,7 @@ public class TraceRecorder {
                 docCount,
                 topScore,
                 documentsJson,
+                mode,
                 Instant.now()
         );
         executor.submit(() -> {

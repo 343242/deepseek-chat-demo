@@ -65,26 +65,28 @@
 | **普通用户**（USER） | 登录且 roles 不含 ADMIN | `/app/chat` | 前台全部模块 |
 | **管理员**（ADMIN） | 登录且 roles 含 `ADMIN` | `/admin`（首次）/ 上次后台页 | 前台全部 + 后台全部 |
 
-> 角色判定基于 `/api/auth/me` 返回的 `roles: List<String>`（见 DESIGN-SYSTEM 附录数据契约）。前端缓存到全局状态，权限守卫读取。
+> 角色判定基于 `/api/auth/me` 返回的 `UserInfo { roles, permissions }`（见 DESIGN-SYSTEM 附录数据契约）。`permissions: List<String>` 是权限码列表，前端缓存到全局状态供权限守卫直接读取，无需维护"角色→权限"映射表。
 
 ### 2.2 权限码与模块映射
 
-后端 8 个权限种子码（+ 1 个未种子化的 `team:manage`）与前端模块的对应关系：
+后端权限码（V3 种子 8 个 + V9/V12/V22 追加）与前端模块的对应关系：
 
 | 权限码 | 控制的模块 | 默认授予角色 | 来源 Controller |
 |--------|-----------|-------------|----------------|
 | `chat:send` | 聊天工作台 | USER / ADMIN | ChatController |
 | `chat:stream` | SSE 流式聊天 | USER / ADMIN | ChatController |
 | `conversation:manage` | 会话管理 | USER / ADMIN | ConversationController |
-| `usage:view` | 用量统计 | ADMIN | UsageController |
+| `usage:view` | 用量统计 | USER / ADMIN | UsageController |
 | `model:config` | 模型参数配置 | ADMIN | ModelParamsController |
 | `prompt:manage` | 系统提示词 | ADMIN | PromptController |
 | `user:manage` | 用户管理 | ADMIN | UserController |
 | `role:manage` | 角色权限管理 | ADMIN | RoleController |
-| `evaluation:manage` | 评估系统 | （非默认种子，需配置） | EvaluationRunController / DatasetController |
-| `team:manage` ⚠️ | 团队创建者额度设置 | （非种子，待后端确认） | TeamController.setCreatorQuota |
+| `evaluation:manage` | 评估系统 | ADMIN | EvaluationRunController / DatasetController（`@Profile("evaluation")` 门控） |
+| `team:manage` | 团队创建者额度设置 | ADMIN | TeamController.setCreatorQuota |
+| `team:view` | 查看团队信息 | ADMIN | TeamController |
+| `trace:view` | Agent 事件/调用链查看（管理员侧） | ADMIN | AdminTraceController |
 
-> ⚠️ `team:manage` 和 `evaluation:manage` 不在 V3 权限种子内（详见 DESIGN-SYSTEM 附录 15.5 T1）。前端按"是否拥有该权限码"判断，不写死角色名。
+> 权限来源：V3 种子 8 个核心码 + V9 `team:view`/`team:manage` + V12 `evaluation:manage` + V22 `trace:view`，均已绑定 ADMIN（详见 `resources/db/migration/`）。前端按"是否拥有该权限码"判断，不写死角色名。
 
 ### 2.3 角色 × 模块 × 权限矩阵 🔒
 
@@ -108,7 +110,7 @@
 | 系统提示词 | 后台 | `prompt:manage` | ❌ | ❌ | ✅ |
 | 用户管理 | 后台 | `user:manage` | ❌ | ❌ | ✅ |
 | 角色权限 | 后台 | `role:manage` | ❌ | ❌ | ✅ |
-| 评估 | 后台 | `evaluation:manage` + feature flag | ❌ | ❌ | ⚠️ 条件 |
+| 评估 | 后台 | `evaluation:manage` + `evaluation` profile | ❌ | ❌ | ✅（profile 开启时） |
 | 后台入口（顶栏切换） | — | 任一**后台管理**权限（`prompt:manage`/`user:manage`/`role:manage`/`evaluation:manage`） | ❌ | ❌（隐藏切换钮） | ✅ |
 
 > ⚠️ 关于"模型配置"的预留：矩阵虽标 USER ❌，但**路由 `/app/models` 与组件代码保留**，PermissionGuard 守卫照常工作。这不是"删除功能"，而是"默认仅 ADMIN"。未来 IA-8 落地 + 给 USER 角色授予 `model:config` 后，前端零改动即对 USER 开放，届时只需在主导航加回该项。
@@ -247,9 +249,9 @@
 | 2 | 系统提示词 | `/admin/prompts` | `ScrollText` | `prompt:manage` | |
 | 3 | 用户管理 | `/admin/users` | `UserCog` | `user:manage` | |
 | 4 | 角色权限 | `/admin/roles` | `ShieldCheck` | `role:manage` | |
-| 5 | 评估 | `/admin/evaluation` | `FlaskConical` | `evaluation:manage` | **+ eval feature flag** |
+| 5 | 评估 | `/admin/evaluation` | `FlaskConical` | `evaluation:manage` | **+ `evaluation` profile 开启** |
 
-> **当前状态（v0.3.0）**：后台侧栏只含系统级管理（提示词/用户/角色/评估）。用量统计在 v0.2.0 移至前台（`/app/usage`），v0.3.0 保持；模型配置在 v0.2.0 曾移至前台，v0.3.0 收回 USER 访问权（路由 `/app/models` 保留仅 ADMIN，但不在前台主导航暴露，ADMIN 从后台访问）。每个后台项独立权限守卫：管理员若某项权限被收回，该项隐藏。评估项双重门禁——`evaluation:manage` 权限 AND eval feature flag 开启（flag 来源见 8.1）。
+> **当前状态（v0.3.0）**：后台侧栏只含系统级管理（提示词/用户/角色/评估）。用量统计在 v0.2.0 移至前台（`/app/usage`），v0.3.0 保持；模型配置在 v0.2.0 曾移至前台，v0.3.0 收回 USER 访问权（路由 `/app/models` 保留仅 ADMIN，但不在前台主导航暴露，ADMIN 从后台访问）。每个后台项独立权限守卫：管理员若某项权限被收回，该项隐藏。评估项受 `@Profile("evaluation")` 门控——默认 profile 不激活评估控制器，需 `SPRING_PROFILES_ACTIVE` 含 `evaluation` 才生效；非评估环境调用会得到 404。前端 feature flag 判定见 8.1。
 
 ### 3.3 认证布局（AuthShell）
 
@@ -371,7 +373,7 @@
    ├─ chat:send         ❌（USER 也可能被收回）→ 403
    ├─ model:config 等   ❌ → /app/chat（静默回前台）或 403
    └─ evaluation:manage ❌ → 隐藏入口 + 直敲则 403
-3. eval feature flag?   ❌（评估专用）→ 403
+3. eval profile 开启?   ❌（评估专用，见 8.1）→ 403/404
 4. 全通过               → 渲染页面
 ```
 
@@ -454,15 +456,15 @@
 | prop | 类型 | 说明 |
 |------|------|------|
 | `require` | `string \| string[]` | 权限码，数组表示"满足任一" |
-| `feature` | `string` | feature flag 名（目前仅 `evaluation`） |
+| `feature` | `string` | feature flag 名（目前仅 `evaluation`，来源见 8.1） |
 | `fallback` | `ReactNode` | 无权限时的替代渲染（默认 `null` 即隐藏） |
 | `redirect` | `string` | 路由级用，无权限重定向目标（默认 `/app/chat`） |
 | `children` | `ReactNode` | 受保护内容 |
 
 **判定逻辑**：
 
-1. `require` 权限码是否在当前用户权限列表中？（`/api/auth/me` 返回的 roles 对应权限，前端缓存）
-2. 若有 `feature` prop，该 feature flag 是否开启？
+1. `require` 权限码是否在当前用户 `permissions` 列表中？（`/api/auth/me` 返回 `permissions: List<String>`，前端缓存——无需前端维护"角色→权限"映射表）
+2. 若有 `feature` prop，该 feature flag 是否开启？（见 8.1）
 3. 全通过渲染 children，否则渲染 fallback / 重定向
 
 > ⚠️ 前端权限守卫仅作**体验优化**（隐藏入口、防误访问），**不替代后端 `@PreAuthorize`**。后端是真正的安全边界，前端被绕过不能造成数据泄露。
@@ -517,7 +519,7 @@
 | 系统提示词 | `/admin/prompts` | `prompt:manage` | 列表 + 大文本编辑 | PromptController |
 | 用户管理 | `/admin/users` | `user:manage` | 列表 + 抽屉详情 | UserController |
 | 角色权限 | `/admin/roles` | `role:manage` | 列表 + 权限矩阵 | RoleController |
-| 评估 | `/admin/evaluation` | `evaluation:manage` + flag | 工作台（运行/数据集） | EvaluationRun/DatasetController |
+| 评估 | `/admin/evaluation` | `evaluation:manage` + `evaluation` profile | 工作台（运行/数据集） | EvaluationRun/DatasetController |
 
 ### 6.4 团队详情 Tab 结构
 
@@ -603,14 +605,15 @@
 
 | 编号 | 事项 | 影响 | 后续动作 |
 |------|------|------|---------|
-| IA-1 | **评估 feature flag 来源** | 评估导航项的显示需知道 eval profile 是否开启 | 建议后端在 `/api/auth/me` 响应增加 `features: { evaluation: boolean }` 字段，或新增 `/api/features` 端点。当前前端无法可靠判断，只能按权限码显示（可能点了 404） |
+| IA-1 | **评估 feature flag 来源** | 评估导航项的显示需知道 eval profile 是否开启 | ⏸️ 当前不开发（预留）：评估控制器受 `@Profile("evaluation")` 门控，`/api/auth/me` 暂无 `features.evaluation` 字段。当前前端只能按 `evaluation:manage` 权限码显示入口，非评估环境点击会得到 404（控制器未激活）。如需可靠判定，建议后端在 `/api/auth/me` 响应增加 `features: { evaluation: boolean }` 字段或新增 `/api/features` 端点——列为后续，当前迭代不动 |
 | IA-2 | **系统状态指示器** | `/actuator/health` 已 `permitAll`，可做顶栏轻量健康指示 | 评估是否在 TopBar 右侧加一个小绿点/红点指示后端健康。需权衡：频繁轮询的开销 vs 价值。暂不实现，列入后续 |
 | IA-3 | **团队文档与团队详情的团队上下文同步** | 知识库 `/app/knowledge/team/:teamId` 与团队详情 `/app/teams/:teamId` 文档 Tab 共享数据，切换时需保持团队上下文 | 用全局状态（Zustand）记录"当前活跃团队"，两处读写同一份 |
 | IA-4 | **前后台切换的记忆粒度** | 侧栏收起状态、最近访问页是否前台后台各自独立 | 已定：localStorage key 区分 `sidebar.app.*` / `sidebar.admin.*`，最近访问页区分 `last.app` / `last.admin`，各自独立 |
-| IA-5 | **权限码前端获取方式** | `/api/auth/me` 返回 `roles: List<String>`（角色名），但权限守卫需要权限码（`chat:send` 等） | 需后端在 `/api/auth/me` 增加 `permissions: List<String>` 字段，或前端维护"角色→权限"映射表。前者更可靠（权限可动态调整），建议推动后端 |
+| IA-5 | ~~**权限码前端获取方式**~~ | ~~`/api/auth/me` 返回 `roles: List<String>`（角色名），但权限守卫需要权限码~~ | ✅ 已解决：`/api/auth/me` 返回的 `UserInfo` 已含 `permissions: List<String>`（`LoginResponse.java:30`），权限守卫直接读权限码，无需前端维护"角色→权限"映射表。注：登录/注册/刷新响应中 permissions 可能为空（异步预热 best-effort），前端拿响应后应立即调 `/me` 兜底拉取（`/me` 保证返回非空当前权限快照） |
 | IA-6 | **401 自动刷新的并发控制** | 多个请求同时 401 时，refresh 应只发一次，其余排队等刷新结果 | 前端实现：refresh 请求做单例锁，并发 401 共享同一 Promise |
 | IA-7 | **会话路由与会话列表状态** | `/app/chat/:conversationId` 直接打开会话，需确保侧栏会话列表也高亮该项并滚动可见 | 前端：路由参数变化时同步列表 active 态 + scrollIntoView |
-| IA-8 | **ModelParams 缺 userId 维度（个人化阻塞，v0.3.0 已降级）** | `model:config` 在 v0.3.0 收回 USER 访问权，此项不再阻塞当前迭代。但未来若要重新开放给 USER（个人化模型参数），仍需后端给 `ModelParams` 表加 `user_id` 列（按 `(user_id, model_id)` 唯一索引），API 层注入当前用户 id 过滤。前端 `/app/models` 路由与组件已预留，改造完成后给 USER 授 `model:config` 即可零改动开放 | 后端给 `ModelParams` 表加 `user_id` 列；前端已预留接口，无需改动 |
+| IA-8 | **ModelParams 缺 userId 维度（个人化阻塞，v0.3.0 已降级）** | `model:config` 在 v0.3.0 收回 USER 访问权，此项不再阻塞当前迭代。但未来若要重新开放给 USER（个人化模型参数），仍需后端给 `ModelParams` 表加 `user_id` 列（按 `(user_id, model_id)` 唯一索引），API 层注入当前用户 id 过滤。前端 `/app/models` 路由与组件已预留，改造完成后给 USER 授 `model:config` 即可零改动开放 | 后端给 `ModelParams` 表加 `user_id` 列（当前 `V1__init_schema.sql:66-75` 的 `model_params` 表按 `model_id` 全局唯一，无 userId）；前端已预留接口，无需改动 |
+| IA-9 | **会话列表服务端搜索缺失** | `GET /api/conversations` 仅支持 page/size/status，无 keyword 参数 | 已知限制：前端搜索框只能客户端过滤已加载列表（标注"仅已加载"）。会话极多时只能搜已加载部分。如需服务端搜索，需后端在 `ConversationServiceImpl.list` 加 keyword 参数 |
 
 ---
 

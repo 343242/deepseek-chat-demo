@@ -20,6 +20,11 @@ public class WorkspaceTraceContextProvider implements TraceContextProvider {
     }
 
     @Override
+    public String mode() {
+        return MODE_AGENT;
+    }
+
+    @Override
     public @Nullable String extractSessionId(Object arg) {
         return ((ToolWorkspace) arg).getSessionId();
     }

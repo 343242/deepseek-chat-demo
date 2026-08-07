@@ -21,7 +21,7 @@ public record TraceEventVO(
     String sessionId,
     Long userId,
     String stepType,
-    String toolName,
+    String mode,
     boolean success,
     Long durationMs,
     String inputSummary,
@@ -39,7 +39,7 @@ public record TraceEventVO(
     public static TraceEventVO of(TraceEvent e, List<Map<String, Object>> sanitizedDocs) {
         return new TraceEventVO(
             e.getId(), e.getTraceId(), e.getSessionId(), e.getUserId(),
-            e.getStepType(), e.getToolName(), e.isSuccess(), e.getDurationMs(),
+            e.getStepType(), e.getMode(), e.getToolName(), e.isSuccess(), e.getDurationMs(),
             e.getInputSummary(), e.getOutputSummary(),
             e.getDocCount(), e.getTopScore(),
             sanitizedDocs, e.getCreatedAt()

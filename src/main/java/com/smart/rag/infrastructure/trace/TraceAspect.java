@@ -45,6 +45,8 @@ public class TraceAspect {
     private static final String MDC_TRACE_ID = "traceId";
     /** Chat 路径入口（AbstractModeStrategy）把 conversationId 放入 MDC，供下游切面兜底取 sessionId */
     private static final String MDC_SESSION_ID = "ragSessionId";
+    /** MDC key：检索路径模式（入口注入，供 PATH_RECALL 等非 AOP 路径兜底取 mode） */
+    private static final String MDC_MODE = "ragMode";
 
     private final TraceRecorder recorder;
     private final ObjectMapper objectMapper;
@@ -93,15 +95,15 @@ public class TraceAspect {
     private StepContext extractContext(Object[] args) {
         String sessionId = null;
         Long userId = null;
-        String inputQuery = null;
+        String mode = null;
         if (args != null) {
             for (Object arg : args) {
                 if (arg == null) continue;
                 // 优先委托给已注册的 provider 提取 sessionId/userId
-                if (sessionId == null || userId == null) {
+                if (sessionId == null || userId == null || mode == null) {
                     for (TraceContextProvider provider : contextProviders) {
                         if (provider.supports(arg)) {
-                            if (sessionId == null) sessionId = provider.extractSessionId(arg);
+                            if (mode == null) mode = provider.mode();
                             if (userId == null) userId = provider.extractUserId(arg);
                             if (sessionId != null && userId != null) break;
                         }
@@ -120,8 +122,12 @@ public class TraceAspect {
         if (sessionId == null || sessionId.isBlank()) {
             sessionId = "unknown";
         }
-        if (userId == null) userId = 0L;
-        return new StepContext(sessionId, userId, inputQuery);
+        // mode 兜底：provider 未命中时从 MDC 取（入口注入）
+        if (mode == null) {
+            String mdcMode = org.slf4j.MDC.get(MDC_MODE);
+            mode = (mdcMode != null && !mdcMode.isBlank()) ? mdcMode : TraceContextProvider.MODE_UNKNOWN;
+        }
+        return new StepContext(sessionId, userId, inputQuery, mode);
     }
 
     // === 结果记录 ===
@@ -164,6 +170,7 @@ public class TraceAspect {
                 ctx.sessionId,
                 ctx.userId,
                 stepType,
+                ctx.mode,
                 toolName,
                 success,
                 durationMs,
@@ -302,7 +309,7 @@ public class TraceAspect {
 
     // === 内部数据载体 ===
 
-    private record StepContext(String sessionId, Long userId, @Nullable String inputQuery) {}
+    private record StepContext(String sessionId, Long userId, @Nullable String inputQuery, String mode) {}
 
     private static class ToolResultInfo {
         @Nullable String summary;

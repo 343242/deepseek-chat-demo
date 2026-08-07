@@ -77,18 +77,22 @@
 |------|-------|-------------|-------------|---------|
 | 用户名 | 用户名 | 请输入用户名 | `@NotBlank`（LoginRequest:6） | 用户名不能为空 |
 | 密码 | 密码 | 请输入密码 | `@NotBlank`（LoginRequest:7） | 密码不能为空 |
-| 滑块验证码 | — | 向右拖动完成验证 | captchaId + captchaCode（滑块 x 坐标） | 验证失败，请重试 |
+| 滑块验证码 | — | 向右拖动完成验证 | captchaId + captchaCode（滑块 x 坐标，随表单一起提交；LoginRequest:8-9） | 验证失败，请重试 |
+
+> 提交 `POST /api/auth/login` 时请求体含 4 个字段：`{ username, password, captchaId, captchaCode }`。captchaId 来自 `GET /api/auth/captcha`，captchaCode 是滑块松手时的 x 像素位移。
 
 ### 2.2 注册页字段
 
 | 字段 | label | placeholder | 校验（后端） | 错误文案 |
 |------|-------|-------------|-------------|---------|
-| 用户名 | 用户名 | 2-50 字符 | `@NotBlank` + `@Size(min=2,max=50)`（RegisterRequest:8） | 用户名需 2-50 字符 |
-| 昵称（可选） | 昵称 | 选填，最多 50 字符 | `@Size(max=50)`（RegisterRequest:14） | 昵称最多 50 字符 |
-| 邮箱 | 邮箱 | name@example.com | `@NotBlank` + `@Email` + `@Size(max=100)`（RegisterRequest:10-12） | 邮箱格式不正确 |
-| 密码 | 密码 | 8-72 字符 | `@NotBlank` + `@Size(min=8,max=72)`（RegisterRequest:9） | 密码需 8-72 字符 |
+| 用户名 | 用户名 | 2-50 字符 | `@NotBlank` + `@Size(min=2,max=50)`（RegisterRequest:8） | 用户名长度必须为2到50个字符 |
+| 密码 | 密码 | 8-72 字符 | `@NotBlank` + `@Size(min=8,max=72)`（RegisterRequest:9） | 密码长度必须为8到72个字符 |
+| 邮箱 | 邮箱 | name@example.com | `@NotBlank` + `@Email` + `@Size(max=100)`（RegisterRequest:10） | 邮箱格式不正确 |
+| 昵称（可选） | 昵称 | 选填，最多 50 字符 | `@Size(max=50)`（RegisterRequest:11） | 昵称最多50个字符 |
 | 确认密码 | 确认密码 | 再次输入密码 | 前端：与密码一致 | 两次密码不一致 |
-| 滑块验证码 | — | 向右拖动完成验证 | 同登录 | 验证失败，请重试 |
+| 滑块验证码 | — | 向右拖动完成验证 | 同登录（captchaId + captchaCode，RegisterRequest:12-13） | 验证失败，请重试 |
+
+> 提交 `POST /api/auth/register` 时请求体含 6 个字段：`{ username, password, email, nickname, captchaId, captchaCode }`（nickname 可空）。错误文案原样使用后端 message。
 
 > 注册页布局与登录页相同，只是字段纵向增多，卡片高度自适应。底部链接变为"已有账号？[登录]"。
 
@@ -219,19 +223,22 @@
 - 密码框清空，焦点回到密码框
 - 滑块验证码**刷新**（单次使用，已消费）
 
-### 4.6 IP 锁定态（⚠️ 关键）
+### 4.6 IP 限流态（⚠️ 关键）
 
-后端：**10 次失败 / 5 分钟锁 IP**（TokenCacheService.java:208-215）。
+后端：**per-IP 滑动窗口限流**（`RateLimitProperties` + `AuthServiceImpl`，Redis Lua 原子递增），无"账户锁定"概念：
+- 登录：默认 **30 次 / 30 分钟**（`ratelimit:login:*` key）
+- 注册：默认 **10 次 / 20 分钟**（`ratelimit:register:*` key，独立计数，互不消耗）
+- ⚠️ **错误验证码不消耗登录 IP 配额**——验证码先于限流校验（避免被用来恶意锁死账户）；只有通过验证码后的登录/注册尝试才计数
+- 阈值可在 `app.ratelimit.*` 覆盖（生产可调紧）
 
 ```
 ┌─ 登录卡顶部错误条 ──────────────────────────┐
-│ 🔒 登录尝试过于频繁，请 5 分钟后再试          │  ← --error-50 底
-└─────────────────────────────────────────────┘
+│ 🔒 登录尝试过于频繁，请稍后再试              │  ← --error-50 底
+└─────────────────────────────────────────────┘     --error-600 文字（后端 message）
 ```
 
-- 锁定期间登录按钮禁用，文案变"请稍后再试"
-- 前端可选显示倒计时（基于首次失败时间估算，非精确，因锁定是服务端按 IP 判定）
-- ⚠️ 不显示"还剩 N 次"——后端不暴露剩余次数，前端无法精确告知
+- 后端返回 `RateLimitExceededException`（消息"登录尝试过于频繁，请稍后再试"），前端原样显示后端 message
+- 前端不显示"还剩 N 次"——后端不暴露剩余次数；TTL 由 Redis key 过期决定（首次失败起 30 分钟窗口滑动），前端无法精确告知
 
 ### 4.7 登录成功
 
@@ -278,7 +285,7 @@
 |------|------|------|
 | AUTH-1 | 登录卡背景是否加品牌蓝渐变？ | DS 2.0a 蓝白主调禁止大面积蓝色 hero。建议纯冷灰底，仅 Logo 方块用蓝。如需品牌感可加极淡 `--brand-50` 角落光晕 |
 | AUTH-2 | "记住我"是否需要？ | 后端无此字段（LoginRequest 无 rememberMe）。token 过期由 refresh 自动续期，不需要"记住我"。建议**不画**此项 |
-| AUTH-3 | 注册成功后是否自动登录？ | 后端 RegisterResponse 返回 UserInfo（无 token，token 在 cookie）。推测注册即登录。需确认注册接口是否同时 Set-Cookie |
+| AUTH-3 | ~~注册成功后是否自动登录？~~ | ✅ 已确认：注册与登录共用 `issueTokensAndPersist`（`AuthServiceImpl`），注册成功即签发 access/refresh token 并 Set-Cookie，返回 `UserInfo`。注册即登录，无需二次登录 |
 
 ---
 

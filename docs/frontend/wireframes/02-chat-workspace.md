@@ -261,8 +261,8 @@ USER 右对齐（头像在右），ASSISTANT 左对齐（头像在左，全宽�
      回答正文（Markdown）…[1][2]
      
      ── 引用来源 ──                              ← 仅 RAG 模式
-     [1] 📄 report.pdf · 第3页        ▸           ← ReferenceCard (DS 11.8)
-     [2] 📄 manual.pdf               ▸           ← 片段正文暂不可用（待 T2 端点）
+     [1] 📄 report.pdf · 第3页  混合检索 0.87  ▸  ← ReferenceCard (DS 11.8)，▸ 展开片段（content 预览 + GET /api/chunks/{chunkId} 取全文）
+     [2] 📄 manual.pdf          向量检索 0.82  ▸  ← source/score/content 可空（agent 路径）
      
      🤖 Agent · 意图:深度检索(0.92) · 3轮 · 8.2s  ▸查看推理  ← 仅 AGENT 模式（DS 11.3.5）
      
@@ -282,11 +282,12 @@ USER 右对齐（头像在右），ASSISTANT 左对齐（头像在左，全宽�
 **引用来源区**：
 ```
 ─── 引用来源 ───
-[1] 📄 report.pdf · 第3页        ▸ 查看片段（暂不可用）
-[2] 📄 manual.pdf                ▸ 查看片段（暂不可用）
+[1] 📄 report.pdf · 第3页   混合检索 0.87   ▸ 查看片段
+[2] 📄 manual.pdf           向量检索 0.82   ▸ 查看片段
 ```
-- ⚠️ Reference 当前**仅含 fileName/page/chunkId/documentId**，无片段正文
-- "查看片段"按钮当前禁用（待后端补 T2 端点）
+- Reference 含 score（相关性）/ source（来源 Tool，中文映射）/ content（截断预览，可空）
+- "查看片段"：卡内 content 是截断预览，点击调 `GET /api/chunks/{chunkId}` → `ChunkDTO.content` 取全文展开（见 DS 11.8）
+- source/score 为 null 时（agent 路径常见）隐藏对应行，仅保留文件名 + 页码
 - 点文件名可跳知识库对应文档
 
 ### 3.7 分支切换器（重生成）
@@ -335,9 +336,9 @@ USER 右对齐（头像在右），ASSISTANT 左对齐（头像在左，全宽�
 | 开关 | 默认 | 条件约束 |
 |------|------|---------|
 | 模型选择器 `[model ▾]` | 上次使用的模型 | ModelSelector (DS 11.2)，按 provider 分组 |
-| RAG `[RAG ○/●]` | 关 | ragEnabled，开启后检索知识库 |
+| RAG `[RAG ○/●]` | 关 | ragEnabled，开启后检索知识库（可配合 teamId 检索团队知识库） |
 | 记忆 `[记忆 ○/●]` | 关 | mode=MULTI_TURN，开启后"思考"开关可用 |
-| 思考 `[思考 ○/●]` | 关 | **仅记忆模式（MULTI_TURN）可用**（ChatRequest.java:63-65），其他模式禁用 |
+| 思考 `[思考 ○/●]` | 关 | **仅记忆模式（MULTI_TURN）可用**——后端字段 `enableThinking`，`isThinkingEnabled()` 仅 MULTI_TURN 返回 true（`ChatRequest.java:62-65`），其他模式禁用 |
 | 模式（隐含） | SIMPLE | 选 Agent 时输入框上方提示"Agent 模式" |
 
 > **"记忆"即 MULTI_TURN 模式**：面向用户用"记忆"而非技术词"多轮"，语义更直觉（"开启后 AI 会记住上下文"）。开关值映射到后端 `mode=MULTI_TURN`。
@@ -348,7 +349,7 @@ USER 右对齐（头像在右），ASSISTANT 左对齐（头像在左，全宽�
 
 | 约束 | 值 | 来源 |
 |------|----|----|
-| 消息最大长度 | 10000 字符 | ChatRequest.java:28 |
+| 消息最大长度 | 10000 字符 | `@Size(max=10000)`（ChatRequest.java:27） |
 | 字数计数 | `当前/10000`，超限变红 | DS 10.3 |
 | **无附件功能** | 不画附件/回形针按钮 | ChatRequest 无附件字段 |
 | Enter 发送 / Shift+Enter 换行 | — | 通用约定 |
@@ -381,12 +382,13 @@ USER 右对齐（头像在右），ASSISTANT 左对齐（头像在左，全宽�
 │ ✕ 引用来源                        │  ← 关闭按钮
 │                                   │
 │ [1] 📄 report.pdf · 第3页          │  ← ReferenceCard
-│     来自: hybridSearch · 0.87      │
-│     ⚠️ 片段正文暂不可用             │
+│     来自: hybridSearch · 0.87      │  ← source + score
+│     "片段文本预览（截断）..."        │  ← content（可空，agent 路径可能为 null）
+│                       [查看完整片段]│  ← GET /api/chunks/{chunkId} 取全文
 │                                   │
 │ [2] 📄 manual.pdf                  │
 │     来自: vectorSearch · 0.82      │
-│     ⚠️ 片段正文暂不可用             │
+│     "片段文本预览..."               │
 └───────────────────────────────────┘
 ```
 
@@ -413,7 +415,7 @@ USER 右对齐（头像在右），ASSISTANT 左对齐（头像在左，全宽�
 └───────────────────────────────────┘
 ```
 
-> ⚠️ 当前仅 agentMetadata 汇总可展示（DS 11.4）。完整 6 事件逐项回放待后端补 T3 端点。
+> ⚠️ 当前仅 agentMetadata 汇总可展示（DS 11.4）。完整 6 事件逐项回放需用户态端点——后端已持久化（`agent_session_event`）但仅暴露管理员侧 `GET /api/admin/agent-events`（需 `trace:view`），普通用户会话级端点尚未提供，**当前迭代不开发**，用汇总视图兜底。
 
 ---
 
@@ -503,7 +505,7 @@ AGENT 消息完成后点"查看推理" → 右栏滑入时间线（§5.3）。
 
 | 编号 | 事项 | 影响 |
 |------|------|------|
-| CHAT-1 | 会话搜索是否做？ | 后端不支持服务端搜索。当前方案是前端过滤已加载列表。会话极多时只能搜已加载部分。可接受或推动后端加 keyword 参数 |
+| CHAT-1 | ~~会话搜索是否做？~~ | 已知限制：`GET /api/conversations` 仅 page/size/status，无 keyword。前端搜索框客户端过滤已加载列表（标注"仅已加载"）。会话极多时只能搜已加载部分，可接受或后续推动后端加 keyword 参数 |
 | CHAT-2 | 停止生成的体验 | 后端无停止端点，只能客户端 abort。停止后已生成内容保留，但服务端可能仍在消耗算力（直到检测到客户端断开）。体验可接受 |
 | CHAT-3 | Agent 模式选择器形态 | 当前假设通过模型选择器旁的下拉切换 SIMPLE/MULTI_TURN/AGENT。也可独立成 segmented control。需定 |
 | CHAT-4 | 会话标题自动生成的时机 | 后端 titleSource=SYSTEM 从首条消息截取。前端是否显示"自动"标记？建议不显示（多数产品不标） |

@@ -95,6 +95,7 @@ public class TraceAspect {
     private StepContext extractContext(Object[] args) {
         String sessionId = null;
         Long userId = null;
+        String inputQuery = null;
         String mode = null;
         if (args != null) {
             for (Object arg : args) {
@@ -104,6 +105,7 @@ public class TraceAspect {
                     for (TraceContextProvider provider : contextProviders) {
                         if (provider.supports(arg)) {
                             if (mode == null) mode = provider.mode();
+                            if (sessionId == null) sessionId = provider.extractSessionId(arg);
                             if (userId == null) userId = provider.extractUserId(arg);
                             if (sessionId != null && userId != null) break;
                         }

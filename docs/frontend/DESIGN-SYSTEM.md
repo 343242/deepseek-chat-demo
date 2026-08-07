@@ -1307,15 +1307,20 @@ line-height: 1.5;            /* 中文行距需大于西文 */
 
 **契约**：`GET /api/auth/captcha` → `CaptchaResult { captchaId, backgroundImage(base64 PNG), puzzleImage(base64 PNG), answer?(dev only) }`
 
+> **缺口位置约定**：缺口 **y 固定居中**（`answerY = (155-47)/2 = 54`），**x 随机**（安全边界——bot 必须图像识别才能定位）。前端实现要点：
+> - puzzleImage `top` 写死 `39px`（= `answerY - padding(15)`），用户只水平拖动
+> - `captchaCode = puzzleImage.left + 15`（补偿 padding，对齐到拼图块左边缘，与后端 answerX 语义一致）
+> - 容差 ±5px，无需精确对齐
+
 **用途**：登录、注册前置验证。
 
 📐 布局（宽 320px，高 ~200px）：
 ```
 ┌────────────────────────────────┐
-│   [背景图 320×180 含缺口]        │  ← backgroundImage，puzzleImage 缺口处叠加
-│   [拼图小块 ← 跟随滑块]          │
+│   [背景图 310×155 含缺口]        │  ← backgroundImage，缺口 y 固定居中、x 随机
+│   [拼图小块 ← 仅水平跟随滑块]    │  ← puzzleImage，top 固定 39px，left 随滑块
 ├────────────────────────────────┤
-│ [滑轨] ▶ 向右拖动完成验证 [■]    │  ← 滑块轨道，宽 320，高 40
+│ [滑轨] ▶ 向右拖动完成验证 [■]    │  ← 滑块轨道，宽 310，高 40
 └────────────────────────────────┘
 ```
 

@@ -39,6 +39,14 @@ public class CaptchaService {
     private static final int PUZZLE_PADDING = 10;
     private static final int TOLERANCE = 5;
     private static final int CAPTCHA_RATE_LIMIT = 20;
+    /**
+     * 拼图缺口固定 Y（垂直居中）。
+     * <p>
+     * x 维持随机（安全边界——bot 必须图像识别才能定位缺口）；
+     * y 固定是为了让前端拿到 puzzleImage 后只需水平拖动，垂直位置可写死。
+     * y 是否随机对安全几乎无影响（破解靠识别 x，不靠穷举 y）。
+     */
+    private static final int PUZZLE_ANSWER_Y = (BG_HEIGHT - PUZZLE_SIZE) / 2;
 
     /** 预生成池目标大小 */
     private static final int POOL_TARGET = 50;
@@ -185,7 +193,7 @@ public class CaptchaService {
     private PreGenerated generatePre() {
         String captchaId = UUID.randomUUID().toString().replace("-", "");
         int answerX = PUZZLE_PADDING + secureRandom.nextInt(BG_WIDTH - PUZZLE_SIZE - 2 * PUZZLE_PADDING);
-        int answerY = PUZZLE_PADDING + secureRandom.nextInt(BG_HEIGHT - PUZZLE_SIZE - 2 * PUZZLE_PADDING);
+        int answerY = PUZZLE_ANSWER_Y; // 固定垂直居中（见常量注释）
 
         BufferedImage bgImage = generateBackground();
         Area puzzleShape = createPuzzleShape(answerX, answerY);

@@ -22,6 +22,7 @@ public record TraceEventVO(
     Long userId,
     String stepType,
     String mode,
+    String toolName,
     boolean success,
     Long durationMs,
     String inputSummary,

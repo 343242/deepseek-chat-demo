@@ -3,8 +3,6 @@ package com.smart.rag.infrastructure.llm;
 import com.smart.rag.infrastructure.exception.ClientException;
 import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;
 
-import java.util.Objects;
-
 /**
  * 重排序结果
  */

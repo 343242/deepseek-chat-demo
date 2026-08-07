@@ -1,9 +1,5 @@
 package com.smart.rag.infrastructure.llm.registry;
 
-import com.smart.rag.infrastructure.exception.RemoteException;
-import com.smart.rag.infrastructure.exception.errorcode.RemoteErrorCode;
-import com.smart.rag.infrastructure.fallback.FallbackEligibility;
-import com.smart.rag.infrastructure.fallback.ModelCircuitBreakerRegistry;
 import com.smart.rag.infrastructure.fallback.ProbeStreamHandler;
 import com.smart.rag.infrastructure.fallback.probe.SharedProbeRegistry;
 import com.smart.rag.infrastructure.llm.CapabilityClient;
@@ -59,7 +55,6 @@ public class LlmClientFactory {
     private final Map<String, LlmProvider> providers;
     private final CapabilityStrategyRegistry strategyRegistry;
     private final LlmCircuitBreakerAdapterRegistry circuitBreakerRegistry;
-    private final FallbackEligibility fallbackEligibility;
     @Nullable
     private final ProbeStreamHandler probeStreamHandler;
     @Nullable
@@ -75,7 +70,6 @@ public class LlmClientFactory {
                             Map<String, LlmProvider> providers,
                             CapabilityStrategyRegistry strategyRegistry,
                             LlmCircuitBreakerAdapterRegistry circuitBreakerRegistry,
-                            FallbackEligibility fallbackEligibility,
                             @Nullable ProbeStreamHandler probeStreamHandler,
                             @Nullable SharedProbeRegistry sharedProbeRegistry,
                             @Nullable LlmMetrics metrics) {
@@ -88,7 +82,6 @@ public class LlmClientFactory {
                     + "': " + a.getClass().getName() + " vs " + b.getClass().getName()); }));
         this.strategyRegistry = strategyRegistry;
         this.circuitBreakerRegistry = circuitBreakerRegistry;
-        this.fallbackEligibility = fallbackEligibility;
         this.probeStreamHandler = probeStreamHandler;
         this.sharedProbeRegistry = sharedProbeRegistry;
         this.metrics = metrics;

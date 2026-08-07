@@ -1,10 +1,5 @@
 package com.smart.rag.rag.service;
 
-import org.springframework.ai.document.Document;
-import org.springframework.core.io.Resource;
-
-import java.util.List;
-
 /**
  * ETL Pipeline 服务接口
  * <p>

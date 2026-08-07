@@ -1,7 +1,6 @@
 package com.smart.rag.rag.etl;
 
 import org.springframework.ai.document.Document;
-import org.springframework.core.io.Resource;
 
 import java.util.List;
 

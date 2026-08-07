@@ -317,7 +317,6 @@ public class LeidenCommunityDetector {
      */
     private Refinement refinePartition(LevelGraph lg, int[] community) {
         int n = lg.n;
-        double m = lg.m;
 
         // Rep semantics within a parent cluster: a sub-community's rep is the smallest
         // node index among its members; the rep's arrays hold the community state.

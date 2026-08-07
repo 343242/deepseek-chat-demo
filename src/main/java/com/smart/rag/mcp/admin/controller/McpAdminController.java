@@ -14,7 +14,6 @@ import com.smart.rag.mcp.admin.dto.UpdateToolRequest;
 import com.smart.rag.mcp.admin.dto.VersionRequest;
 import com.smart.rag.mcp.admin.entity.McpSecurityConfigView;
 import com.smart.rag.mcp.admin.entity.McpServerConfig;
-import com.smart.rag.mcp.admin.entity.McpToolConfig;
 import com.smart.rag.mcp.admin.service.CreateServerRequest;
 import com.smart.rag.mcp.admin.service.McpAdminService;
 import org.springframework.security.access.prepost.PreAuthorize;

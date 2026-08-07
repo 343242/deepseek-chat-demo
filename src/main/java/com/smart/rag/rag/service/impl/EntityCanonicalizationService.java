@@ -17,7 +17,6 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.Map;
-import java.util.stream.Collectors;
 
 /**
  * 实体规范化服务（Level 1: NFC + lowercase + trim）

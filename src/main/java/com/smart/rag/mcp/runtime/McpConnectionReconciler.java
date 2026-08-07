@@ -46,21 +46,18 @@ public class McpConnectionReconciler {
     private final McpServerRuntime runtime;
     private final McpClientFactory clientFactory;
     private final ObjectMapper objectMapper;
-    private final McpDesiredStateHasher hasher;
     private final TransactionTemplate txTemplate;
 
     public McpConnectionReconciler(McpServerConfigMapper serverMapper,
                                    McpToolConfigMapper toolMapper,
                                    McpServerRuntime runtime,
                                    McpClientFactory clientFactory,
-                                   McpDesiredStateHasher hasher,
                                    TransactionTemplate txTemplate,
                                    ObjectMapper objectMapper) {
         this.serverMapper = serverMapper;
         this.toolMapper = toolMapper;
         this.runtime = runtime;
         this.clientFactory = clientFactory;
-        this.hasher = hasher;
         this.txTemplate = txTemplate;
         this.objectMapper = objectMapper;
     }

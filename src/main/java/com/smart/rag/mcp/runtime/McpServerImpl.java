@@ -10,7 +10,6 @@ import com.smart.rag.mcp.core.McpArgs;
 import com.smart.rag.mcp.core.McpIntent;
 import com.smart.rag.mcp.core.McpPrompt;
 import com.smart.rag.mcp.core.McpResource;
-import com.smart.rag.mcp.core.McpServer;
 import com.smart.rag.mcp.core.McpServerHealth;
 import com.smart.rag.mcp.core.McpTools;
 import com.smart.rag.mcp.core.McpResources;
@@ -22,6 +21,7 @@ import com.smart.rag.mcp.core.Subject;
 import com.smart.rag.mcp.admin.entity.McpToolConfig;
 import com.smart.rag.mcp.policy.McpAuthorizer;
 import com.smart.rag.mcp.policy.McpDescriptionSanitizer;
+import com.smart.rag.mcp.admin.mapper.McpToolConfigMapper;
 import io.modelcontextprotocol.client.McpSyncClient;
 import io.modelcontextprotocol.spec.McpSchema;
 import org.slf4j.Logger;
@@ -45,7 +45,7 @@ public final class McpServerImpl implements ManagedMcpServer {
     private final FallbackEligibility fallbackEligibility;
     private final McpDescriptionSanitizer descriptionSanitizer;
     private final McpRemoteCallExecutor remoteCallExecutor;
-    private final com.smart.rag.mcp.admin.mapper.McpToolConfigMapper toolConfigMapper;
+    private final McpToolConfigMapper toolConfigMapper;
 
     /** Instance-local active flag: false after withdraw; callbacks captured before withdraw fail fast. */
     private volatile boolean active = true;
@@ -59,7 +59,7 @@ public final class McpServerImpl implements ManagedMcpServer {
                   McpAuthorizer authorizer,
                   McpCircuitBreakerRegistry circuitRegistry,
                   FallbackEligibility fallbackEligibility,
-                  com.smart.rag.mcp.admin.mapper.McpToolConfigMapper toolConfigMapper,
+                  McpToolConfigMapper toolConfigMapper,
                   McpDescriptionSanitizer descriptionSanitizer) {
         this.id = id;
         this.client = client;

@@ -6,7 +6,6 @@ import com.smart.rag.evaluation.dataset.EvaluationDatasetItem;
 import com.smart.rag.evaluation.result.EvaluationResultRepository;
 import com.smart.rag.evaluation.runner.EvaluationRun;
 import com.smart.rag.evaluation.runner.EvaluationExecutionService;
-import com.smart.rag.evaluation.runner.EvaluationExecutionService.RunSummary;
 import com.smart.rag.evaluation.runner.EvaluationProgressSink;
 import com.smart.rag.evaluation.runner.EvaluationSseBridge;
 import com.smart.rag.evaluation.runner.EvaluationRunner.EvalConfig;

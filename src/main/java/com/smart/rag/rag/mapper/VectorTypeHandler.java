@@ -7,7 +7,6 @@ import java.sql.CallableStatement;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
-import java.util.Arrays;
 
 /**
  * MyBatis TypeHandler —— {@code float[]} ⇄ pgvector text literal {@code [v1,v2,...]}。

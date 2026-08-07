@@ -1,10 +1,10 @@
 package com.smart.rag.chat.service;
 
-import com.smart.rag.chat.context.ContextPromptInjector;
 import com.smart.rag.mode.RequestContext;
 import com.smart.rag.mode.ChatRequest;
 import com.smart.rag.infrastructure.llm.CapabilityClient;
 import com.smart.rag.infrastructure.llm.registry.LlmClientRegistry;
+import org.springframework.ai.chat.memory.ChatMemory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.client.advisor.api.Advisor;
 import org.springframework.stereotype.Component;
@@ -20,16 +20,13 @@ public class ChatRequestSpecFactory {
     private final ChatAdvisorChainFactory advisorChainFactory;
     private final SystemPromptService systemPromptService;
     private final LlmClientRegistry llmRegistry;
-    private final ContextPromptInjector contextPromptInjector;
 
     public ChatRequestSpecFactory(ChatAdvisorChainFactory advisorChainFactory,
                                   SystemPromptService systemPromptService,
-                                  LlmClientRegistry llmRegistry,
-                                  ContextPromptInjector contextPromptInjector) {
+                                  LlmClientRegistry llmRegistry) {
         this.advisorChainFactory = advisorChainFactory;
         this.systemPromptService = systemPromptService;
         this.llmRegistry = llmRegistry;
-        this.contextPromptInjector = contextPromptInjector;
     }
 
     public ChatClient.ChatClientRequestSpec createSpec(ChatClient chatClient,
@@ -41,7 +38,7 @@ public class ChatRequestSpecFactory {
         ChatClient.ChatClientRequestSpec spec = chatClient.prompt()
                 .user(request.message())
                 .advisors(a -> a.advisors(chain)
-                        .param(org.springframework.ai.chat.memory.ChatMemory.CONVERSATION_ID,
+                        .param(ChatMemory.CONVERSATION_ID,
                                 conversationId));
 
         if (advisorChainFactory.hasTools()) {

@@ -7,7 +7,6 @@ import com.smart.rag.rag.retrieval.RerankDocumentPostProcessor;
 import com.smart.rag.rag.retrieval.HybridDocumentRetriever;
 import com.smart.rag.rag.retrieval.MmrDocumentPostProcessor;
 import com.smart.rag.rag.retrieval.RerankThenMmrPostProcessor;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -20,7 +19,6 @@ import org.springframework.ai.rag.retrieval.search.VectorStoreDocumentRetriever;
 import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.ai.vectorstore.filter.FilterExpressionBuilder;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -45,12 +43,10 @@ public class RagAdvisorFactory {
 
     private final VectorStore vectorStore;
     private final VectorStoreMapper vectorStoreMapper;
-    private final JdbcTemplate jdbcTemplate;
     private final RagRetrievalProperties properties;
     private final HybridSearchService hybridSearchService;
     private final ParentDocumentPostProcessor parentDocumentPostProcessor;
     private final QueryTransformer rewriteQueryTransformer;
-    private final ObjectMapper objectMapper;
 
     /** Rerank 单例 Bean（null when rerank-enabled=false），生命周期由 Spring 容器管理 */
     private final RerankDocumentPostProcessor rerankPostProcessor;
@@ -63,22 +59,18 @@ public class RagAdvisorFactory {
 
     public RagAdvisorFactory(VectorStore vectorStore,
                              VectorStoreMapper vectorStoreMapper,
-                             JdbcTemplate jdbcTemplate,
                              RagRetrievalProperties properties,
                              HybridSearchService hybridSearchService,
                              ParentDocumentPostProcessor parentDocumentPostProcessor,
                              QueryTransformer rewriteQueryTransformer,
-                             ObjectMapper objectMapper,
                              @Nullable RerankDocumentPostProcessor rerankPostProcessor,
                              @Qualifier("ragPostProcessExecutor") ExecutorService ragPostProcessExecutor) {
         this.vectorStore = vectorStore;
         this.vectorStoreMapper = vectorStoreMapper;
-        this.jdbcTemplate = jdbcTemplate;
         this.properties = properties;
         this.hybridSearchService = hybridSearchService;
         this.parentDocumentPostProcessor = parentDocumentPostProcessor;
         this.rewriteQueryTransformer = rewriteQueryTransformer;
-        this.objectMapper = objectMapper;
         this.rerankPostProcessor = rerankPostProcessor;
         this.ragPostProcessExecutor = ragPostProcessExecutor;
     }

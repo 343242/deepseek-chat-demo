@@ -6,7 +6,6 @@ import com.smart.rag.evaluation.dataset.EvaluationDatasetItem;
 import com.smart.rag.evaluation.result.EvaluationResult;
 import com.smart.rag.evaluation.result.EvaluationResultRepository;
 import com.smart.rag.evaluation.runner.EvaluationRunner.EvalConfig;
-import com.smart.rag.infrastructure.concurrent.ScopeJoiner;
 import com.smart.rag.infrastructure.concurrent.ScopeOptions;
 import com.smart.rag.infrastructure.concurrent.ScopePolicy;
 import com.smart.rag.infrastructure.concurrent.ScopedTasks;

@@ -1,8 +1,5 @@
 package com.smart.rag.evaluation.metrics.retrieval;
 
-import java.util.List;
-import java.util.Set;
-
 /**
  * 检索指标计算结果
  *

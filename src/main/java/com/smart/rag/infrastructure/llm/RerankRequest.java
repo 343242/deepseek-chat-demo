@@ -4,7 +4,6 @@ import com.smart.rag.infrastructure.exception.ClientException;
 import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;
 
 import java.util.List;
-import java.util.Objects;
 
 /**
  * 重排序请求

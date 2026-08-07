@@ -1,7 +1,6 @@
 package com.smart.rag.chat.mode;
 
 import com.smart.rag.chat.context.ContextPromptInjector;
-import com.smart.rag.mode.ChatMode;
 import com.smart.rag.mode.ModeSupport;
 import com.smart.rag.mode.ChatModeStrategy;
 import com.smart.rag.mode.Reference;

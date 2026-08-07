@@ -5,7 +5,6 @@ import com.smart.rag.infrastructure.concurrent.ScopeOptions;
 import com.smart.rag.infrastructure.concurrent.ScopePolicy;
 import com.smart.rag.infrastructure.concurrent.ScopedTasks;
 import com.smart.rag.infrastructure.concurrent.Subtask;
-import com.smart.rag.infrastructure.concurrent.TaskScope;
 import com.smart.rag.rag.retrieval.RetrievalPath;
 import com.smart.rag.rag.retrieval.ScoredDocument;
 import com.smart.rag.rag.retrieval.entity.EntityExpansionRetriever;

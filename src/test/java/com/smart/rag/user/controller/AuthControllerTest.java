@@ -1,7 +1,8 @@
 package com.smart.rag.user.controller;
 
-import com.smart.rag.infrastructure.exception.BusinessException;
+import com.smart.rag.infrastructure.exception.ClientException;
 import com.smart.rag.infrastructure.exception.GlobalExceptionHandler;
+import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;
 import com.smart.rag.infrastructure.web.dto.CaptchaResult;
 import com.smart.rag.infrastructure.web.service.CaptchaService;
 import com.smart.rag.infrastructure.web.token.CookieTokenManager;
@@ -114,17 +115,17 @@ class AuthControllerTest {
         }
 
         @Test
-        @DisplayName("login_invalidCredentials → 200 with non-zero code (BusinessException)")
+        @DisplayName("login_invalidCredentials → 200 with ClientException LOGIN_FAILED")
         void login_invalidCredentials() throws Exception {
             when(authService.login(anyString(), anyString(), anyString(), anyString(), anyString()))
-                    .thenThrow(new BusinessException("用户名或密码错误"));
+                    .thenThrow(new ClientException(ClientErrorCode.LOGIN_FAILED));
 
             mockMvc.perform(post("/api/auth/login")
                             .contentType(MediaType.APPLICATION_JSON)
                             .content(objectMapper.writeValueAsString(
                                     new LoginRequest("testuser", "wrong", "cap-id", "100"))))
                     .andExpect(status().isOk())
-                    .andExpect(jsonPath("$.code").value(40000));
+                    .andExpect(jsonPath("$.code").value(101005));
         }
     }
 

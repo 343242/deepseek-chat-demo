@@ -22,7 +22,6 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
  *   <li>{@link ServiceException} — 服务端错误 (B类, 200001–299999)</li>
  *   <li>{@link RemoteException} — 第三方服务错误 (C类, 300001–399999)</li>
  *   <li>{@link MessagingException} — 消息总线错误 (D类, 400001–499999)</li>
- *   <li>{@link BusinessException} — 旧版兼容（逐步迁移中）</li>
  * </ul>
  */
 @RestControllerAdvice
@@ -57,15 +56,6 @@ public class GlobalExceptionHandler {
     public ResponseEntity<GlobalResponse<Void>> handleMessaging(MessagingException e) {
         IErrorCode errorCode = e.getErrorCode();
         log.error("Messaging error: code={}, message={}", errorCode.getCode(), e.getUserMessage());
-        return ResponseEntity.ok(GlobalResponse.error(errorCode, e.getUserMessage()));
-    }
-
-    // ==================== 旧版兼容 ====================
-
-    @ExceptionHandler(BusinessException.class)
-    public ResponseEntity<GlobalResponse<Void>> handleBusiness(BusinessException e) {
-        IErrorCode errorCode = e.getErrorCode();
-        log.warn("Business error (deprecated): code={}, message={}", errorCode.getCode(), e.getUserMessage());
         return ResponseEntity.ok(GlobalResponse.error(errorCode, e.getUserMessage()));
     }
 

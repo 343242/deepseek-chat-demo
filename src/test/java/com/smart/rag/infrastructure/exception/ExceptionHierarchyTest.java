@@ -70,19 +70,6 @@ class ExceptionHierarchyTest {
     }
 
     @Test
-    @DisplayName("BusinessException is marked @Deprecated and extends AbstractException")
-    void businessExceptionDeprecatedTransition() {
-        BusinessException ex = new BusinessException(
-                com.smart.rag.infrastructure.exception.errorcode.ErrorCode.BAD_REQUEST);
-        assertThat(ex).isInstanceOf(AbstractException.class);
-        assertThat(ex).isInstanceOf(RuntimeException.class);
-
-        @SuppressWarnings("deprecation")
-        boolean deprecated = BusinessException.class.isAnnotationPresent(Deprecated.class);
-        assertThat(deprecated).isTrue();
-    }
-
-    @Test
     @DisplayName("ClientException is NOT instanceof ServiceException")
     void clientIsNotService() {
         ClientException ex = new ClientException(

@@ -35,12 +35,6 @@ class ErrorCodeTest {
         void remoteErrorCodeImplements() {
             assertThat(RemoteErrorCode.PROVIDER_NOT_FOUND).isInstanceOf(IErrorCode.class);
         }
-
-        @Test
-        @DisplayName("ErrorCode (legacy) implements IErrorCode")
-        void legacyErrorCodeImplements() {
-            assertThat(ErrorCode.SUCCESS).isInstanceOf(IErrorCode.class);
-        }
     }
 
     @Nested
@@ -69,12 +63,6 @@ class ErrorCodeTest {
             for (RemoteErrorCode code : RemoteErrorCode.values()) {
                 assertThat(code.getCode()).isBetween(300001, 399999);
             }
-        }
-
-        @Test
-        @DisplayName("ErrorCode SUCCESS code is 0")
-        void successCode() {
-            assertThat(ErrorCode.SUCCESS.getCode()).isEqualTo(0);
         }
     }
 

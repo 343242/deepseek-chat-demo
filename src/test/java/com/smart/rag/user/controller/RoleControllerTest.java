@@ -56,7 +56,7 @@ class RoleControllerTest {
     }
 
     @Test
-    @DisplayName("创建角色 - 名称为空 → 400 (BusinessException)")
+    @DisplayName("创建角色 - 名称为空 → 200 with VALIDATION_ERROR code")
     void createRole_blankName() throws Exception {
         Map<String, String> req = Map.of("roleName", "", "roleDesc", "desc");
 

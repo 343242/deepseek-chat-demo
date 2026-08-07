@@ -1,8 +1,9 @@
 package com.smart.rag.user.controller;
 
-import com.smart.rag.infrastructure.response.PagedResult;
-import com.smart.rag.infrastructure.exception.BusinessException;
+import com.smart.rag.infrastructure.exception.ClientException;
 import com.smart.rag.infrastructure.exception.GlobalExceptionHandler;
+import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;
+import com.smart.rag.infrastructure.response.PagedResult;
 import com.smart.rag.user.dto.*;
 import com.smart.rag.user.service.SysUserService;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -83,11 +84,11 @@ class UserControllerTest {
     @DisplayName("更新用户状态 - 无效状态 → 200 with non-zero code")
     void updateUserStatus_invalidStatus() throws Exception {
         when(sysUserService.updateUserStatus(1L, 2)).thenThrow(
-                new BusinessException("无效的用户状态，仅支持 0(禁用) 和 1(启用)"));
+                new ClientException(ClientErrorCode.USER_STATUS_INVALID));
 
         mockMvc.perform(post("/api/users/1/status?status=2"))
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.code").value(40000));
+                .andExpect(jsonPath("$.code").value(102004));
     }
 
     @Test

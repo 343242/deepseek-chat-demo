@@ -1,7 +1,6 @@
 package com.smart.rag.infrastructure.exception;
 
 import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;
-import com.smart.rag.infrastructure.exception.errorcode.ErrorCode;
 import com.smart.rag.infrastructure.exception.errorcode.RemoteErrorCode;
 import com.smart.rag.infrastructure.exception.errorcode.ServiceErrorCode;
 import com.smart.rag.infrastructure.response.GlobalResponse;
@@ -65,23 +64,6 @@ class GlobalExceptionHandlerTest {
             assertThat(response.getBody()).isNotNull();
             assertThat(response.getBody().code()).isEqualTo(300002);
             assertThat(response.getBody().message()).isEqualTo("GPT-4 超时");
-        }
-    }
-
-    @Nested
-    @DisplayName("Legacy BusinessException handler")
-    class LegacyHandler {
-
-        @Test
-        @DisplayName("handleBusiness returns 200 with legacy error code")
-        @SuppressWarnings("deprecation")
-        void handleBusiness() {
-            BusinessException ex = new BusinessException(ErrorCode.FORBIDDEN);
-            ResponseEntity<GlobalResponse<Void>> response = handler.handleBusiness(ex);
-
-            assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
-            assertThat(response.getBody()).isNotNull();
-            assertThat(response.getBody().code()).isEqualTo(40300);
         }
     }
 

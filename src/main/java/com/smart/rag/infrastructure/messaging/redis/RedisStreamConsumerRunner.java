@@ -1,6 +1,5 @@
 package com.smart.rag.infrastructure.messaging.redis;
 
-import com.smart.rag.infrastructure.exception.BusinessException;
 import com.smart.rag.infrastructure.exception.ClientException;
 import com.smart.rag.infrastructure.exception.MessageConsumeException;
 import com.smart.rag.infrastructure.exception.MessagingException;
@@ -301,7 +300,7 @@ public class RedisStreamConsumerRunner<T> {
      *       {@link MessageConsumeException}（400002 消费处理失败）、其它 {@link MessagingException}
      *       （传输层）、Spring {@code TransientDataAccessException}（DB 连接/锁等基础设施瞬态）；</li>
      *   <li><b>非重试 → 直接 DLQ</b>：{@link ClientException}（A 类——消息内容触发客户端错误，
-     *       重试无意义）、legacy {@link BusinessException}、以及<b>未知异常</b>
+     *       重试无意义）、以及<b>未知异常</b>
      *       （白名单之外——NPE/非法状态/非瞬态数据错误等，design R2：避免 bug 被重试循环放大）。</li>
      * </ul>
      */
@@ -365,16 +364,16 @@ public class RedisStreamConsumerRunner<T> {
             || e instanceof org.springframework.dao.DataAccessResourceFailureException;
     }
 
-    /** DLQ reason：A 类/legacy 业务异常归为客户端错误，其余为未知。 */
+    /** DLQ reason：A 类客户端异常归为客户端错误，其余为未知。 */
     private static String dlqReason(Throwable e) {
-        if (e instanceof ClientException || e instanceof BusinessException) {
+        if (e instanceof ClientException) {
             return "CLIENT_ERROR";
         }
         return "UNKNOWN";
     }
 
     private static boolean isUnknown(Throwable e) {
-        return !(e instanceof ClientException) && !(e instanceof BusinessException);
+        return !(e instanceof ClientException);
     }
 
     /** XACK（消费连接池）。失败仅记日志：消息留 PEL，PelRecoverySweeper 兜底。 */

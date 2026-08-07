@@ -178,7 +178,7 @@ public class TeamServiceImpl implements TeamService {
 
         // 2. 批量查询团队
         List<Long> teamIds = memberships.stream().map(TeamMember::getTeamId).toList();
-        Map<Long, Team> teamMap = teamMapper.selectBatchIds(teamIds).stream()
+        Map<Long, Team> teamMap = teamMapper.selectByIds(teamIds).stream()
                 .filter(t -> t.getDeleted() == 0)
                 .collect(Collectors.toMap(Team::getId, t -> t));
 

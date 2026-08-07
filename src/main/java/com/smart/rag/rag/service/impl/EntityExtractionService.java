@@ -181,7 +181,7 @@ public class EntityExtractionService {
 
             // Step 5: 委托 embedding
             if (!affectedEntityIds.isEmpty()) {
-                List<RagEntity> entitiesToEmbed = entityMapper.selectBatchIds(affectedEntityIds);
+                List<RagEntity> entitiesToEmbed = entityMapper.selectByIds(affectedEntityIds);
                 embeddingService.embedEntities(entitiesToEmbed);
 
                 // Step 6: 标记 community_stale=TRUE

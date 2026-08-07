@@ -281,7 +281,7 @@ public class TeamMemberServiceImpl implements TeamMemberService {
 
         // 批量查询用户信息
         List<Long> userIds = page.getRecords().stream().map(TeamMember::getUserId).toList();
-        Map<Long, SysUser> userMap = sysUserMapper.selectBatchIds(userIds).stream()
+        Map<Long, SysUser> userMap = sysUserMapper.selectByIds(userIds).stream()
                 .collect(java.util.stream.Collectors.toMap(SysUser::getId, u -> u));
 
         return PagedResult.<TeamMember, TeamMemberVO>of(page, m -> {

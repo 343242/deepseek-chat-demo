@@ -95,9 +95,9 @@ public class TeamApprovalServiceImpl implements TeamApprovalService {
         List<Long> docIds = page.getRecords().stream().map(TeamUploadApproval::getDocumentId).distinct().toList();
         List<Long> uploaderIds = page.getRecords().stream().map(TeamUploadApproval::getUploaderId).distinct().toList();
 
-        Map<Long, RagDocument> docMap = ragDocumentMapper.selectBatchIds(docIds).stream()
+        Map<Long, RagDocument> docMap = ragDocumentMapper.selectByIds(docIds).stream()
                 .collect(java.util.stream.Collectors.toMap(RagDocument::getId, d -> d));
-        Map<Long, SysUser> userMap = sysUserMapper.selectBatchIds(uploaderIds).stream()
+        Map<Long, SysUser> userMap = sysUserMapper.selectByIds(uploaderIds).stream()
                 .collect(java.util.stream.Collectors.toMap(SysUser::getId, u -> u));
 
         return PagedResult.<TeamUploadApproval, ApprovalVO>of(page, a -> {
@@ -185,7 +185,7 @@ public class TeamApprovalServiceImpl implements TeamApprovalService {
 
         // 批量查询文档
         List<Long> docIds = page.getRecords().stream().map(TeamUploadApproval::getDocumentId).distinct().toList();
-        Map<Long, RagDocument> docMap = ragDocumentMapper.selectBatchIds(docIds).stream()
+        Map<Long, RagDocument> docMap = ragDocumentMapper.selectByIds(docIds).stream()
                 .collect(java.util.stream.Collectors.toMap(RagDocument::getId, d -> d));
 
         return PagedResult.<TeamUploadApproval, MyApprovalVO>of(page, a -> {

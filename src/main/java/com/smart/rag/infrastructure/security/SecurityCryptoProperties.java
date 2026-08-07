@@ -10,7 +10,7 @@ import org.springframework.stereotype.Component;
  * 经 env {@code SECURITY_CRYPTO_MASTER_KEY} 注入；<b>不入库不入 git</b>。
  * <p>
  * <b>缺失 master-key 时的行为</b>：{@link SecretCipher} 构造时 <b>不 fail-fast</b>，
- * {@code isAvailable()} 返回 false，encrypt/decrypt 抛 {@link IllegalStateException}。
+ * {@code isAvailable()} 返回 false，encrypt/decrypt 抛 {@link ServiceException}。
  * 是否在启动期 fail-fast 由消费方决定（如 {@code ApiKeyCipher} 在 BYOK enabled=true 时 fail-fast）。
  */
 @Component

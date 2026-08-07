@@ -1,5 +1,6 @@
 package com.smart.rag.infrastructure.llm.crypto;
 
+import com.smart.rag.infrastructure.exception.ServiceException;
 import com.smart.rag.infrastructure.llm.config.LlmByokProperties;
 import com.smart.rag.infrastructure.security.SecretCipher;
 import com.smart.rag.infrastructure.security.SecurityCryptoProperties;
@@ -72,7 +73,7 @@ class ApiKeyCipherTest {
         ApiKeyCipher.CipherText ct = cipher.encrypt("sk-key");
 
         assertThatThrownBy(() -> cipher.decrypt(ct.cipher(), new byte[12]))
-            .isInstanceOf(IllegalStateException.class)
+            .isInstanceOf(ServiceException.class)
             .hasMessageContaining("decrypt 失败")
             .hasCauseInstanceOf(AEADBadTagException.class);
     }
@@ -85,7 +86,7 @@ class ApiKeyCipherTest {
         tampered[0] ^= 0x01;
 
         assertThatThrownBy(() -> cipher.decrypt(tampered, ct.iv()))
-            .isInstanceOf(IllegalStateException.class)
+            .isInstanceOf(ServiceException.class)
             .hasCauseInstanceOf(AEADBadTagException.class);
     }
 
@@ -102,7 +103,7 @@ class ApiKeyCipherTest {
     @Test
     void enabledTrue_invalidBase64Key_throwsAtConstruction() {
         assertThatThrownBy(() -> cipher("not!!base64!!", true))
-            .isInstanceOf(IllegalStateException.class)
+            .isInstanceOf(ServiceException.class)
             .hasMessageContaining("非 base64");
     }
 
@@ -111,7 +112,7 @@ class ApiKeyCipherTest {
         String shortKey = Base64.getEncoder().encodeToString(new byte[16]);
 
         assertThatThrownBy(() -> cipher(shortKey, true))
-            .isInstanceOf(IllegalStateException.class)
+            .isInstanceOf(ServiceException.class)
             .hasMessageContaining("32B");
     }
 
@@ -136,6 +137,6 @@ class ApiKeyCipherTest {
         ApiKeyCipher cipher = cipher(VALID_KEY, true);
 
         assertThatThrownBy(() -> cipher.decrypt(new byte[]{1, 2, 3}, new byte[12]))
-            .isInstanceOf(IllegalStateException.class);
+            .isInstanceOf(ServiceException.class);
     }
 }

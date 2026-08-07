@@ -82,7 +82,7 @@ class McpBearerTokenCodecTest {
 
         assertThatThrownBy(() -> codec.decode(tampered))
                 .isInstanceOf(ServiceException.class)
-                .hasMessageContaining("不可解密");
+                .hasMessageContaining("decrypt 失败");
     }
 
     @Test

@@ -1,7 +1,7 @@
 package com.smart.rag.infrastructure.security;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import com.smart.rag.infrastructure.exception.ServiceException;
+import com.smart.rag.infrastructure.exception.errorcode.ServiceErrorCode;
 import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Component;
 
@@ -25,8 +25,6 @@ import java.util.Base64;
 @Component
 public class SecretCipher {
 
-    private static final Logger log = LoggerFactory.getLogger(SecretCipher.class);
-
     private static final String TRANSFORMATION = "AES/GCM/NoPadding";
     private static final int GCM_TAG_BITS = 128;
     private static final int IV_BYTES = 12;
@@ -46,10 +44,12 @@ public class SecretCipher {
         this.previousKeyId = props.getPreviousKeyId();
 
         if (previousKey != null && (previousKeyId == null || previousKeyId.isBlank())) {
-            throw new IllegalStateException("previous-master-key 配置了但 previous-key-id 缺失");
+            throw new ServiceException(ServiceErrorCode.INTERNAL_ERROR,
+                    "previous-master-key 配置了但 previous-key-id 缺失");
         }
         if (currentKeyId != null && previousKeyId != null && currentKeyId.equals(previousKeyId)) {
-            throw new IllegalStateException("key-id 与 previous-key-id 不能相同");
+            throw new ServiceException(ServiceErrorCode.INTERNAL_ERROR,
+                    "key-id 与 previous-key-id 不能相同");
         }
     }
 
@@ -61,11 +61,12 @@ public class SecretCipher {
         try {
             keyBytes = Base64.getDecoder().decode(base64);
         } catch (IllegalArgumentException e) {
-            throw new IllegalStateException("app.security.crypto." + label + " 非 base64 编码", e);
+            throw new ServiceException(ServiceErrorCode.INTERNAL_ERROR,
+                    "app.security.crypto." + label + " 非 base64 编码", e);
         }
         try {
             if (keyBytes.length != KEY_BYTES) {
-                throw new IllegalStateException(
+                throw new ServiceException(ServiceErrorCode.INTERNAL_ERROR,
                     "app.security.crypto." + label + " 解码后必须 " + KEY_BYTES + "B（256-bit），实际 " + keyBytes.length + "B");
             }
             return new SecretKeySpec(keyBytes, ALGORITHM);
@@ -84,7 +85,7 @@ public class SecretCipher {
             byte[] cipherText = cipher.doFinal(plain.getBytes(StandardCharsets.UTF_8));
             return new CipherText(cipherText, iv, currentKeyId);
         } catch (GeneralSecurityException e) {
-            throw new IllegalStateException("AES/GCM encrypt 失败", e);
+            throw new ServiceException(ServiceErrorCode.INTERNAL_ERROR, "AES/GCM encrypt 失败", e);
         }
     }
 
@@ -106,7 +107,7 @@ public class SecretCipher {
         // Try current first
         try {
             return doDecrypt(currentKey, cipherText, iv);
-        } catch (IllegalStateException e) {
+        } catch (ServiceException e) {
             if (previousKey != null && (keyId == null || keyId.equals(currentKeyId))) {
                 // Fall back to previous key
                 return doDecrypt(previousKey, cipherText, iv);
@@ -122,7 +123,8 @@ public class SecretCipher {
             byte[] plain = cipher.doFinal(cipherText);
             return new String(plain, StandardCharsets.UTF_8);
         } catch (GeneralSecurityException e) {
-            throw new IllegalStateException("AES/GCM decrypt 失败（密文/IV 篡改或 master-key 不匹配）", e);
+            throw new ServiceException(ServiceErrorCode.INTERNAL_ERROR,
+                    "AES/GCM decrypt 失败（密文/IV 篡改或 master-key 不匹配）", e);
         }
     }
 
@@ -136,7 +138,8 @@ public class SecretCipher {
 
     private void requireAvailable() {
         if (currentKey == null) {
-            throw new IllegalStateException("SecretCipher 不可用（master-key 缺失）");
+            throw new ServiceException(ServiceErrorCode.INTERNAL_ERROR,
+                    "SecretCipher 不可用（master-key 缺失）");
         }
     }
 

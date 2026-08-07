@@ -27,7 +27,10 @@ services:
     restart: unless-stopped
     ports:
       - "${REDIS_PORT:-6379}:6379"
-    command: redis-server --appendonly yes
+    # MQ 持久化策略（parent 验收）：AOF everysec + noeviction——
+    # stream 是消息总线载体，不能被 LRU 驱逐（驱逐 = 消息丢失）；内存写满时 Redis 拒绝写入，
+    # send 失败由 outbox 行吸收（relay 补投），见 docs/design/messaging-migration.md
+    command: redis-server --appendonly yes --appendfsync everysec --maxmemory 512mb --maxmemory-policy noeviction
     volumes:
       - redisdata:/data
     healthcheck:
@@ -55,89 +58,7 @@ services:
       timeout: 3s
       retries: 10
 
-  # ── RocketMQ 5.x (NameServer + Broker/Proxy + Dashboard) ──────────────
-  # 官方参考: https://rocketmq.apache.org/zh/docs/quickStart/03quickstartWithDockercompose
-  # 设计文档参考: docs/design/messaging-bus.md
-  # Topic/消费组初始化: scripts/init-rocketmq-topics.sh
-  # 注意: Proxy 以 --enable-proxy 嵌入 Broker（开发模式），生产环境建议独立部署为 mqproxy 容器
-
-  rmqnamesrv:
-    image: apache/rocketmq:5.2.0  # 与客户端 rocketmq-client-java 5.2.0 版本一致
-    container_name: smart-rag-rmqnamesrv
-    restart: unless-stopped
-    ports:
-      - "${ROCKETMQ_NAMESRV_PORT:-9876}:9876"
-    environment:
-      JAVA_OPT_EXT: "-Xms256m -Xmx400m"
-    command: sh mqnamesrv
-    healthcheck:
-      test: ["CMD-SHELL", "grep -q 'The Name Server boot success' /home/rocketmq/logs/rocketmqlogs/namesrv.log || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-
-  rmqbroker:
-    image: apache/rocketmq:5.2.0  # 与客户端 rocketmq-client-java 5.2.0 版本一致
-    container_name: smart-rag-rmqbroker
-    user: root  # Docker named volume 默认 root 所有权，rocketmq(3000) 无写权限
-    restart: unless-stopped
-    ports:
-      - "${ROCKETMQ_BROKER_PORT:-10911}:10911"
-      - "${ROCKETMQ_BROKER_HA_PORT:-10912}:10912"
-      - "${ROCKETMQ_PROXY_HTTP_PORT:-8080}:8080"
-      - "${ROCKETMQ_PROXY_PORT:-8081}:8081"
-      - "${ROCKETMQ_DASHBOARD_PORT:-8082}:8082"  # Dashboard 共享 Broker 网络命名空间，端口在此发布
-    environment:
-      NAMESRV_ADDR: "rmqnamesrv:9876"
-      JAVA_OPT_EXT: "-Xms512m -Xmx512m"
-    depends_on:
-      rmqnamesrv:
-        condition: service_healthy
-    command:
-      - sh
-      - -c
-      - |
-        cat > /home/rocketmq/rocketmq-5.2.0/conf/broker.conf << EOF
-        brokerClusterName = DefaultCluster
-        brokerName = broker-a
-        brokerId = 0
-        deleteWhen = 04
-        fileReservedTime = 48
-        # ⚠️ 开发环境双异步，生产环境改为 brokerRole=SYNC_MASTER / flushDiskType=SYNC_FLUSH
-        brokerRole = ASYNC_MASTER
-        flushDiskType = ASYNC_FLUSH
-        timerMaxDelaySec = 31622400
-        # Docker 环境：brokerIP1 必须设为 127.0.0.1，否则 proxy 广播容器内网 IP (172.18.x.x)，
-        # gRPC 客户端从宿主机无法连通。生产环境去掉此行或改为实际主机 IP。
-        brokerIP1 = 127.0.0.1
-        EOF
-        sh mqbroker --enable-proxy \
-          -c /home/rocketmq/rocketmq-5.2.0/conf/broker.conf
-    volumes:
-      - rmqdata:/home/rocketmq/store
-    healthcheck:
-      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/10911' 2>/dev/null"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-
-  rmqdashboard:
-    image: apacherocketmq/rocketmq-dashboard:2.1.0
-    container_name: smart-rag-rmqdashboard
-    network_mode: "service:rmqbroker"
-    environment:
-      JAVA_OPTS: >-
-        -Xms256m -Xmx256m
-        -Drocketmq.config.enableDashBoardCollect=false
-        -Drocketmq.namesrv.addr=rmqnamesrv:9876
-        -Dserver.port=8082
-    depends_on:
-      rmqbroker:
-        condition: service_healthy
-    restart: unless-stopped
-
 volumes:
   pgdata:
   redisdata:
   miniodata:
-  rmqdata:

@@ -1,0 +1,29 @@
+{
+  "id": "redis-stream-mq-migration",
+  "name": "redis-stream-mq-migration",
+  "title": "Redis Stream MQ 迁移：RedisStreamMessageBus + Outbox publisher 可靠性",
+  "description": "",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P2",
+  "creator": "instant",
+  "assignee": "instant",
+  "createdAt": "2026-08-05",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "agentic-rag-dev",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "08-05-redis-stream-message-bus",
+    "08-05-publisher-reliability-outbox"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

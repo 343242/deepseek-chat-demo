@@ -1,0 +1,2 @@
+{"file": ".trellis/tasks/08-05-redis-stream-mq-migration/prd.md", "reason": "Parent 验收：移除 RocketMQ 完整性（grep=0）、三链路全通"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "校验整体错误码体系一致性"}

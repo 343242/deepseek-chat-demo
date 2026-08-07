@@ -22,6 +22,7 @@ import org.springframework.data.redis.connection.stream.ReadOffset;
 import org.springframework.data.redis.connection.stream.RecordId;
 import org.springframework.data.redis.connection.stream.StreamOffset;
 import org.springframework.data.redis.connection.stream.StreamReadOptions;
+import org.springframework.data.redis.core.StreamOperations;
 
 import java.util.List;
 import java.util.Map;
@@ -204,7 +205,8 @@ public class RedisStreamConsumerRunner<T> {
         ReconnectBackoff backoff = new ReconnectBackoff(properties.redis().reconnectBackoff());
         while (running.get()) {
             try {
-                List<MapRecord<String, Object, Object>> messages = connections.streamOps().read(
+                List<MapRecord<String, Object, Object>> messages = readStreams(
+                    connections.streamOps(),
                     Consumer.from(group, consumerName),
                     StreamReadOptions.empty().count(readBatch)
                         .block(properties.redis().readBlock()),
@@ -231,6 +233,20 @@ public class RedisStreamConsumerRunner<T> {
             }
         }
         log.info("Poll loop exited: topic={}, group={}", topic, group);
+    }
+
+    /**
+     * Spring Data {@code read(Consumer, StreamReadOptions, StreamOffset<K>...)} 的 varargs 桥接。
+     * 泛型 varargs 在调用点打包 {@code StreamOffset<String>[]} 会触发 javac "generic array created
+     * for a varargs parameter" 警告；@SafeVarargs 声明此桥为安全转发（直接透传已打包数组，
+     * 不做任何数组内容操作），调用点不再警告。
+     */
+    @SafeVarargs
+    private static List<MapRecord<String, Object, Object>> readStreams(
+            StreamOperations<String, Object, Object> ops,
+            Consumer consumer, StreamReadOptions options,
+            StreamOffset<String>... offsets) {
+        return ops.read(consumer, options, offsets);
     }
 
     /** PUSH：内联；SIMPLE：semaphore 背压 + processingPool。 */

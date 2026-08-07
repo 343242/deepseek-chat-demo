@@ -2,11 +2,14 @@ package com.smart.rag.infrastructure.messaging.outbox;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.smart.rag.infrastructure.exception.MessagingException;
+import com.smart.rag.infrastructure.exception.errorcode.MessagingErrorCode;
 import com.smart.rag.infrastructure.messaging.BackoffSchedule;
 import com.smart.rag.infrastructure.messaging.MessageBus;
 import com.smart.rag.infrastructure.messaging.MessageEnvelope;
 import com.smart.rag.infrastructure.messaging.MessagePayloadCodec;
 import com.smart.rag.infrastructure.messaging.MessagingProperties;
+import io.micrometer.core.instrument.Gauge;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -23,7 +26,6 @@ import java.util.Map;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
 
 /**
  * OutboxRelay（design §3）——定时扫描 outbox {@code pending} 行，经 delegate bus 投递，
@@ -248,21 +250,29 @@ public class OutboxRelay implements SmartLifecycle {
     }
 
     /**
+     * 运行时类加载。{@code Class.forName} 返回 {@code Class<?>}，Java 类型擦除使泛型参数
+     * 无法静态验证——此处是唯一且不可避免的 unchecked 桥（payload_type 为运行时字符串）。
+     */
+    @SuppressWarnings("unchecked")
+    private static <T> Class<T> loadPayloadClass(String name) throws ClassNotFoundException {
+        return (Class<T>) Class.forName(name);
+    }
+
+    /**
      * envelope 重建（design §4/§5）：payload_type 驱动反序列化；恢复 tag/hashKey/headers；
      * traceparent 用存储值不重新 inject（delegate send 对已存在 traceparent 不覆盖）。
      */
     MessageEnvelope<?> rebuildEnvelope(OutboxEntry row) {
-        Class<?> payloadType;
+        Class<Object> payloadType;
         try {
-            payloadType = Class.forName(row.getPayloadType());
+            payloadType = loadPayloadClass(row.getPayloadType());
         } catch (ClassNotFoundException e) {
             // payload 类不在 classpath = 部署/env 错误；按普通投递失败路径有界重试 → dead
-            throw new com.smart.rag.infrastructure.exception.MessagingException(
-                com.smart.rag.infrastructure.exception.errorcode.MessagingErrorCode.CONSUME_FAILED,
+            throw new MessagingException(
+                MessagingErrorCode.CONSUME_FAILED,
                 "Outbox payload type not found: " + row.getPayloadType(), e);
         }
-        @SuppressWarnings("unchecked")
-        Object payload = codec.decode(row.getPayload().getBytes(StandardCharsets.UTF_8), (Class) payloadType);
+        Object payload = codec.decode(row.getPayload().getBytes(StandardCharsets.UTF_8), payloadType);
         return new MessageEnvelope<>(null, row.getTopic(), row.getTag(), payload,
             row.getHashKey(), row.getDedupKey(), parseHeaders(row.getHeaders()),
             row.getCreatedAt().toEpochMilli());
@@ -275,8 +285,8 @@ public class OutboxRelay implements SmartLifecycle {
         try {
             return JSON.readValue(json, STRING_MAP_TYPE);
         } catch (Exception e) {
-            throw new com.smart.rag.infrastructure.exception.MessagingException(
-                com.smart.rag.infrastructure.exception.errorcode.MessagingErrorCode.CONSUME_FAILED,
+            throw new MessagingException(
+                MessagingErrorCode.CONSUME_FAILED,
                 "Failed to parse outbox headers: " + json, e);
         }
     }
@@ -288,10 +298,10 @@ public class OutboxRelay implements SmartLifecycle {
         if (meterRegistry == null) {
             return;
         }
-        io.micrometer.core.instrument.Gauge.builder("messaging.outbox.leader_active",
+        Gauge.builder("messaging.outbox.leader_active",
                 () -> leadership.isLeader() ? 1 : 0)
             .register(meterRegistry);
-        io.micrometer.core.instrument.Gauge.builder("messaging.outbox.oldest_age_seconds",
+        Gauge.builder("messaging.outbox.oldest_age_seconds",
                 () -> {
                     Instant oldest = mapper.selectOldestCreatedAt();
                     return oldest == null ? 0.0
@@ -299,7 +309,7 @@ public class OutboxRelay implements SmartLifecycle {
                 })
             .register(meterRegistry);
         for (String topic : KNOWN_TOPICS) {
-            io.micrometer.core.instrument.Gauge.builder("messaging.outbox.pending",
+            Gauge.builder("messaging.outbox.pending",
                     () -> pendingCount(topic))
                 .tag("topic", topic)
                 .register(meterRegistry);

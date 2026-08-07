@@ -53,7 +53,7 @@ public class LlmCryptoCanaryRunner {
             log.info("BYOK crypto canary OK: 存量密文可正常解密");
         } catch (Exception e) {
             // master-key 误改 / 密文损坏 → WARN（不抛，不阻断启动）；BYOK 静默回落系统级
-            log.warn("BYOK crypto canary FAILED: 存量密文无法解密，疑似 master-key 误改（env LLM_MASTER_KEY）。"
+            log.warn("BYOK crypto canary FAILED: 存量密文无法解密，疑似 master-key 误改（env SECURITY_CRYPTO_MASTER_KEY）。"
                 + "BYOK 将静默回落系统级，请核对 master-key。原因: {}", e.getMessage());
         }
     }

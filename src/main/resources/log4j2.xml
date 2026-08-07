@@ -62,7 +62,7 @@
             <LevelRangeFilter minLevel="INFO" maxLevel="INFO" onMatch="ACCEPT" onMismatch="DENY"/>
             <Policies>
                 <TimeBasedTriggeringPolicy interval="1"/>
-                <SizeBasedTriggeringPolicy size="500MB"/>
+                <SizeBasedTriggeringPolicy size="2048MB"/>
             </Policies>
             <DefaultRolloverStrategy max="30">
                 <Delete basePath="${LOG_HOME}/info" maxDepth="1">

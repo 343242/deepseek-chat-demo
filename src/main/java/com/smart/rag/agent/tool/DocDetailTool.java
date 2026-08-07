@@ -96,7 +96,7 @@ public class DocDetailTool implements RagTool {
             }
 
             long duration = System.currentTimeMillis() - start;
-            log.debug("Doc detail: fetched {} highlights from {} ids in {}ms",
+            log.info("Doc detail: fetched {} highlights from {} ids in {}ms",
                 highlights.size(), idList.size(), duration);
 
             return ToolResult.success("docDetail",

@@ -247,6 +247,7 @@ public class TraceAspect {
                     putMeta(m, metaMap, "page_number", "page");
                     putMeta(m, metaMap, "rrfScore", "score");
                     putMeta(m, metaMap, "rerankScore", "score");
+                    putMeta(m, metaMap, "sources");
                     // rrfScore 优先，否则用 rerankScore
                 }
                 var getScore = docClass.getMethod("getScore");

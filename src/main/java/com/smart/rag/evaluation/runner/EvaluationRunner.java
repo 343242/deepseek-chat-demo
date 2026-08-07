@@ -205,7 +205,7 @@ public class EvaluationRunner {
             paths.add(new Bm25RetrievalPath(vectorStoreMapper, queryNormalizer, evalProps));
         }
         HybridSearchService evalSearchService = new HybridSearchService(
-                paths, evalProps, queryNormalizer, scopedTasks);
+                paths, evalProps, queryNormalizer, scopedTasks, null);
         return new HybridDocumentRetriever(evalSearchService, userId, null);
     }
 

@@ -8,6 +8,7 @@ import com.smart.rag.agent.dto.ToolResult;
 import com.smart.rag.infrastructure.trace.TracedStep;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.ai.document.Document;
 import org.springframework.stereotype.Component;
 
@@ -48,6 +49,11 @@ public class HybridSearchTool implements RagTool {
             if (queryText == null || queryText.isBlank()) {
                 return ToolResult.failure("hybridSearch",
                     "查询文本不能为空", "INVALID_INPUT", 0).toJson(objectMapper);
+            }
+
+            // 注入 sessionId 到 MDC，供下游 PATH_RECALL trace 记录关联（与 Chat 路径 AbstractModeStrategy 同一 key）
+            if (workspace.getSessionId() != null) {
+                MDC.put("ragSessionId", workspace.getSessionId());
             }
 
             List<Document> docs = hybridSearchService.hybridSearch(

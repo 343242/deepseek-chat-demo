@@ -7,10 +7,12 @@ import com.smart.rag.infrastructure.concurrent.Subtask;
 import com.smart.rag.infrastructure.concurrent.TaskState;
 import com.smart.rag.infrastructure.exception.ServiceException;
 import com.smart.rag.infrastructure.exception.errorcode.ServiceErrorCode;
+import com.smart.rag.infrastructure.trace.TraceRecorder;
 import com.smart.rag.rag.config.RagRetrievalProperties;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.slf4j.MDC;
 import org.springframework.ai.document.Document;
 
 import org.springframework.stereotype.Service;
@@ -43,6 +45,7 @@ public class HybridSearchService {
     private final RagRetrievalProperties properties;
     private final QueryNormalizer queryNormalizer;
     private final ScopedTasks scopedTasks;
+    private final @Nullable TraceRecorder traceRecorder;
 
     // ========================================================================
     // 唯一构造器：RetrievalPath 列表由 Spring 注入（OCP：新路径注册即生效），
@@ -52,11 +55,13 @@ public class HybridSearchService {
     public HybridSearchService(List<RetrievalPath> paths,
                                RagRetrievalProperties properties,
                                QueryNormalizer queryNormalizer,
-                               ScopedTasks scopedTasks) {
+                               ScopedTasks scopedTasks,
+                               @Nullable TraceRecorder traceRecorder) {
         this.paths = List.copyOf(paths);
         this.properties = properties;
         this.queryNormalizer = queryNormalizer;
         this.scopedTasks = scopedTasks;
+        this.traceRecorder = traceRecorder;
     }
 
     // ========================================================================
@@ -104,9 +109,11 @@ public class HybridSearchService {
             if (failedCount > 0) {
                 log.warn("Partial search degradation: {}/{} paths failed", failedCount, paths.size());
             }
+            // 记录每路独立召回结果（②trace_event PATH_RECALL + ①结构化日志）
+            recordPathRecall(userId, normalized, tasks);
 
             List<Document> fused = rrfFusion(tasks);
-            log.debug("Hybrid search: queryLen={}, paths={}, failed={}, fused={}, teamId={}",
+            log.info("Hybrid search: queryLen={}, paths={}, failed={}, fused={}, teamId={}",
                     normalized.length(), paths.size(), failedCount, fused.size(), teamId);
 
             return fused;
@@ -121,6 +128,8 @@ public class HybridSearchService {
         int k = properties.rrfK();
         Map<String, Double> scores = new HashMap<>();
         Map<String, Document> docMap = new HashMap<>();
+        // 按 chunkId 累积命中的分路名（provenance）：同一 chunk 被多路命中 -> sources 为多值
+        Map<String, List<String>> sourcesByDoc = new HashMap<>();
 
         for (var entry : tasks.entrySet()) {
             RetrievalPath path = entry.getKey();
@@ -135,9 +144,9 @@ public class HybridSearchService {
                         : 1.0 / (k + sd.rank());
                 scores.merge(docId, contribution, Double::sum);
                 docMap.putIfAbsent(docId, sd.doc());
+                sourcesByDoc.computeIfAbsent(docId, x -> new ArrayList<>()).add(sd.pathName());
             }
         }
-
         return scores.entrySet().stream()
                 .sorted(Map.Entry.<String, Double>comparingByValue().reversed())
                 .limit(properties.fusionTopK())
@@ -145,11 +154,91 @@ public class HybridSearchService {
                     Document doc = docMap.get(e.getKey());
                     if (doc != null) {
                         doc.getMetadata().put("rrfScore", e.getValue());
+                        doc.getMetadata().put("sources", sourcesByDoc.getOrDefault(e.getKey(), List.of()));
                     }
                     return doc;
                 })
                 .filter(Objects::nonNull)
                 .toList();
+    }
+
+    // ========================================================================
+    // Per-path recall tracing（② trace_event PATH_RECALL — 每路独立召回明细）
+    // ========================================================================
+
+    /**
+     * 记录每路独立召回结果：①结构化日志 + ②trace_event 持久化（step_type=PATH_RECALL）。
+     * <p>
+     * 在 rrfFusion 之前调用——此时每路结果完整、失败状态可查。
+     * traceRecorder 可空（EvaluationRunner 构造时传 null，跳过持久化）。
+     *
+     * @param userId    用户 ID（隔离条件 + trace_event.user_id）
+     * @param queryText 归一化后的查询（写入 input_summary）
+     * @param tasks     各路 subtask（key=path, value=该路召回的 ScoredDocument 列表）
+     */
+    private void recordPathRecall(long userId, String queryText,
+                                  Map<RetrievalPath, Subtask<List<ScoredDocument>>> tasks) {
+        String traceId = mdcTraceId();
+        String sessionId = mdcSessionId();
+        for (var entry : tasks.entrySet()) {
+            RetrievalPath path = entry.getKey();
+            Subtask<List<ScoredDocument>> task = entry.getValue();
+            boolean success = task.exception() == null;
+            List<ScoredDocument> docs = success ? safePathResults(task) : List.of();
+
+            // documents JSONB（仅元数据，不含正文——与 trace_event 约定一致）
+            List<Map<String, Object>> documents = new ArrayList<>(docs.size());
+            for (ScoredDocument sd : docs) {
+                Map<String, Object> m = new LinkedHashMap<>();
+                m.put("chunkId", sd.doc().getId());
+                m.put("rank", sd.rank());
+                m.put("score", sd.score());
+                Map<String, Object> md = sd.doc().getMetadata();
+                if (md != null) {
+                    Object documentId = md.get("documentId");
+                    if (documentId != null) m.put("documentId", documentId);
+                    Object fileName = md.get("fileName");
+                    if (fileName != null) m.put("fileName", fileName);
+                    Object page = md.get("page_number");
+                    if (page != null) m.put("page", page);
+                }
+                documents.add(m);
+            }
+
+            log.info("Path recall: path={}, ok={}, count={}, chunks={}",
+                    path.name(), success, docs.size(),
+                    documents.stream().map(d ->
+                        "[" + d.get("rank") + "]" + d.get("chunkId")
+                        + " doc=" + d.getOrDefault("documentId", "?")
+                        + " file=" + d.getOrDefault("fileName", "?"))
+                    .toList());
+
+            if (traceRecorder != null) {
+                traceRecorder.record(traceId, sessionId, userId, "PATH_RECALL", path.name(),
+                        success, null, queryText, null,
+                        docs.size(), null, documents);
+            }
+        }
+    }
+
+    /** 安全提取 subtask 结果（不抛异常，供 trace 记录用；rrfFusion 仍用 taskResultOrEmpty 做严格错误传播） */
+    private List<ScoredDocument> safePathResults(Subtask<List<ScoredDocument>> task) {
+        try {
+            List<ScoredDocument> r = task.result();
+            return r != null ? r : List.of();
+        } catch (Exception e) {
+            return List.of();
+        }
+    }
+
+    private static @Nullable String mdcTraceId() {
+        String tid = MDC.get("traceId");
+        return (tid != null && !tid.isBlank()) ? tid : null;
+    }
+
+    private static String mdcSessionId() {
+        String sid = MDC.get("ragSessionId");
+        return (sid != null && !sid.isBlank()) ? sid : "unknown";
     }
 
     // ========================================================================

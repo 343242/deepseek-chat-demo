@@ -30,7 +30,7 @@ public @interface TracedStep {
 
     /**
      * 步骤类型，写入 {@code trace_event.step_type}。
-     * 约定值：QUERY_REWRITE / VECTOR_SEARCH / BM25_SEARCH / RRF_FUSION / RERANK / CONTEXT_ASSEMBLY / HYBRID_SEARCH。
+     * 约定值：QUERY_REWRITE / VECTOR_SEARCH / BM25_SEARCH / RRF_FUSION / PATH_RECALL / RERANK / CONTEXT_ASSEMBLY / HYBRID_SEARCH。
      * 不限定枚举——未来新增链路类型（如 AGENT_INTENT / TOOL_CALLED）可直接用新字符串，无需改注解定义。
      */
     String value();

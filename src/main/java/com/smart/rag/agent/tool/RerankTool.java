@@ -99,7 +99,7 @@ public class RerankTool implements RagTool {
             workspace.replaceRetrievedDocs(rerankedDocs);
 
             long duration = System.currentTimeMillis() - start;
-            log.debug("Rerank completed: {} docs -> {} docs in {}ms",
+            log.info("Rerank completed: {} docs -> {} docs in {}ms",
                 docs.size(), rerankedDocs.size(), duration);
 
             return ToolResult.success("rerank",

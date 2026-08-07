@@ -92,7 +92,7 @@ public class QueryRewriteTool implements RagTool {
             workspace.addRewrittenQuery(rewrittenQuery);
 
             long duration = System.currentTimeMillis() - start;
-            log.debug("Query rewrite: inputLen={}, outputLen={}, duration={}ms",
+            log.info("Query rewrite: inputLen={}, outputLen={}, duration={}ms",
                 queryText.length(), rewrittenQuery.length(), duration);
 
             return ToolResult.success("queryRewrite",

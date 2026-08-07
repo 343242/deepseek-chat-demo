@@ -57,7 +57,7 @@ public class VectorRetrievalPath implements RetrievalPath {
         for (int i = 0; i < docs.size(); i++) {
             Document doc = docs.get(i);
             double vectorScore = doc.getScore() != null ? doc.getScore() : 0.5;
-            results.add(new ScoredDocument(doc, i + 1, vectorScore));
+            results.add(new ScoredDocument(doc, i + 1, vectorScore, name()));
         }
         return results;
     }

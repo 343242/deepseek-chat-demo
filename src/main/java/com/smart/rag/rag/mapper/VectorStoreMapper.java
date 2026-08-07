@@ -60,7 +60,7 @@ public interface VectorStoreMapper {
      * @param isolationField metadata 中隔离字段名（"userId" 或 "teamId"）
      * @param isolationValue 隔离字段值
      * @param topK           返回数量上限
-     * @return 按 BM25 排名降序排列的文档列表（每条 metadata 带 {@code retrievalSource=bm25}）
+     * @return 按 BM25 排名降序排列的文档列表
      */
     default List<Document> bm25Search(String ftsConfig, String sanitizedQuery,
                                       String isolationField, String isolationValue, int topK) {
@@ -68,7 +68,6 @@ public interface VectorStoreMapper {
         List<Document> docs = new ArrayList<>(rows.size());
         for (VectorStoreRow row : rows) {
             Map<String, Object> metadata = row.metadata() != null ? row.metadata() : new HashMap<>();
-            metadata.put("retrievalSource", "bm25");
             docs.add(new Document(row.id(), row.content(), metadata));
         }
         return docs;

@@ -113,7 +113,7 @@ public class MmrDocumentPostProcessor implements DocumentPostProcessor {
         }
 
         if (distance == null) {
-            log.debug("MMR relevance-only (distance unavailable): {} docs → {}", n, topK);
+            log.info("MMR relevance-only (distance unavailable): {} docs → {}", n, topK);
             return documents.stream()
                     .sorted(Comparator.comparingDouble(this::resolveRelevanceScore).reversed())
                     .limit(topK)
@@ -175,7 +175,7 @@ public class MmrDocumentPostProcessor implements DocumentPostProcessor {
             result.add(documents.get(idx));
         }
 
-        log.debug("MMR: {} docs → {} docs (lambda={}, db_cosine)", documents.size(), result.size(), lambda);
+        log.info("MMR: {} docs → {} docs (lambda={}, db_cosine)", documents.size(), result.size(), lambda);
         return result;
     }
 
@@ -192,7 +192,7 @@ public class MmrDocumentPostProcessor implements DocumentPostProcessor {
         if (rrfScore instanceof Number) {
             return ((Number) rrfScore).doubleValue();
         }
-        log.debug("No rerankScore/rrfScore in metadata for doc {}, falling back to 0.5 " +
+        log.info("No rerankScore/rrfScore in metadata for doc {}, falling back to 0.5 " +
                 "(Rerank→MMR 顺序下罕见：仅 Rerank 关闭/透传且 rrfScore 缺失时)", doc.getId());
         return 0.5;
     }

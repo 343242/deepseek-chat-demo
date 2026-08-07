@@ -85,7 +85,7 @@ public class RerankDocumentPostProcessor implements DocumentPostProcessor {
             reranked.add(new Document(original.getId(), original.getText(), metadata));
         }
 
-        log.debug("Rerank completed: {} docs -> {} docs", documents.size(), reranked.size());
+        log.info("Rerank completed: {} docs -> {} docs", documents.size(), reranked.size());
         return reranked;
     }
 }

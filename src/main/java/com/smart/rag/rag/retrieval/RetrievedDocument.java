@@ -20,7 +20,7 @@ import java.util.Map;
  * @param score         相关性分数
  * @param source        来源 Tool 名称（如 hybridSearch）
  * @param subQueryIndex 关联的子问题索引（-1 表示未关联）
- * @param metadata      文档元信息（documentId/userId/teamId/fileName/page_number/retrievalSource 等）
+ * @param metadata      文档元信息（documentId/userId/teamId/fileName/page_number/sources 等）
  */
 public record RetrievedDocument(
     String chunkId,
@@ -42,7 +42,7 @@ public record RetrievedDocument(
      * 从 Spring AI {@link Document} 统一构造：提取 chunkId/documentId/fileName/page，
      * content/score/metadata 取自文档；source/subQueryIndex 留默认（null/-1），refNumber=0（由收集器赋值）。
      * <p>
-     * metadata 返回可变副本，调用方可在其上追加键（retrievalSource/sourceDocId 等）。
+ * metadata 返回可变副本，调用方可在其上追加键（sources/sourceDocId 等）。
      */
     public static RetrievedDocument from(Document d) {
         Map<String, Object> metadata = d.getMetadata() != null

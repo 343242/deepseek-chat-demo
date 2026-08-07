@@ -85,7 +85,6 @@ public class Bm25SearchTool implements RagTool {
                 RetrievedDocument rd = RetrievedDocument.from(doc)
                     .withSource("bm25Search")
                     .withScore(0.0); // BM25 分数不直接可用，由 RRF 融合时计算
-                rd.metadata().put("retrievalSource", "bm25");
                 retrieved.add(rd);
             }
 
@@ -93,7 +92,7 @@ public class Bm25SearchTool implements RagTool {
             workspace.addRetrievedDocsDeduplicated(retrieved);
 
             long duration = System.currentTimeMillis() - start;
-            log.debug("BM25 search: queryLen={}, {} results in {}ms", sanitized.length(), docs.size(), duration);
+            log.info("BM25 search: queryLen={}, {} results in {}ms", sanitized.length(), docs.size(), duration);
 
             return ToolResult.success("bm25Search",
                 "BM25 检索到 " + docs.size() + " 个相关文档片段",

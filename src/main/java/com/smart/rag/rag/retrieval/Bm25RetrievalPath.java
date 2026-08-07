@@ -57,7 +57,7 @@ public class Bm25RetrievalPath implements RetrievalPath {
 
         List<ScoredDocument> results = new ArrayList<>(docs.size());
         for (int i = 0; i < docs.size(); i++) {
-            results.add(new ScoredDocument(docs.get(i), i + 1, 0.0));
+            results.add(new ScoredDocument(docs.get(i), i + 1, 0.0, name()));
         }
         return results;
     }

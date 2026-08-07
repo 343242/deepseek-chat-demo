@@ -123,7 +123,7 @@ public class RagAdvisorFactory {
         for (org.springframework.ai.rag.postretrieval.document.DocumentPostProcessor pp : getPostProcessors()) {
             docs = pp.process(queryObj, docs);
         }
-        log.debug("Chat retrieval: {} docs for userId={}, teamId={}", docs.size(), userId, teamId);
+        log.info("Chat retrieval: {} docs for userId={}, teamId={}", docs.size(), userId, teamId);
         return docs;
     }
 

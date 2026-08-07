@@ -126,7 +126,7 @@ public class ParentDocumentPostProcessor implements DocumentPostProcessor {
                     .reversed());
         }
 
-        log.debug("ParentDocumentPostProcessor: {} docs → {} parent docs + {} non-child docs",
+        log.info("ParentDocumentPostProcessor: {} docs → {} parent docs + {} non-child docs",
                 documents.size(), resolvedParents.size(), nonChildDocs.size());
 
         return result;

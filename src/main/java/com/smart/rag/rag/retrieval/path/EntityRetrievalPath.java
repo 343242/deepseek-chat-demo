@@ -172,7 +172,7 @@ public class EntityRetrievalPath implements RetrievalPath {
             if (vc != null && vc.votedByEntities() != null) {
                 meta.put("votedByEntities", vc.votedByEntities());
             }
-            result.add(new ScoredDocument(new Document(chunkId.toString(), content, meta), rank++, score));
+            result.add(new ScoredDocument(new Document(chunkId.toString(), content, meta), rank++, score, name()));
         }
         return result;
     }

@@ -76,6 +76,8 @@ public class VectorSearchTool implements RagTool {
             }
             workspace.addRetrievedDocs(retrieved);
 
+            log.info("Vector search: queryLen={}, {} results in {}ms", queryText.length(), docs.size(), duration);
+
             return ToolResult.success("vectorSearch",
                 "检索到 " + docs.size() + " 个相关文档片段",
                 retrieved, duration).toJson(objectMapper);

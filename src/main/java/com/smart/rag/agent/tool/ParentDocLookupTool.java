@@ -158,7 +158,7 @@ public class ParentDocLookupTool implements RagTool {
             workspace.replaceRetrievedDocs(result);
 
             long duration = System.currentTimeMillis() - start;
-            log.debug("Parent doc lookup: {} docs -> {} parent docs + {} non-child docs in {}ms",
+            log.info("Parent doc lookup: {} docs -> {} parent docs + {} non-child docs in {}ms",
                 docs.size(), resolvedParents.size(), nonChildDocs.size(), duration);
 
             return ToolResult.success("parentDocLookup",

@@ -18,6 +18,7 @@ import com.smart.rag.chat.service.ChatMessagePublisher;
 import com.smart.rag.mode.ModeChainResult;
 import com.smart.rag.chat.service.StreamCompletionHelper;
 import com.smart.rag.chat.service.PromptLoaderService;
+import com.smart.rag.mode.StreamFrame;
 import com.smart.rag.mode.StreamResult;
 import com.smart.rag.mode.StrategyExecuteResult;
 import com.smart.rag.mode.StrategyExecutionContext;
@@ -355,13 +356,15 @@ public class AgentModeStrategy implements ChatModeStrategy {
         StringBuilder collectedContent = new StringBuilder();
         final int maxContentLength = 1 << 20;
         // .call()→.stream()：ToolCallAdvisor.adviseStream 驱动流式 ReAct（Poc6 验证 streamCount=2）。
+        // 用 .chatResponse() 替代 .content()：保留 reasoning_content（思考过程），手动拆为 StreamFrame。
         // 截断保护 + doFinally 落库（StreamCompletionHelper，与 SIMPLE/MULTI_TURN 逐字同语义）。
-        Flux<String> content = spec.stream()
-            .content()
-            .doOnNext(text -> {
-                if (text != null && collectedContent.length() < maxContentLength) {
+        Flux<StreamFrame> frames = spec.stream()
+            .chatResponse()
+            .flatMapIterable(com.smart.rag.chat.mode.AbstractModeStrategy::splitIntoFrames)
+            .doOnNext(frame -> {
+                if (frame.isContent() && collectedContent.length() < maxContentLength) {
                     int remaining = maxContentLength - collectedContent.length();
-                    collectedContent.append(text, 0, Math.min(text.length(), remaining));
+                    collectedContent.append(frame.payload(), 0, Math.min(frame.payload().length(), remaining));
                 }
             })
             .doOnError(e -> {
@@ -374,20 +377,18 @@ public class AgentModeStrategy implements ChatModeStrategy {
             .doFinally(signal -> StreamCompletionHelper.onComplete(
                 ctx, collectedContent.toString(), signal, chatMessagePublisher, conversationHelper));
 
-        return new StreamResult(content, buildReferences(result.workspace().getRetrievedDocs()));
+        // agentMetadata：intent/confidence 在 buildAdvisorChain 同步阶段已就绪；retrievalRounds 此处为初始值
+        //（订阅前未触发 ReAct 检索），由 ChatServiceImpl.chatStream 外层 doOnComplete 刷新为终值。
+        // references 不在此固化（订阅前 workspace.retrievedDocs 为空，固化为空 list 是已知 bug）→ 传 null，
+        // 改由 doOnComplete 现场从 workspace 构建（修复 agent 流式 references 时序缺口）。
+        Map<String, Object> agentMetadata = buildAgentMetadata(result);
+        return new StreamResult(frames, null, agentMetadata, result.workspace());
     }
 
-    /** 从 workspace 检索文档构造引用映射（#n → chunkId/documentId/fileName/page/score/source/content），无检索时返回 null */
+    /** 从 workspace 检索文档构造引用映射；空时返回 null。委托 {@link Reference#fromAll} 消除重复。 */
     private static List<Reference> buildReferences(List<RetrievedDocument> docs) {
-        if (docs == null || docs.isEmpty()) {
-            return null;
-        }
-        List<Reference> refs = new ArrayList<>(docs.size());
-        for (RetrievedDocument doc : docs) {
-            refs.add(new Reference(doc.refNumber(), doc.chunkId(), doc.documentId(),
-                doc.fileName(), doc.page(), doc.score(), doc.source(), doc.content()));
-        }
-        return refs;
+        List<Reference> refs = Reference.fromAll(docs);
+        return refs.isEmpty() ? null : refs;
     }
 
     /**

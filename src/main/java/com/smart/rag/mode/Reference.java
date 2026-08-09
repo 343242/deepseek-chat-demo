@@ -1,6 +1,10 @@
 package com.smart.rag.mode;
 
+import com.smart.rag.rag.retrieval.RetrievedDocument;
 import org.jspecify.annotations.Nullable;
+
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * 检索引用映射 — agent + chat 双路径统一。
@@ -30,4 +34,18 @@ public record Reference(
     double score,
     @Nullable String source,
     @Nullable String content
-) {}
+) {
+    /** 从 RetrievedDocument 构建引用（agent 流式 doOnComplete 时调用，消除 AgentModeStrategy.buildReferences 重复逻辑）。 */
+    public static Reference from(RetrievedDocument doc) {
+        return new Reference(doc.refNumber(), doc.chunkId(), doc.documentId(),
+            doc.fileName(), doc.page(), doc.score(), doc.source(), doc.content());
+    }
+
+    /** 批量构建引用映射；空列表返回空 List（调用方按需转 null）。 */
+    public static List<Reference> fromAll(List<RetrievedDocument> docs) {
+        if (docs == null || docs.isEmpty()) return List.of();
+        List<Reference> refs = new ArrayList<>(docs.size());
+        for (RetrievedDocument doc : docs) refs.add(from(doc));
+        return refs;
+    }
+}

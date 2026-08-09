@@ -16,6 +16,7 @@ import com.smart.rag.mode.ModeChainResult;
 import com.smart.rag.chat.service.StreamCompletionHelper;
 import com.smart.rag.mode.StrategyExecuteResult;
 import com.smart.rag.mode.StrategyExecutionContext;
+import com.smart.rag.mode.StreamFrame;
 import com.smart.rag.mode.StreamResult;
 import com.smart.rag.infrastructure.advisor.RagContextAdvisor;
 import org.slf4j.MDC;
@@ -155,15 +156,19 @@ public abstract class AbstractModeStrategy implements ChatModeStrategy {
         final int maxContentLength = 1 << 20;
         AtomicBoolean usageRecorded = new AtomicBoolean(false);
 
-        Flux<String> content = requestSpecFactory.createSpec(
+        // 用 .chatResponse() 替代 .content()：后者只取文本且 filter(hasLength) 丢弃 reasoning-only chunk，
+        // 导致思考过程（reasoning_content）在标准模式流式下完全丢失。这里手动拆出 text + reasoning，
+        // 包装为 StreamFrame 下发（REASONING 帧供 SseStreamBridge 发 event:reasoning）。
+        Flux<StreamFrame> frames = requestSpecFactory.createSpec(
                 ctx.chatClient(), ctx.candidateId(), ctx.request(),
                 ctx.conversationId(), chain, ctx.cagContext())
             .stream()
-            .content()
-            .doOnNext(text -> {
-                if (text != null && collectedContent.length() < maxContentLength) {
+            .chatResponse()
+            .flatMapIterable(AbstractModeStrategy::splitIntoFrames)
+            .doOnNext(frame -> {
+                if (frame.isContent() && collectedContent.length() < maxContentLength) {
                     int remaining = maxContentLength - collectedContent.length();
-                    collectedContent.append(text, 0, Math.min(text.length(), remaining));
+                    collectedContent.append(frame.payload(), 0, Math.min(frame.payload().length(), remaining));
                 }
             })
             .doFinally(signal -> {
@@ -173,7 +178,7 @@ public abstract class AbstractModeStrategy implements ChatModeStrategy {
                 }
             });
 
-        return new StreamResult(content, references);
+        return new StreamResult(frames, references);
     }
 
     /**
@@ -195,5 +200,32 @@ public abstract class AbstractModeStrategy implements ChatModeStrategy {
         } else {
             tracker.recordUsage(ctx.conversationId(), candidateId, ctx.elapsed());
         }
+    }
+
+    /**
+     * 从 Spring AI {@link ChatResponse} 拆出正文与思考帧。
+     * <p>
+     * 一个 ChatResponse 可能同时携带 content（{@code AssistantMessage.getText()}）
+     * 和 reasoning_content（{@code AssistantMessage.getMetadata().get("reasoning_content")}）。
+     * 拆为独立的 {@link StreamFrame}，保留时序：reasoning 先（模型先思考后作答的天然顺序），
+     * content 后。两者皆空时返回空列表（被 flatMapIterable 跳过，等价于原 .content() 的 filter(hasLength)）。
+     * <p>
+     * 供 {@link AbstractModeStrategy#doExecuteStream} 与 {@code AgentModeStrategy.executeStream} 共用。
+     */
+    public static List<StreamFrame> splitIntoFrames(ChatResponse resp) {
+        if (resp == null || resp.getResult() == null || resp.getResult().getOutput() == null) {
+            return List.of();
+        }
+        org.springframework.ai.chat.messages.AssistantMessage msg = resp.getResult().getOutput();
+        java.util.List<StreamFrame> out = new java.util.ArrayList<>(2);
+        Object rc = msg.getMetadata() != null ? msg.getMetadata().get("reasoning_content") : null;
+        if (rc instanceof String rs && !rs.isEmpty()) {
+            out.add(StreamFrame.reasoning(rs));
+        }
+        String text = msg.getText();
+        if (text != null && !text.isEmpty()) {
+            out.add(StreamFrame.content(text));
+        }
+        return out;
     }
 }

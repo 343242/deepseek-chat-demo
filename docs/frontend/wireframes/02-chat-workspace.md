@@ -172,9 +172,9 @@
 ┌─ 消息流（独立滚动）──────────────────────────────┐
 │                                                  │
 │  ┌─ 加载更多（顶部，历史多时显示）──────────────┐ │
-│  │  ↑ 向上滚动加载更早消息                       │ │  ← 后端 /messages 不分页
-│  └──────────────────────────────────────────────┘ │     前端虚拟滚动或截断渲染
-│                                                  │
+│  │  ↑ 向上滚动加载更早消息                       │ │  ← 游标分页：
+│  └──────────────────────────────────────────────┘ │     GET /{id}/messages?limit=20&before={根消息id}
+│                                                  │        → MessageCursorPage{items, nextCursor, hasMore}
 │  ═══ 今天 14:30 ═══                               │  ← 时间分组分隔
 │                                                  │
 │  [消息1 USER]                                     │
@@ -509,7 +509,7 @@ AGENT 消息完成后点"查看推理" → 右栏滑入时间线（§5.3）。
 | CHAT-2 | 停止生成的体验 | 后端无停止端点，只能客户端 abort。停止后已生成内容保留，但服务端可能仍在消耗算力（直到检测到客户端断开）。体验可接受 |
 | CHAT-3 | Agent 模式选择器形态 | 当前假设通过模型选择器旁的下拉切换 SIMPLE/MULTI_TURN/AGENT。也可独立成 segmented control。需定 |
 | CHAT-4 | 会话标题自动生成的时机 | 后端 titleSource=SYSTEM 从首条消息截取。前端是否显示"自动"标记？建议不显示（多数产品不标） |
-| CHAT-5 | 消息虚拟滚动 | 后端 /messages 不分页一次性返回。会话消息极多（上千条）时需虚拟滚动（@tanstack/react-virtual）。普通会话直接渲染 |
+| CHAT-5 | ~~消息虚拟滚动~~ | ✅ 后端已支持游标分页：`GET /api/conversations/{id}/messages?limit=20&before={根消息id}` → `MessageCursorPage{items, nextCursor, hasMore}`，limit @Max(50)。前端用 IntersectionObserver 监听滚动到顶部，带 nextCursor（本页最早根消息 id）作 before 加载更早历史，无需虚拟滚动 |
 
 ---
 

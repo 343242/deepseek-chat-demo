@@ -266,6 +266,12 @@
 ```
 
 > Token 在 HttpOnly Cookie 里（前端 JS 不可读），无需手动存储。前端只需缓存 `user` 对象供权限守卫用。
+>
+> ⚠️ **跨域部署陷阱（Cookie SameSite）**：后端 Cookie 默认 `SameSite=Lax`（`JwtProperties.cookieSameSite` 默认值）。前后端分离部署（前端 `localhost:5173` → 后端 `localhost:8080`，或不同域名）时，跨站 fetch 默认**不携带 Cookie** → 登录后所有接口 401。两种解法：
+> - **开发期推荐**：Vite dev server 配 proxy 把 `/api` 转发到后端（同源），Cookie 自然携带
+> - **跨域部署**：后端设 `app.jwt.cookie-same-site=none` + `cookie-secure=true`（`SameSite=None` 浏览器强制要求 `Secure`，需 HTTPS）。`CookieTokenManager` 检测到 None+非Secure 会强制开 Secure 兜底
+>
+> 所有 fetch 请求必须带 `credentials: 'include'`。后端 CORS 已 `allowCredentials=true`，但 `allowedOrigins` 不能是 `*`，需精确白名单。
 
 ---
 

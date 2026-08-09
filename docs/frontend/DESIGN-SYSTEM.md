@@ -509,12 +509,14 @@ RAG / Agent 操作耗时长（流式生成、文档向量化、Agent 多轮工�
 
 #### 4.4.9 用户状态 `UserStatus`（整数 0/1）⚠️
 
-> 后端序列化为**整数**而非枚举名，前端必须按整数判断。
+> 后端 `UserVO.status` 字段类型是 **`Integer`**（手动存 `UserStatus.code`，0/1），前端按整数判断。注意 `UserStatus` 枚举本身**无 `@JsonValue`**——若未来有端点直接返回枚举对象会输出字符串名（"DISABLED"/"ENABLED"），当前 `UserVO` 走 Integer 路径不受影响，但接触枚举本身时需留意。
 
 | 整数值 | 枚举名 | 中文文案 | 色值 | 图标 | 场景 |
 |--------|--------|---------|------|------|------|
 | `1` | `ENABLED` | 启用 | `--success-600` | `CheckCircle2` | 正常用户 |
 | `0` | `DISABLED` | 禁用 | `--error-600` | `Ban` | 被禁用（无法登录） |
+
+> ⚠️ 用户状态更新接口用 **query param**：`POST /api/users/{id}/status?status=0`（`@RequestParam`），**不是 JSON body**。前端若发 `{status:0}` body 会被忽略（status 为 null → 400）。
 
 #### 4.4.10 AgentTrace finalStatus（4 值）
 
@@ -1263,7 +1265,7 @@ line-height: 1.5;            /* 中文行距需大于西文 */
 - 页码：数字按钮，当前页 bg `--brand-600` 文字 inverse，其余 hover `--bg-hover`
 - 省略号：`...`
 - 每页条数选择：Select（10/20/50/100）
-- ⚠️ 后端 PageRequest 最大 100，前端"每页"选项不超过 100
+- ⚠️ **size 上限因端点而异**：全局 `PageRequest.MAX_PAGE_SIZE=100`（文档/审批/团队成员等接口会被 clamp 到 100），但**会话列表** `GET /api/conversations` 的 `size` 是 `@Max(500)` 默认 50——可超过 100。前端"每页"选项统一不超过 100 即可（会话列表传更大值后端也接，但其他接口会被 clamp，建议统一 100 上限避免踩坑）
 - 总数显示：左侧"共 N 条"
 
 ### 10.20 Empty 空状态
@@ -1385,16 +1387,33 @@ line-height: 1.5;            /* 中文行距需大于西文 */
 ### 11.3 ChatMessageBubble 聊天消息气泡 ⭐
 
 **契约**：
-- 发送：`POST /api/chat` / `POST /api/chat/stream`
-- 消息：`MessageVO { id, parentId, role, content, status, modelId?, enableThinking?, tokenUsage?, durationMs?, createdAt, children[] }`
-- 流式片段：SSE `data:` 行（纯文本片段）+ 终止 `references` 事件
-- RAG 引用：`List<Reference> { refNumber, chunkId, documentId, fileName, page?, score, source?, content? }`
-- Agent 元数据：`agentMetadata: Map { intent?, confidence?, retrievalRounds?, agentDegraded?, degradedTo? }`
-- 降级：`fallback: FallbackMeta { requestedModel, fallback }`
+- 发送：`POST /api/chat`（阻塞，返回完整 `ChatResponse`）/ `POST /api/chat/stream`（SSE 流式）
+- 消息：`MessageVO { id, parentId, role, content, status, modelId?, thinkingEnabled?, tokenUsage, durationMs?, createdAt, children[] }`
+  - ⚠️ `tokenUsage` 是**单个 Integer（总 token 数）**，无 prompt/completion 拆分——元信息行的 `↑prompt ↓completion` 无法仅凭此字段渲染（见 11.3.7 注）
+  - 字段名是 `thinkingEnabled`（`MessageVO`），请求侧是 `enableThinking`（`ChatRequest`）——序列化后前端收到的是 `thinkingEnabled`
+- RAG 引用：`List<Reference> { refNumber, chunkId, documentId(String), fileName, page?, score, source?, content? }`
+- Agent 元数据（阻塞式 `ChatResponse.agentMetadata`）：`Map { intent?, confidence?, retrievalRounds?, agentDegraded?, degradedTo? }`
+- 降级（阻塞式 `ChatResponse.fallback`）：`FallbackMeta { requestedModel, fallback }`
+
+**⚠️ SSE 流式接入（关键约束）**：
+
+1. **必须用 `fetch` + `ReadableStream` 手动解析，禁用浏览器原生 `EventSource`**。原因：`/api/chat/stream` 是 **POST + `@RequestBody`（JSON）**，而 `EventSource` 只支持 GET 且无法设 body/自定义 header。Token 在 HttpOnly Cookie 里，fetch 需带 `credentials: 'include'`。
+2. **SSE 帧结构（三类）**：
+   | 帧 | SSE 输出 | 含义 | 前端处理 |
+   |---|---|---|---|
+   | 内容帧 | `data:{chunk}\n\n`（**无 `event:` 行**） | 模型输出的文本片段 | 累加到当前消息 content，末尾接打字光标 |
+   | references 帧 | `event:references\ndata:[{...Reference}]\n\n` | RAG 引用列表（流结束前发，仅在 RAG 有引用时） | 解析 JSON，渲染引用脚注区 |
+   | error 帧 | `event:error\ndata:"流式响应失败..."\n\n` | 流式失败 | 显示错误卡片 + 重试 |
+   > ⚠️ 内容帧**没有 `event:` 名**，很多 SSE 库默认按 event 名路由、对未命名事件处理不一——务必用底层流解析（读 `data:`/`event:` 行），不要依赖"按 event 名分发"的高层封装。
+3. **⚠️ 流式不发 `agentMetadata` / `fallback` / `durationMs` / `tokenUsage`（后端待补）**：`SseStreamBridge` 只发内容/references/error 三类帧，阻塞式 `ChatResponse` 携带的 agentMetadata 与 fallback **不会通过 SSE 发出**。后果：
+   - AGENT 模式流式完成后，前端拿不到 agentMetadata → AgentTraceTimeline 汇总视图（11.3.5/11.4）无数据，需标注"流式下暂不可用"
+   - 降级提示（fallback，11.3.6）流式下不显示
+   - 耗时/durationMs：前端自行计时（请求开始到流结束）
+   - 后续推动后端在流末补一帧（如 `event:meta`）携带 agentMetadata/fallback
 
 **这是平台最复杂的组件**，需同时支持流式态、Agent 态、错误态、分支态。
 
-> v0.3.1：三模式（SIMPLE/MULTI_TURN/AGENT）统一走流式 UX，无独立"阻塞态"。Agent 模式差异仅在完成后多一个可展开的 agentMetadata 条（11.3.5）。
+> v0.3.1：三模式（SIMPLE/MULTI_TURN/AGENT）统一走流式 UX，无独立"阻塞态"。Agent 模式差异仅在完成后多一个可展开的 agentMetadata 条（11.3.5）——但流式下该条因 SSE 不发而暂缺（见上 #3）。
 
 📐 通用结构：
 ```
@@ -1449,9 +1468,9 @@ line-height: 1.5;            /* 中文行距需大于西文 */
 
 #### 11.3.5 Agent 元数据条（agentMetadata）— Agent 模式
 
-> v0.3.1 修正：Agent 模式**支持流式**（`AgentModeStrategy.java:298` 实现 executeStream），与 SIMPLE/MULTI_TURN 统一走流式 UX。agentMetadata 在**流式完成后**随最终响应返回，作为"可展开的推理详情"呈现，不再是阻塞等待态。
-
-助手消息底部（流式生成完成后）显示 Agent 专属元信息条：
+> v0.3.1 修正：Agent 模式**支持流式**（`AgentModeStrategy.java:298` 实现 executeStream），与 SIMPLE/MULTI_TURN 统一走流式 UX。
+>
+> ⚠️ **后端待补（G3）**：`agentMetadata` 只在**阻塞式** `POST /api/chat` 的 `ChatResponse` 中返回；**流式** `/api/chat/stream` 的 `SseStreamBridge` 当前不发 agentMetadata 帧（只发内容/references/error）。因此流式场景下本条暂无数据来源——AGENT 模式流式完成后，这条元信息条**当前不渲染**（或显示"推理详情流式下暂不可用"）。后续推动后端在 SSE 流末补一帧（如 `event:meta`）携带 agentMetadata/fallback，前端即可启用。阻塞式接口仍可正常展示。
 
 ```
 🤖 Agent · 意图: 深度检索(0.92) · 检索 3 轮 · 用时 8.2s  ▸ 查看推理
@@ -1482,7 +1501,9 @@ deepseek-v4-flash · ↑120 ↓80 · 1.5s · 2026-06-20 14:30
 
 - modelId（`--text-tertiary`，mono 字体）
 - token：`↑prompt ↓completion`（`--text-tertiary`）
+  > ⚠️ 后端 `MessageVO.tokenUsage` 是**单 Integer（总 token 数）**，无 prompt/completion 拆分。元信息行要么只显示总数（`200 token`），要么推动后端补 prompt/completion 拆分字段。当前按总数显示。
 - 耗时 durationMs → 转秒（`--text-tertiary`）
+  > ⚠️ `durationMs` 在 `MessageVO` 中存在（历史消息可读）；但**流式生成当下**前端拿不到（SSE 不发），需自行计时（请求开始到流结束）。ChatResponse（阻塞式）也无此字段。
 - 时间（`--text-tertiary`，按第 13 章格式化）
 - 整行 `--font-size-xs`，分隔符用 `·` 间隔
 
@@ -1632,7 +1653,13 @@ deepseek-v4-flash · ↑120 ↓80 · 1.5s · 2026-06-20 14:30
 
 ### 11.7 ConversationTree 会话树 / 分支导航
 
-**契约**：消息 `parentId` + `children[]` 构成树，支持重生成分支。`GET /api/conversations/{id}` 返回 messages 树（仅一层 children）。
+**契约**：消息 `parentId` + `children[]` 构成树，支持重生成分支。消息加载走**游标分页**：
+
+- `GET /api/conversations/{conversationId}/messages?limit=20&before={根消息id}` → `MessageCursorPage { items: List<MessageVO>, nextCursor: Long, hasMore: boolean }`
+- 分页方向：从最新向最早翻（时间倒序加载），`items` 内部仍按时间升序排列便于正序渲染
+- `nextCursor` = 本页最早的**根消息 id**（USER 消息，轮次粒度），`null` 表示已到最早
+- limit @Max(50)，默认 20
+- `GET /api/conversations/{id}`（会话详情）也返回 `ConversationDetail`（含首批消息），但翻历史用上面的 messages 端点
 
 📐 用于消息流中的分支切换（见 11.3.8）。分支较多时展示简化树：
 
@@ -1677,6 +1704,8 @@ deepseek-v4-flash · ↑120 ↓80 · 1.5s · 2026-06-20 14:30
 
 **契约**：`ApprovalVO { id, documentId, fileName, fileSize, uploaderId, uploaderName, status, reviewerId?, reviewComment?, createdAt, reviewedAt? }`，`ApprovalStatus` 3 值。
 
+> ⚠️ **后端待补（A2）**：`ApprovalVO` 只有 `reviewerId`（Long），**无 `reviewerName`**。下方"已审批态"示例里"审批人: admin"无法直接渲染——要么推动后端 join 用户表补 `reviewerName`，要么前端额外查用户（不推荐，N+1）。当前文档示例按"后端补字段后"的预期写。
+
 📐 用于团队审批列表（管理员视角）和我的审批（上传者视角）。
 
 **管理员视角（待审批）：**
@@ -1689,7 +1718,9 @@ deepseek-v4-flash · ↑120 ↓80 · 1.5s · 2026-06-20 14:30
 └─────────────────────────────────┘
 ```
 
-- 通过 / 拒绝前可填审批备注（`ApprovalReviewRequest.comment`，max 512）
+- 点击"通过"或"拒绝"后调 `POST /api/teams/{teamId}/approvals/{id}/review`，请求体 `ApprovalReviewRequest { action, comment }`：
+  - `action`（**必填**）：`"APPROVE"` 或 `"REJECT"`（决定通过/拒绝，**非** boolean）
+  - `comment`（可选）：审批备注，max 512
 - 通过 → 文档进入 ETL；拒绝 → uploader 收到通知
 
 **已审批态（PENDING 之外）：**
@@ -1703,11 +1734,13 @@ deepseek-v4-flash · ↑120 ↓80 · 1.5s · 2026-06-20 14:30
 ```
 
 - status Badge 按 4.4.4
-- reviewerName + reviewedAt + reviewComment（如非空）
+- reviewerName（⚠️ 后端待补，见本节契约注）+ reviewedAt + reviewComment（如非空）
 
 ### 11.10 TokenUsageChip 用量徽标
 
-**契约**：`TokenUsageDTO { conversationId, modelId, promptTokens, completionTokens, totalTokens, durationMs, createdAt }`；聚合 `UsageStats { groupKey, requestCount, totalPromptTokens, totalCompletionTokens, totalTokens, avgDurationMs }`。
+**契约**：`TokenUsageDTO { conversationId, modelId, promptTokens, completionTokens, totalTokens, durationMs, createdAt(LocalDateTime) }`；聚合 `UsageStats { groupKey, requestCount, totalPromptTokens, totalCompletionTokens, totalTokens, avgDurationMs }`。
+
+> ⚠️ **时间类型混用（D1）**：`TokenUsageDTO.createdAt` 是 **LocalDateTime**（无时区偏移），而 `MessageVO`/`ConversationSummary`/`DocumentDTO` 等用的是 **OffsetDateTime**（带偏移）。两者 ISO 序列化格式不同（`2026-06-20T14:30:00` vs `2026-06-20T14:30:00+08:00`），前端 dayjs 解析需分别处理。同理 `SystemPromptDTO` 也是 LocalDateTime。后端无全局 `@JsonFormat`/JavaTimeModule 统一配置。
 
 📐 紧凑展示 token 用量，用于消息元信息行、用量统计页。
 
@@ -1931,7 +1964,13 @@ alice 的上传额度
 
 ### 13.5 错误文案（与后端对齐）
 
-后端返回 `GlobalResponse { code, message }`，前端**优先显示后端 message**，本地兜底文案仅用于网络错误：
+后端返回 `GlobalResponse { code, message }`，前端**优先显示后端 message**，本地兜底文案仅用于网络错误。
+
+> ⚠️ **错误响应是双轨制（J4）**，前端 HTTP 拦截器必须同时处理两类：
+> - **业务错误**：HTTP **200** + body `{ code: 非0, message }`（如校验失败、限流内部、资源不存在）——拦截器要检查 `code !== 0` 才算错
+> - **安全/协议错误**：HTTP **4xx/5xx** + GlobalResponse body（401 未认证、403 权限不足、429 限流由 Security 过滤器直接返回 HTTP 状态码）
+>
+> 即"HTTP 200 不代表成功"——必须看 `code === 0` 才放行。两类都从 body 取 `message` 显示。
 
 | 场景 | 前端兜底文案 |
 |------|-------------|

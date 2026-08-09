@@ -464,6 +464,7 @@
 **判定逻辑**：
 
 1. `require` 权限码是否在当前用户 `permissions` 列表中？（`/api/auth/me` 返回 `permissions: List<String>`，前端缓存——无需前端维护"角色→权限"映射表）
+   > ⚠️ **登录响应的 permissions 可能为空**：登录/注册/刷新响应里的 `permissions` 是异步预热 best-effort，**可能为 `List.of()`**（预热未完成）。前端**拿到登录响应后必须立即调 `GET /api/auth/me` 兜底**——`/me` 保证返回非空当前权限快照。否则用户登录后所有 PermissionGuard 失效（看不到任何模块）。`/me` 是权限兜底的权威入口，缓存 miss 时同步加载 DB。
 2. 若有 `feature` prop，该 feature flag 是否开启？（见 8.1）
 3. 全通过渲染 children，否则渲染 fallback / 重定向
 

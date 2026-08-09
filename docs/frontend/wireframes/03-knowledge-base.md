@@ -194,7 +194,7 @@
   │   └─ uploaded=false, uploadedChunks 空（新上传）
   │       → 并发分片上传（3-5 并发）
   │
-  ├─ PUT /{uploadId}/chunks/{index} (每片: raw body + X-Chunk-MD5 header)
+  ├─ POST /{uploadId}/chunks/{index} (每片: raw body + X-Chunk-MD5 header)
   │   → 更新进度条
   │   → 单片失败重试 3 次
   │

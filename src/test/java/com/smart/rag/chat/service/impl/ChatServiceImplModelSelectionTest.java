@@ -77,10 +77,9 @@ class ChatServiceImplModelSelectionTest {
     }
 
     private ChatServiceImpl createService() {
-        return new ChatServiceImpl(
-                llmRegistry, fallbackEligibility, modeRouter, usageTracker,
-                conversationHelper, chatMessagePublisher, sseStreamBridge, cagContextManager,
-                cagProperties, userContextProvider, teamMembershipVerifier);
+        return new ChatServiceImpl(llmRegistry, fallbackEligibility, modeRouter, usageTracker,
+        conversationHelper, chatMessagePublisher, sseStreamBridge, cagContextManager,
+        cagProperties, userContextProvider, teamMembershipVerifier, org.mockito.Mockito.mock(com.smart.rag.chat.service.ActiveStreamRegistry.class), org.mockito.Mockito.mock(com.smart.rag.infrastructure.llm.metrics.LlmMetrics.class));
     }
 
     private void setupCommonMocks(String requestedModel) {

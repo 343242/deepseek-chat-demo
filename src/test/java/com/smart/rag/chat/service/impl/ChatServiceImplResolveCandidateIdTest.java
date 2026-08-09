@@ -55,10 +55,9 @@ class ChatServiceImplResolveCandidateIdTest {
     private static final String DEFAULT_CANDIDATE_ID = "qwen-plus";
 
     private ChatServiceImpl createService() {
-        return new ChatServiceImpl(
-                llmRegistry, fallbackEligibility, modeRouter, usageTracker,
-                conversationHelper, chatMessagePublisher, sseStreamBridge, cagContextManager,
-                cagProperties, userContextProvider, teamMembershipVerifier);
+        return new ChatServiceImpl(llmRegistry, fallbackEligibility, modeRouter, usageTracker,
+        conversationHelper, chatMessagePublisher, sseStreamBridge, cagContextManager,
+        cagProperties, userContextProvider, teamMembershipVerifier, org.mockito.Mockito.mock(com.smart.rag.chat.service.ActiveStreamRegistry.class), org.mockito.Mockito.mock(com.smart.rag.infrastructure.llm.metrics.LlmMetrics.class));
     }
 
     private ChatRequest requestWithModel(String model) {

@@ -45,6 +45,15 @@ public class LlmMetrics {
             .increment(count);
     }
 
+    /**
+     * 流式生成取消计数（design chat-stream-cancel.md §6.3）。
+     * 标签 {@code reason} 区分 USER_ABORT / NAVIGATE_AWAY / SESSION_SWITCH。
+     */
+    public void recordStreamCancelled(String reason) {
+        if (registry == null) return;
+        registry.counter("chat.stream.cancelled", "reason", reason).increment();
+    }
+
     // ==================== Embedding ====================
 
     public void recordEmbedLatency(String candidateId, long startNanos, String result) {

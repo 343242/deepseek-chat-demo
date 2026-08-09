@@ -5,8 +5,11 @@ import com.smart.rag.mode.RequestContext;
 import com.smart.rag.chat.context.RequestContextManager;
 import com.smart.rag.mode.ChatRequest;
 import com.smart.rag.chat.dto.ChatResponse;
-import com.smart.rag.chat.dto.FallbackMeta;
+import com.smart.rag.chat.dto.CancelReason;
+import com.smart.rag.chat.dto.CancelStreamResponse;
 import com.smart.rag.mode.Reference;
+import com.smart.rag.chat.dto.FallbackMeta;
+import com.smart.rag.mode.WorkspaceInfo;
 import com.smart.rag.infrastructure.exception.ProviderNotFoundException;
 import com.smart.rag.infrastructure.fallback.FallbackEligibility;
 import com.smart.rag.infrastructure.llm.CapabilityClient;
@@ -15,17 +18,20 @@ import com.smart.rag.infrastructure.llm.adapter.ChatModelAdapter;
 import com.smart.rag.infrastructure.llm.LlmCapability;
 import com.smart.rag.infrastructure.exception.ClientException;
 import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;
-import com.smart.rag.infrastructure.llm.resilience.FallbackExecutor;
 import com.smart.rag.infrastructure.llm.registry.LlmClientRegistry;
+import com.smart.rag.infrastructure.llm.resilience.FallbackExecutor;
+import com.smart.rag.infrastructure.llm.metrics.LlmMetrics;
 import com.smart.rag.mode.ChatModeStrategy;
 import com.smart.rag.chat.mode.ModeRouter;
 import com.smart.rag.chat.service.ChatConversationHelper;
 import com.smart.rag.chat.service.ChatMessagePublisher;
 import com.smart.rag.chat.service.ChatService;
 import com.smart.rag.chat.service.ChatUsageTracker;
-import com.smart.rag.chat.service.MdcPropagator;
+import com.smart.rag.chat.service.ActiveStreamRegistry;
 import com.smart.rag.chat.service.SseStreamBridge;
+import com.smart.rag.chat.service.MdcPropagator;
 import com.smart.rag.chat.service.UserContextProvider;
+import com.smart.rag.mode.StreamFrame;
 import com.smart.rag.mode.StreamResult;
 import com.smart.rag.mode.StrategyExecuteResult;
 import com.smart.rag.mode.StrategyExecutionContext;
@@ -38,9 +44,12 @@ import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.Sinks;
 
+import java.util.Collections;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.Map;
 
@@ -67,6 +76,8 @@ public class ChatServiceImpl implements ChatService {
     private final CagProperties cagProperties;
     private final UserContextProvider userContextProvider;
     private final TeamMembershipVerifier teamMembershipVerifier;
+    private final ActiveStreamRegistry activeStreamRegistry;
+    private final LlmMetrics llmMetrics;
 
     public ChatServiceImpl(LlmClientRegistry llmRegistry,
                            FallbackEligibility fallbackEligibility,
@@ -78,7 +89,9 @@ public class ChatServiceImpl implements ChatService {
                            RequestContextManager cagContextManager,
                            CagProperties cagProperties,
                            UserContextProvider userContextProvider,
-                           TeamMembershipVerifier teamMembershipVerifier) {
+                           TeamMembershipVerifier teamMembershipVerifier,
+                           ActiveStreamRegistry activeStreamRegistry,
+                           LlmMetrics llmMetrics) {
         this.llmRegistry = llmRegistry;
         this.fallbackExecutor = new FallbackExecutor(fallbackEligibility);
         this.modeRouter = modeRouter;
@@ -90,6 +103,8 @@ public class ChatServiceImpl implements ChatService {
         this.cagProperties = cagProperties;
         this.userContextProvider = userContextProvider;
         this.teamMembershipVerifier = teamMembershipVerifier;
+        this.activeStreamRegistry = activeStreamRegistry;
+        this.llmMetrics = llmMetrics;
     }
 
     // ==================== 阻塞式聊天（跨模型 Fallback） ====================
@@ -129,8 +144,13 @@ public class ChatServiceImpl implements ChatService {
         Map<String, String> parentMdc = MdcPropagator.capture();
 
         AtomicReference<List<Reference>> refsRef = new AtomicReference<>();
+        AtomicReference<Map<String, Object>> agentMetadataRef = new AtomicReference<>();
+        AtomicReference<FallbackMeta> fallbackRef = new AtomicReference<>();
+        AtomicReference<WorkspaceInfo> workspaceRef = new AtomicReference<>();
+        // 降级链已尝试模型（每次 lambda 执行追加；error 帧在降级链耗尽时携带，供前端提示）
+        List<String> attempted = Collections.synchronizedList(new ArrayList<>());
 
-        Flux<String> stream = fallbackExecutor.executeStream(chain, client -> {
+        Flux<StreamFrame> stream = fallbackExecutor.executeStream(chain, client -> {
             ChatCapable chatCapable = (ChatCapable) client;
             ChatClient chatClient = ChatClient.builder(new ChatModelAdapter(chatCapable)).build();
             StrategyExecutionContext execCtx = new StrategyExecutionContext(
@@ -138,9 +158,14 @@ public class ChatServiceImpl implements ChatService {
                 pctx.conversationId, pctx.rawConversationId, pctx.userId,
                 pctx.cagCtx, System.currentTimeMillis());
 
+            attempted.add(client.candidateId());
             StreamResult sr = pctx.modeStrategy.executeStream(execCtx);
-            refsRef.set(sr.references()); // 捕获最终成功模型的 references（fallback 时后者覆盖前者）
-            Flux<String> flux = sr.content();
+            refsRef.set(sr.references());                  // 标准模式同步 references
+            agentMetadataRef.set(sr.agentMetadata());      // Agent 模式 intent/confidence（retrievalRounds 流后刷新）
+            workspaceRef.set(sr.workspace());              // Agent 模式工作区（成功模型覆盖前序失败模型）
+            boolean isFallback = !client.candidateId().equals(pctx.requestedCandidateId);
+            fallbackRef.set(isFallback ? new FallbackMeta(pctx.requestedCandidateId, true) : null);
+            Flux<StreamFrame> flux = sr.frames();
             if (parentMdc != null) {
                 flux = flux.doOnSubscribe(s -> MdcPropagator.restore(parentMdc))
                            .doFinally(signal -> MdcPropagator.clear());
@@ -148,7 +173,85 @@ public class ChatServiceImpl implements ChatService {
             return flux;
         });
 
-        return sseStreamBridge.bridge(stream, refsRef);
+        // 外层 doOnComplete：Agent 模式 workspace 在 ReAct 检索期间填充，content 流结束后才就绪。
+        // 此时现场构建 references 终值（修复 agent 流式 references 固化为空的 bug）+ 刷新 retrievalRounds。
+        // reactor 语义保证 doOnComplete 副作用先于 SseStreamBridge subscribe 的 onComplete 回调（发帧）。
+        stream = stream.doOnComplete(() -> {
+            WorkspaceInfo ws = workspaceRef.get();
+            if (ws != null) {
+                refsRef.set(Reference.fromAll(ws.getRetrievedDocs()));
+                Map<String, Object> meta = agentMetadataRef.get();
+                if (meta != null) {
+                    meta.put("retrievalRounds", ws.getRetrievalRound());
+                }
+            }
+        });
+
+        return bridgeCancellable(stream, pctx, refsRef, agentMetadataRef, fallbackRef, attempted);
+    }
+
+    // ==================== 流式取消（design chat-stream-cancel.md §4/§5） ====================
+
+    /**
+     * 可取消桥接：创建 cancelSink/cancelled/emitterRef → 先 register（design §4.3，信号可重放）
+     * → takeUntilOther 包装（design §4.4，软取消）→ bridge（后填充 emitter）。
+     * <p>
+     * register 先于 bridge 的 subscribe：窗口内的取消信号会被 sink 缓存，takeUntilOther 订阅时立即触发。
+     * emitter 由 bridge 创建后回填 emitterRef，供 registry 兜底清理 / canceled 帧使用。
+     * 单会话单流：register 检测到同 conversationId 旧流时，自动软取消旧流（design §5.1）。
+     */
+    private SseEmitter bridgeCancellable(Flux<StreamFrame> stream,
+                                         PreparedContext pctx,
+                                         AtomicReference<List<Reference>> refsRef,
+                                         AtomicReference<Map<String, Object>> agentMetadataRef,
+                                         AtomicReference<FallbackMeta> fallbackRef,
+                                         List<String> attempted) {
+        // 软取消状态（design §4.2/§4.3）
+        Sinks.Empty<Void> cancelSink = Sinks.empty();
+        AtomicBoolean cancelled = new AtomicBoolean(false);
+        AtomicReference<String> cancelReason = new AtomicReference<>();
+        AtomicReference<SseEmitter> emitterRef = new AtomicReference<>();
+
+        // takeUntilOther: cancelSink 发信号后 cancel 上游(断 HTTP 读取)，下游以正常 onComplete 终止。
+        // 注意：不保证 drain，取消后大概率截断（design §8.1）；已 dispatch 帧发完，缓冲内未 dispatch 丢弃。
+        Flux<StreamFrame> cancellable = stream.takeUntilOther(cancelSink.asMono());
+
+        // ① 先 register（emitter 尚未创建，用 AtomicReference 后填充；design §4.3）
+        ActiveStreamRegistry.ActiveStream activeStream = new ActiveStreamRegistry.ActiveStream(
+                cancelSink, cancelled, cancelReason, emitterRef,
+                System.currentTimeMillis(), String.valueOf(pctx.userId));
+        ActiveStreamRegistry.ActiveStream old = activeStreamRegistry.register(pctx.conversationId, activeStream);
+        if (old != null) {
+            log.debug("Replaced previous active stream for conversation {}", pctx.conversationId);
+        }
+
+        // ② 再 bridge —— subscribe 时 cancelSink 的信号可被重放（窗口内的取消能生效）
+        return sseStreamBridge.bridge(cancellable,
+                new SseStreamBridge.SseTailFrames(refsRef, agentMetadataRef, fallbackRef, attempted),
+                cancelSink, cancelled, cancelReason, emitterRef,
+                pctx.conversationId, activeStream);
+    }
+
+    /**
+     * 取消指定会话的活跃流式生成（design chat-stream-cancel.md §4/§6.1）。
+     * <p>
+     * 软取消：registry.cancel 先置 cancelled 标志、再 cancelSink.tryEmitEmpty()，
+     * 触发 takeUntilOther → 下游正常 onComplete → 桥接层发 event:canceled → complete emitter。
+     * 已生成内容不落库（StreamCompletionHelper CANCEL 分支）。
+     */
+    @Override
+    public CancelStreamResponse cancelStream(String rawConversationId, CancelReason reason) {
+        Long userId = userContextProvider.getCurrentUserId();
+        String isolatedId = ConversationIdUtil.buildIsolatedId(userId, rawConversationId);
+        String reasonName = reason != null ? reason.name() : CancelReason.USER_ABORT.name();
+
+        boolean cancelled = activeStreamRegistry.cancel(isolatedId, reasonName);
+        if (cancelled) {
+            llmMetrics.recordStreamCancelled(reasonName);
+            log.info("Stream cancelled by user: conversation={}, reason={}",
+                    ConversationIdUtil.mask(isolatedId), reasonName);
+        }
+        return new CancelStreamResponse(cancelled, rawConversationId);
     }
 
     // ==================== 内部辅助 ====================

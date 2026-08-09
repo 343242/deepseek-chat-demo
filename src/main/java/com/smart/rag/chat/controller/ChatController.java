@@ -1,5 +1,8 @@
 package com.smart.rag.chat.controller;
 
+import com.smart.rag.chat.dto.CancelReason;
+import com.smart.rag.chat.dto.CancelStreamRequest;
+import com.smart.rag.chat.dto.CancelStreamResponse;
 import com.smart.rag.mode.ChatRequest;
 import com.smart.rag.chat.dto.ChatResponse;
 import com.smart.rag.chat.dto.ModelVO;
@@ -67,6 +70,20 @@ public class ChatController {
     @PostMapping(value = "/chat/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter chatStreamPost(@Valid @RequestBody ChatRequest request) {
         return chatService.chatStream(request);
+    }
+
+    /**
+     * 取消流式生成（design chat-stream-cancel.md §6.1）。
+     * <p>
+     * 软取消：断开与 LLM 的连接（停止拉取新 token），让下游以正常 onComplete 终止，
+     * 桥接层发送 {@code event:canceled} 终止帧后 complete emitter。已生成内容不落库。
+     * <p>
+     * 幂等：流不存在/已结束时返回 {@code cancelled:false}，不报错。
+     * 权限沿用类级 {@code @PreAuthorize("hasAuthority('chat:send')")}，端点级不重复。
+     */
+    @PostMapping("/chat/stream/cancel")
+    public GlobalResponse<CancelStreamResponse> cancelStream(@Valid @RequestBody CancelStreamRequest request) {
+        return GlobalResponse.ok(chatService.cancelStream(request.conversationId(), request.reason()));
     }
 
     @PostMapping("/models/refresh")

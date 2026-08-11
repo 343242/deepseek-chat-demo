@@ -153,7 +153,7 @@
 最后一页：底部"加载更多"消失
 ```
 
-> 后端不支持服务端搜索（仅 page/size/status），搜索框只能**前端过滤已加载列表**。
+> 🔶 **半阻塞 · 当前用 mock（客户端过滤）**：`GET /api/conversations` 暂仅 page/size/status，无 keyword。搜索框**前端过滤已加载列表**（标注"仅已加载 N 条"），会话极多时只能搜已加载部分。后端 [`docs/design/conversation-list-search-filter.md`](../../design/conversation-list-search-filter.md)（状态：实现就绪）落地后，前端改传 `keyword`/`pinned` 参数切服务端搜索，UI 不变。
 
 ### 2.6 新建会话交互
 
@@ -360,9 +360,9 @@ USER 右对齐（头像在右），ASSISTANT 左对齐（头像在左，全宽�
 | 状态 | 按钮 |
 |------|------|
 | 空闲 | `[发送 ➤]`（primary） |
-| 流式生成中 | `[⏹ 停止]`（secondary），点击 = 客户端 abort fetch |
+| 流式生成中 | `[⏹ 停止]`（secondary），点击 = 调 `POST /api/chat/stream/cancel` 软取消（见下） |
 
-> ⚠️ 后端**无停止端点**，停止只能客户端断 SSE 连接（ChatController 无 /stop）。停止后已生成内容保留。
+> ✅ **取消端点已就绪（CHAT-2 解决）**：`POST /api/chat/stream/cancel`，body `{ conversationId, reason? }`（reason 为枚举 `USER_ABORT`/`NAVIGATE_AWAY`/`SESSION_SWITCH`，默认 `USER_ABORT`），返回 `{ cancelled: boolean }`。后端**软取消**——断开与 LLM 的连接停止拉取新 token，发 `event:canceled` 终止帧（data `{reason}`）后 complete emitter；**已生成内容不落库**。幂等：流不存在/已结束返回 `cancelled:false` 不报错。前端点击停止即调此端点（无需再裸 abort fetch）；若请求未及返回可叠加 `AbortController` 兜底断流。
 
 ---
 
@@ -505,8 +505,8 @@ AGENT 消息完成后点"查看推理" → 右栏滑入时间线（§5.3）。
 
 | 编号 | 事项 | 影响 |
 |------|------|------|
-| CHAT-1 | ~~会话搜索是否做？~~ | 已知限制：`GET /api/conversations` 仅 page/size/status，无 keyword。前端搜索框客户端过滤已加载列表（标注"仅已加载"）。会话极多时只能搜已加载部分，可接受或后续推动后端加 keyword 参数 |
-| CHAT-2 | 停止生成的体验 | 后端无停止端点，只能客户端 abort。停止后已生成内容保留，但服务端可能仍在消耗算力（直到检测到客户端断开）。体验可接受 |
+| CHAT-1 | ~~会话搜索是否做？~~ | 🔶 半阻塞·mock：`GET /api/conversations` 仅 page/size/status，无 keyword。前端搜索框客户端过滤已加载列表（标注"仅已加载"）。后端 [`conversation-list-search-filter.md`](../../design/conversation-list-search-filter.md)（实现就绪）落地后切服务端 keyword/pinned 搜索，UI 不变 |
+| CHAT-2 | ~~停止生成的体验~~ | ✅ 已解决：`POST /api/chat/stream/cancel` 软取消（body `{conversationId, reason?}` → `{cancelled}`），后端发 `event:canceled` 终止帧，已生成内容不落库，幂等。前端点击停止调此端点（见 §4.4） |
 | CHAT-3 | Agent 模式选择器形态 | 当前假设通过模型选择器旁的下拉切换 SIMPLE/MULTI_TURN/AGENT。也可独立成 segmented control。需定 |
 | CHAT-4 | 会话标题自动生成的时机 | 后端 titleSource=SYSTEM 从首条消息截取。前端是否显示"自动"标记？建议不显示（多数产品不标） |
 | CHAT-5 | ~~消息虚拟滚动~~ | ✅ 后端已支持游标分页：`GET /api/conversations/{id}/messages?limit=20&before={根消息id}` → `MessageCursorPage{items, nextCursor, hasMore}`，limit @Max(50)。前端用 IntersectionObserver 监听滚动到顶部，带 nextCursor（本页最早根消息 id）作 before 加载更早历史，无需虚拟滚动 |

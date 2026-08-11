@@ -3,8 +3,8 @@
 > **文档类型**：高保真设计系统规范（Design System Specification）
 > **首轮交付范围**：仅设计规范，不含页面线框与信息架构
 > **基准对标**：Dify · RAGFlow（AI / RAG 平台风）
-> **技术栈取向**：Tailwind CSS + shadcn/ui（Radix）+ CSS 变量 token + Inter
-> **当前版本**：v0.3.1（修正 Agent 模式为统一流式，详见 1.1.3）
+> **技术栈取向**：Tailwind CSS v4 + shadcn/ui（Radix）+ CSS 变量 token + Inter
+> **当前版本**：v0.3.3（技术栈锁定 + 流式耗时/token 不展示决策，详见 1.1）
 
 ---
 
@@ -14,6 +14,8 @@
 
 | 版本 | 日期 | 变更 | 作者 |
 |------|------|------|------|
+| 0.3.3 | 2026-08-12 | 技术栈锁定（§15.4 最终版，去除全部"或"待决项）：React 19 + Vite + React Router v7；Tailwind v4（§15.2 改为 CSS-first `@theme`）；Zustand（UI 态）+ TanStack Query v5（服务端态）；传输用原生 fetch + 自定义 apiFetch 薄封装（不用 axios，因 SSE 必须用 fetch 避免双 transport）；shiki（rehype-pretty-code）；echarts（echarts-for-react）；Markdown 管线加 rehype-sanitize 白名单防 XSS。另：durationMs/tokenUsage 因 SSE 不发，决策流式当下不展示（不自行计时），历史 MessageVO 读取后展示（11.3/11.3.7/15.5 同步） | 前端设计 |
+| 0.3.2 | 2026-08-12 | 前后端契约对齐（按代码事实校正伪阻塞 + 真/半阻塞降级 mock）：(1) G3 解决——SSE 帧结构从 3 类扩为 7 类（补 reasoning/agentMetadata/fallback/canceled），11.3.5 流式 agentMetadata 已可用；(2) D1 解决——时间字段全局统一 OffsetDateTime（`JacksonTimeConfig`），11.10/13.3/行 184 同步；(3) 15.5 表 T6 决策不加 token-in-body、T7/T8 标记已解决；(4) 11.8 score 明确展示策略——归一化前按后端原值展示（已知取舍，待归一化设计落地后零改动获得可比分数） | 前端设计 |
 | 0.3.1 | 2026-06-21 | 修正 Agent 模式设计假设：确认后端 Agent 支持流式（`AgentModeStrategy.java:298` 实现 executeStream），三模式（SIMPLE/MULTI_TURN/AGENT）统一流式 UX。删除"Agent 阻塞式"全部描述（9.4 改为完成后展开动效、11.3.5 改为完成后元数据条、11.4 改为完成后可展开时间线、4.4.7 ChatMode 表去掉"阻塞式"标注） | 前端设计 |
 | 0.3.0 | 2026-06-20 | 按用户反馈确立产品基调：新增 2.0 视觉基调节（蓝白配色 / 圆角舒适 / 破坏操作强制弹窗）；圆角阶梯整体上调大一档；新增 4.0 蓝白主调节 + 中性色改冷调；强化 10.11 ConfirmDialog；2.5 可恢复性升为硬规则；12.8 明确纯中文界面定位 | 前端设计 |
 | 0.2.0 | 2026-06-20 | 按产品 UI 设计纪律强化：新增一致性锁（颜色/形状/组件）、交互态完整性（5态+3状态）、动效动机总表、组件类型→圆角硬映射表、文案四原则、Z-Index 纪律 | 前端设计 |
@@ -181,7 +183,7 @@ RAG / Agent 操作耗时长（流式生成、文档向量化、Agent 多轮工�
 - 状态徽标必须覆盖后端枚举的**全部值**（如 EtlStatus 11 个值，缺一个就是 bug）
 - 表单字段、校验规则、文案与后端 DTO 校验注解一致（如密码 8-72 位）
 - 错误文案与后端错误消息体系对齐（第 13 章）
-- 时间戳三套类型（OffsetDateTime / LocalDateTime / Instant）前端统一格式化
+- 时间戳统一为 **OffsetDateTime**（后端 `JacksonTimeConfig` 全局统一，无 LocalDateTime/Instant 混用，详见 13.3）
 
 ### 2.8 一致性锁（Consistency Lock）🔒
 
@@ -286,7 +288,7 @@ RAG / Agent 操作耗时长（流式生成、文档向量化、Agent 多轮工�
 
 ### 3.3 暗色模式机制
 
-采用**类名切换 + CSS 变量覆盖**（Tailwind `darkMode: ['selector']` 或 `darkMode: 'class'`）：
+采用**类名切换 + CSS 变量覆盖**（Tailwind v4 用 `@custom-variant dark (&:where(.dark, .dark *))` 启用 `.dark` 类切换，见 §15.2）：
 
 ```html
 <html class="dark">  <!-- 切换 -->
@@ -1392,28 +1394,30 @@ line-height: 1.5;            /* 中文行距需大于西文 */
   - ⚠️ `tokenUsage` 是**单个 Integer（总 token 数）**，无 prompt/completion 拆分——元信息行的 `↑prompt ↓completion` 无法仅凭此字段渲染（见 11.3.7 注）
   - 字段名是 `thinkingEnabled`（`MessageVO`），请求侧是 `enableThinking`（`ChatRequest`）——序列化后前端收到的是 `thinkingEnabled`
 - RAG 引用：`List<Reference> { refNumber, chunkId, documentId(String), fileName, page?, score, source?, content? }`
-- Agent 元数据（阻塞式 `ChatResponse.agentMetadata`）：`Map { intent?, confidence?, retrievalRounds?, agentDegraded?, degradedTo? }`
-- 降级（阻塞式 `ChatResponse.fallback`）：`FallbackMeta { requestedModel, fallback }`
+- Agent 元数据：`Map { intent?, confidence?, retrievalRounds?, agentDegraded?, degradedTo? }`——阻塞式随 `ChatResponse.agentMetadata` 返回；流式由 `event:agentMetadata` 终端帧携带（见下 SSE 帧结构）
+- 降级：`FallbackMeta { requestedModel, fallback }`——阻塞式随 `ChatResponse.fallback` 返回；流式由 `event:fallback` 终端帧携带
 
 **⚠️ SSE 流式接入（关键约束）**：
 
 1. **必须用 `fetch` + `ReadableStream` 手动解析，禁用浏览器原生 `EventSource`**。原因：`/api/chat/stream` 是 **POST + `@RequestBody`（JSON）**，而 `EventSource` 只支持 GET 且无法设 body/自定义 header。Token 在 HttpOnly Cookie 里，fetch 需带 `credentials: 'include'`。
-2. **SSE 帧结构（三类）**：
+2. **SSE 帧结构（七类）**：
    | 帧 | SSE 输出 | 含义 | 前端处理 |
    |---|---|---|---|
    | 内容帧 | `data:{chunk}\n\n`（**无 `event:` 行**） | 模型输出的文本片段 | 累加到当前消息 content，末尾接打字光标 |
-   | references 帧 | `event:references\ndata:[{...Reference}]\n\n` | RAG 引用列表（流结束前发，仅在 RAG 有引用时） | 解析 JSON，渲染引用脚注区 |
-   | error 帧 | `event:error\ndata:"流式响应失败..."\n\n` | 流式失败 | 显示错误卡片 + 重试 |
+   | reasoning 帧 | `event:reasoning\ndata:{思考片段}\n\n` | 推理过程（思考模型，enableThinking 开启时） | 渲染到可折叠的"思考过程"区 |
+   | references 帧 | `event:references\ndata:[{...Reference}]\n\n` | RAG 引用列表（终端帧，仅 RAG 有引用时） | 解析 JSON，渲染引用脚注区 |
+   | agentMetadata 帧 | `event:agentMetadata\ndata:{intent,confidence,retrievalRounds,...}\n\n` | Agent 元数据（终端帧，仅 AGENT 模式） | 渲染 11.3.5 元信息条 |
+   | fallback 帧 | `event:fallback\ndata:{requestedModel,fallback}\n\n` | 跨模型降级信号（终端帧，发生降级时） | 渲染 11.3.6 降级提示 |
+   | canceled 帧 | `event:canceled\ndata:{reason}\n\n` | 软取消终止帧（点击"停止"触发） | 终止流，保留已生成内容 |
+   | error 帧 | `event:error\ndata:{error,message,attempted}\n\n` | 结构化流式失败 | 显示错误卡片 + 重试 |
    > ⚠️ 内容帧**没有 `event:` 名**，很多 SSE 库默认按 event 名路由、对未命名事件处理不一——务必用底层流解析（读 `data:`/`event:` 行），不要依赖"按 event 名分发"的高层封装。
-3. **⚠️ 流式不发 `agentMetadata` / `fallback` / `durationMs` / `tokenUsage`（后端待补）**：`SseStreamBridge` 只发内容/references/error 三类帧，阻塞式 `ChatResponse` 携带的 agentMetadata 与 fallback **不会通过 SSE 发出**。后果：
-   - AGENT 模式流式完成后，前端拿不到 agentMetadata → AgentTraceTimeline 汇总视图（11.3.5/11.4）无数据，需标注"流式下暂不可用"
-   - 降级提示（fallback，11.3.6）流式下不显示
-   - 耗时/durationMs：前端自行计时（请求开始到流结束）
-   - 后续推动后端在流末补一帧（如 `event:meta`）携带 agentMetadata/fallback
+   > 📐 终端帧（references/agentMetadata/fallback）仅在 content 流正常 complete 后发送；canceled 帧在软取消时**替代**上述终端帧发送（取消不发 references/agentMetadata/fallback）。
+3. **流式元数据已就绪（G3 已解决）**：`SseStreamBridge` 现已发 `event:agentMetadata` / `event:fallback` / `event:references` 终端帧（见上表），AGENT 模式流式完成后可直接渲染 11.3.5 元信息条与 11.3.6 降级提示。
+   - 📌 **`durationMs` / `tokenUsage` 流式当下不展示（已决策）**：SSE 不发这两项，前端**不自行计时、不估算 token**。流式生成（含当次会话刚完成）的元信息行**只显示 `模型 · 时间`**；重新加载会话后从历史 `MessageVO`（带这两字段）读取时再展示完整 `模型 · token · 耗时 · 时间`（见 11.3.7）。
 
 **这是平台最复杂的组件**，需同时支持流式态、Agent 态、错误态、分支态。
 
-> v0.3.1：三模式（SIMPLE/MULTI_TURN/AGENT）统一走流式 UX，无独立"阻塞态"。Agent 模式差异仅在完成后多一个可展开的 agentMetadata 条（11.3.5）——但流式下该条因 SSE 不发而暂缺（见上 #3）。
+> v0.3.1：三模式（SIMPLE/MULTI_TURN/AGENT）统一走流式 UX，无独立"阻塞态"。Agent 模式差异仅在完成后多一个可展开的 agentMetadata 条（11.3.5）——流式下由 `event:agentMetadata` 终端帧提供数据（见上 #3）。
 
 📐 通用结构：
 ```
@@ -1470,7 +1474,7 @@ line-height: 1.5;            /* 中文行距需大于西文 */
 
 > v0.3.1 修正：Agent 模式**支持流式**（`AgentModeStrategy.java:298` 实现 executeStream），与 SIMPLE/MULTI_TURN 统一走流式 UX。
 >
-> ⚠️ **后端待补（G3）**：`agentMetadata` 只在**阻塞式** `POST /api/chat` 的 `ChatResponse` 中返回；**流式** `/api/chat/stream` 的 `SseStreamBridge` 当前不发 agentMetadata 帧（只发内容/references/error）。因此流式场景下本条暂无数据来源——AGENT 模式流式完成后，这条元信息条**当前不渲染**（或显示"推理详情流式下暂不可用"）。后续推动后端在 SSE 流末补一帧（如 `event:meta`）携带 agentMetadata/fallback，前端即可启用。阻塞式接口仍可正常展示。
+> ✅ **G3 已解决**：`agentMetadata` 阻塞式随 `ChatResponse` 返回，流式由 `SseStreamBridge` 的 `event:agentMetadata` 终端帧携带（content 流正常 complete 后发送）。AGENT 模式流式完成后直接渲染本条。降级提示同理走 `event:fallback` 终端帧（11.3.6）。
 
 ```
 🤖 Agent · 意图: 深度检索(0.92) · 检索 3 轮 · 用时 8.2s  ▸ 查看推理
@@ -1500,12 +1504,13 @@ deepseek-v4-flash · ↑120 ↓80 · 1.5s · 2026-06-20 14:30
 ```
 
 - modelId（`--text-tertiary`，mono 字体）
-- token：`↑prompt ↓completion`（`--text-tertiary`）
-  > ⚠️ 后端 `MessageVO.tokenUsage` 是**单 Integer（总 token 数）**，无 prompt/completion 拆分。元信息行要么只显示总数（`200 token`），要么推动后端补 prompt/completion 拆分字段。当前按总数显示。
+- token：仅显示总数（`--text-tertiary`，如 `200 token`）
+  > ⚠️ 后端 `MessageVO.tokenUsage` 是**单 Integer（总 token 数）**，无 prompt/completion 拆分——元信息行只显示总数，不渲染 `↑prompt ↓completion` 拆分。
 - 耗时 durationMs → 转秒（`--text-tertiary`）
-  > ⚠️ `durationMs` 在 `MessageVO` 中存在（历史消息可读）；但**流式生成当下**前端拿不到（SSE 不发），需自行计时（请求开始到流结束）。ChatResponse（阻塞式）也无此字段。
 - 时间（`--text-tertiary`，按第 13 章格式化）
 - 整行 `--font-size-xs`，分隔符用 `·` 间隔
+
+> 📌 **流式当下不展示 token / 耗时（已决策）**：SSE 不发 `tokenUsage` / `durationMs`，前端**不自行计时、不估算 token**。流式生成期间及当次会话刚完成的消息，元信息行**只显示 `模型 · 时间`**，省略 token 与耗时两项；重新加载会话后，从历史 `MessageVO`（带 `tokenUsage` / `durationMs`）读取时再完整展示上述四段。
 
 #### 11.3.8 分支导航（children / parentId）
 
@@ -1695,6 +1700,7 @@ deepseek-v4-flash · ↑120 ↓80 · 1.5s · 2026-06-20 14:30
   - `chunkId` — vector_store UUID，点击"查看完整片段"调 `GET /api/chunks/{chunkId}` 取全量 content（见下）
   - `documentId` / `fileName` / `page` — 文档定位
   - `score` — 相关性得分（向量相似度 / RRF 融合分 / rerank 分，取决于检索路径）。前端据此排序、高亮、置信度展示
+  > 📌 **score 展示策略（已决策：归一化前原值展示）**：当前管线 `rrfScore (~0.033)` 与 `rerankScore (~1.0)` 量纲差约 30 倍、末端无质量门，分数跨检索路径**不可直接横向比较**。前端决策：**按后端原值展示**，不做前端归一化计算。后果：同一批引用内不同来源的绝对数字可能不具可比性——这是已知取舍。待后端 [`docs/design/rag-score-normalization-cutoff.md`](../design/rag-score-normalization-cutoff.md)（归一化 + 末端截断）落地后，score 才具备跨路径可比的排序/置信度意义，届时前端零改动即获得可比分数
   - `source` — 检索来源 Tool 名（如 `hybridSearch` / `vectorSearch`），前端映射为中文（混合检索 / 向量检索）。**可空**——agent 路径未参与打分时为 null
   - `content` — 截断的 chunk 内容预览，**可空**（agent 路径在注入 prompt 后未单独保留）
 - **完整片段查看**：卡内 content 是截断预览，点击"查看完整片段"调 `GET /api/chunks/{chunkId}` → `ChunkDTO { id, content, documentId, fileName, metadata }` 取全文展开（归属校验复用文档权限逻辑）
@@ -1738,9 +1744,9 @@ deepseek-v4-flash · ↑120 ↓80 · 1.5s · 2026-06-20 14:30
 
 ### 11.10 TokenUsageChip 用量徽标
 
-**契约**：`TokenUsageDTO { conversationId, modelId, promptTokens, completionTokens, totalTokens, durationMs, createdAt(LocalDateTime) }`；聚合 `UsageStats { groupKey, requestCount, totalPromptTokens, totalCompletionTokens, totalTokens, avgDurationMs }`。
+**契约**：`TokenUsageDTO { conversationId, modelId, promptTokens, completionTokens, totalTokens, durationMs, createdAt(OffsetDateTime) }`；聚合 `UsageStats { groupKey, requestCount, totalPromptTokens, totalCompletionTokens, totalTokens, avgDurationMs }`。
 
-> ⚠️ **时间类型混用（D1）**：`TokenUsageDTO.createdAt` 是 **LocalDateTime**（无时区偏移），而 `MessageVO`/`ConversationSummary`/`DocumentDTO` 等用的是 **OffsetDateTime**（带偏移）。两者 ISO 序列化格式不同（`2026-06-20T14:30:00` vs `2026-06-20T14:30:00+08:00`），前端 dayjs 解析需分别处理。同理 `SystemPromptDTO` 也是 LocalDateTime。后端无全局 `@JsonFormat`/JavaTimeModule 统一配置。
+> ✅ **D1 已解决**：后端 `JacksonTimeConfig` 全局统一，`TokenUsageDTO.createdAt` 已改为 **OffsetDateTime**（与 `MessageVO`/`SystemPromptDTO`/`ConversationSummary`/`DocumentDTO` 一致）。前端 dayjs 用同一套 ISO 带偏移解析即可，无需按字段分支。
 
 📐 紧凑展示 token 用量，用于消息元信息行、用量统计页。
 
@@ -1935,7 +1941,7 @@ alice 的上传额度
 
 ### 13.3 时间格式化规则 🔒
 
-⚠️ 后端时间戳有三种类型（OffsetDateTime / LocalDateTime / Instant），前端**统一格式化**，对用户透明：
+⚠️ 后端时间戳统一为 **OffsetDateTime**（`JacksonTimeConfig` 全局统一，D1 已解决），前端统一格式化，对用户透明：
 
 | 场景 | 格式 | 示例 |
 |------|------|------|
@@ -2225,48 +2231,53 @@ alice 的上传额度
 }
 ```
 
-### 15.2 Tailwind 配置扩展示例
+### 15.2 Tailwind 配置扩展示例（v4，CSS-first `@theme`）
 
-```js
-// tailwind.config.js —— 与本规范 token 对齐
-module.exports = {
-  darkMode: ['selector', '.dark'],
-  theme: {
-    extend: {
-      colors: {
-        // 映射 CSS 变量，使用时 bg-primary-600 / text-success-600
-        primary: {
-          50:  'var(--brand-50)',  100: 'var(--brand-100)',
-          600: 'var(--brand-600)', 700: 'var(--brand-700)',
-          // ...其余阶
-        },
-        success: { 50: 'var(--success-50)', 600: 'var(--success-600)' },
-        warning: { 50: 'var(--warning-50)', 600: 'var(--warning-600)' },
-        error:   { 50: 'var(--error-50)',   600: 'var(--error-600)' },
-        // 语义别名
-        canvas: 'var(--bg-canvas)',
-        surface: 'var(--bg-card)',
-        muted: 'var(--bg-base)',
-      },
-      fontFamily: {
-        sans: ['var(--font-sans)'],
-        mono: ['var(--font-mono)'],
-      },
-      fontSize: {
-        xs: '11px', sm: '12px', base: '13px',
-        md: '14px', lg: '16px', xl: '18px',
-      },
-      borderRadius: {
-        none: '0', sm: '6px', md: '8px', lg: '12px',
-        xl: '16px', '2xl': '20px', '3xl': '24px', full: '9999px',
-      },
-      boxShadow: {
-        focus: 'var(--shadow-focus)',
-      },
-    },
-  },
-};
+> v0.3.3 起 Tailwind 升级到 v4。v4 用 CSS-first 配置：`@import "tailwindcss"` + `@theme {}` 取代 v3 的 `tailwind.config.js`。`@theme` 里的 `--color-*` / `--font-*` / `--text-*` / `--radius-*` 命名空间自动生成对应工具类（如 `--color-primary-600` → `bg-primary-600`）。
+
+```css
+/* app.css —— Tailwind v4 CSS-first 配置，与本规范 token 对齐 */
+@import "tailwindcss";
+
+/* 暗色强制 class 模式（v4 默认 prefers-color-scheme，这里改为 .dark 切换） */
+@custom-variant dark (&:where(.dark, .dark *));
+
+@theme {
+  /* 品牌色阶 —— 映射 :root 的 --brand-* 变量，使用时 bg-primary-600 / text-primary-700 */
+  --color-primary-50:  var(--brand-50);
+  --color-primary-100: var(--brand-100);
+  --color-primary-600: var(--brand-600);
+  --color-primary-700: var(--brand-700);
+  /* ...其余阶按需补 */
+
+  /* 语义色 */
+  --color-success-50: var(--success-50);  --color-success-600: var(--success-600);
+  --color-warning-50: var(--warning-50);  --color-warning-600: var(--warning-600);
+  --color-error-50:   var(--error-50);    --color-error-600:   var(--error-600);
+
+  /* 语义背景别名 */
+  --color-canvas: var(--bg-canvas);
+  --color-surface: var(--bg-card);
+  --color-muted: var(--bg-base);
+
+  /* 字体 */
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+
+  /* 字号阶梯（本规范 6.3 自定义阶梯，覆盖 v4 默认） */
+  --text-xs: 11px;  --text-sm: 12px;  --text-base: 13px;
+  --text-md: 14px;  --text-lg: 16px;  --text-xl: 18px;
+
+  /* 圆角阶梯（本规范 7.1） */
+  --radius-sm: 6px;  --radius-md: 8px;   --radius-lg: 12px;
+  --radius-xl: 16px; --radius-2xl: 20px; --radius-3xl: 24px;
+
+  /* 焦点阴影 */
+  --shadow-focus: var(--shadow-focus);
+}
 ```
+
+> 💡 v3 → v4 迁移要点：① 删除 `tailwind.config.js`，配置并入 CSS `@theme`；② `darkMode: ['selector','.dark']` 改为 `@custom-variant dark (...)`；③ shadcn/ui 已支持 v4，`npx shadcn add` 生成的组件即兼容。
 
 ### 15.3 品牌替换清单
 
@@ -2284,27 +2295,34 @@ module.exports = {
 
 **品牌色阶生成建议**：选定主色（如新品牌主色 `#7C3AED` 紫色），用工具（如 [uicolors.app](https://uicolors.app/)）生成 50-950 等阶替换 `--brand-*`，暗色提亮一阶即可。
 
-### 15.4 推荐技术栈落地清单
+### 15.4 技术栈落地清单（最终版，v0.3.3 锁定）
 
-基于本规范，前端实现推荐：
+> 版本基线取当下最新主线（2026-08）。所有"或"待决项已定。
 
-| 类别 | 选型 | 对应规范章 |
-|------|------|-----------|
-| 框架 | React 18 + Vite（或 Next.js） | — |
-| 样式 | Tailwind CSS v3 | 全篇 token |
-| 组件库 | shadcn/ui（Radix UI 基底） | 第 10 章 |
-| 图标 | lucide-react | 第 8 章 |
-| 变体 | class-variance-authority + tailwind-merge + clsx | 第 10 章 |
-| 表单 | react-hook-form + zod | 10.22 |
-| 表格 | @tanstack/react-table | 10.10 |
-| Markdown | react-markdown + remark-gfm + rehype-raw | 11.3.2 |
-| 代码高亮 | react-syntax-highlighter 或 shiki | 11.3.2 |
-| 数学公式 | katex + rehype-katex | 11.3.2 |
-| 图表 | @antv/g2 或 echarts | 11.10 |
-| 时间 | dayjs + relativeTime + utc 插件 | 13.3 |
-| 状态管理 | Zustand 或 Jotai（轻量，够用） | — |
-| 数据请求 | TanStack Query（含缓存、重试、SSE 友好） | — |
-| 路由 | React Router v6（Vite）或 Next.js App Router | — |
+| 类别 | 选型 | 版本 / 集成方式 | 对应章 |
+|------|------|----------------|-------|
+| 框架 | **React + Vite** | React 19 + Vite | — |
+| 路由 | **React Router** | v7（declarative / Vite 模式，与 v6 路由树兼容） | IA §4 |
+| 样式 | **Tailwind CSS** | v4（CSS-first `@theme` 配置，见 §15.2） | 全篇 token |
+| 组件库 | **shadcn/ui** | Radix UI 基底，源码经 CLI 拷入仓库 `components/ui/` | 第 10 章 |
+| 图标 | **lucide-react** | 唯一图标库，不混用 | 第 8 章 |
+| 变体 | **CVA + tailwind-merge + clsx** | shadcn 同款 | 第 10 章 |
+| UI / 临时态 | **Zustand** | 聊天/SSE 会话态、侧栏折叠等 | — |
+| 服务端态 / 请求编排 | **TanStack Query** | v5，缓存/失效/重试/分页 | — |
+| HTTP 传输 | **原生 fetch + 自定义 apiFetch** | 不用 axios（理由见下） | — |
+| 表单 | **react-hook-form + zod** | 配 `@hookform/resolvers/zod` | 10.22 |
+| 表格 | **@tanstack/react-table** | headless，支持虚拟化 | 10.10 |
+| Markdown | **react-markdown + remark-gfm + rehype-raw + rehype-sanitize + rehype-katex + katex** | rehype-sanitize 白名单防 XSS（必备） | 11.3.2 |
+| 代码高亮 | **shiki** | 经 `rehype-pretty-code` 接入 react-markdown 管线 | 11.3.2 |
+| 图表 | **echarts** | 经 `echarts-for-react`，仅用量页懒加载（包大） | 11.10 |
+| 时间 | **dayjs** | + `relativeTime` + `utc` 插件 | 13.3 |
+
+**关键选型理由：**
+
+- **传输层 fetch + apiFetch（非 axios）**：SSE 流式（`POST + @RequestBody`）本就必须用 fetch + ReadableStream（见 11.3），axios 无法胜任；若 REST 走 axios 则需维护**两套 transport**。axios 的卖点（拦截器/超时/JSON 转换）在 fetch + 薄封装下均可复刻，而本项目的三件定制（401→refresh→重放的并发单例锁、GlobalResponse 双轨制判 `code===0`、Cookie `credentials:'include'`）放在一个 `apiFetch` 里比塞进 axios 拦截器更清晰。TanStack Query 负责**编排**（缓存/失效），`apiFetch` 负责**传输**，两者是不同层。
+- **表单/表格用无头库而非全家桶**：react-hook-form+zod / @tanstack/react-table 是 shadcn 官方组合的**逻辑引擎**（shadcn 的 `<Form>` 套在 RHF 上、Data Table 用 TanStack Table）。逻辑（无头）与样式（自有 token）分层，避免全家桶的设计语言绑定与"两套状态源"冲突，契合本规范自定义设计系统。
+- **rehype-sanitize 必备**：LLM 输出与 RAG 片段可能含恶意 `<script>`/`<img onerror>`；rehype-raw 允许原始 HTML，必须配 sanitize 白名单，否则 XSS。
+- **shadcn/ui = Radix（行为/a11y 骨架）+ Tailwind v4 + 本规范 token（皮），源码归仓库**：样式零冲突、改无上限、无运行时供应商锁定。
 
 ### 15.5 待确认事项追踪 ⚠️
 
@@ -2317,9 +2335,11 @@ module.exports = {
 | T3 | Agent 事件历史 REST 端点（用户态） | 11.4 AgentTraceTimeline 完整 6 事件视图 | ⏸️ 当前不开发（预留）：后端已持久化（`agent_session_event` + `AgentEventStore`），但仅暴露**管理员侧** `GET /api/admin/agent-events`（需 `trace:view`）。面向普通用户的会话级端点尚未提供。当前用 `agentMetadata` 汇总视图兜底 |
 | T4 | ~~Reference 不含 score/source/片段~~ | 11.8 引用卡信息不全 | ✅ 已实现：`mode/Reference.java` 含 8 字段（refNumber, chunkId, documentId, fileName, page, **score**, **source**, **content**），agent + chat 双路径统一。score/source/content 可空（agent 路径常见） |
 | T5 | ~~`/api/models` 仅返回 ID 字符串列表~~ | 11.2 ModelSelector 需前端维护 provider 映射表 | ✅ 已实现：`GET /api/models/detail` 返回 `List<ModelVO>`（id/provider/model/capability/available）。新前端一律用 `/models/detail`，旧的 `/api/models`（仅 CHAT id 字符串）不再用 |
-| T6 | 登录响应不返回 token（纯 Cookie） | 跨域部署时 Cookie SameSite=Lax 可能失效 | 后端评估加 token-in-body 开关（见阶段一调研） |
-| T7 | Cookie SameSite 硬编码 Lax | 跨域部署受影响 | 后端参数化 SameSite（`CookieTokenManager.java:65,74`） |
-| T8 | Cookie Secure 无 profile 设置 | HTTPS 生产必须手动设 | 后端在 prod profile 设 `app.jwt.cookie-secure=true` |
+| T6 | 登录响应不返回 token（纯 Cookie） | 跨域部署时 Cookie SameSite=Lax 可能失效 | 🚫 已决策**不加** token-in-body（放大 XSS 风险）。跨域改走 T7 的 `SameSite=None; Secure`；原生 App 等无法用 Cookie 的客户端另议 OAuth2 Bearer |
+| T7 | ~~Cookie SameSite 硬编码 Lax~~ | 跨域部署受影响 | ✅ 已解决：`JwtProperties.cookieSameSite` 参数化（默认 Lax），`CookieTokenManager` 检测 `none` 强制 `Secure=true`。跨域部署设 `JWT_COOKIE_SAMESITE=None` |
+| T8 | ~~Cookie Secure 无 profile 设置~~ | HTTPS 生产必须手动设 | ✅ 已解决：`application-stable.yml` 已配 `cookie-secure: true`，prod 是 stable 的 overlay（`SPRING_PROFILES_ACTIVE=stable,prod`）继承该值，无需在 prod.yml 重复 |
+| G3 | ~~流式不发 agentMetadata / fallback~~ | 11.3.5 Agent 元信息条 / 11.3.6 降级提示在流式下无数据 | ✅ 已解决：`SseStreamBridge` 现发 `event:references` / `event:agentMetadata` / `event:fallback` / `event:canceled` / `event:error` 终端帧（见 11.3 SSE 帧结构）。附带决策：`durationMs` / `tokenUsage` SSE 仍不发，前端**流式当下不展示**（不自行计时），历史 `MessageVO` 读取后展示 |
+| D1 | ~~时间类型混用 LocalDateTime / OffsetDateTime~~ | dayjs 解析需按字段分支 | ✅ 已解决：后端 `JacksonTimeConfig` 全局统一，`TokenUsageDTO` / `SystemPromptDTO` / `MessageVO` / `ConversationSummary` / `DocumentDTO` 时间字段**全部为 OffsetDateTime**，前端统一一套解析即可 |
 
 ### 15.6 文档维护
 

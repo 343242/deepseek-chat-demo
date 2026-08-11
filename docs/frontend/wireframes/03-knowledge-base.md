@@ -128,11 +128,10 @@
 
 ### 3.5 筛选约束
 
-⚠️ 后端列表接口**仅支持 page/size/teamId**，无 search/status/date 筛选（DocumentController.java:47-60）。
+🔶 **半阻塞 · 当前用 mock（客户端过滤）**：后端列表接口暂仅 page/size/teamId，无 keyword/status/mimeType（DocumentController.java:47-60）。后端 [`docs/design/document-list-search-filter.md`](../../design/document-list-search-filter.md)（状态：实现就绪）落地后将支持 keyword/status[]/mimeType[] 服务端筛选。
 
-- **不做服务端搜索框**（会误导，搜不到未加载的）
-- **不做服务端状态筛选**
-- 可选：**前端过滤已加载列表**（按状态/文件名），但标注"仅当前已加载"
+- **搜索框 + 状态/MIME 筛选器照常实现 UI**，但当前走**前端过滤已加载列表**（标注"仅当前已加载 N 条"），搜不到未加载页
+- 后端设计文档落地后，前端改传 `keyword`/`status`/`mimeType` 参数切服务端筛选，**UI 不变**
 - 默认按 createTime 降序（后端默认）
 
 ---
@@ -252,7 +251,7 @@
 点击文档行或"查看详情" → 右侧滑入抽屉（400px 宽）。
 
 ✅ **可查看分块内容**：`GET /api/documents/{id}/chunks`（分页）返回 `ChunkDTO { id, content, documentId, fileName, metadata }`，content 为片段全文。
-⚠️ **无原文件预览、无下载**（后端无对应端点，DocumentDTO 仅元数据；如需原文件预览/下载需后端补端点）。
+🔶 **原文件预览/下载 · 真阻塞 · 当前用 mock**：后端暂无端点，DocumentDTO 仅元数据。后端 [`docs/design/document-original-file-preview-download.md`](../../design/document-original-file-preview-download.md)（状态：实现就绪）规划了 `GET /api/documents/{id}/preview`（PDF inline / 文本类渲染；OOXML 不可预览）与 `GET /api/documents/{id}/download`（attachment，全类型）。**前端先实现"预览/下载"入口与调用逻辑**（指向上述端点路径），当前无后端时走 mock 兜底——预览给占位/示例文件（如"原文件预览待后端就绪"），下载按钮置灰或给示例 blob；后端落地后切真实流式端点，UI 不变。
 
 ### 6.1 抽屉结构
 
@@ -422,9 +421,9 @@ Toast error：
 
 | 编号 | 事项 | 影响 |
 |------|------|------|
-| KB-1 | ~~文档列表搜索是否做？~~ | 已知限制：`GET /api/documents`（及 `?teamId=`）仅 page/size，无 keyword/status/date。当前方案不做服务端搜索框（避免误导），可选前端过滤已加载列表（标注"仅已加载"）。如需服务端搜索，需后端在 DocumentController 加 keyword 参数 |
-| KB-2 | ~~文档内容预览~~ | ✅ 分块内容可看：`GET /api/documents/{id}/chunks` + `GET /api/chunks/{chunkId}` 返回 `ChunkDTO.content`（片段全文）。详情抽屉展示分块列表（§6.1）。⚠️ 原文件全文预览/渲染仍无端点（仅有 chunk 文本，非原文件排版） |
-| KB-3 | 文档下载 | 后端无端点。当前不画下载按钮。若需要，后端补下载端点 |
+| KB-1 | ~~文档列表搜索是否做？~~ | 🔶 半阻塞·mock：`GET /api/documents`（及 `?teamId=`）仅 page/size，无 keyword/status/mimeType。前端搜索/筛选器照常实现，走客户端过滤已加载列表（标注"仅已加载"）。后端 [`document-list-search-filter.md`](../../design/document-list-search-filter.md)（实现就绪）落地后切服务端 keyword/status[]/mimeType[]，UI 不变 |
+| KB-2 | ~~文档内容预览~~ | ✅ 分块内容可看：`GET /api/documents/{id}/chunks` + `GET /api/chunks/{chunkId}` 返回 `ChunkDTO.content`（片段全文）。🔶 原文件预览为真阻塞·mock：前端先实现预览入口，当前无端点走 mock 占位，后端 [`document-original-file-preview-download.md`](../../design/document-original-file-preview-download.md)（实现就绪，规划 `GET /api/documents/{id}/preview`，PDF inline / 文本类渲染 / OOXML 不可预览）落地后切真实端点 |
+| KB-3 | 文档下载 | 🔶 真阻塞·mock：前端先实现下载按钮（指向 `GET /api/documents/{id}/download`），当前无端点置灰或给示例 blob，后端 [`document-original-file-preview-download.md`](../../design/document-original-file-preview-download.md)（实现就绪，attachment，全类型）落地后切真实流式下载 |
 | KB-4 | 批量操作 | 当前方案支持多选（checkbox）。批量删除/批量重试是否需要？后端 `/upload/batch` 支持批量上传，但删除/重试是单个端点，批量需前端循环 |
 | KB-5 | 拖拽上传的 dropzone 范围 | 当前方案是整个内容区支持拖拽。也可限定为顶部 dropzone 区域。需定 |
 

@@ -296,7 +296,7 @@
 
 ## 4. 路由树（完整 URL 结构） 🛣️
 
-基于 React Router v6 风格。所有路由挂在一个根 `<Router>` 下，按 shell 分组。
+基于 React Router v7（declarative 模式，路由树写法与 v6 兼容）。所有路由挂在一个根 `<Router>` 下，按 shell 分组。
 
 ### 4.1 完整路由表
 
@@ -614,7 +614,7 @@
 | IA-6 | **401 自动刷新的并发控制** | 多个请求同时 401 时，refresh 应只发一次，其余排队等刷新结果 | 前端实现：refresh 请求做单例锁，并发 401 共享同一 Promise |
 | IA-7 | **会话路由与会话列表状态** | `/app/chat/:conversationId` 直接打开会话，需确保侧栏会话列表也高亮该项并滚动可见 | 前端：路由参数变化时同步列表 active 态 + scrollIntoView |
 | IA-8 | **ModelParams 缺 userId 维度（个人化阻塞，v0.3.0 已降级）** | `model:config` 在 v0.3.0 收回 USER 访问权，此项不再阻塞当前迭代。但未来若要重新开放给 USER（个人化模型参数），仍需后端给 `ModelParams` 表加 `user_id` 列（按 `(user_id, model_id)` 唯一索引），API 层注入当前用户 id 过滤。前端 `/app/models` 路由与组件已预留，改造完成后给 USER 授 `model:config` 即可零改动开放 | 后端给 `ModelParams` 表加 `user_id` 列（当前 `V1__init_schema.sql:66-75` 的 `model_params` 表按 `model_id` 全局唯一，无 userId）；前端已预留接口，无需改动 |
-| IA-9 | **会话列表服务端搜索缺失** | `GET /api/conversations` 仅支持 page/size/status，无 keyword 参数 | 已知限制：前端搜索框只能客户端过滤已加载列表（标注"仅已加载"）。会话极多时只能搜已加载部分。如需服务端搜索，需后端在 `ConversationServiceImpl.list` 加 keyword 参数 |
+| IA-9 | **会话列表服务端搜索缺失** | `GET /api/conversations` 仅支持 page/size/status，无 keyword 参数 | 🔶 半阻塞·mock：前端搜索框客户端过滤已加载列表（标注"仅已加载"）。后端 [`docs/design/conversation-list-search-filter.md`](../design/conversation-list-search-filter.md)（状态：实现就绪，规划 keyword/pinned/status 服务端筛选）落地后，前端改传参数切服务端搜索，UI 不变 |
 
 ---
 

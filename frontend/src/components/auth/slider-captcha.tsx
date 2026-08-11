@@ -43,22 +43,38 @@ export const SliderCaptcha = forwardRef<SliderCaptchaHandle, SliderCaptchaProps>
     const startXRef = useRef(0)
     const startHandleXRef = useRef(0)
 
+    // 用 ref 持有最新回调，使 load 依赖稳定（空数组），
+    // 避免父组件 re-render（submitting/dialogError 变化）→ onReset 身份变化 → load 重建 → 重复 fetch
+    const onVerifiedRef = useRef(onVerified)
+    onVerifiedRef.current = onVerified
+    const onResetRef = useRef(onReset)
+    onResetRef.current = onReset
+    // in-flight 守卫：防止 StrictMode/并发导致的重复请求
+    const loadingTokenRef = useRef(0)
+    // 挂载一次守卫：StrictMode dev 会双跑 effect，确保只 fetch 一次
+    const didMountRef = useRef(false)
+
     const load = useCallback(async () => {
+      const token = ++loadingTokenRef.current
       setLoading(true)
       setStatus('idle')
       setHandleX(0)
       try {
         const data = await getCaptcha()
+        if (token !== loadingTokenRef.current) return // 已被更新的请求取代
         setCaptcha(data)
-        onReset?.()
+        onResetRef.current?.()
       } catch {
-        setCaptcha(null)
+        if (token === loadingTokenRef.current) setCaptcha(null)
       } finally {
-        setLoading(false)
+        if (token === loadingTokenRef.current) setLoading(false)
       }
-    }, [onReset])
+    }, [])
 
+    // 仅挂载时加载一次（load 恒定；StrictMode dev 双跑被 didMountRef 拦截）
     useEffect(() => {
+      if (didMountRef.current) return
+      didMountRef.current = true
       void load()
     }, [load])
 
@@ -66,7 +82,7 @@ export const SliderCaptcha = forwardRef<SliderCaptchaHandle, SliderCaptchaProps>
       refresh: () => void load(),
       fail: () => {
         setStatus('fail')
-        // 抖动后回弹并刷新
+        // 抖动后回弹并刷新（仅一次）
         setTimeout(() => void load(), 500)
       },
     }))

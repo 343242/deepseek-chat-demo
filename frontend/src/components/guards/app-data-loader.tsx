@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { useNavigate } from 'react-router'
+import { useNavigate, useLocation } from 'react-router'
 import { useMe } from '@/api/auth'
 import { useAuthStore } from '@/stores/auth-store'
 import { useThemeStore, applyTheme } from '@/stores/theme-store'
@@ -11,7 +11,10 @@ import { useThemeStore, applyTheme } from '@/stores/theme-store'
  * - 应用持久化的主题
  */
 export function AppDataLoader({ children }: { children: React.ReactNode }) {
-  const me = useMe()
+  const { pathname } = useLocation()
+  // 登录/注册页不预取 /me（避免未认证 401→refresh 级联报错）
+  const isAuthRoute = pathname.startsWith('/auth')
+  const me = useMe({ enabled: !isAuthRoute })
   const setInitialized = useAuthStore((s) => s.setInitialized)
   const navigate = useNavigate()
 
@@ -24,6 +27,11 @@ export function AppDataLoader({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (me.isSuccess || me.isError) setInitialized(true)
   }, [me.isSuccess, me.isError, setInitialized])
+
+  // auth 路由直接标记 initialized（无需 /me，避免 RequireAuth/loader 误判）
+  useEffect(() => {
+    if (isAuthRoute) setInitialized(true)
+  }, [isAuthRoute, setInitialized])
 
   // 401 全局跳转
   useEffect(() => {

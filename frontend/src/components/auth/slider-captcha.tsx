@@ -93,16 +93,12 @@ export const SliderCaptcha = forwardRef<SliderCaptchaHandle, SliderCaptchaProps>
       if (!draggingRef.current) return
       draggingRef.current = false
       if (!captcha) return
-      // 到达右端附近即视为完成拖拽（乐观成功，提交时由后端裁决 ±5px）
-      if (handleX > maxX * 0.85) {
-        setStatus('success')
-        const captchaCode = Math.round(handleX) + 15
-        onVerified(captcha.captchaId, captchaCode)
-      } else {
-        // 未拖到位，回弹
-        setStatus('idle')
-        setHandleX(0)
-      }
+      // 松手即提交位移。captchaCode = handleX + 15（拼图块在图内偏移 15px，对齐后端 answerX）。
+      // 拼图块随滑块 1:1 移动，用户视觉对齐缺口时 handleX+15 ≈ answerX；±5px 容差由后端裁决。
+      // 注意：不要用"拖到右端才算成功"——缺口 x 随机分布于 [10,253]，强制拖到右端必然失败。
+      setStatus('success')
+      const captchaCode = Math.round(handleX) + 15
+      onVerified(captcha.captchaId, captchaCode)
     }
 
     const trackFillW = status === 'success' ? BG_W : handleX + TRACK_H

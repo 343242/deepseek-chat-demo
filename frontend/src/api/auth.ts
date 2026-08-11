@@ -8,7 +8,7 @@ export const authKeys = {
 }
 
 /** GET /api/auth/me —— 权限兜底权威入口（IA-5：登录响应 permissions 可能为空，须立即调 /me） */
-export function useMe() {
+export function useMe(options?: { enabled?: boolean }) {
   const setUser = useAuthStore((s) => s.setUser)
   return useQuery({
     queryKey: authKeys.me,
@@ -17,6 +17,7 @@ export function useMe() {
       setUser(data)
       return data
     },
+    enabled: options?.enabled ?? true,
     retry: false,
     staleTime: 60_000,
     meta: { silent401: true },

@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/code-review-checklist.md", "reason": "10-dimension review checklist — primary review lens"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Forbidden patterns + SOLID — compliance check"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Exception taxonomy — ensure no illegal exception types"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Flyway contract — verify V25 compliance"}
+{"file": "docs/design/backend-time-unification.md", "reason": "Design doc — verify implementation matches all §12 completion criteria"}

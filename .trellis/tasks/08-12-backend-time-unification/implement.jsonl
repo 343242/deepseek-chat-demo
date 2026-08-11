@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Backend guidelines entry — Pre-Dev checklist"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "SOLID, forbidden patterns, DTO rules — must comply"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Flyway schema management rules — V25 migration must comply"}
+{"file": ".trellis/spec/backend/code-review-checklist.md", "reason": "10-dimension review checklist — implement against it"}
+{"file": "docs/design/backend-time-unification.md", "reason": "Design doc being implemented — authoritative spec"}

@@ -55,7 +55,8 @@ export default function RegisterPage() {
         email: values.email,
         nickname: values.nickname || undefined,
         captchaId: captcha.id,
-        captchaCode: captcha.code,
+        // 后端 captchaCode 为 @NotBlank String
+        captchaCode: String(captcha.code),
       })
       const me = await api.get<UserInfo>('/auth/me')
       setUser(me)

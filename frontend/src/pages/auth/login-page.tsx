@@ -71,7 +71,8 @@ export default function LoginPage() {
         username: creds.username,
         password: creds.password,
         captchaId,
-        captchaCode,
+        // 后端 captchaCode 为 @NotBlank String：发送滑块位移的字符串形式（对齐后 = answerX）
+        captchaCode: String(captchaCode),
       })
       // 登录响应 permissions 可能为空，立即调 /me 兜底（IA-5）
       const me = await api.get<UserInfo>('/auth/me')

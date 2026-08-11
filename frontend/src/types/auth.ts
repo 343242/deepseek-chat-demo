@@ -14,12 +14,13 @@ export interface LoginResponse {
   user: UserInfo
 }
 
-/** 登录请求（LoginRequest: username/password/captchaId/captchaCode） */
+/** 登录请求（LoginRequest: username/password/captchaId/captchaCode）
+ *  注：后端 captchaCode 为 @NotBlank String（滑块 x 像素位移的字符串形式），见 README 登录示例 */
 export interface LoginRequest {
   username: string
   password: string
   captchaId: string
-  captchaCode: number
+  captchaCode: string
 }
 
 /** 注册请求（RegisterRequest: username/password/email/nickname/captchaId/captchaCode） */
@@ -29,7 +30,7 @@ export interface RegisterRequest {
   email: string
   nickname?: string
   captchaId: string
-  captchaCode: number
+  captchaCode: string
 }
 
 /** 滑块验证码（CaptchaResult） */

@@ -64,9 +64,11 @@ services:
       SERVER_NAME: ${SERVER_NAME:?SERVER_NAME required}
     volumes:
       - ./nginx/templates:/etc/nginx/templates:ro
-      - certbot-etc:/etc/letsencrypt:ro
-      - certbot-var:/var/lib/letsencrypt
-      - certbot-webroot:/var/www/certbot:ro
+      # 证书存储与 scripts/init-ssl.sh 保持一致（该脚本将证书写入 ./certbot/）
+      # 若用命名卷，init-ssl.sh 申请的证书对 nginx/certbot 容器不可见，首次部署会因缺证书崩溃
+      - ./certbot/etc:/etc/letsencrypt:ro
+      - ./certbot/var:/var/lib/letsencrypt
+      - ./certbot/webroot:/var/www/certbot:ro
     depends_on:
       app: { condition: service_healthy }
     networks:
@@ -83,9 +85,9 @@ services:
     container_name: smart-rag-certbot
     restart: unless-stopped
     volumes:
-      - certbot-etc:/etc/letsencrypt
-      - certbot-var:/var/lib/letsencrypt
-      - certbot-webroot:/var/www/certbot
+      - ./certbot/etc:/etc/letsencrypt
+      - ./certbot/var:/var/lib/letsencrypt
+      - ./certbot/webroot:/var/www/certbot
     # 每 12 小时尝试续期一次（Let's Encrypt 证书 90 天有效，到期前 30 天才会真正续）
     entrypoint: ["/bin/sh", "-c", "trap exit TERM; while :; do certbot renew --quiet --webroot --webroot-path /var/www/certbot; sleep 12h; done"]
     networks:
@@ -177,6 +179,3 @@ volumes:
   pgdata:
   redisdata:
   miniodata:
-  certbot-etc:
-  certbot-var:
-  certbot-webroot:

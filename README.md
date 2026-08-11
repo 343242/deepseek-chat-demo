@@ -275,7 +275,7 @@ src/main/java/com/smart/rag/
     ├── memory/          #   Redis 会话记忆（Spring AI ChatMemory 适配）
     ├── fallback/        #   Fallback 自动降级（重试链 + 资格判定）
     ├── concurrent/      #   ScopedTasks / TaskScope / ScopePolicy（并发与超时）
-    ├── messaging/       #   RocketMQ 适配
+    ├── messaging/       #   Redis Stream 消息总线（RedisStreamMessageBus + Outbox + DLQ）
     ├── exception/       #   RemoteException / GlobalExceptionHandler / ErrorCode 枚举
     ├── request|response|stream|web/  # HTTP 载体与 Web 层公共组件
     └── model/           #   跨业务领域模型（与 entity 区分）
@@ -297,9 +297,9 @@ src/main/java/com/smart/rag/
 | **推荐** | 4 vCPU / 16 GB RAM / 80 GB SSD（文档量大或并发高时） |
 | **操作系统** | 任意 Linux 发行版（Ubuntu 22.04 / Debian 12 验证过），装好 Docker Engine + Compose v2 即可，无需 JDK |
 
-内存分配（8GB VPS 实测）：PostgreSQL ~700MB + Redis ~350MB + MinIO ~450MB + RocketMQ(broker+proxy+dashboard) ~1.8GB + 应用 JVM ~2GB + Nginx ~50MB + OS ~1GB ≈ 6.5GB，留 1.5GB buffer。
+内存分配（8GB VPS 实测）：PostgreSQL ~700MB + Redis ~350MB + MinIO ~450MB + 应用 JVM ~2GB + Nginx ~50MB + OS ~1GB ≈ 4.6GB，留 3.4GB buffer。
 
-> **RocketMQ 不可省略**：3 个 `SmartLifecycle` Consumer（`ChatMessageSaveConsumer` / `UsageRecordConsumer` / `EtlDocumentConsumer`）在应用启动时同步建链，broker 不可达会让 ApplicationContext 启动失败。
+> **Redis Stream 不可省略**：消息总线（`RedisStreamMessageBus` + Outbox）在应用启动时同步建链（消费组/订阅），Redis 不可达会让 ApplicationContext 启动失败。compose 中的 Redis 已配置 AOF everysec + noeviction（stream 不能被 LRU 驱逐），无需额外中间件。
 
 ### 部署步骤
 
@@ -317,7 +317,7 @@ vim .env   # 重点：SERVER_NAME / 各种密码 / 4 个 LLM API key / JWT_SECRE
 # 4. 启动完整栈
 docker compose -f docker-compose.prod.yml up -d
 
-# 5. 等待应用就绪（Flyway 迁移 + RocketMQ subscribe 大约 60-90s）
+# 5. 等待应用就绪（Flyway 迁移 + Redis Stream subscribe 大约 60-90s）
 docker compose -f docker-compose.prod.yml logs -f app
 # 看到 "Started SmartRagApplication" 即就绪
 
@@ -354,7 +354,7 @@ Internet ──► nginx (80/443) ──► app (8080)
                                   ├── postgres (5432, 内部)
                                   ├── redis    (6379, 内部)
                                   ├── minio    (9000, 内部)
-                                  └── rmqbroker(8081, 内部)
+                                  └── redis    (6379, 内部, 消息总线)
 ```
 
 **只有 nginx 暴露 80/443 到公网**，所有中间件仅在 `smart-rag-net` 内部网络，无法从公网直连。
@@ -364,14 +364,14 @@ Internet ──► nginx (80/443) ──► app (8080)
 | 现象 | 排查方向 |
 |------|---------|
 | `docker compose up` 后 app 容器反复重启 | `docker compose logs app` 看是否 env 缺失（常见：`JWT_SECRET` / 4 个 LLM key 未填） |
-| 应用启动卡在 RocketMQ subscribe | 确认 `rmqbroker` 健康检查通过：`docker compose ps rmqbroker` |
+| 应用启动卡在 Redis Stream subscribe | 确认 `redis` 健康检查通过：`docker compose ps redis` |
 | HTTPS 访问报 502 | app 未就绪，检查 `docker compose logs app` 是否还在 Flyway 迁移 |
 | 证书续期失败 | `docker compose logs certbot`；手动续：`docker compose run --rm certbot certonly --webroot --webroot-path /var/www/certbot -d ${SERVER_NAME}` |
 | 文档上传 413 | nginx `client_max_body_size 60m` 已设，检查是否被外层 CDN/ALB 截断 |
 
 ### 备份与恢复
 
-数据卷：`pgdata` / `redisdata` / `miniodata` / `rmqdata`。生产建议每日定时备份 PG：
+数据卷：`pgdata` / `redisdata` / `miniodata`。生产建议每日定时备份 PG：
 
 ```bash
 # 备份（每日 cron）

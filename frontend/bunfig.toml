@@ -1,0 +1,4 @@
+# 当前环境经本地代理访问 npm 官方源不稳定，固定使用 npmmirror 镜像。
+# 如环境可直接访问 registry.npmjs.org，可删除本文件或改回官方源。
+[install]
+registry = "https://registry.npmmirror.com"

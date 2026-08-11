@@ -1,0 +1,465 @@
+/*
+ * Smart RAG 前端全局样式
+ * 对齐 DESIGNIGN-SYSTEM.md v0.3.3（§15.1 token 清单 / §15.2 Tailwind v4 @theme）
+ * 结构：Tailwind v4 CSS-first → @theme inline 暴露工具类 → :root/.dark 原始 token → base 层
+ */
+
+@import "tailwindcss";
+@import "tw-animate-css";
+
+/* 暗色强制 .dark 类切换（v4 默认 prefers-color-scheme，此处改为手动 class） */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ============================================================
+ * @theme inline —— 把设计 token 暴露成 Tailwind 工具类
+ * inline：工具类引用 CSS 变量（而非静态解析值），使 .dark 覆盖即时生效
+ * 命名空间：--color-* → bg/text/border 等；--text-* → 字号；--radius-* → 圆角；--font-* → 字体
+ * ============================================================ */
+@theme inline {
+  /* 品牌色阶 → bg-primary-600 / text-primary-700 / border-primary-100 … */
+  --color-primary-50: var(--brand-50);
+  --color-primary-100: var(--brand-100);
+  --color-primary-200: var(--brand-200);
+  --color-primary-300: var(--brand-300);
+  --color-primary-400: var(--brand-400);
+  --color-primary-500: var(--brand-500);
+  --color-primary-600: var(--brand-600);
+  --color-primary-700: var(--brand-700);
+  --color-primary-800: var(--brand-800);
+  --color-primary-900: var(--brand-900);
+
+  /* 语义色阶 */
+  --color-success-50: var(--success-50);
+  --color-success-600: var(--success-600);
+  --color-success-700: var(--success-700);
+  --color-warning-50: var(--warning-50);
+  --color-warning-600: var(--warning-600);
+  --color-warning-700: var(--warning-700);
+  --color-error-50: var(--error-50);
+  --color-error-600: var(--error-600);
+  --color-error-700: var(--error-700);
+  --color-info-50: var(--info-50);
+  --color-info-600: var(--info-600);
+
+  /* 中性色阶（原始） */
+  --color-neutral-0: var(--neutral-0);
+  --color-neutral-50: var(--neutral-50);
+  --color-neutral-100: var(--neutral-100);
+  --color-neutral-200: var(--neutral-200);
+  --color-neutral-300: var(--neutral-300);
+  --color-neutral-400: var(--neutral-400);
+  --color-neutral-500: var(--neutral-500);
+  --color-neutral-700: var(--neutral-700);
+  --color-neutral-900: var(--neutral-900);
+
+  /* 语义背景 → bg-canvas / bg-surface / bg-base / bg-hover / bg-selected */
+  --color-canvas: var(--bg-canvas);
+  --color-surface: var(--bg-card);
+  --color-base: var(--bg-base);
+  --color-field: var(--bg-input);
+  --color-hover: var(--bg-hover);
+  --color-selected: var(--bg-selected);
+
+  /* 语义文本 → text-fg / text-muted / text-subtle / text-faint / text-inv / text-link */
+  --color-fg: var(--text-primary);
+  --color-muted: var(--text-secondary);
+  --color-subtle: var(--text-tertiary);
+  --color-faint: var(--text-disabled);
+  --color-inv: var(--text-inverse);
+  --color-link: var(--text-link);
+
+  /* 语义边框 → border-line / border-line-strong / border-line-subtle / border-accent / border-err */
+  --color-line: var(--border-default);
+  --color-line-strong: var(--border-strong);
+  --color-line-subtle: var(--border-subtle);
+  --color-accent: var(--border-accent);
+  --color-err-line: var(--border-error);
+
+  /* shadcn 语义桥（shadcn 组件用 background/foreground/card/primary/border/ring …） */
+  --color-background: var(--bg-canvas);
+  --color-foreground: var(--text-primary);
+  --color-card: var(--bg-card);
+  --color-card-foreground: var(--text-primary);
+  --color-popover: var(--bg-card);
+  --color-popover-foreground: var(--text-primary);
+  --color-primary-foreground: var(--text-inverse);
+  --color-secondary: var(--bg-base);
+  --color-secondary-foreground: var(--text-primary);
+  --color-muted-foreground: var(--text-secondary);
+  --color-accent-foreground: var(--text-primary);
+  --color-destructive: var(--error-600);
+  --color-destructive-foreground: var(--text-inverse);
+  --color-border: var(--border-default);
+  --color-input: var(--border-default);
+  --color-ring: var(--brand-600);
+
+  /* shadcn sidebar（保留 token，自定义侧栏也可用） */
+  --color-sidebar: var(--bg-card);
+  --color-sidebar-foreground: var(--text-primary);
+  --color-sidebar-primary: var(--brand-600);
+  --color-sidebar-primary-foreground: var(--text-inverse);
+  --color-sidebar-accent: var(--bg-hover);
+  --color-sidebar-accent-foreground: var(--text-primary);
+  --color-sidebar-border: var(--border-default);
+  --color-sidebar-ring: var(--brand-600);
+
+  /* 字体 */
+  --font-sans: var(--font-sans);
+  --font-mono: var(--font-mono);
+
+  /* 字号阶梯（DS §5.2，px 值 + 行高；覆盖 v4 默认） */
+  --text-xs: 11px;
+  --text-xs--line-height: 16px;
+  --text-sm: 12px;
+  --text-sm--line-height: 18px;
+  --text-base: 13px;
+  --text-base--line-height: 20px;
+  --text-md: 14px;
+  --text-md--line-height: 22px;
+  --text-lg: 16px;
+  --text-lg--line-height: 24px;
+  --text-lg--font-weight: 500;
+  --text-xl: 18px;
+  --text-xl--line-height: 26px;
+  --text-xl--font-weight: 600;
+  --text-2xl: 22px;
+  --text-2xl--line-height: 30px;
+  --text-2xl--font-weight: 600;
+  --text-3xl: 28px;
+  --text-3xl--line-height: 36px;
+  --text-3xl--font-weight: 700;
+
+  /* 圆角阶梯（DS §7.1） */
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-2xl: 20px;
+  --radius-3xl: 24px;
+
+  /* 阴影（DS §7.2） */
+  --shadow-xs: var(--shadow-xs);
+  --shadow-sm: var(--shadow-sm);
+  --shadow-md: var(--shadow-md);
+  --shadow-lg: var(--shadow-lg);
+}
+
+/* ============================================================
+ * :root —— 亮色原始 token（DS §15.1）
+ * ============================================================ */
+:root {
+  /* 应用品牌（可替换占位，DS §15.3） */
+  --app-name: 'Smart RAG';
+  --app-logo: 'SR';
+
+  /* 品牌主色 50-950 + logo */
+  --brand-50: #eff4ff;
+  --brand-100: #d1e0ff;
+  --brand-200: #b3ccff;
+  --brand-300: #94b8ff;
+  --brand-400: #5c8bff;
+  --brand-500: #2e6ff2;
+  --brand-600: #155eef; /* 🔒 主色基准 */
+  --brand-700: #0d4edb;
+  --brand-800: #0b3fae;
+  --brand-900: #0a2e7c;
+  --brand-logo-bg: #155eef;
+
+  /* 中性色阶（冷调白） */
+  --neutral-0: #ffffff;
+  --neutral-50: #f9fafb;
+  --neutral-100: #f2f4f7;
+  --neutral-200: #e4e7ec;
+  --neutral-300: #d0d5dd;
+  --neutral-400: #98a2b3;
+  --neutral-500: #667085;
+  --neutral-700: #344054;
+  --neutral-900: #101828;
+
+  /* 文本语义别名 */
+  --text-primary: var(--neutral-900);
+  --text-secondary: var(--neutral-700);
+  --text-tertiary: var(--neutral-500);
+  --text-disabled: var(--neutral-400);
+  --text-inverse: var(--neutral-0);
+  --text-link: var(--brand-600);
+
+  /* 背景语义别名 */
+  --bg-canvas: var(--neutral-50);
+  --bg-base: var(--neutral-100);
+  --bg-card: var(--neutral-0);
+  --bg-input: var(--neutral-0);
+  --bg-hover: var(--neutral-50);
+  --bg-selected: var(--brand-50);
+
+  /* 边框语义别名 */
+  --border-default: var(--neutral-300);
+  --border-strong: var(--neutral-400);
+  --border-accent: var(--brand-600);
+  --border-subtle: var(--neutral-200);
+  --border-error: #d92d20;
+
+  /* 语义色 */
+  --success-50: #ecfdf3;
+  --success-600: #039855;
+  --success-700: #027a48;
+  --success-tint: rgba(3, 152, 85, 0.1);
+  --warning-50: #fffaeb;
+  --warning-600: #f79009;
+  --warning-700: #dc6803;
+  --warning-tint: rgba(247, 144, 9, 0.1);
+  --error-50: #fef3f2;
+  --error-600: #d92d20;
+  --error-700: #b42318;
+  --error-tint: rgba(217, 45, 32, 0.1);
+  --info-50: var(--brand-50);
+  --info-600: var(--brand-600);
+
+  /* 排版 */
+  --font-sans:
+    'Inter Variable', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+    'Microsoft YaHei', 'Helvetica Neue', Arial, sans-serif;
+  --font-mono: 'JetBrains Mono', 'SF Mono', Menlo, Consolas, 'Courier New', monospace;
+
+  /* 间距（4px base） */
+  --space-0: 0px;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+  --space-20: 80px;
+
+  /* 布局 */
+  --layout-topbar-h: 56px;
+  --layout-sidebar-w: 240px;
+  --layout-sidebar-collapsed-w: 64px;
+  --layout-app-sidebar-w: 280px;
+  --layout-content-max-w: 1440px;
+  --layout-content-p: 24px;
+  --layout-chat-input-w: 768px;
+  --layout-detail-w: 320px;
+
+  /* 圆角 */
+  --radius-none: 0px;
+  --radius-full: 9999px;
+
+  /* 阴影（DS §7.2，背景色调和暗色） */
+  --shadow-xs: 0 1px 2px rgba(16, 24, 40, 0.05);
+  --shadow-sm: 0 1px 3px rgba(16, 24, 40, 0.1), 0 1px 2px rgba(16, 24, 40, 0.06);
+  --shadow-md: 0 4px 8px -2px rgba(16, 24, 40, 0.1), 0 2px 4px -2px rgba(16, 24, 40, 0.06);
+  --shadow-lg: 0 12px 16px -4px rgba(16, 24, 40, 0.08), 0 4px 6px -2px rgba(16, 24, 40, 0.03);
+  --shadow-focus: 0 0 0 4px var(--brand-100);
+
+  /* 图标尺寸 */
+  --icon-xs: 12px;
+  --icon-sm: 14px;
+  --icon-md: 16px;
+  --icon-lg: 20px;
+  --icon-xl: 24px;
+
+  /* 动效 */
+  --motion-duration-fast: 100ms;
+  --motion-duration-base: 200ms;
+  --motion-duration-slow: 300ms;
+  --motion-duration-slower: 400ms;
+  --motion-ease-default: cubic-bezier(0.4, 0, 0.2, 1);
+  --motion-ease-out: cubic-bezier(0, 0, 0.2, 1);
+  --motion-ease-bounce: cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  /* z-index */
+  --z-base: 0;
+  --z-sticky: 10;
+  --z-drawer: 100;
+  --z-dropdown: 1000;
+  --z-modal: 1100;
+  --z-toast: 1200;
+  --z-tooltip: 1300;
+
+  /* shadcn 基础圆角（组件默认） */
+  --radius: 8px;
+}
+
+/* ============================================================
+ * .dark —— 暗色覆盖（DS §15.1 / §14）
+ * ============================================================ */
+.dark {
+  --neutral-0: #101828;
+  --neutral-50: #1d2939;
+  --neutral-100: #212b36;
+  --neutral-200: #2d3748;
+  --neutral-300: #475467;
+  --neutral-400: #667085;
+  --neutral-500: #98a2b3;
+  --neutral-700: #d0d5dd;
+  --neutral-900: #eaecf0;
+
+  /* 文本反转 */
+  --text-primary: var(--neutral-0);
+  --text-secondary: var(--neutral-100);
+  --text-tertiary: var(--neutral-300);
+  --text-disabled: var(--neutral-400);
+  --text-inverse: #101828;
+
+  /* 背景 */
+  --bg-canvas: #101828;
+  --bg-base: #1d2939;
+  --bg-card: #1d2939;
+  --bg-input: #212b36;
+  --bg-hover: rgba(255, 255, 255, 0.05);
+  --bg-selected: rgba(21, 94, 239, 0.15);
+
+  /* 边框 */
+  --border-default: var(--neutral-700);
+  --border-strong: var(--neutral-500);
+  --border-subtle: var(--neutral-200);
+
+  /* 品牌提亮 */
+  --brand-600: #2e6ff2;
+  --brand-700: #5c8bff;
+  --text-link: var(--brand-400);
+
+  /* 阴影弱化（不用纯黑硬边） */
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 4px 8px -2px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 12px 16px -4px rgba(0, 0, 0, 0.5);
+}
+
+/* ============================================================
+ * base 层
+ * ============================================================ */
+@layer base {
+  *,
+  ::before,
+  ::after {
+    border-color: var(--color-border);
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+    text-rendering: optimizeLegibility;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    margin: 0;
+    background-color: var(--bg-canvas);
+    color: var(--text-primary);
+    font-family: var(--font-sans);
+    font-size: 13px; /* DS 默认正文 §5.2 */
+    line-height: 1.5;
+    /* 中文断行规则（DS §5.5） */
+    word-break: break-word;
+    overflow-wrap: anywhere;
+  }
+
+  /* 键盘聚焦环：鼠标点击不显示，Tab 才显示（DS §10.0 / §12.3） */
+  :focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 4px var(--brand-100);
+    border-radius: inherit;
+  }
+
+  /* 选区 */
+  ::selection {
+    background: var(--brand-100);
+    color: var(--brand-900);
+  }
+
+  /* 滚动条（克制，Dify 风格） */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--neutral-300) transparent;
+  }
+  *::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  *::-webkit-scrollbar-thumb {
+    background-color: var(--neutral-300);
+    border-radius: var(--radius-full);
+    border: 2px solid transparent;
+    background-clip: content-box;
+  }
+  *::-webkit-scrollbar-thumb:hover {
+    background-color: var(--neutral-400);
+    background-clip: content-box;
+  }
+}
+
+/* ============================================================
+ * 组件层 —— 全局复用的业务原子样式
+ * ============================================================ */
+@layer components {
+  /* 流式打字光标（DS §9.3）—— 末尾蓝色闪烁 ▍ */
+  .typing-cursor::after {
+    content: '▍';
+    margin-left: 1px;
+    color: var(--brand-600);
+    font-weight: 400;
+    animation: srag-blink 1s step-end infinite;
+  }
+
+  /* 元信息行（消息底部 模型·token·耗时·时间，DS §11.3.7） */
+  .meta-row {
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    color: var(--text-tertiary);
+  }
+}
+
+/* ============================================================
+ * 动效
+ * ============================================================ */
+@keyframes srag-blink {
+  0%,
+  50% {
+    opacity: 1;
+  }
+  50.01%,
+  100% {
+    opacity: 0;
+  }
+}
+
+/* 滑块验证码失败抖动（DS §11.1） */
+@keyframes shake {
+  0%,
+  100% {
+    translate: 0 0;
+  }
+  20% {
+    translate: -6px 0;
+  }
+  40% {
+    translate: 6px 0;
+  }
+  60% {
+    translate: -4px 0;
+  }
+  80% {
+    translate: 4px 0;
+  }
+}
+
+/* 动效减弱（DS §9.8 / §12.5）—— 所有动效降级为瞬态 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

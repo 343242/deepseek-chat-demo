@@ -11,7 +11,7 @@ import com.smart.rag.infrastructure.exception.ClientException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -61,14 +61,14 @@ public class UsageServiceImpl implements UsageService {
 
     @Override
     public List<UsageStats> statsByModel(Long userId, String model,
-                                         LocalDateTime startTime, LocalDateTime endTime) {
+                                         OffsetDateTime startTime, OffsetDateTime endTime) {
         String prefix = ConversationIdUtil.buildLikePrefix(userId);
         return aggregateByModelForUser(model, prefix, startTime, endTime);
     }
 
     @Override
     public List<UsageStats> statsByConversation(Long userId, String conversation,
-                                                 LocalDateTime startTime, LocalDateTime endTime) {
+                                                 OffsetDateTime startTime, OffsetDateTime endTime) {
         if (conversation != null && !conversation.isBlank()) {
             String isolatedId = ConversationIdUtil.buildIsolatedId(userId, conversation);
             return aggregateByConversation(isolatedId, startTime, endTime);
@@ -93,32 +93,32 @@ public class UsageServiceImpl implements UsageService {
 
     @Override
     public List<UsageStats> aggregateByModel(String modelId,
-                                              LocalDateTime startTime,
-                                              LocalDateTime endTime) {
-        LocalDateTime start = startTime != null ? startTime : LocalDateTime.now().minusDays(DEFAULT_DAYS);
+                                              OffsetDateTime startTime,
+                                              OffsetDateTime endTime) {
+        OffsetDateTime start = startTime != null ? startTime : OffsetDateTime.now().minusDays(DEFAULT_DAYS);
         return mapper.aggregateByModel(modelId, start, endTime);
     }
 
     @Override
     public List<UsageStats> aggregateByModelForUser(String modelId, String userPrefix,
-                                                     LocalDateTime startTime, LocalDateTime endTime) {
-        LocalDateTime start = startTime != null ? startTime : LocalDateTime.now().minusDays(DEFAULT_DAYS);
+                                                     OffsetDateTime startTime, OffsetDateTime endTime) {
+        OffsetDateTime start = startTime != null ? startTime : OffsetDateTime.now().minusDays(DEFAULT_DAYS);
         return mapper.aggregateByModelForUser(modelId, userPrefix, start, endTime);
     }
 
     @Override
     public List<UsageStats> aggregateByConversation(String conversationId,
-                                                    LocalDateTime startTime,
-                                                    LocalDateTime endTime) {
-        LocalDateTime start = startTime != null ? startTime : LocalDateTime.now().minusDays(DEFAULT_DAYS);
+                                                    OffsetDateTime startTime,
+                                                    OffsetDateTime endTime) {
+        OffsetDateTime start = startTime != null ? startTime : OffsetDateTime.now().minusDays(DEFAULT_DAYS);
         return mapper.aggregateByConversation(conversationId, start, endTime);
     }
 
     @Override
     public List<UsageStats> aggregateByUserConversations(String userPrefix,
-                                                          LocalDateTime startTime,
-                                                          LocalDateTime endTime) {
-        LocalDateTime start = startTime != null ? startTime : LocalDateTime.now().minusDays(DEFAULT_DAYS);
+                                                          OffsetDateTime startTime,
+                                                          OffsetDateTime endTime) {
+        OffsetDateTime start = startTime != null ? startTime : OffsetDateTime.now().minusDays(DEFAULT_DAYS);
         return mapper.aggregateByUserConversations(userPrefix, start, endTime);
     }
 

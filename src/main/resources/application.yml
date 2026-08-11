@@ -22,6 +22,9 @@ spring:
               url: https://mcp.tavily.com/mcp
 
 app:
+  # 展示时区——JVM TZ 与 API 输出展示时区从同一环境变量派生，永远一致（设计文档 §5）
+  time-zone: ${APP_TIME_ZONE:Asia/Shanghai}
+  date-format: yyyy-MM-dd HH:mm:ss
   cors:
     allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000}
   chat:

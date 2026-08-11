@@ -1,6 +1,6 @@
 package com.smart.rag.chat.dto;
 
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 
 /**
  * System Prompt 配置 DTO
@@ -8,6 +8,6 @@ import java.time.LocalDateTime;
 public record SystemPromptDTO(
     String modelId,
     String promptText,
-    LocalDateTime createdAt,
-    LocalDateTime updatedAt
+    OffsetDateTime createdAt,
+    OffsetDateTime updatedAt
 ) {}

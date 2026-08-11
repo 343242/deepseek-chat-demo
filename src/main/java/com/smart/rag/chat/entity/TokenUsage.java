@@ -4,7 +4,7 @@ import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 
 /**
  * Token 用量记录
@@ -36,7 +36,7 @@ public class TokenUsage {
     private Long durationMs;
 
     @TableField("created_at")
-    private LocalDateTime createdAt;
+    private OffsetDateTime createdAt;
 
     public TokenUsage() {
     }
@@ -50,7 +50,7 @@ public class TokenUsage {
         this.completionTokens = completionTokens;
         this.totalTokens = totalTokens;
         this.durationMs = durationMs;
-        this.createdAt = LocalDateTime.now();
+        this.createdAt = OffsetDateTime.now();
     }
 
     // Getters
@@ -61,7 +61,7 @@ public class TokenUsage {
     public Long getCompletionTokens() { return completionTokens; }
     public Long getTotalTokens() { return totalTokens; }
     public Long getDurationMs() { return durationMs; }
-    public LocalDateTime getCreatedAt() { return createdAt; }
+    public OffsetDateTime getCreatedAt() { return createdAt; }
 
     // Setters
     public void setId(Long id) { this.id = id; }
@@ -71,5 +71,5 @@ public class TokenUsage {
     public void setCompletionTokens(Long completionTokens) { this.completionTokens = completionTokens; }
     public void setTotalTokens(Long totalTokens) { this.totalTokens = totalTokens; }
     public void setDurationMs(Long durationMs) { this.durationMs = durationMs; }
-    public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
+    public void setCreatedAt(OffsetDateTime createdAt) { this.createdAt = createdAt; }
 }

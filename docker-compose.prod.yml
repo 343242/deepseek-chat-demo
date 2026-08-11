@@ -23,6 +23,8 @@ services:
     env_file: .env
     environment:
       SPRING_PROFILES_ACTIVE: stable,prod
+      # JVM 时区——与 app.time-zone 从同一 APP_TIME_ZONE 派生，保证 OffsetDateTime.now 偏移与 API 输出一致
+      TZ: ${APP_TIME_ZONE:-Asia/Shanghai}
       # 容器内通过 service 名访问同网络中间件（覆盖 .env 里的 localhost 默认值）
       DB_HOST: postgres
       REDIS_HOST: redis

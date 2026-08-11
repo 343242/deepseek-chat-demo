@@ -28,7 +28,7 @@ import org.springframework.web.context.request.ServletRequestAttributes;
 
 import jakarta.annotation.Nullable;
 import java.lang.reflect.Method;
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -101,7 +101,7 @@ public class AdminAuditAspect {
             entry.setIpAddress(requestMeta.ip());
             entry.setUserAgent(requestMeta.userAgent());
             entry.setDurationMs((int) durationMs);
-            entry.setCreatedAt(LocalDateTime.now());
+            entry.setCreatedAt(OffsetDateTime.now());
             try {
                 writer.writeAsync(entry);
             } catch (Exception ex) {

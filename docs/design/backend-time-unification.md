@@ -121,7 +121,7 @@ jsr310 原生 `OffsetDateTimeSerializer`/`OffsetDateTimeDeserializer`/`InstantSe
 
 **根因约束**：输出与解析逻辑在 Jackson 与 Spring 两条入口只能有一份实现（§2 不复制改参数）。因此抽一个共享 codec，序列化器/反序列化器/`Formatter` 全部委托给它。"口径一致"由"同一份代码"保证，而非文档声明。
 
-**共享 codec**（`config/time/TimeCodec.java`）：
+**共享 codec**（`config/time/TimeCodec.java`，纯值类，由 `JacksonTimeConfig` 注册为单例 `@Bean`）：
 
 ```java
 public final class TimeCodec {
@@ -146,7 +146,9 @@ public final class TimeCodec {
         try {
             return OffsetDateTime.parse(text).toInstant();      // 带偏移
         } catch (DateTimeParseException offset) {
-            LocalDateTime ldt = LocalDateTime.parse(text);      // 无偏移（含 pattern "yyyy-MM-dd HH:mm:ss"）
+            // 无偏移串（pattern "yyyy-MM-dd HH:mm:ss"，空格分隔）——用配置 printFormatter 而非
+            // 默认 ISO_LOCAL_DATE_TIME（后者要求 'T' 分隔符）按配置时区补偏移
+            LocalDateTime ldt = LocalDateTime.parse(text, printFormatter);
             return ldt.atZone(zone).toInstant();
         }
     }
@@ -191,11 +193,13 @@ public final class OffsetDateTimeJsonDeserializer extends JsonDeserializer<Offse
 @Configuration
 public class JacksonTimeConfig {
 
-    private final TimeCodec codec;
-    public JacksonTimeConfig(TimeCodec codec) { this.codec = codec; }  // @Component 单例
+    @Bean
+    TimeCodec timeCodec(AppProperties app) {
+        return new TimeCodec(app.timeZone(), app.dateFormat());
+    }
 
     @Bean
-    Jackson2ObjectMapperBuilderCustomizer javaTimeCustomizer(AppProperties app) {
+    Jackson2ObjectMapperBuilderCustomizer javaTimeCustomizer(TimeCodec codec, AppProperties app) {
         return builder -> builder
             .serializers(
                 new OffsetDateTimeJsonSerializer(codec),
@@ -239,7 +243,7 @@ public class TimeFormattersConfig implements WebMvcConfigurer {
 }
 ```
 
-`TimeCodec` 提升为 `@Component` bean，由 `JacksonTimeConfig` 与 `TimeFormattersConfig` 共享同一实例。`UsageController` 入参改 `OffsetDateTime` 后移除 `@DateTimeFormat`（格式与时区由 `TimeCodec` 单点定义，不在 Controller 重复 pattern）。
+`TimeCodec` 注册为单例 `@Bean`（由 `JacksonTimeConfig.timeCodec(AppProperties)` 工厂方法创建），由 `JacksonTimeConfig` 与 `TimeFormattersConfig` 共享同一实例。`UsageController` 入参改 `OffsetDateTime` 后移除 `@DateTimeFormat`（格式与时区由 `TimeCodec` 单点定义，不在 Controller 重复 pattern）。
 
 ### 6.4 作用域边界（修 P1-6）
 

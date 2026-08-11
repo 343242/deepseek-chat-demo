@@ -8,10 +8,12 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 /**
  * 统一全局异常处理器
@@ -85,6 +87,25 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(AuthenticationException.class)
     public ResponseEntity<GlobalResponse<Void>> handleAuthentication(AuthenticationException e) {
         return ResponseEntity.ok(GlobalResponse.error(ClientErrorCode.UNAUTHORIZED));
+    }
+
+    /**
+     * @RequestBody 反序列化失败（如畸形 JSON、无法解析的时间串）——客户端错误。
+     */
+    @ExceptionHandler(HttpMessageNotReadableException.class)
+    public ResponseEntity<GlobalResponse<Void>> handleNotReadable(HttpMessageNotReadableException e) {
+        log.warn("Malformed request body: {}", e.getMessage());
+        return ResponseEntity.ok(GlobalResponse.error(ClientErrorCode.BAD_REQUEST, "请求体格式错误或字段无法解析"));
+    }
+
+    /**
+     * @RequestParam 类型转换失败（如全局 Formatter 无法解析的时间查询参数）——客户端错误。
+     */
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<GlobalResponse<Void>> handleTypeMismatch(MethodArgumentTypeMismatchException e) {
+        log.warn("Param type mismatch: name={}, value={}, msg={}", e.getName(), e.getValue(), e.getMessage());
+        return ResponseEntity.ok(GlobalResponse.error(ClientErrorCode.BAD_REQUEST,
+                "参数 " + e.getName() + " 格式错误或无法解析"));
     }
 
     @ExceptionHandler(Exception.class)

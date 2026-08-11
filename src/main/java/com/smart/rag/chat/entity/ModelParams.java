@@ -4,7 +4,7 @@ import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 
 /**
  * 模型运行时参数配置
@@ -36,18 +36,18 @@ public class ModelParams {
     private Double presencePenalty;
 
     @TableField("created_at")
-    private LocalDateTime createdAt;
+    private OffsetDateTime createdAt;
 
     @TableField("updated_at")
-    private LocalDateTime updatedAt;
+    private OffsetDateTime updatedAt;
 
     public ModelParams() {
     }
 
     public ModelParams(String modelId) {
         this.modelId = modelId;
-        this.createdAt = LocalDateTime.now();
-        this.updatedAt = LocalDateTime.now();
+        this.createdAt = OffsetDateTime.now();
+        this.updatedAt = OffsetDateTime.now();
     }
 
     public void applyUpdates(Double temperature, Integer maxTokens, Double topP,
@@ -57,7 +57,7 @@ public class ModelParams {
         if (topP != null) this.topP = topP;
         if (frequencyPenalty != null) this.frequencyPenalty = frequencyPenalty;
         if (presencePenalty != null) this.presencePenalty = presencePenalty;
-        this.updatedAt = LocalDateTime.now();
+        this.updatedAt = OffsetDateTime.now();
     }
 
     // Getters
@@ -68,8 +68,8 @@ public class ModelParams {
     public Double getTopP() { return topP; }
     public Double getFrequencyPenalty() { return frequencyPenalty; }
     public Double getPresencePenalty() { return presencePenalty; }
-    public LocalDateTime getCreatedAt() { return createdAt; }
-    public LocalDateTime getUpdatedAt() { return updatedAt; }
+    public OffsetDateTime getCreatedAt() { return createdAt; }
+    public OffsetDateTime getUpdatedAt() { return updatedAt; }
 
     // Setters (needed for MyBatis-Plus)
     public void setId(Long id) { this.id = id; }
@@ -79,6 +79,6 @@ public class ModelParams {
     public void setTopP(Double topP) { this.topP = topP; }
     public void setFrequencyPenalty(Double frequencyPenalty) { this.frequencyPenalty = frequencyPenalty; }
     public void setPresencePenalty(Double presencePenalty) { this.presencePenalty = presencePenalty; }
-    public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
-    public void setUpdatedAt(LocalDateTime updatedAt) { this.updatedAt = updatedAt; }
+    public void setCreatedAt(OffsetDateTime createdAt) { this.createdAt = createdAt; }
+    public void setUpdatedAt(OffsetDateTime updatedAt) { this.updatedAt = updatedAt; }
 }

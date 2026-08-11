@@ -6,7 +6,7 @@ import com.smart.rag.chat.entity.TokenUsage;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
 
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.util.List;
 
 /**
@@ -30,19 +30,19 @@ public interface TokenUsageMapper extends BaseMapper<TokenUsage> {
                                                  @Param("userPrefix") String userPrefix);
 
     List<UsageStats> aggregateByModel(@Param("modelId") String modelId,
-                                      @Param("startTime") LocalDateTime startTime,
-                                      @Param("endTime") LocalDateTime endTime);
+                                      @Param("startTime") OffsetDateTime startTime,
+                                      @Param("endTime") OffsetDateTime endTime);
 
     List<UsageStats> aggregateByConversation(@Param("conversationId") String conversationId,
-                                             @Param("startTime") LocalDateTime startTime,
-                                             @Param("endTime") LocalDateTime endTime);
+                                             @Param("startTime") OffsetDateTime startTime,
+                                             @Param("endTime") OffsetDateTime endTime);
 
     List<UsageStats> aggregateByModelForUser(@Param("modelId") String modelId,
                                              @Param("userPrefix") String userPrefix,
-                                             @Param("startTime") LocalDateTime startTime,
-                                             @Param("endTime") LocalDateTime endTime);
+                                             @Param("startTime") OffsetDateTime startTime,
+                                             @Param("endTime") OffsetDateTime endTime);
 
     List<UsageStats> aggregateByUserConversations(@Param("userPrefix") String userPrefix,
-                                                   @Param("startTime") LocalDateTime startTime,
-                                                   @Param("endTime") LocalDateTime endTime);
+                                                   @Param("startTime") OffsetDateTime startTime,
+                                                   @Param("endTime") OffsetDateTime endTime);
 }

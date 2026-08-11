@@ -1,6 +1,6 @@
 package com.smart.rag.chat.dto;
 
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 
 /**
  * 单次 Token 用量 DTO
@@ -12,5 +12,5 @@ public record TokenUsageDTO(
     long completionTokens,
     long totalTokens,
     long durationMs,
-    LocalDateTime createdAt
+    OffsetDateTime createdAt
 ) {}

@@ -5,11 +5,10 @@ import com.smart.rag.chat.dto.UsageStats;
 import com.smart.rag.chat.service.UsageService;
 import com.smart.rag.infrastructure.response.GlobalResponse;
 import com.smart.rag.infrastructure.web.util.SecurityUtils;
-import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
-import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.util.List;
 
 /**
@@ -37,8 +36,8 @@ public class UsageController {
     @GetMapping("/stats/model")
     public GlobalResponse<List<UsageStats>> statsByModel(
             @RequestParam(required = false) String model,
-            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime startTime,
-            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime endTime) {
+            @RequestParam(required = false) OffsetDateTime startTime,
+            @RequestParam(required = false) OffsetDateTime endTime) {
         Long userId = SecurityUtils.getCurrentUserId();
         return GlobalResponse.ok(usageService.statsByModel(userId, model, startTime, endTime));
     }
@@ -46,8 +45,8 @@ public class UsageController {
     @GetMapping("/stats/conversation")
     public GlobalResponse<List<UsageStats>> statsByConversation(
             @RequestParam(required = false) String conversation,
-            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime startTime,
-            @RequestParam(required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime endTime) {
+            @RequestParam(required = false) OffsetDateTime startTime,
+            @RequestParam(required = false) OffsetDateTime endTime) {
         Long userId = SecurityUtils.getCurrentUserId();
         return GlobalResponse.ok(usageService.statsByConversation(userId, conversation, startTime, endTime));
     }

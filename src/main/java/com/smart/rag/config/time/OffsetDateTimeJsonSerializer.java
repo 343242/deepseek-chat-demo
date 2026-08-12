@@ -19,6 +19,16 @@ public final class OffsetDateTimeJsonSerializer extends JsonSerializer<OffsetDat
         this.codec = codec;
     }
 
+    /**
+     * 必须覆写：Spring Framework 6.2 的 {@code Jackson2ObjectMapperBuilder.serializers(...)}
+     * 急切校验 {@code handledType()}（null 或 Object 即抛 "Unknown handled type"），
+     * 而 {@code JsonSerializer<T>} 默认返回 {@code Object.class}，泛型参数不会自动解析。
+     */
+    @Override
+    public Class<OffsetDateTime> handledType() {
+        return OffsetDateTime.class;
+    }
+
     @Override
     public void serialize(OffsetDateTime value, JsonGenerator gen, SerializerProvider serializers) throws IOException {
         gen.writeString(codec.format(value.toInstant()));

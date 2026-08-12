@@ -19,6 +19,16 @@ public final class InstantJsonDeserializer extends JsonDeserializer<Instant> {
         this.codec = codec;
     }
 
+    /**
+     * 必须覆写：Spring Framework 6.2 的 {@code Jackson2ObjectMapperBuilder.deserializers(...)}
+     * 急切校验 {@code handledType()}（null 或 Object 即抛 "Unknown handled type"），
+     * 而 {@code JsonDeserializer<T>} 默认返回 {@code Object.class}，泛型参数不会自动解析。
+     */
+    @Override
+    public Class<Instant> handledType() {
+        return Instant.class;
+    }
+
     @Override
     public Instant deserialize(JsonParser p, DeserializationContext ctxt) throws IOException {
         return codec.parse(p.getValueAsString());

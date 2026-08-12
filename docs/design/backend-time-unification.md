@@ -119,6 +119,8 @@ environment:
 
 jsr310 原生 `OffsetDateTimeSerializer`/`OffsetDateTimeDeserializer`/`InstantSerializer`/`InstantDeserializer` **没有** `(DateTimeFormatter, TimeZone)` 或 `(ZoneId, DateTimeFormatter)` 构造——它们的定制点是 `withFormat(...)` 或子类，且无法原生表达"丢偏移按配置时区格式化"和"带偏移/无偏移双口径解析"。因此本方案**自写**序列化器/反序列化器（`extends JsonSerializer<T>` / `extends JsonDeserializer<T>`），不用原生类。
 
+**实施增补（Spring Framework 6.2 急切校验，实测 P0）**：`JsonSerializer<T>`/`JsonDeserializer<T>` 的默认 `handledType()` 返回 `Object.class`——泛型参数**不会**自动反射。Spring 6.2 起（本项目 spring-web 6.2.18，Boot 3.5.14）`Jackson2ObjectMapperBuilder.serializers(...)`/`deserializers(...)` 在注册时急切调用 `handledType()`，返回 `null` 或 `Object.class` 直接抛 `IllegalArgumentException("Unknown handled type in <class>")`，导致 `jacksonObjectMapperBuilder` 工厂方法启动失败。因此每个自写序列化器/反序列化器**必须**覆写 `handledType()` 返回具体类型（本项目 4 个类均已覆写；Spring ≤6.1 无此校验，样例可侥幸通过，6.2 起必炸）。
+
 **根因约束**：输出与解析逻辑在 Jackson 与 Spring 两条入口只能有一份实现（§2 不复制改参数）。因此抽一个共享 codec，序列化器/反序列化器/`Formatter` 全部委托给它。"口径一致"由"同一份代码"保证，而非文档声明。
 
 **共享 codec**（`config/time/TimeCodec.java`，纯值类，由 `JacksonTimeConfig` 注册为单例 `@Bean`）：

@@ -22,6 +22,16 @@ public final class InstantJsonSerializer extends JsonSerializer<Instant> {
         this.codec = codec;
     }
 
+    /**
+     * 必须覆写：Spring Framework 6.2 的 {@code Jackson2ObjectMapperBuilder.serializers(...)}
+     * 急切校验 {@code handledType()}（null 或 Object 即抛 "Unknown handled type"），
+     * 而 {@code JsonSerializer<T>} 默认返回 {@code Object.class}，泛型参数不会自动解析。
+     */
+    @Override
+    public Class<Instant> handledType() {
+        return Instant.class;
+    }
+
     @Override
     public void serialize(Instant value, JsonGenerator gen, SerializerProvider serializers) throws IOException {
         gen.writeString(codec.format(value));

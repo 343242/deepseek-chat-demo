@@ -208,7 +208,13 @@ public class OutboxMessageBus implements MessageBus {
         entry.setHeaders(headersJson(message.headers()));
         entry.setStatus("pending");
         entry.setAttempts(0);
-        entry.setNextRetryAt(Instant.now());
+        // createdAt/updatedAt/nextRetryAt 同源一个时刻：避免多次 now() 漂移，并满足两列的 NOT NULL。
+        // XML INSERT 逐列显式枚举（JSONB CAST 惯例），显式 NULL 不会触发 DDL 的 DEFAULT now()，
+        // 故必须在此赋值——回归见 OutboxMessageBusInsertTest（真 PG，锁死此契约）。
+        Instant now = Instant.now();
+        entry.setNextRetryAt(now);
+        entry.setCreatedAt(now);
+        entry.setUpdatedAt(now);
         try {
             outboxMapper.insert(entry);
         } catch (Exception e) {

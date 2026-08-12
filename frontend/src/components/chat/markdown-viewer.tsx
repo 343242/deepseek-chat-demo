@@ -1,4 +1,4 @@
-import { memo, useState } from 'react'
+import { memo } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import rehypeRaw from 'rehype-raw'
@@ -7,6 +7,7 @@ import rehypeKatex from 'rehype-katex'
 import { Check, Copy } from 'lucide-react'
 import 'katex/dist/katex.min.css'
 import { cn } from '@/lib/utils'
+import { useCopy } from '@/hooks/use-copy'
 
 /**
  * Markdown 渲染（DS §11.3.2）
@@ -41,7 +42,7 @@ interface CodeNode {
 }
 
 function CodeBlock({ children }: { children: React.ReactNode }) {
-  const [copied, setCopied] = useState(false)
+  const { copied, copy } = useCopy()
   // 从 children（<code> 元素）提取语言与文本
   const codeEl = (Array.isArray(children) ? children[0] : children) as CodeNode
   const props = codeEl?.props ?? {}
@@ -49,22 +50,12 @@ function CodeBlock({ children }: { children: React.ReactNode }) {
   const lang = /language-(\w+)/.exec(className)?.[1]
   const text = extractText(props.children)
 
-  async function copy() {
-    try {
-      await navigator.clipboard.writeText(text)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 1500)
-    } catch {
-      /* ignore */
-    }
-  }
-
   return (
     <div className="group relative my-3 overflow-hidden rounded-md border border-line-subtle bg-neutral-900">
       <div className="flex items-center justify-between border-b border-white/10 px-3 py-1.5">
         <span className="text-xs font-medium text-neutral-400">{lang || 'text'}</span>
         <button
-          onClick={copy}
+          onClick={() => copy(text)}
           className="flex items-center gap-1 text-xs text-neutral-400 transition-colors hover:text-white"
           type="button"
         >

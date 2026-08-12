@@ -11,6 +11,8 @@ import type {
 import { UPLOAD_LIMITS } from '@/lib/constants'
 
 export const docKeys = {
+  /** 根键：失效时用作前缀匹配，覆盖所有 documents 子键 */
+  all: ['documents'] as const,
   list: (teamId?: number | null) => ['documents', teamId ?? 'personal'] as const,
   detail: (id: number) => ['documents', id] as const,
   chunks: (id: number) => ['documents', id, 'chunks'] as const,
@@ -73,7 +75,7 @@ export function useDeleteDocument() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (id: number) => api.post<void>(`/documents/${id}/delete`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['documents'] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: docKeys.all }),
   })
 }
 
@@ -81,7 +83,7 @@ export function useRetryDocument() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (id: number) => api.post<DocumentDTO>(`/documents/${id}/retry`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['documents'] }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: docKeys.all }),
   })
 }
 
@@ -100,17 +102,17 @@ export function chunkUploadInit(req: ChunkUploadInitRequest) {
   return api.post<ChunkUploadResult>('/documents/multipart', req)
 }
 
-/** 上传单分片（raw body + X-Chunk-MD5 header） */
+/** 上传单分片（raw body + X-Chunk-Checksum header，SHA-256） */
 export async function uploadChunk(
   uploadId: string,
   chunkIndex: number,
   data: Blob,
-  md5: string,
+  checksum: string,
 ): Promise<void> {
   await apiFetch<void>(`/documents/multipart/${uploadId}/chunks/${chunkIndex}`, {
     method: 'POST',
     body: data,
-    headers: { 'X-Chunk-MD5': md5, 'Content-Type': 'application/octet-stream' },
+    headers: { 'X-Chunk-Checksum': checksum, 'Content-Type': 'application/octet-stream' },
   })
 }
 

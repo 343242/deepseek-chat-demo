@@ -62,6 +62,8 @@ export const SliderCaptcha = forwardRef<SliderCaptchaHandle, SliderCaptchaProps>
       try {
         const data = await getCaptcha()
         if (token !== loadingTokenRef.current) return // 已被更新的请求取代
+        // TEMP-DEBUG(联调诊断): 验证码获取成功（dev 下 answer 会暴露，可核对滑块位移）
+        console.info(`[trace] captcha loaded id=${data.captchaId} answer=${data.answer ?? 'null'}`)
         setCaptcha(data)
         onResetRef.current?.()
       } catch {
@@ -114,6 +116,8 @@ export const SliderCaptcha = forwardRef<SliderCaptchaHandle, SliderCaptchaProps>
       // 注意：不要用"拖到右端才算成功"——缺口 x 随机分布于 [10,253]，强制拖到右端必然失败。
       setStatus('success')
       const captchaCode = Math.round(handleX) + 15
+      // TEMP-DEBUG(联调诊断): 滑块位移提交值（对齐时 ≈ answer；±5 容差由后端裁决）
+      console.info(`[trace] captcha submit id=${captcha.captchaId} code=${captchaCode}`)
       onVerified(captcha.captchaId, captchaCode)
     }
 

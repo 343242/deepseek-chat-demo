@@ -1,37 +1,28 @@
 import { useState } from 'react'
+import { useQuery } from '@tanstack/react-query'
 import { FileText, ChevronDown, ChevronRight } from 'lucide-react'
 import type { Reference } from '@/types/document'
 import { fetchChunk } from '@/api/documents'
 import { sourceLabel } from '@/lib/status-meta'
-import { Badge } from '@/components/ui/badge'
 
-/** ReferenceCard 引用来源卡（DS §11.8）—— 序号 + 文件名 + 页码 + source/score + 片段预览 */
+/** ReferenceCard 引用来源卡（DS §11.8）—— 序号 + 文件名 + 页码 + source/score + 片段预览。
+ *  FE-014：按需展开走 React Query 缓存（同一 chunk 二次展开命中缓存，不再重复请求）。 */
 export function ReferenceCard({ ref, onOpenDoc }: { ref: Reference; onOpenDoc?: (docId: string) => void }) {
   const [expanded, setExpanded] = useState(false)
-  const [fullContent, setFullContent] = useState<string | null>(null)
-  const [loading, setLoading] = useState(false)
+
+  // 展开时才拉取全文；staleTime 内二次展开直接命中缓存
+  const { data: chunk, isFetching } = useQuery({
+    queryKey: ['chunks', ref.chunkId],
+    queryFn: () => fetchChunk(ref.chunkId),
+    enabled: expanded,
+    retry: false,
+    staleTime: 5 * 60_000,
+  })
 
   const src = sourceLabel(ref.source)
-
-  async function loadFull() {
-    if (fullContent !== null) {
-      setExpanded((v) => !v)
-      return
-    }
-    setLoading(true)
-    try {
-      const chunk = await fetchChunk(ref.chunkId)
-      setFullContent(chunk.content)
-      setExpanded(true)
-    } catch {
-      setFullContent(ref.content ?? '（无法加载片段）')
-      setExpanded(true)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  const preview = fullContent ?? ref.content
+  // 展开后：命中缓存用全文，否则回退预览/失败提示
+  const expandedContent = chunk?.content ?? ref.content ?? '（无法加载片段）'
+  const preview = expanded ? expandedContent : ref.content
 
   return (
     <div className="rounded-md border border-line-subtle bg-base/50 p-2.5 text-sm">
@@ -70,17 +61,15 @@ export function ReferenceCard({ ref, onOpenDoc }: { ref: Reference; onOpenDoc?: 
 
       <div className="mt-1.5 pl-7">
         <button
-          onClick={loadFull}
-          disabled={loading}
+          onClick={() => setExpanded((v) => !v)}
+          disabled={isFetching}
           className="inline-flex items-center gap-1 text-xs text-link hover:underline disabled:opacity-50"
           type="button"
         >
           {expanded ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
-          {loading ? '加载中…' : expanded ? '收起' : preview ? '展开片段' : '查看完整片段'}
+          {isFetching ? '加载中…' : expanded ? '收起' : preview ? '展开片段' : '查看完整片段'}
         </button>
       </div>
     </div>
   )
 }
-
-export { Badge }

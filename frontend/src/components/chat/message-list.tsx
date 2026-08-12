@@ -1,8 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { ArrowDown, Loader2 } from 'lucide-react'
 import { ChatMessage } from './chat-message'
 import { EmptyState } from '@/components/common/empty-state'
-import { Button } from '@/components/ui/button'
+import { useInfiniteScroll } from '@/hooks/use-infinite-scroll'
 import { useChatStore } from '@/stores/chat-store'
 import { fetchMessages } from '@/api/conversations'
 import { time } from '@/lib/format'
@@ -22,7 +22,6 @@ export function MessageList() {
   const [showJump, setShowJump] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
   const [hasMore, setHasMore] = useState(true)
-  const topRef = useRef<HTMLDivElement>(null)
 
   // 流式/新消息自动滚底（除非用户手动上滚）
   useEffect(() => {
@@ -40,26 +39,20 @@ export function MessageList() {
     setShowJump(!atBottom && streaming)
   }
 
-  // 滚到顶部加载更早历史（游标分页）
-  useEffect(() => {
-    const el = topRef.current
-    if (!el || !conversationId || !hasMore) return
-    const ob = new IntersectionObserver(async (entries) => {
-      if (entries[0].isIntersecting && !loadingMore) {
-        setLoadingMore(true)
-        try {
-          const earliest = messages.find((m) => m.parentId == null)?.id
-          const page = await fetchMessages(conversationId, 20, earliest)
-          if (page.items.length) prepend(page.items as RenderMessage[])
-          setHasMore(page.hasMore)
-        } finally {
-          setLoadingMore(false)
-        }
-      }
-    })
-    ob.observe(el)
-    return () => ob.disconnect()
-  }, [conversationId, hasMore, loadingMore, messages, prepend])
+  // 滚到顶部加载更早历史（游标分页）—— onLoadMore 依赖 messages，随新页到达重新订阅
+  const loadMore = useCallback(async () => {
+    if (!conversationId) return
+    setLoadingMore(true)
+    try {
+      const earliest = messages.find((m) => m.parentId == null)?.id
+      const page = await fetchMessages(conversationId, 20, earliest)
+      if (page.items.length) prepend(page.items as RenderMessage[])
+      setHasMore(page.hasMore)
+    } finally {
+      setLoadingMore(false)
+    }
+  }, [conversationId, messages, prepend])
+  const topRef = useInfiniteScroll({ onLoadMore: loadMore, hasMore, loading: loadingMore })
 
   if (messages.length === 0) {
     return (
@@ -131,5 +124,3 @@ function TimeSeparator({ label }: { label: string }) {
     </div>
   )
 }
-
-export { Button }

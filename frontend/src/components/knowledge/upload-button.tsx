@@ -5,9 +5,10 @@ import { Progress } from '@/components/ui/progress'
 import { toast } from 'sonner'
 import {
   uploadDirect, shouldChunk, chunkUploadInit, uploadChunk, chunkUploadComplete, chunkUploadDelete,
+  docKeys,
 } from '@/api/documents'
 import { queryClient } from '@/lib/query-client'
-import { md5 } from '@/lib/md5'
+import { computeChecksum } from '@/lib/checksum'
 import { UPLOAD_LIMITS } from '@/lib/constants'
 import { extOf, formatFileSize, formatSpeed } from '@/lib/format'
 import { cn } from '@/lib/utils'
@@ -73,12 +74,11 @@ export function UploadButton({
             setTasks((t) => t.map((x) => (x.id === taskId ? { ...x, progress: 100, status: 'success' } : x)))
           } else {
             // 分片上传
-            const buf = await file.arrayBuffer()
-            const fileMd5 = md5(buf)
+            const fileChecksum = await computeChecksum(file)
             const chunkSize = UPLOAD_LIMITS.chunkSize
             const totalChunks = Math.ceil(file.size / chunkSize)
             const init = await chunkUploadInit({
-              fileMd5, fileName: file.name, fileSize: file.size, mimeType: file.type, chunkSize,
+              fileChecksum, fileName: file.name, fileSize: file.size, mimeType: file.type, chunkSize,
               teamId: teamId ?? null, replaceDocumentId: replaceDocumentId ?? null,
             })
             if (init.uploaded) {
@@ -90,8 +90,8 @@ export function UploadButton({
               for (let i = 0; i < totalChunks; i++) {
                 const start = i * chunkSize
                 const blob = file.slice(start, Math.min(start + chunkSize, file.size))
-                const chunkMd5 = md5(await blob.arrayBuffer())
-                await uploadChunk(uploadId, i, blob, chunkMd5)
+                const chunkChecksum = await computeChecksum(blob)
+                await uploadChunk(uploadId, i, blob, chunkChecksum)
                 const progress = Math.round(((i + 1) / totalChunks) * 100)
                 const now = Date.now()
                 const uploadedBytes = (i + 1) * chunkSize
@@ -102,7 +102,7 @@ export function UploadButton({
               setTasks((t) => t.map((x) => (x.id === taskId ? { ...x, progress: 100, status: 'success' } : x)))
             }
           }
-          queryClient.invalidateQueries({ queryKey: ['documents'] })
+          queryClient.invalidateQueries({ queryKey: docKeys.all })
           onDone?.()
         } catch (e) {
           setTasks((t) => t.map((x) => (x.id === taskId ? { ...x, status: 'error', error: (e as Error).message } : x)))

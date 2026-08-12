@@ -40,6 +40,19 @@ export interface MessageVO {
   children?: MessageVO[]
 }
 
+/**
+ * 渲染用消息（MessageVO + 流式附加字段）。
+ * 定义在 types 层（而非 store）以供 stream-reducer 等纯函数复用，避免与 store 的循环依赖。
+ */
+export interface RenderMessage extends MessageVO {
+  references?: Reference[]
+  agentMetadata?: AgentMetadata
+  fallback?: FallbackMeta
+  reasoning?: string
+  /** 本地临时消息（未持久化） */
+  pending?: boolean
+}
+
 /** ChatRequest（mode/ChatRequest.java） */
 export interface ChatRequest {
   model: string

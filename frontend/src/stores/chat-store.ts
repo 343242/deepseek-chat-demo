@@ -1,20 +1,16 @@
 import { create } from 'zustand'
-import type { MessageVO, ChatMode, AgentMetadata, FallbackMeta } from '@/types/chat'
+import type { RenderMessage, ChatMode, AgentMetadata } from '@/types/chat'
 import type { Reference } from '@/types/document'
 import { streamChat, cancelChat } from '@/lib/sse'
 import { toRawConversationId, newRawId } from '@/lib/conversation-id'
+import { applyFrame, finalizeInProgress } from '@/lib/chat/stream-reducer'
+import { nextTempId } from '@/lib/chat/temp-id'
 import { useAuthStore } from './auth-store'
 import { queryClient } from '@/lib/query-client'
 import { convKeys } from '@/api/conversations'
 
-/** 渲染用消息（MessageVO + 流式附加字段） */
-export interface RenderMessage extends MessageVO {
-  references?: Reference[]
-  agentMetadata?: AgentMetadata
-  fallback?: FallbackMeta
-  reasoning?: string
-  pending?: boolean // 本地临时消息（未持久化）
-}
+// RenderMessage 定义已迁至 types/chat（供 stream-reducer 等纯函数复用，避免循环依赖）
+export type { RenderMessage } from '@/types/chat'
 
 export interface SendOptions {
   model: string
@@ -47,9 +43,6 @@ interface ChatState {
   closeDetail: () => void
 }
 
-let tempIdSeq = -1
-const nextTempId = () => tempIdSeq--
-
 export const useChatStore = create<ChatState>((set, get) => {
   let abortController: AbortController | null = null
 
@@ -70,6 +63,7 @@ export const useChatStore = create<ChatState>((set, get) => {
       set({ conversationId: null, messages: [], streaming: false, error: null, detail: null })
     },
 
+    // send 仅做编排（FE-006）：构造乐观消息 → streamChat → 每帧交给纯函数 applyFrame
     send: (text, opts) => {
       const trimmed = text.trim()
       if (!trimmed || !opts.model || get().streaming) return
@@ -116,53 +110,39 @@ export const useChatStore = create<ChatState>((set, get) => {
         {
           onContent: (chunk) =>
             set((s) => ({
-              messages: s.messages.map((m) =>
-                m.id === assistantId ? { ...m, content: m.content + chunk } : m,
-              ),
+              messages: applyFrame(s.messages, { type: 'content', chunk }, assistantId),
             })),
           onReasoning: (chunk) =>
             set((s) => ({
-              messages: s.messages.map((m) =>
-                m.id === assistantId ? { ...m, reasoning: (m.reasoning ?? '') + chunk } : m,
-              ),
+              messages: applyFrame(s.messages, { type: 'reasoning', chunk }, assistantId),
             })),
           onReferences: (refs) =>
             set((s) => ({
-              messages: s.messages.map((m) => (m.id === assistantId ? { ...m, references: refs } : m)),
+              messages: applyFrame(s.messages, { type: 'references', references: refs }, assistantId),
             })),
           onAgentMetadata: (meta) =>
             set((s) => ({
-              messages: s.messages.map((m) => (m.id === assistantId ? { ...m, agentMetadata: meta } : m)),
+              messages: applyFrame(s.messages, { type: 'agentMetadata', metadata: meta }, assistantId),
             })),
           onFallback: (fb) =>
             set((s) => ({
-              messages: s.messages.map((m) => (m.id === assistantId ? { ...m, fallback: fb } : m)),
+              messages: applyFrame(s.messages, { type: 'fallback', fallback: fb }, assistantId),
             })),
-          onCanceled: () => {
+          onCanceled: (reason) =>
             set((s) => ({
-              messages: s.messages.map((m) =>
-                m.id === assistantId ? { ...m, status: 'FINISHED' } : m,
-              ),
-            }))
-          },
-          onError: (frame) => {
+              messages: applyFrame(s.messages, { type: 'canceled', reason }, assistantId),
+            })),
+          onError: (frame) =>
             set((s) => ({
               error: frame.message,
-              messages: s.messages.map((m) =>
-                m.id === assistantId ? { ...m, status: 'ERROR' } : m,
-              ),
-            }))
-          },
+              messages: applyFrame(s.messages, frame, assistantId),
+            })),
           onComplete: () => {
             // 正常结束 / 软取消后服务端关闭流：复位 streaming，收尾消息态
             if (get().streaming) {
               set((s) => ({
                 streaming: false,
-                messages: s.messages.map((m) =>
-                  m.id === assistantId && m.status === 'IN_PROGRESS'
-                    ? { ...m, status: 'FINISHED' }
-                    : m,
-                ),
+                messages: finalizeInProgress(s.messages, assistantId),
               }))
             }
             // 新会话首条消息完成 → 刷新会话列表（wireframe §2.6）

@@ -10,11 +10,9 @@ import { ModelSelector } from './model-selector'
 import { useModels } from '@/api/models'
 import { useChatStore } from '@/stores/chat-store'
 import { CHAT_MODE_META } from '@/lib/status-meta'
+import { CHAT_LIMITS, STORAGE_KEYS } from '@/lib/constants'
 import type { ChatMode } from '@/types/chat'
 import { cn } from '@/lib/utils'
-
-const MAX_LEN = 10000
-const LAST_MODEL_KEY = 'srag.lastModel'
 
 const MODES: { value: ChatMode; label: string }[] = [
   { value: 'SIMPLE', label: '单轮' },
@@ -29,7 +27,7 @@ export function ChatInput() {
   const stop = useChatStore((s) => s.stop)
 
   const [text, setText] = useState('')
-  const [model, setModel] = useState<string>(() => localStorage.getItem(LAST_MODEL_KEY) ?? '')
+  const [model, setModel] = useState<string>(() => localStorage.getItem(STORAGE_KEYS.lastModel) ?? '')
   const [mode, setMode] = useState<ChatMode>('SIMPLE')
   const [rag, setRag] = useState(false)
   const [thinking, setThinking] = useState(false)
@@ -59,7 +57,7 @@ export function ChatInput() {
 
   function persistModel(id: string) {
     setModel(id)
-    localStorage.setItem(LAST_MODEL_KEY, id)
+    localStorage.setItem(STORAGE_KEYS.lastModel, id)
   }
 
   function doSend() {
@@ -76,7 +74,7 @@ export function ChatInput() {
     }
   }
 
-  const overLimit = text.length > MAX_LEN
+  const overLimit = text.length > CHAT_LIMITS.maxLength
   const canSend = !!text.trim() && !!model && !streaming && !overLimit
 
   return (
@@ -120,7 +118,7 @@ export function ChatInput() {
           />
           <div className="flex items-center justify-between px-3 pb-2">
             <span className={cn('text-xs', overLimit ? 'text-error-600' : 'text-faint')}>
-              {text.length}/{MAX_LEN}
+              {text.length}/{CHAT_LIMITS.maxLength}
             </span>
             {streaming ? (
               <Button size="sm" variant="secondary" onClick={stop}>

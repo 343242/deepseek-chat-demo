@@ -11,6 +11,7 @@ import { UploadButton } from './upload-button'
 import { FileTypeIcon } from './file-icon'
 import {
   useDocumentDetail, useDocumentChunks, useDocumentHistory, useDeleteDocument,
+  docKeys,
 } from '@/api/documents'
 import { queryClient } from '@/lib/query-client'
 import { ETL_STATUS_META } from '@/lib/status-meta'
@@ -145,7 +146,7 @@ export function DocumentDetailDrawer({
 
         <SheetFooter>
           <div className="mr-auto">
-            <UploadButton teamId={doc.teamId} replaceDocumentId={doc.id} compact onDone={() => queryClient.invalidateQueries({ queryKey: ['documents'] })} />
+            <UploadButton teamId={doc.teamId} replaceDocumentId={doc.id} compact onDone={() => queryClient.invalidateQueries({ queryKey: docKeys.all })} />
           </div>
           <Button variant="destructive" onClick={() => setConfirmDel(true)}>
             <Trash2 className="size-4" /> 删除

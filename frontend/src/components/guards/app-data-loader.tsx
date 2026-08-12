@@ -16,14 +16,21 @@ export function AppDataLoader({ children }: { children: React.ReactNode }) {
   const isAuthRoute = pathname.startsWith('/auth')
   const me = useMe({ enabled: !isAuthRoute })
   const setInitialized = useAuthStore((s) => s.setInitialized)
+  const setUser = useAuthStore((s) => s.setUser)
   const navigate = useNavigate()
+
+  // FE-010：me 数据 → store 的唯一写入入口（queryFn 已纯取数，订阅解耦）。
+  // 登录后 login-page 会 setQueryData(authKeys.me) 触发此订阅写入。
+  useEffect(() => {
+    if (me.data) setUser(me.data)
+  }, [me.data, setUser])
 
   // 主题：挂载时应用（zustand persist 已在 storage 层 apply，这里兜底）
   useEffect(() => {
     applyTheme(useThemeStore.getState().mode)
   }, [])
 
-  // /me 完成后标记 initialized（成功 setUser 已在 queryFn 内；失败也标记，避免无限 loader）
+  // /me 完成后标记 initialized（成功时 store 已由上面的订阅写入；失败也标记，避免无限 loader）
   useEffect(() => {
     if (me.isSuccess || me.isError) setInitialized(true)
   }, [me.isSuccess, me.isError, setInitialized])

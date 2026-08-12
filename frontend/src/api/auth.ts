@@ -7,16 +7,16 @@ export const authKeys = {
   me: ['auth', 'me'] as const,
 }
 
-/** GET /api/auth/me —— 权限兜底权威入口（IA-5：登录响应 permissions 可能为空，须立即调 /me） */
+/** GET /api/auth/me —— 权限兜底权威入口（IA-5：登录响应 permissions 可能为空，须立即调 /me）。
+ *  FE-010：纯取数，不再在 queryFn 内写 store；store 写入由 AppDataLoader 订阅 me.data 统一完成。 */
+export function fetchMe() {
+  return api.get<UserInfo>('/auth/me')
+}
+
 export function useMe(options?: { enabled?: boolean }) {
-  const setUser = useAuthStore((s) => s.setUser)
   return useQuery({
     queryKey: authKeys.me,
-    queryFn: async () => {
-      const data = await api.get<UserInfo>('/auth/me')
-      setUser(data)
-      return data
-    },
+    queryFn: fetchMe,
     enabled: options?.enabled ?? true,
     retry: false,
     staleTime: 60_000,
@@ -31,12 +31,11 @@ export function getCaptcha() {
 
 export function useLogin() {
   const qc = useQueryClient()
-  const setUser = useAuthStore((s) => s.setUser)
   return useMutation({
     mutationFn: (req: LoginRequest) => api.post<LoginResponse>('/auth/login', req),
-    onSuccess: (data) => {
-      // 登录响应 permissions 可能为空，写 user 但标记未初始化；由调用方立即触发 /me 兜底
-      setUser({ ...data.user, permissions: data.user.permissions ?? [] })
+    onSuccess: () => {
+      // FE-010：不在此写 store；login-page 登录后会 setQueryData(authKeys.me) 温暖订阅源，
+      // 由 AppDataLoader 订阅链路统一 setUser。
       qc.invalidateQueries({ queryKey: authKeys.me })
     },
   })

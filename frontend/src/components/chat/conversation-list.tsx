@@ -1,4 +1,4 @@
-import { useMemo, useRef, useEffect, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router'
 import { Search, Plus, Pin, MoreHorizontal, Pencil, Archive, Trash2, MessageSquare } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -8,7 +8,8 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { EmptyState } from '@/components/common/empty-state'
 import { ConfirmDialog } from '@/components/common/confirm-dialog'
-import { useConversations, useUpdateConversation, useDeleteConversation, convKeys } from '@/api/conversations'
+import { useInfiniteScroll } from '@/hooks/use-infinite-scroll'
+import { useConversations, useUpdateConversation, useDeleteConversation } from '@/api/conversations'
 import { time } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { useChatStore } from '@/stores/chat-store'
@@ -64,17 +65,9 @@ export function ConversationList() {
     return order.map((k) => ({ key: k, items: (map.get(k) ?? []).sort((a, b) => b.lastMessageAt.localeCompare(a.lastMessageAt)) })).filter((g) => g.items.length)
   }, [filtered])
 
-  // 无限滚动
-  const sentinelRef = useRef<HTMLDivElement>(null)
-  useEffect(() => {
-    const el = sentinelRef.current
-    if (!el || !hasNextPage) return
-    const ob = new IntersectionObserver((entries) => {
-      if (entries[0].isIntersecting && !isFetchingNextPage) void fetchNextPage()
-    })
-    ob.observe(el)
-    return () => ob.disconnect()
-  }, [hasNextPage, isFetchingNextPage, fetchNextPage])
+  // 无限滚动（fetchNextPage 来自 RQ，引用稳定）
+  const loadMore = useCallback(() => void fetchNextPage(), [fetchNextPage])
+  const sentinelRef = useInfiniteScroll({ onLoadMore: loadMore, hasMore: hasNextPage, loading: isFetchingNextPage })
 
   function openConv(c: ConversationSummary) {
     reset()
@@ -213,6 +206,3 @@ export function ConversationList() {
     </div>
   )
 }
-
-// 保持 convKeys 引用避免 tree-shake 误删（导出供他处复用）
-export { convKeys }

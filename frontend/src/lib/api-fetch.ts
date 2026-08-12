@@ -81,12 +81,21 @@ export async function apiFetch<T>(path: string, opts: ApiFetchOptions = {}): Pro
     body = rawBody
   }
 
-  const res = await fetch(buildUrl(path, params), {
+  const url = buildUrl(path, params)
+  // TEMP-DEBUG(联调诊断): info 级请求链路追踪，定位后删除
+  console.info(
+    `[trace] REQ ${opts.method ?? 'GET'} ${url} | origin=${typeof window !== 'undefined' ? window.location.origin : '(ssr)'} | contentType=${finalHeaders.get('Content-Type') ?? '-'} | hasBody=${body != null} | credentials=include`,
+  )
+  const res = await fetch(url, {
     ...rest,
     headers: finalHeaders,
     body,
     credentials: 'include',
   })
+  // TEMP-DEBUG(联调诊断): 响应状态 + CORS 允许源（403 且无 ACAO 头 = CorsFilter 拒绝）
+  console.info(
+    `[trace] RES ${res.status} ${url} | acao=${res.headers.get('access-control-allow-origin') ?? '-'} | contentType=${res.headers.get('content-type') ?? '-'}`,
+  )
 
   // 401 → 尝试 refresh → 重放（仅一次）
   if (res.status === 401 && !_retried) {

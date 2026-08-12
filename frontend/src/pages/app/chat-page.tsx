@@ -1,13 +1,13 @@
 import { useEffect } from 'react'
 import { useParams } from 'react-router'
-import { X, BrainCircuit, Loader2 } from 'lucide-react'
+import { X, Loader2 } from 'lucide-react'
 import { MessageList } from '@/components/chat/message-list'
 import { ChatInput } from '@/components/chat/chat-input'
 import { ReferenceCard } from '@/components/chat/reference-card'
+import { AgentSummary } from '@/components/chat/agent-summary'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useChatStore, type RenderMessage } from '@/stores/chat-store'
 import { useConversationDetail } from '@/api/conversations'
-import { agentIntentLabel } from '@/lib/status-meta'
 
 export default function ChatPage() {
   const { conversationId = null } = useParams<{ conversationId?: string }>()
@@ -84,37 +84,6 @@ export default function ChatPage() {
           </div>
         </aside>
       )}
-    </div>
-  )
-}
-
-/** Agent 推理汇总视图（DS §11.4 当前可实现版：完整 6 事件回放待用户态端点 T3） */
-function AgentSummary({ meta }: { meta: NonNullable<ReturnType<typeof useChatStore.getState>['detail']>['meta'] }) {
-  return (
-    <div className="space-y-3 text-sm">
-      <div className="rounded-md border border-line-subtle p-3">
-        <div className="flex items-center gap-1.5 font-medium text-fg">
-          <BrainCircuit className="size-4 text-primary-600" /> 意图识别
-        </div>
-        <p className="mt-1 text-muted">
-          {agentIntentLabel(meta?.intent)}
-          {meta?.confidence != null && <span> · 置信度 {meta.confidence.toFixed(2)}</span>}
-        </p>
-      </div>
-      {meta?.retrievalRounds != null && (
-        <div className="rounded-md border border-line-subtle p-3">
-          <div className="font-medium text-fg">检索轮数</div>
-          <p className="mt-1 text-muted">{meta.retrievalRounds} 轮</p>
-        </div>
-      )}
-      {meta?.agentDegraded && (
-        <div className="rounded-md bg-warning-50 p-3 text-warning-700">
-          Agent 已降级为普通多轮对话{meta.degradedTo ? `（→ ${meta.degradedTo}）` : ''}
-        </div>
-      )}
-      <p className="text-xs text-subtle">
-        完整 6 事件推理时间线需后端用户态端点（T3，预留）。
-      </p>
     </div>
   )
 }

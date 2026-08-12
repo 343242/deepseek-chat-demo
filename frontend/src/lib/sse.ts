@@ -15,7 +15,7 @@ import type { Reference } from '@/types/document'
 const SSE_URL = '/chat/stream'
 
 /** 将一条原始 SSE 事件（event 名 + data 文本）映射为强类型帧 */
-function mapFrame(event: string | null, data: string): SseFrame | null {
+export function mapFrame(event: string | null, data: string): SseFrame | null {
   // 内容帧：无 event 名，data 直接是文本片段
   if (event === null || event === 'message' || event === '') {
     return { type: 'content', chunk: data }
@@ -46,7 +46,7 @@ function mapFrame(event: string | null, data: string): SseFrame | null {
   }
 }
 
-function safeJson<T>(text: string): T | null {
+export function safeJson<T>(text: string): T | null {
   if (!text) return null
   try {
     return JSON.parse(text) as T
@@ -156,7 +156,7 @@ export function streamChat(req: ChatRequest, handlers: SseHandlers): AbortContro
 }
 
 /** 解析一个 SSE 事件块（多行文本）为帧 */
-function parseEventBlock(block: string): SseFrame | null {
+export function parseEventBlock(block: string): SseFrame | null {
   const lines = block.split('\n')
   let event: string | null = null
   const dataLines: string[] = []

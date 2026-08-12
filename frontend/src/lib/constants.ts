@@ -50,6 +50,14 @@ export const STORAGE_KEYS = {
   sidebarAdminCollapsed: 'sidebar.admin.collapsed',
   lastAppPage: 'last.app',
   lastAdminPage: 'last.admin',
+  /** 上次选中的聊天模型 id（chat-input 记忆） */
+  lastModel: 'srag.lastModel',
+} as const
+
+/** 聊天输入限制（FE-015：收口到 constants，与 UPLOAD_LIMITS 同层） */
+export const CHAT_LIMITS = {
+  /** 单条消息最大字符数 */
+  maxLength: 10000,
 } as const
 
 /** 文档上传限制（DocumentProperties） */

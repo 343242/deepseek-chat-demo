@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import { Bot, Copy, Check, RotateCcw, AlertCircle, BrainCircuit, ChevronRight } from 'lucide-react'
 import { MarkdownViewer } from './markdown-viewer'
 import { ReferenceCard } from './reference-card'
@@ -6,6 +5,7 @@ import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { useAuth } from '@/hooks/use-auth'
+import { useCopy } from '@/hooks/use-copy'
 import { agentIntentLabel } from '@/lib/status-meta'
 import { time, formatDuration } from '@/lib/format'
 import { cn } from '@/lib/utils'
@@ -22,20 +22,10 @@ interface ChatMessageProps {
 
 export function ChatMessage({ message, onOpenRefs, onOpenAgent, onRegenerate }: ChatMessageProps) {
   const { initials } = useAuth()
-  const [copied, setCopied] = useState(false)
+  const { copied, copy } = useCopy()
   const isUser = message.role === 'USER'
   const streaming = message.status === 'IN_PROGRESS'
   const isAgent = !!message.agentMetadata
-
-  async function copy() {
-    try {
-      await navigator.clipboard.writeText(message.content)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 1500)
-    } catch {
-      /* ignore */
-    }
-  }
 
   // 用户消息：右对齐，轻气泡
   if (isUser) {
@@ -144,7 +134,7 @@ export function ChatMessage({ message, onOpenRefs, onOpenAgent, onRegenerate }: 
           {!streaming && message.status !== 'ERROR' && (
             <div className="mt-1.5 flex items-center gap-2">
               <div className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
-                <Button variant="ghost" size="icon-sm" onClick={copy} aria-label="复制">
+                <Button variant="ghost" size="icon-sm" onClick={() => copy(message.content)} aria-label="复制">
                   {copied ? <Check className="size-3.5 text-success-600" /> : <Copy className="size-3.5" />}
                 </Button>
                 {onRegenerate && (

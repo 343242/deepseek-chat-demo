@@ -58,7 +58,8 @@ export interface Reference {
 /* ============ 分片上传 ChunkUploadController ============ */
 
 export interface ChunkUploadInitRequest {
-  fileMd5: string
+  /** 整文件校验和（SHA-256 小写 hex；前端先行，后端同步迁移，算法见 CHECKSUM_ALGORITHM） */
+  fileChecksum: string
   fileName: string
   fileSize: number
   mimeType: string

@@ -1,11 +1,11 @@
 package com.smart.rag.chat.service;
 
+import com.smart.rag.common.util.ChecksumUtils;
 import com.smart.rag.infrastructure.exception.MessagingException;
 import com.smart.rag.infrastructure.exception.errorcode.MessagingErrorCode;
 import com.smart.rag.infrastructure.messaging.MessageBus;
 import com.smart.rag.infrastructure.messaging.MessageEnvelope;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
-import org.apache.commons.codec.digest.DigestUtils;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -55,7 +55,7 @@ class ChatMessagePublisherTest {
     class PublishMessageSave {
 
         @Test
-        @DisplayName("send 成功：消息 envelope 含正确 topic / payload / dedupKey（md5(userMessage)）")
+        @DisplayName("send 成功：消息 envelope 含正确 topic / payload / dedupKey（sha256(userMessage)）")
         void sendSuccessPublishesEnvelope() {
             when(aiResponse.getMetadata()).thenReturn(metadata);
             when(metadata.getUsage()).thenReturn(usage);
@@ -68,7 +68,7 @@ class ChatMessagePublisherTest {
             MessageEnvelope<ChatMessagePayload> env = captureSent();
             assertThat(env.topic()).isEqualTo("chat_message_save");
             assertThat(env.deduplicationKey())
-                    .isEqualTo("conv-1:" + DigestUtils.md5Hex("hello"));
+                    .isEqualTo("conv-1:" + ChecksumUtils.sha256Hex("hello"));
 
             ChatMessagePayload p = env.payload();
             assertThat(p.conversationId()).isEqualTo("conv-1");

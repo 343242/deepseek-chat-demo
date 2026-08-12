@@ -312,12 +312,6 @@
             <version>3.18.0</version>
         </dependency>
 
-        <!-- Apache Commons Codec — MD5/SHA via DigestUtils (U1: replaces hand-rolled MessageDigest; version managed by Spring Boot BOM) -->
-        <dependency>
-            <groupId>commons-codec</groupId>
-            <artifactId>commons-codec</artifactId>
-        </dependency>
-
         <!-- OkHttp 4.x (MinIO requires JVM classes; okhttp 5.x ships only KMP metadata jar) -->
         <dependency>
             <groupId>com.squareup.okhttp3</groupId>

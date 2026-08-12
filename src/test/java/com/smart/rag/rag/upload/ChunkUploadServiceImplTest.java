@@ -1,5 +1,6 @@
 package com.smart.rag.rag.upload;
 
+import com.smart.rag.common.util.ChecksumUtils;
 import com.smart.rag.rag.service.TeamAccessGate;
 import com.smart.rag.infrastructure.exception.ClientException;
 import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;
@@ -26,7 +27,6 @@ import org.springframework.data.redis.core.HashOperations;
 import org.springframework.data.redis.core.StringRedisTemplate;
 
 import java.io.ByteArrayInputStream;
-import java.security.MessageDigest;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.Executor;
@@ -85,15 +85,15 @@ class ChunkUploadServiceImplTest {
      * 构造一份合法 session（与 createNewSession 写入的字段一致）。
      *
      * @param declaredMime 客户端声明的 MIME
-     * @param fileMd5      合并后对象的真实 MD5（由调用方根据 payload 计算）
+     * @param fileChecksum 合并后对象的真实校验和（SHA-256，由调用方根据 payload 计算）
      */
-    private Map<Object, Object> sessionFixture(String declaredMime, String fileMd5) {
-        return sessionFixture(declaredMime, fileMd5, "doc.docx");
+    private Map<Object, Object> sessionFixture(String declaredMime, String fileChecksum) {
+        return sessionFixture(declaredMime, fileChecksum, "doc.docx");
     }
 
-    private Map<Object, Object> sessionFixture(String declaredMime, String fileMd5, String fileName) {
+    private Map<Object, Object> sessionFixture(String declaredMime, String fileChecksum, String fileName) {
         Map<Object, Object> session = new HashMap<>();
-        session.put("fileMd5", fileMd5);
+        session.put("fileChecksum", fileChecksum);
         session.put("fileName", fileName);
         session.put("fileSize", "1024");
         session.put("mimeType", declaredMime);
@@ -107,13 +107,13 @@ class ChunkUploadServiceImplTest {
     }
 
     /**
-     * 准备 MinIO 流：composeObject 之后会先 getObject 算 MD5，再 getObject 探测 MIME。
+     * 准备 MinIO 流：composeObject 之后会先 getObject 算校验和（SHA-256），再 getObject 探测 MIME。
      * 两次返回的内容必须指向同一份字节，故用相同 payload。
      *
      * @param payload 合并后的真实字节
      */
     private void stubMinioStreams(byte[] payload) throws Exception {
-        // MD5 计算 / MIME 探测均会调用 getObject；Mockito 默认按注册顺序匹配，但
+        // 校验和计算 / MIME 探测均会调用 getObject；Mockito 默认按注册顺序匹配，但
         // LENIENT 下 we use any() 让两次都返回基于同一 payload 的独立流（流不可重用）。
         when(minioClient.getObject(any(GetObjectArgs.class)))
                 .thenAnswer(inv -> new GetObjectResponse(
@@ -121,18 +121,6 @@ class ChunkUploadServiceImplTest {
                         new ByteArrayInputStream(payload)));
     }
 
-    private static byte[] md5(byte[] data) throws Exception {
-        return MessageDigest.getInstance("MD5").digest(data);
-    }
-
-    private static String hex(byte[] bytes) {
-        char[] chars = "0123456789abcdef".toCharArray();
-        StringBuilder sb = new StringBuilder(bytes.length * 2);
-        for (byte b : bytes) {
-            sb.append(chars[(b >> 4) & 0x0f]).append(chars[b & 0x0f]);
-        }
-        return sb.toString();
-    }
 
     @BeforeEach
     void setUp() {
@@ -157,7 +145,7 @@ class ChunkUploadServiceImplTest {
         stubMinioStreams(zipBytes);
 
         when(hashOperations.entries(anyString())).thenReturn(
-                sessionFixture(PDF_MIME, hex(md5(zipBytes)), "report.pdf"));
+                sessionFixture(PDF_MIME, ChecksumUtils.sha256Hex(zipBytes), "report.pdf"));
 
         assertThatThrownBy(() -> service.performMerge(UPLOAD_ID))
                 .isInstanceOfSatisfying(ClientException.class,
@@ -182,7 +170,7 @@ class ChunkUploadServiceImplTest {
         byte[] zipBytes = {0x50, 0x4B, 0x03, 0x04, 0x00, 0x00, 0x00, 0x00, 'a', 'b'};
         stubMinioStreams(zipBytes);
 
-        when(hashOperations.entries(anyString())).thenReturn(sessionFixture(DOCX_MIME, hex(md5(zipBytes))));
+        when(hashOperations.entries(anyString())).thenReturn(sessionFixture(DOCX_MIME, ChecksumUtils.sha256Hex(zipBytes)));
         when(ragDocumentMapper.insert(any(RagDocument.class))).thenAnswer(inv -> {
             ((RagDocument) inv.getArgument(0)).setId(42L);
             return 1;
@@ -215,7 +203,7 @@ class ChunkUploadServiceImplTest {
         byte[] unrecognizable = {(byte) 0xFE, (byte) 0xFF, 0x00, 0x01, 0x02, 0x03, 0x04, 0x05};
         stubMinioStreams(unrecognizable);
 
-        when(hashOperations.entries(anyString())).thenReturn(sessionFixture(PDF_MIME, hex(md5(unrecognizable))));
+        when(hashOperations.entries(anyString())).thenReturn(sessionFixture(PDF_MIME, ChecksumUtils.sha256Hex(unrecognizable)));
 
         assertThatThrownBy(() -> service.performMerge(UPLOAD_ID))
                 .isInstanceOfSatisfying(ClientException.class,

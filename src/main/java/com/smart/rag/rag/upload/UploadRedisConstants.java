@@ -16,10 +16,10 @@ public final class UploadRedisConstants {
     /** 上传会话元数据 Hash */
     public static final String SESSION_PREFIX = "upload:session:";
 
-    /** 分片状态 + ETag Hash（含 __merging 合并锁标记） */
+    /** 分片状态 + 校验和 Hash（含 __merging 合并锁标记） */
     public static final String PARTS_PREFIX = "upload:parts:";
 
-    /** 反向索引（续传查找）：upload:file:{userId}:{fileMd5} → uploadId */
+    /** 反向索引（续传查找）：upload:file:{userId}:{fileChecksum} → uploadId */
     public static final String FILE_PREFIX = "upload:file:";
 
     // ---- TTL ----
@@ -53,8 +53,8 @@ public final class UploadRedisConstants {
         return PARTS_PREFIX + uploadId;
     }
 
-    public static String fileKey(Long userId, String fileMd5) {
-        return FILE_PREFIX + userId + ":" + fileMd5;
+    public static String fileKey(Long userId, String fileChecksum) {
+        return FILE_PREFIX + userId + ":" + fileChecksum;
     }
 
     public static String rateKey(Long userId) {

@@ -1,5 +1,6 @@
 package com.smart.rag.rag.upload;
 
+import com.smart.rag.common.util.ChecksumUtils;
 import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;
 import com.smart.rag.infrastructure.exception.errorcode.ServiceErrorCode;
 import com.smart.rag.infrastructure.exception.AbstractException;
@@ -19,7 +20,6 @@ import com.smart.rag.infrastructure.web.util.SecurityUtils;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import io.minio.*;
 import io.minio.SourceObject;
-import org.apache.commons.codec.digest.DigestUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.util.unit.DataSize;
@@ -117,18 +117,18 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         checkRateLimit(userId);
 
         // 秒传检查：BloomFilter 预筛 + DB 确认
-        if (documentDedupService != null && !documentDedupService.mayExist(request.fileMd5())) {
-            log.debug("BloomFilter miss for fileMd5={}, skipping quick-upload check", request.fileMd5());
+        if (documentDedupService != null && !documentDedupService.mayExist(request.fileChecksum())) {
+            log.debug("BloomFilter miss for fileChecksum={}, skipping quick-upload check", request.fileChecksum());
         } else {
-            RagDocument existing = findExistingForQuickUpload(request.fileMd5(), userId, request.teamId());
+            RagDocument existing = findExistingForQuickUpload(request.fileChecksum(), userId, request.teamId());
             if (existing != null) {
-                log.info("Quick upload hit: fileMd5={}, userId={}, teamId={}, docId={}", request.fileMd5(), userId, request.teamId(), existing.getId());
+                log.info("Quick upload hit: fileChecksum={}, userId={}, teamId={}, docId={}", request.fileChecksum(), userId, request.teamId(), existing.getId());
                 return ChunkUploadResult.quickUploaded(existing.getId(), existing.getFileName());
             }
         }
 
         // 续传检查
-        String existingUploadId = redisTemplate.opsForValue().get(UploadRedisConstants.fileKey(userId, request.fileMd5()));
+        String existingUploadId = redisTemplate.opsForValue().get(UploadRedisConstants.fileKey(userId, request.fileChecksum()));
         if (existingUploadId != null) {
             ChunkUploadResult resumed = tryResume(existingUploadId, request, userId);
             if (resumed != null) {
@@ -142,7 +142,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
     // ==================== uploadChunk ====================
 
     @Override
-    public ChunkUploadResponse uploadChunk(String uploadId, int chunkIndex, String chunkMd5, byte[] chunkData) {
+    public ChunkUploadResponse uploadChunk(String uploadId, int chunkIndex, String chunkChecksum, byte[] chunkData) {
         Long userId = SecurityUtils.getCurrentUserId();
         Map<String, String> session = validateSession(uploadId, userId);
 
@@ -163,12 +163,12 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
             return ChunkUploadResponse.uploaded(uploadId, chunkIndex);
         }
 
-        // 分片 MD5 校验
-        String actualChunkMd5 = DigestUtils.md5Hex(chunkData);
-        if (!actualChunkMd5.equalsIgnoreCase(chunkMd5)) {
-            log.warn("Chunk MD5 mismatch: uploadId={}, index={}, expected={}, actual={}",
-                    uploadId, chunkIndex, chunkMd5, actualChunkMd5);
-            throw new ClientException(ClientErrorCode.UPLOAD_CHUNK_MD5_MISMATCH);
+        // 分片校验和（SHA-256）校验
+        String actualChunkChecksum = ChecksumUtils.sha256Hex(chunkData);
+        if (!actualChunkChecksum.equalsIgnoreCase(chunkChecksum)) {
+            log.warn("Chunk checksum mismatch: uploadId={}, index={}, expected={}, actual={}",
+                    uploadId, chunkIndex, chunkChecksum, actualChunkChecksum);
+            throw new ClientException(ClientErrorCode.UPLOAD_CHUNK_CHECKSUM_MISMATCH);
         }
 
         // 上传分片到 MinIO 临时路径
@@ -176,14 +176,14 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         String chunkObjectKey = session.get("objectName") + "/part-" + chunkIndex;
         putObjectToMinio(bucket, chunkObjectKey, chunkData, session.get("mimeType"));
 
-        // ETag 用分片 MD5 代替（composeObject 不需要 S3 ETag）
-        String etag = actualChunkMd5;
+        // 分片校验和存入 Redis parts Hash（composeObject 不依赖 S3 ETag，此处仅为记录）
+        String checksum = actualChunkChecksum;
 
         // Lua 原子操作
         List result = redisTemplate.execute(
                 atomicChunkUploadScript,
                 List.of(UploadRedisConstants.partsKey(uploadId)),
-                String.valueOf(chunkIndex), etag,
+                String.valueOf(chunkIndex), checksum,
                 String.valueOf(totalChunks), UploadRedisConstants.MERGING_FIELD
         );
 
@@ -243,12 +243,12 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
     // ==================== complete ====================
 
     @Override
-    public Long complete(String uploadId, String fileMd5) {
-        return complete(uploadId, fileMd5, null);
+    public Long complete(String uploadId, String fileChecksum) {
+        return complete(uploadId, fileChecksum, null);
     }
 
     @Override
-    public Long complete(String uploadId, String fileMd5, @Nullable Long expectedTeamId) {
+    public Long complete(String uploadId, String fileChecksum, @Nullable Long expectedTeamId) {
         Long userId = SecurityUtils.getCurrentUserId();
 
         String sessionKey = UploadRedisConstants.sessionKey(uploadId);
@@ -256,7 +256,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
 
         if (rawSession.isEmpty()) {
             // Session already cleaned — merge was done. 用路径 teamId 做幂等回查，保留团队维度
-            RagDocument doc = findExistingForQuickUpload(fileMd5, userId, expectedTeamId);
+            RagDocument doc = findExistingForQuickUpload(fileChecksum, userId, expectedTeamId);
             if (doc != null) {
                 log.info("Complete idempotent: uploadId={} already merged as docId={}", uploadId, doc.getId());
                 return doc.getId();
@@ -272,8 +272,8 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         // Extract teamId from session for team-scoped quick-upload lookup
         Long teamId = parseNullableLong(session.get("teamId"), "teamId");
 
-        if (!fileMd5.equalsIgnoreCase(session.get("fileMd5"))) {
-            throw new ClientException(ClientErrorCode.UPLOAD_FILE_MD5_MISMATCH, "声明的文件MD5与会话不匹配");
+        if (!fileChecksum.equalsIgnoreCase(session.get("fileChecksum"))) {
+            throw new ClientException(ClientErrorCode.UPLOAD_FILE_CHECKSUM_MISMATCH, "声明的文件校验和与会话不匹配");
         }
 
         // 防止 autoMerge 进行中重复触发：检查 __merging 标记
@@ -282,7 +282,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         if (Boolean.TRUE.equals(merging)) {
             // autoMerge 正在进行中，等待完成后再查结果
             log.info("Complete deferred: auto-merge in progress, uploadId={}", uploadId);
-            RagDocument existing = findExistingForQuickUpload(fileMd5, userId, teamId);
+            RagDocument existing = findExistingForQuickUpload(fileChecksum, userId, teamId);
             if (existing != null) {
                 return existing.getId();
             }
@@ -298,9 +298,9 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         if (docId != null) {
             return docId;
         }
-        RagDocument doc = findExistingForQuickUpload(fileMd5, userId, teamId);
+        RagDocument doc = findExistingForQuickUpload(fileChecksum, userId, teamId);
         if (doc == null) {
-            log.error("Post-merge document lookup failed: uploadId={}, fileMd5={}, userId={}", uploadId, fileMd5, userId);
+            log.error("Post-merge document lookup failed: uploadId={}, fileChecksum={}, userId={}", uploadId, fileChecksum, userId);
             throw new ServiceException(ServiceErrorCode.ETL_FAILED, "合并后文档未找到");
         }
         return doc.getId();
@@ -337,7 +337,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
             log.error("Error during abort cleanup: uploadId={}", uploadId, e);
         }
 
-        cleanupRedis(uploadId, session.get("userId"), session.get("fileMd5"));
+        cleanupRedis(uploadId, session.get("userId"), session.get("fileChecksum"));
     }
 
     // ==================== 合并流程 ====================
@@ -368,7 +368,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
                 log.warn("Merge rejected: team dissolved, teamId={}, uploadId={}", teamId, uploadId);
                 String bucket = session.get("bucket");
                 cleanupTempChunks(bucket, session.get("objectName"), parseSessionInt(session, "totalChunks"));
-                cleanupRedis(uploadId, session.get("userId"), session.get("fileMd5"));
+                cleanupRedis(uploadId, session.get("userId"), session.get("fileChecksum"));
                 throw new ServiceException(ServiceErrorCode.TEAM_NOT_FOUND, "团队已解散，上传已取消");
             }
         }
@@ -395,16 +395,16 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         String mimeType = session.get("mimeType");
         composeObjects(bucket, targetObjectKey, sources, mimeType);
 
-        // 4. 流式读取合并后文件，计算实际 MD5
-        String actualMd5 = computeFileMd5FromMinio(bucket, targetObjectKey);
-        String declaredMd5 = session.get("fileMd5");
+        // 4. 流式读取合并后文件，计算实际校验和（SHA-256）
+        String actualChecksum = computeFileChecksumFromMinio(bucket, targetObjectKey);
+        String declaredChecksum = session.get("fileChecksum");
 
-        if (!actualMd5.equalsIgnoreCase(declaredMd5)) {
-            log.warn("File MD5 mismatch: uploadId={}, expected={}, actual={}", uploadId, declaredMd5, actualMd5);
+        if (!actualChecksum.equalsIgnoreCase(declaredChecksum)) {
+            log.warn("File checksum mismatch: uploadId={}, expected={}, actual={}", uploadId, declaredChecksum, actualChecksum);
             deleteFromMinio(bucket, targetObjectKey);
             cleanupTempChunks(bucket, basePath, totalChunks);
             redisTemplate.opsForHash().delete(UploadRedisConstants.partsKey(uploadId), UploadRedisConstants.MERGING_FIELD);
-            throw new ClientException(ClientErrorCode.UPLOAD_FILE_MD5_MISMATCH, "文件校验失败");
+            throw new ClientException(ClientErrorCode.UPLOAD_FILE_CHECKSUM_MISMATCH, "文件校验失败");
         }
 
         // 4.1 R2-H1: 对合并后的对象做服务端魔数校验，用检测到的真实 MIME 路由解析器与落库，
@@ -423,20 +423,20 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
 
         // 5. 持久化 rag_document（使用检测到的真实 MIME）
         Long userId = parseSessionLong(session, "userId");
-        Long docId = persistDocument(session, targetObjectKey, actualMd5, userId, teamId, effectiveMimeType);
-        log.info("Chunk upload merged: uploadId={}, docId={}, md5={}, mime={} (declared={})",
-                uploadId, docId, actualMd5, effectiveMimeType, mimeType);
+        Long docId = persistDocument(session, targetObjectKey, actualChecksum, userId, teamId, effectiveMimeType);
+        log.info("Chunk upload merged: uploadId={}, docId={}, checksum={}, mime={} (declared={})",
+                uploadId, docId, actualChecksum, effectiveMimeType, mimeType);
 
-        // 5.1 将文件 MD5 加入 BloomFilter 去重
-        if (documentDedupService != null && actualMd5 != null) {
-            documentDedupService.add(actualMd5);
+        // 5.1 将文件校验和加入 BloomFilter 去重
+        if (documentDedupService != null && actualChecksum != null) {
+            documentDedupService.add(actualChecksum);
         }
 
         // 6. 清理临时分片
         cleanupTempChunks(bucket, basePath, totalChunks);
 
         // 7. 清理 Redis
-        cleanupRedis(uploadId, session.get("userId"), declaredMd5);
+        cleanupRedis(uploadId, session.get("userId"), declaredChecksum);
 
         // 8. 触发 ETL（使用检测到的真实 MIME 路由解析器）
         etlDispatchService.dispatchAsync(
@@ -488,16 +488,16 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
     }
 
     /**
-     * 秒传查找：按 fileMd5 查找已入库文档。
+     * 秒传查找：按 fileChecksum 查找已入库文档。
      * <p>
      * teamId 隔离规则：
-     * - teamId != null → 查 teamId + fileMd5（团队空间）
-     * - teamId == null → 查 userId + fileMd5（个人空间）
+     * - teamId != null → 查 teamId + fileChecksum（团队空间）
+     * - teamId == null → 查 userId + fileChecksum（个人空间）
      * 避免跨团队或个人/团队之间的秒传误命中。
      */
-    private RagDocument findExistingForQuickUpload(String fileMd5, Long userId, @Nullable Long teamId) {
+    private RagDocument findExistingForQuickUpload(String fileChecksum, Long userId, @Nullable Long teamId) {
         LambdaQueryWrapper<RagDocument> wrapper = new LambdaQueryWrapper<RagDocument>()
-                .eq(RagDocument::getFileMd5, fileMd5)
+                .eq(RagDocument::getFileChecksum, fileChecksum)
                 .in(RagDocument::getStatus, EtlStatus.COMPLETED, EtlStatus.PROCESSING)
                 .eq(RagDocument::getDeleted, 0);
         if (teamId != null) {
@@ -513,7 +513,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         String sessionKey = UploadRedisConstants.sessionKey(uploadId);
         Map<Object, Object> rawSession = redisTemplate.opsForHash().entries(sessionKey);
         if (rawSession.isEmpty()) {
-            redisTemplate.delete(UploadRedisConstants.fileKey(userId, request.fileMd5()));
+            redisTemplate.delete(UploadRedisConstants.fileKey(userId, request.fileChecksum()));
             return null;
         }
 
@@ -551,7 +551,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         // Redis 写入 session
         String sessionKey = UploadRedisConstants.sessionKey(uploadId);
         Map<String, String> sessionFields = new HashMap<>(Map.ofEntries(
-                Map.entry("fileMd5", request.fileMd5()),
+                Map.entry("fileChecksum", request.fileChecksum()),
                 Map.entry("fileName", request.fileName()),
                 Map.entry("fileSize", String.valueOf(request.fileSize())),
                 Map.entry("mimeType", request.mimeType()),
@@ -576,7 +576,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
 
         // 反向索引
         redisTemplate.opsForValue().set(
-                UploadRedisConstants.fileKey(userId, request.fileMd5()),
+                UploadRedisConstants.fileKey(userId, request.fileChecksum()),
                 uploadId, UploadRedisConstants.SESSION_TTL);
 
         log.info("Chunk upload init: uploadId={}, file={}, size={}, chunks={}, user={}",
@@ -727,12 +727,12 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         }
     }
 
-    private String computeFileMd5FromMinio(String bucket, String objectName) {
+    private String computeFileChecksumFromMinio(String bucket, String objectName) {
         try (InputStream is = minioClient.getObject(
                 GetObjectArgs.builder().bucket(bucket).object(objectName).build())) {
-            return DigestUtils.md5Hex(is);
+            return ChecksumUtils.sha256Hex(is);
         } catch (Exception e) {
-            log.error("Failed to compute file MD5 from MinIO: bucket={}, object={}", bucket, objectName, e);
+            log.error("Failed to compute file checksum from MinIO: bucket={}, object={}", bucket, objectName, e);
             throw new ClientException(ClientErrorCode.UPLOAD_FAILED, "文件校验失败");
         }
     }
@@ -798,7 +798,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
 
     // ==================== DB 持久化 ====================
 
-    private Long persistDocument(Map<String, String> session, String targetObjectKey, String actualMd5,
+    private Long persistDocument(Map<String, String> session, String targetObjectKey, String actualChecksum,
                                  Long userId, @Nullable Long teamId, String effectiveMimeType) {
         RagDocument doc = new RagDocument();
         doc.setFileName(session.get("fileName"));
@@ -808,7 +808,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         doc.setBucket(session.get("bucket"));
         doc.setUserId(userId);
         doc.setTeamId(teamId);
-        doc.setFileMd5(actualMd5);
+        doc.setFileChecksum(actualChecksum);
         doc.setStatus(EtlStatus.PROCESSING);
         doc.setDeleted(0);
         doc.setCreateTime(OffsetDateTime.now());
@@ -819,11 +819,11 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
 
     // ==================== Redis 清理 ====================
 
-    private void cleanupRedis(String uploadId, String userId, String fileMd5) {
+    private void cleanupRedis(String uploadId, String userId, String fileChecksum) {
         redisTemplate.delete(UploadRedisConstants.sessionKey(uploadId));
         redisTemplate.delete(UploadRedisConstants.partsKey(uploadId));
-        if (userId != null && fileMd5 != null) {
-            redisTemplate.delete(UploadRedisConstants.fileKey(Long.parseLong(userId), fileMd5));
+        if (userId != null && fileChecksum != null) {
+            redisTemplate.delete(UploadRedisConstants.fileKey(Long.parseLong(userId), fileChecksum));
         }
     }
 

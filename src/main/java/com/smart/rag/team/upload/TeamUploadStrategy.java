@@ -1,5 +1,6 @@
 package com.smart.rag.team.upload;
 
+import com.smart.rag.common.util.ChecksumUtils;
 import com.smart.rag.infrastructure.exception.ClientException;
 import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;
 import com.smart.rag.rag.upload.UploadStrategy;
@@ -18,7 +19,6 @@ import com.smart.rag.team.enums.ApprovalStatus;
 import com.smart.rag.team.enums.TeamMemberRole;
 import com.smart.rag.team.mapper.TeamMemberMapper;
 import com.smart.rag.team.mapper.TeamUploadApprovalMapper;
-import org.apache.commons.codec.digest.DigestUtils;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -93,9 +93,9 @@ public class TeamUploadStrategy implements UploadStrategy {
         fileStorageService.upload(bucket, storageKey, file.getResource(), file.getContentType());
 
         boolean autoApproved = isAutoApproved(teamId, userId);
-        String fileMd5 = computeMd5(file);
+        String fileChecksum = computeChecksum(file);
         RagDocument ragDoc = persistDocument(file.getOriginalFilename(), file.getSize(),
-                file.getContentType(), storageKey, bucket, userId, teamId, autoApproved, fileMd5);
+                file.getContentType(), storageKey, bucket, userId, teamId, autoApproved, fileChecksum);
         eventPublisher.publishEvent(new DocumentCreatedEvent(ragDoc.getId(), replaceDocumentId, userId, teamId));
 
         if (!autoApproved) {
@@ -133,7 +133,7 @@ public class TeamUploadStrategy implements UploadStrategy {
             fileStorageService.upload(bucket, storageKey, file.getResource(), file.getContentType());
 
             RagDocument ragDoc = persistDocument(file.getOriginalFilename(), file.getSize(),
-                    file.getContentType(), storageKey, bucket, userId, teamId, autoApproved, computeMd5(file));
+                    file.getContentType(), storageKey, bucket, userId, teamId, autoApproved, computeChecksum(file));
             eventPublisher.publishEvent(new DocumentCreatedEvent(ragDoc.getId(), null, userId, teamId));
 
             if (!autoApproved) {
@@ -216,7 +216,7 @@ public class TeamUploadStrategy implements UploadStrategy {
      */
     private RagDocument persistDocument(String fileName, long fileSize, String mimeType,
                                         String storageKey, String bucket, Long userId,
-                                        Long teamId, boolean autoApproved, String fileMd5) {
+                                        Long teamId, boolean autoApproved, String fileChecksum) {
         RagDocument doc = new RagDocument();
         doc.setFileName(fileName);
         doc.setFileSize(fileSize);
@@ -225,23 +225,22 @@ public class TeamUploadStrategy implements UploadStrategy {
         doc.setBucket(bucket);
         doc.setUserId(userId);
         doc.setTeamId(teamId);
-        doc.setFileMd5(fileMd5);
+        doc.setFileChecksum(fileChecksum);
         doc.setStatus(autoApproved ? EtlStatus.PROCESSING : EtlStatus.PENDING_APPROVAL);
         ragDocumentMapper.insert(doc);
         return doc;
     }
 
     /**
-     * 计算 MultipartFile 的 MD5（hex 32 位）
+     * 计算 MultipartFile 的校验和（SHA-256，64 位 hex）
      * <p>
-     * U1: 内部使用 commons-codec {@link DigestUtils#md5Hex(InputStream)}。
      * R1-L2: 失败时返回空串（保持现有行为，W5 将改为失败上传）。
      */
-    private String computeMd5(MultipartFile file) {
+    private String computeChecksum(MultipartFile file) {
         try (InputStream is = file.getInputStream()) {
-            return DigestUtils.md5Hex(is);
+            return ChecksumUtils.sha256Hex(is);
         } catch (Exception e) {
-            log.warn("Failed to compute file MD5: {}", e.getMessage());
+            log.warn("Failed to compute file checksum: {}", e.getMessage());
             return "";
         }
     }

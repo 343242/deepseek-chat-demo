@@ -17,7 +17,7 @@ import org.springframework.stereotype.Component;
  * {@link ChatConversationHelper#saveMessagesAndNotify} 落库。
  * <p>
  * <b>幂等</b>：publisher 端 {@link ChatMessagePublisher} 已为每条消息设置稳定的
- * {@code deduplicationKey}（{@code conversationId + ":" + md5Hex(userMessage)}，见 messaging-bus.md §7.1）；
+ * {@code deduplicationKey}（{@code conversationId + ":" + sha256Hex(userMessage)}，见 messaging-bus.md §7.1）；
  * 订阅时由 {@link com.smart.rag.infrastructure.messaging.redis.RedisStreamMessageBus} 自动用
  * {@link com.smart.rag.infrastructure.messaging.idempotent.IdempotentHandler}
  * （Redis SETNX，默认开启、TTL 900s 覆盖 16 次重试窗口）包装 handler，故同一记录的

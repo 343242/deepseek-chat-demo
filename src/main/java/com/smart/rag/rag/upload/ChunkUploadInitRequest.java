@@ -6,7 +6,7 @@ import org.jspecify.annotations.Nullable;
 /**
  * 分片上传初始化请求。
  *
- * @param fileMd5   文件 MD5（32 位十六进制）
+ * @param fileChecksum 文件校验和（SHA-256，64 位十六进制）
  * @param fileName  文件名
  * @param fileSize  文件大小（字节）
  * @param mimeType  MIME 类型
@@ -15,9 +15,9 @@ import org.jspecify.annotations.Nullable;
  */
 public record ChunkUploadInitRequest(
 
-    @NotBlank(message = "文件MD5不能为空")
-    @Pattern(regexp = "^[0-9a-fA-F]{32}$", message = "文件MD5格式错误")
-    String fileMd5,
+    @NotBlank(message = "文件校验和不能为空")
+    @Pattern(regexp = "^[0-9a-fA-F]{64}$", message = "文件校验和格式错误")
+    String fileChecksum,
 
     @NotBlank(message = "文件名不能为空")
     @Size(max = 500, message = "文件名最长500字符")

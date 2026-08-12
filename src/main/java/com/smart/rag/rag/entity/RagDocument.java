@@ -39,8 +39,8 @@ public class RagDocument {
     /** 错误信息（失败时记录） */
     private String errorMessage;
 
-    /** 文件 MD5（服务端合并时计算），用于秒传校验 */
-    private String fileMd5;
+    /** 文件校验和（SHA-256，服务端合并时计算），用于秒传校验 */
+    private String fileChecksum;
 
     /** 所属团队 ID（null=个人文档） */
     private Long teamId;
@@ -102,8 +102,8 @@ public class RagDocument {
     public Integer getDeleted() { return deleted; }
     public void setDeleted(Integer deleted) { this.deleted = deleted; }
 
-    public String getFileMd5() { return fileMd5; }
-    public void setFileMd5(String fileMd5) { this.fileMd5 = fileMd5; }
+    public String getFileChecksum() { return fileChecksum; }
+    public void setFileChecksum(String fileChecksum) { this.fileChecksum = fileChecksum; }
 
     public Long getTeamId() { return teamId; }
     public void setTeamId(Long teamId) { this.teamId = teamId; }

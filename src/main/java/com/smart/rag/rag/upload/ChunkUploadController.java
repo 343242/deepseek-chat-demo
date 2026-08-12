@@ -35,7 +35,7 @@ public class ChunkUploadController {
     /**
      * 创建上传会话（秒传 / 新建 / 续传）。
      * <p>
-     * 前端计算文件 MD5 后调用此接口，后端判断：
+     * 前端计算文件校验和（SHA-256）后调用此接口，后端判断：
      * <ol>
      *   <li>文件已存在 → 秒传，直接返回文档 ID</li>
      *   <li>会话已存在 → 续传，返回已上传分片列表</li>
@@ -55,24 +55,24 @@ public class ChunkUploadController {
     /**
      * 上传单个分片。
      * <p>
-     * 请求头 X-Chunk-MD5 携带前端计算的分片 MD5，后端独立校验。
+     * 请求头 X-Chunk-Checksum 携带前端计算的分片校验和（SHA-256），后端独立校验。
      * <p>
      * R2-L1: chunkData 以 byte[] 接收（Spring 全量缓冲单分片请求体）。此处是单个分片
-     * （大小受 ChunkSizeStrategy 限制，非整个文件），且需整体读取以校验 X-Chunk-MD5。
-     * 完整流式改造（@RequestBody InputStream + 边读边算 MD5 + tee 写 MinIO）涉及
-     * Controller/Service/putObject 签名与 MD5 计算重构，与单分片 bounded 的低 OOM 风险
+     * （大小受 ChunkSizeStrategy 限制，非整个文件），且需整体读取以校验 X-Chunk-Checksum。
+     * 完整流式改造（@RequestBody InputStream + 边读边算校验和 + tee 写 MinIO）涉及
+     * Controller/Service/putObject 签名与校验和计算重构，与单分片 bounded 的低 OOM 风险
      * 不匹配，故当前保留 byte[]；若未来放宽单分片上限再行流式化。
      */
     @PostMapping("/{uploadId}/chunks/{chunkIndex}")
     public GlobalResponse<ChunkUploadResponse> uploadChunk(
             @PathVariable String uploadId,
             @PathVariable int chunkIndex,
-            @RequestHeader("X-Chunk-MD5") String chunkMd5,
+            @RequestHeader("X-Chunk-Checksum") String chunkChecksum,
             @RequestBody byte[] chunkData) {
-        if (chunkMd5 == null || !chunkMd5.matches("^[0-9a-fA-F]{32}$")) {
-            throw new ClientException(ClientErrorCode.VALIDATION_ERROR, "分片MD5格式错误");
+        if (chunkChecksum == null || !chunkChecksum.matches("^[0-9a-fA-F]{64}$")) {
+            throw new ClientException(ClientErrorCode.VALIDATION_ERROR, "分片校验和格式错误");
         }
-        return GlobalResponse.ok(chunkUploadService.uploadChunk(uploadId, chunkIndex, chunkMd5, chunkData));
+        return GlobalResponse.ok(chunkUploadService.uploadChunk(uploadId, chunkIndex, chunkChecksum, chunkData));
     }
 
     /**
@@ -93,7 +93,7 @@ public class ChunkUploadController {
     public GlobalResponse<ChunkUploadCompleteResult> complete(
             @PathVariable String uploadId,
             @Valid @RequestBody ChunkUploadCompleteRequest request) {
-        Long docId = chunkUploadService.complete(uploadId, request.fileMd5());
+        Long docId = chunkUploadService.complete(uploadId, request.fileChecksum());
         return GlobalResponse.ok(new ChunkUploadCompleteResult(docId), "文件合并完成");
     }
 

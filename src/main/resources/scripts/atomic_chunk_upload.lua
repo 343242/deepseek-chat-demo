@@ -1,9 +1,9 @@
 -- atomic_chunk_upload.lua
--- 原子操作：幂等检查 + 记录分片 ETag + 检查是否全部完成 + 设合并锁
+-- 原子操作：幂等检查 + 记录分片校验和 + 检查是否全部完成 + 设合并锁
 --
 -- KEYS[1] = upload:parts:{uploadId}
 -- ARGV[1] = chunkIndex
--- ARGV[2] = etag
+-- ARGV[2] = checksum
 -- ARGV[3] = totalChunks
 -- ARGV[4] = __merging field name
 --
@@ -23,7 +23,7 @@ if tonumber(merging) == 1 then
     return {0, -1}  -- 已有其他线程在合并
 end
 
--- 3. 记录分片 ETag
+-- 3. 记录分片校验和
 redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])
 
 -- 4. 计算已上传分片数（排除元数据字段 __merging）

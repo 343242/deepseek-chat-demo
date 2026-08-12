@@ -1,11 +1,11 @@
 package com.smart.rag.chat.service;
 
+import com.smart.rag.common.util.ChecksumUtils;
 import com.smart.rag.common.util.ConversationIdUtil;
 import com.smart.rag.infrastructure.messaging.MessageBus;
 import com.smart.rag.infrastructure.messaging.MessageEnvelope;
 import com.smart.rag.infrastructure.exception.MessagingException;
 import io.micrometer.core.instrument.MeterRegistry;
-import org.apache.commons.codec.digest.DigestUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.model.ChatResponse;
@@ -30,7 +30,7 @@ import org.springframework.stereotype.Component;
  * {@code send()} 仅在 outbox INSERT 失败（DB 硬故障）时抛 {@link MessagingException}——catch
  * 仅防御此路径，记 {@code chat.save.publish_failed} 告警计数。
  *
- * <p><b>幂等</b>：deduplicationKey = {@code conversationId + ":" + md5Hex(userMessage)}。
+ * <p><b>幂等</b>：deduplicationKey = {@code conversationId + ":" + sha256Hex(userMessage)}。
  * 保证同一会话不同消息不互斥；bus send 网络超时（Broker 实际已入队但客户端抛 TimeoutException）
  * 触发重复投递后，consumer 后续拉到同消息时由 §5.10 总线级 Redis SETNX 拦截，
  * 业务层 DB 唯一约束 {@code (conversation_id, message_index)} 兜底。
@@ -71,8 +71,8 @@ public class ChatMessagePublisher {
         int totalTokens = ChatConversationHelper.extractTotalTokens(aiResponse);
         ChatMessagePayload payload = new ChatMessagePayload(
                 conversationId, userMessage, assistantContent, candidateId, totalTokens);
-        // deduplicationKey = conversationId + ":" + md5Hex(userMessage)。
-        String deduplicationKey = conversationId + ":" + DigestUtils.md5Hex(userMessage);
+        // deduplicationKey = conversationId + ":" + sha256Hex(userMessage)。
+        String deduplicationKey = conversationId + ":" + ChecksumUtils.sha256Hex(userMessage);
         MessageEnvelope<ChatMessagePayload> message =
                 MessageEnvelope.deduplicated(TOPIC, payload, deduplicationKey);
 

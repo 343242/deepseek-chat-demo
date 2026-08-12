@@ -18,12 +18,12 @@ import org.springframework.stereotype.Service;
 /**
  * 文档去重服务 -- Redisson BloomFilter 预筛
  * <p>
- * 使用 RBloomFilter 快速判断文件 MD5 可能已入库。
+ * 使用 RBloomFilter 快速判断文件校验和（SHA-256）可能已入库。
  * BloomFilter 存在假阳性，命中后必须再查 DB 确认。
  * BloomFilter 不存在假阴性，未命中则确定不存在。
  * <p>
  * 生命周期：构造器只做 {@code tryInit}（轻量），
- * 全量 MD5 加载移到 {@link #warmUp()} 监听 {@link ApplicationReadyEvent} 异步执行（R1-M6），
+ * 全量校验和加载移到 {@link #warmUp()} 监听 {@link ApplicationReadyEvent} 异步执行（R1-M6），
  * 不再阻塞应用启动；warm 失败仅记录日志、降级到 DB 去重。
  * 新文档入库后 add，文档删除后不删除（假阳性可接受，假阴性不可接受）。
  * <p>
@@ -39,7 +39,7 @@ public class DocumentDedupService {
 
     private static final Logger log = LoggerFactory.getLogger(DocumentDedupService.class);
 
-    private static final String BLOOM_FILTER_NAME = "smart-rag:dedup:file-md5";
+    private static final String BLOOM_FILTER_NAME = "smart-rag:dedup:file-checksum";
     /** 预期容量：10 万文档 */
     private static final long EXPECTED_CAPACITY = 100_000;
     /** 误判率 1% */
@@ -52,7 +52,7 @@ public class DocumentDedupService {
 
     /**
      * R1-M6: warm-up 完成标志。
-     * true=全量 MD5 已加载，mayExist() 走 BloomFilter；
+     * true=全量校验和已加载，mayExist() 走 BloomFilter；
      * false=冷启动中，mayExist() 始终返回 true（强制走 DB 确认路径）。
      */
     private volatile boolean warmedUp = false;
@@ -76,7 +76,7 @@ public class DocumentDedupService {
     }
 
     /**
-     * R1-M6: 应用就绪后异步 warm-up，从 DB 分页加载已存在的 fileMd5。
+     * R1-M6: 应用就绪后异步 warm-up，从 DB 分页加载已存在的 fileChecksum。
      * <p>
      * 失败处理：任何异常都被吞掉，仅记录 error 日志。warmedUp 保持 false，
      * mayExist() 继续返回 true，系统降级为纯 DB 去重，不影响应用可用性。
@@ -96,9 +96,9 @@ public class DocumentDedupService {
         }
         long started = System.currentTimeMillis();
         try {
-            long totalAdded = loadExistingFileMd5sBatched();
+            long totalAdded = loadExistingFileChecksumsBatched();
             warmedUp = true;
-            log.info("BloomFilter warm-up done: {} MD5s loaded in {}ms, warmedUp={}",
+            log.info("BloomFilter warm-up done: {} checksums loaded in {}ms, warmedUp={}",
                     totalAdded, System.currentTimeMillis() - started, warmedUp);
         } catch (Exception e) {
             // 关键：warm-up 失败绝不阻止应用运行 —— 降级到 DB 去重
@@ -107,16 +107,16 @@ public class DocumentDedupService {
     }
 
     /**
-     * 预筛：文件 MD5 是否可能已入库
+     * 预筛：文件校验和是否可能已入库
      *
-     * @param fileMd5 文件 MD5 哈希
+     * @param fileChecksum 文件校验和（SHA-256）
      * @return true=可能存在（需查 DB 确认），false=确定不存在
      *         <p>
      *         冷启动语义（R1-M6）：warmedUp=false 时始终返回 true，
      *         调用方因此走 confirmExisting 的 DB 确认路径，
      *         避免未加载完时误判「不存在」造成重复入库（假阴性）。
      */
-    public boolean mayExist(String fileMd5) {
+    public boolean mayExist(String fileChecksum) {
         if (bloomFilter == null) {
             // BloomFilter 不可用：不拦截，让调用方走 DB 确认
             return true;
@@ -125,20 +125,20 @@ public class DocumentDedupService {
             // 冷启动：未加载完，保守返回 true 走 DB 确认，避免假阴性
             return true;
         }
-        return bloomFilter.contains(fileMd5);
+        return bloomFilter.contains(fileChecksum);
     }
 
     /**
      * 确认文档是否真实存在（BloomFilter 命中后的 DB 确认）
      *
-     * @param fileMd5 文件 MD5
+     * @param fileChecksum 文件校验和（SHA-256）
      * @param userId  用户 ID（租户隔离）
      * @param teamId  团队 ID（null = 个人空间，非 null = 团队空间）
      * @return 已存在的文档，或 null
      */
-    public RagDocument confirmExisting(String fileMd5, Long userId, @Nullable Long teamId) {
+    public RagDocument confirmExisting(String fileChecksum, Long userId, @Nullable Long teamId) {
         LambdaQueryWrapper<RagDocument> wrapper = new LambdaQueryWrapper<RagDocument>()
-            .eq(RagDocument::getFileMd5, fileMd5)
+            .eq(RagDocument::getFileChecksum, fileChecksum)
             .in(RagDocument::getStatus,
                 com.smart.rag.rag.etl.EtlStatus.COMPLETED,
                 com.smart.rag.rag.etl.EtlStatus.PROCESSING)
@@ -155,9 +155,9 @@ public class DocumentDedupService {
     /**
      * 新文档入库后添加到 BloomFilter
      */
-    public void add(String fileMd5) {
+    public void add(String fileChecksum) {
         if (bloomFilter != null) {
-            bloomFilter.add(fileMd5);
+            bloomFilter.add(fileChecksum);
         }
     }
 
@@ -169,12 +169,12 @@ public class DocumentDedupService {
     }
 
     /**
-     * R1-M6: 分页加载已存在的 fileMd5，避免在大表上一次 selectList 拖垮内存。
+     * R1-M6: 分页加载已存在的 fileChecksum，避免在大表上一次 selectList 拖垮内存。
      * 按 id 升序分页，直到某页返回不满（< WARMUP_BATCH_SIZE）即终止。
      * <p>
      * protected 以支持测试跨包覆写（替代反射）—— 非公共扩展点。
      */
-    protected long loadExistingFileMd5sBatched() {
+    protected long loadExistingFileChecksumsBatched() {
         long totalAdded = 0;
         long lastId = 0L;
         while (true) {
@@ -182,9 +182,9 @@ public class DocumentDedupService {
             // LOW-3: searchCount=false —— warm-up 只需遍历全部页数据，跳过 COUNT 查询（全表 COUNT 昂贵且此处无用）
             Page<RagDocument> pageReq = new Page<>(1, WARMUP_BATCH_SIZE, false);
             LambdaQueryWrapper<RagDocument> wrapper = new LambdaQueryWrapper<RagDocument>()
-                    .select(RagDocument::getId, RagDocument::getFileMd5)
+                    .select(RagDocument::getId, RagDocument::getFileChecksum)
                     .eq(RagDocument::getDeleted, 0)
-                    .isNotNull(RagDocument::getFileMd5)
+                    .isNotNull(RagDocument::getFileChecksum)
                     .gt(RagDocument::getId, lowerBound)
                     .orderByAsc(RagDocument::getId);
             IPage<RagDocument> pageRes = documentMapper.selectPage(pageReq, wrapper);
@@ -193,7 +193,7 @@ public class DocumentDedupService {
                 break;
             }
             for (RagDocument doc : records) {
-                if (doc.getFileMd5() != null && bloomFilter.add(doc.getFileMd5())) {
+                if (doc.getFileChecksum() != null && bloomFilter.add(doc.getFileChecksum())) {
                     totalAdded++;
                 }
                 lastId = doc.getId();

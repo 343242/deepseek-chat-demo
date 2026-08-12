@@ -17,6 +17,7 @@ import com.smart.rag.rag.service.FileStorageService;
 import com.smart.rag.rag.service.TeamAccessGate;
 import com.smart.rag.rag.service.impl.DocumentApplicationServiceImpl;
 import com.smart.rag.rag.service.impl.DocumentLifecycleService;
+import com.smart.rag.common.util.ChecksumUtils;
 import com.smart.rag.rag.service.impl.DocumentValidator;
 import com.smart.rag.rag.upload.BucketResolver;
 import com.smart.rag.rag.upload.ChunkUploadInitRequest;
@@ -25,7 +26,6 @@ import com.smart.rag.rag.upload.ChunkUploadServiceImpl;
 import com.smart.rag.rag.upload.ChunkSizeStrategy;
 import com.smart.rag.rag.upload.UploadStrategyRouter;
 import io.minio.MinioClient;
-import org.apache.commons.codec.digest.DigestUtils;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
@@ -63,7 +63,7 @@ import static org.mockito.Mockito.when;
  *   <li>R1-H1: {@code complete()} throws on missing doc (no more null-as-200)</li>
  *   <li>R1-H4: {@code verifyAccess} throws DOCUMENT_NOT_FOUND vs FORBIDDEN</li>
  *   <li>R1-L1: splitter constructed once per bean (behavioral — chunking correct)</li>
- *   <li>U1: {@link DigestUtils#md5Hex} matches known MD5 (sanity)</li>
+ *   <li>U1: {@link ChecksumUtils#sha256Hex} matches known SHA-256 (sanity)</li>
  * </ul>
  */
 @DisplayName("W2: RAG correctness quick wins")
@@ -192,25 +192,25 @@ class W2CorrectnessQuickWinsTest {
         }
     }
 
-    // ==================== U1: DigestUtils sanity ====================
+    // ==================== U1: ChecksumUtils sanity ====================
 
     @Nested
-    @DisplayName("U1: DigestUtils.md5Hex 与已知值一致")
-    class DigestUtilsMd5 {
+    @DisplayName("U1: ChecksumUtils.sha256Hex 与已知值一致")
+    class ChecksumUtilsSha256 {
 
         @Test
-        @DisplayName("已知输入 → 已知 MD5 hex (lowercase)")
-        void knownInput_knownMd5() {
-            // RFC 1321 test suite: MD5("abc") = 900150983cd24fb0d6963f7d28e17f72
-            String md5 = DigestUtils.md5Hex("abc".getBytes(StandardCharsets.UTF_8));
-            assertThat(md5).isEqualTo("900150983cd24fb0d6963f7d28e17f72");
+        @DisplayName("已知输入 → 已知 SHA-256 hex (lowercase)")
+        void knownInput_knownSha256() {
+            // NIST FIPS 180-4 test suite: SHA-256("abc") = ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad
+            String sha256 = ChecksumUtils.sha256Hex("abc".getBytes(StandardCharsets.UTF_8));
+            assertThat(sha256).isEqualTo("ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
         }
 
         @Test
-        @DisplayName("空输入 → d41d8cd98f00b204e9800998ecf8427e")
-        void emptyInput_knownMd5() {
-            String md5 = DigestUtils.md5Hex(new byte[0]);
-            assertThat(md5).isEqualTo("d41d8cd98f00b204e9800998ecf8427e");
+        @DisplayName("空输入 → e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855")
+        void emptyInput_knownSha256() {
+            String sha256 = ChecksumUtils.sha256Hex(new byte[0]);
+            assertThat(sha256).isEqualTo("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855");
         }
     }
 
@@ -264,7 +264,7 @@ class W2CorrectnessQuickWinsTest {
             loginAs(1L);
 
             ChunkUploadInitRequest request = new ChunkUploadInitRequest(
-                    "d41d8cd98f00b204e9800998ecf8427e",
+                    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
                     "test.txt",
                     1024L,
                     "text/plain",
@@ -295,7 +295,7 @@ class W2CorrectnessQuickWinsTest {
     class CompleteThrowsOnMissingDoc {
 
         private static final String UPLOAD_ID = "race-upload-id";
-        private static final String FILE_MD5 = "d41d8cd98f00b204e9800998ecf8427e";
+        private static final String FILE_CHECKSUM = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
         @Mock private MinioClient minioClient;
         @Mock private BucketResolver bucketResolver;
@@ -338,7 +338,7 @@ class W2CorrectnessQuickWinsTest {
             // performMerge 内部第二次 entries → 返回空（模拟竞态清理）→ performMerge 返回 null
             Map<Object, Object> validSession = new HashMap<>();
             validSession.put("userId", "1");
-            validSession.put("fileMd5", FILE_MD5);
+            validSession.put("fileChecksum", FILE_CHECKSUM);
             validSession.put("fileName", "test.txt");
             validSession.put("fileSize", "1024");
             validSession.put("mimeType", "text/plain");
@@ -358,7 +358,7 @@ class W2CorrectnessQuickWinsTest {
             // fallback lookup returns null
             when(ragDocumentMapper.selectOne(any())).thenReturn(null);
 
-            assertThatThrownBy(() -> service.complete(UPLOAD_ID, FILE_MD5))
+            assertThatThrownBy(() -> service.complete(UPLOAD_ID, FILE_CHECKSUM))
                     .isInstanceOfSatisfying(ServiceException.class,
                             ex -> assertThat(ex.getErrorCode())
                                     .as("合并后文档未找到必须抛 ETL_FAILED")

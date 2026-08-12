@@ -64,7 +64,7 @@ public class TeamChunkUploadController {
         verifyTeamAccess(teamId);
         // 将 teamId 注入 request
         ChunkUploadInitRequest teamRequest = new ChunkUploadInitRequest(
-                request.fileMd5(), request.fileName(), request.fileSize(),
+                request.fileChecksum(), request.fileName(), request.fileSize(),
                 request.mimeType(), request.chunkSize(), teamId, request.replaceDocumentId()
         );
         ChunkUploadResult result = chunkUploadService.init(teamRequest);
@@ -85,13 +85,13 @@ public class TeamChunkUploadController {
             @PathVariable Long teamId,
             @PathVariable String uploadId,
             @PathVariable int chunkIndex,
-            @RequestHeader("X-Chunk-MD5") String chunkMd5,
+            @RequestHeader("X-Chunk-Checksum") String chunkChecksum,
             @RequestBody byte[] chunkData) {
         verifyTeamAccess(teamId);
-        if (chunkMd5 == null || !chunkMd5.matches("^[0-9a-fA-F]{32}$")) {
-            throw new ClientException(ClientErrorCode.VALIDATION_ERROR, "分片MD5格式错误");
+        if (chunkChecksum == null || !chunkChecksum.matches("^[0-9a-fA-F]{64}$")) {
+            throw new ClientException(ClientErrorCode.VALIDATION_ERROR, "分片校验和格式错误");
         }
-        return GlobalResponse.ok(chunkUploadService.uploadChunk(uploadId, chunkIndex, chunkMd5, chunkData));
+        return GlobalResponse.ok(chunkUploadService.uploadChunk(uploadId, chunkIndex, chunkChecksum, chunkData));
     }
 
     /**
@@ -115,7 +115,7 @@ public class TeamChunkUploadController {
             @PathVariable String uploadId,
             @Valid @RequestBody ChunkUploadCompleteRequest request) {
         verifyTeamAccess(teamId);
-        Long docId = chunkUploadService.complete(uploadId, request.fileMd5(), teamId);
+        Long docId = chunkUploadService.complete(uploadId, request.fileChecksum(), teamId);
         return GlobalResponse.ok(new ChunkUploadCompleteResult(docId), "文件合并完成");
     }
 

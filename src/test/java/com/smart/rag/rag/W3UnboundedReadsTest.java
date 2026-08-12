@@ -187,7 +187,7 @@ class W3UnboundedReadsTest {
     class DedupNonBlockingWarmUp {
 
         @Test
-        @DisplayName("构造器不查 DB（启动非阻塞）；warmUp 前可能命中的 MD5 mayExist 仍返回 true")
+        @DisplayName("构造器不查 DB（启动非阻塞）；warmUp 前可能命中的校验和 mayExist 仍返回 true")
         void constructor_does_not_load_db(@Mock RedissonClient redissonClient,
                                           @Mock RagDocumentMapper documentMapper,
                                           @Mock RBloomFilter<String> bloomFilter) {
@@ -202,7 +202,7 @@ class W3UnboundedReadsTest {
             // 冷启动：warmedUp=false
             assertThat(svc.isWarmedUp()).isFalse();
             // mayExist 仍返回 true，确保调用方走 confirmExisting 的 DB 路径
-            assertThat(svc.mayExist("any-md5"))
+            assertThat(svc.mayExist("any-checksum"))
                     .as("冷启动 mayExist 必须返回 true 以走 DB 确认，避免假阴性")
                     .isTrue();
         }
@@ -214,25 +214,25 @@ class W3UnboundedReadsTest {
                                                     @Mock RBloomFilter<String> bloomFilter) {
             when(redissonClient.<String>getBloomFilter(any(String.class))).thenReturn(bloomFilter);
             when(bloomFilter.tryInit(anyLong(), anyDouble())).thenReturn(true);
-            when(bloomFilter.add("known-md5")).thenReturn(true);
-            when(bloomFilter.contains("known-md5")).thenReturn(true);
+            when(bloomFilter.add("known-checksum")).thenReturn(true);
+            when(bloomFilter.contains("known-checksum")).thenReturn(true);
 
-            // 用子类覆写 loadExistingFileMd5sBatched 绕开 MyBatis-Plus lambda cache
+            // 用子类覆写 loadExistingFileChecksumsBatched 绕开 MyBatis-Plus lambda cache
             // （单元测试未启动 Spring 上下文，LambdaQueryWrapper 无法解析实体列）。
-            // 子类只把 known-md5 加入 BloomFilter 后返回 1。
+            // 子类只把 known-checksum 加入 BloomFilter 后返回 1。
             DocumentDedupService svc = new DocumentDedupService(redissonClient, documentMapper) {
                 @Override
-                protected long loadExistingFileMd5sBatched() {
-                    bloomFilter.add("known-md5");
+                protected long loadExistingFileChecksumsBatched() {
+                    bloomFilter.add("known-checksum");
                     return 1L;
                 }
             };
             svc.warmUp();
 
             assertThat(svc.isWarmedUp()).isTrue();
-            // warmUp 完成后，add 过的 MD5 → contains 返回 true
-            assertThat(svc.mayExist("known-md5")).isTrue();
-            verify(bloomFilter, times(1)).add("known-md5");
+            // warmUp 完成后，add 过的校验和 → contains 返回 true
+            assertThat(svc.mayExist("known-checksum")).isTrue();
+            verify(bloomFilter, times(1)).add("known-checksum");
         }
 
         @Test

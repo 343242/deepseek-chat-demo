@@ -8,7 +8,7 @@ import jakarta.validation.constraints.Pattern;
  */
 public record ChunkUploadCompleteRequest(
 
-    @NotBlank(message = "文件MD5不能为空")
-    @Pattern(regexp = "^[0-9a-fA-F]{32}$", message = "文件MD5格式错误")
-    String fileMd5
+    @NotBlank(message = "文件校验和不能为空")
+    @Pattern(regexp = "^[0-9a-fA-F]{64}$", message = "文件校验和格式错误")
+    String fileChecksum
 ) {}

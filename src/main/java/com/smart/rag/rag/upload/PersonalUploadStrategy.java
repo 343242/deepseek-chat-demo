@@ -1,5 +1,6 @@
 package com.smart.rag.rag.upload;
 
+import com.smart.rag.common.util.ChecksumUtils;
 import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;
 import com.smart.rag.infrastructure.exception.ClientException;
 import com.smart.rag.rag.event.DocumentCreatedEvent;
@@ -12,7 +13,6 @@ import com.smart.rag.rag.service.EtlDispatchService;
 import com.smart.rag.rag.service.FileStorageService;
 import com.smart.rag.rag.service.DocumentDedupService;
 import com.smart.rag.rag.service.impl.DocumentValidator;
-import org.apache.commons.codec.digest.DigestUtils;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -85,10 +85,10 @@ public class PersonalUploadStrategy implements UploadStrategy {
         String storageKey = buildStorageKey(userId, originalFilename);
         fileStorageService.upload(bucket, storageKey, file.getResource(), mimeType);
 
-        String fileMd5 = computeMd5(file);
-        RagDocument ragDoc = persistDocument(originalFilename, file.getSize(), mimeType, storageKey, bucket, userId, fileMd5);
-        if (documentDedupService != null && ragDoc.getFileMd5() != null) {
-            documentDedupService.add(ragDoc.getFileMd5());
+        String fileChecksum = computeChecksum(file);
+        RagDocument ragDoc = persistDocument(originalFilename, file.getSize(), mimeType, storageKey, bucket, userId, fileChecksum);
+        if (documentDedupService != null && ragDoc.getFileChecksum() != null) {
+            documentDedupService.add(ragDoc.getFileChecksum());
         }
         eventPublisher.publishEvent(new DocumentCreatedEvent(ragDoc.getId(), replaceDocumentId, userId, ragDoc.getTeamId()));
         log.info("Document uploaded: id={}, file={}, size={}, userId={}", ragDoc.getId(), originalFilename, file.getSize(), userId);
@@ -124,13 +124,13 @@ public class PersonalUploadStrategy implements UploadStrategy {
                 fileStorageService.upload(bucket, storageKey, file.getResource(), mimeType);
                 uploaded = true;
 
-                String fileMd5 = computeMd5(file);
-                ragDoc = persistDocument(originalFilename, file.getSize(), mimeType, storageKey, bucket, userId, fileMd5);
+                String fileChecksum = computeChecksum(file);
+                ragDoc = persistDocument(originalFilename, file.getSize(), mimeType, storageKey, bucket, userId, fileChecksum);
                 // persist 成功后立即登记 dispatch 候选 —— 即使后续 dedup/event 抛异常，
                 // 该文档仍会被 dispatch，避免落入 UPLOADED 死状态。
                 candidates.add(new EtlCandidate(ragDoc.getId(), bucket, storageKey, originalFilename, mimeType, file.getSize(), userId, ragDoc.getTeamId()));
-                if (documentDedupService != null && ragDoc.getFileMd5() != null) {
-                    documentDedupService.add(ragDoc.getFileMd5());
+                if (documentDedupService != null && ragDoc.getFileChecksum() != null) {
+                    documentDedupService.add(ragDoc.getFileChecksum());
                 }
                 eventPublisher.publishEvent(new DocumentCreatedEvent(ragDoc.getId(), null, userId, ragDoc.getTeamId()));
                 log.debug("Document uploaded (batch): id={}, file={}, size={}, userId={}", ragDoc.getId(), originalFilename, file.getSize(), userId);
@@ -205,7 +205,7 @@ public class PersonalUploadStrategy implements UploadStrategy {
      * 持久化文档元数据到数据库
      */
     private RagDocument persistDocument(String fileName, long fileSize, String mimeType,
-                                        String storageKey, String bucket, Long userId, String fileMd5) {
+                                        String storageKey, String bucket, Long userId, String fileChecksum) {
         RagDocument ragDoc = new RagDocument();
         ragDoc.setFileName(fileName);
         ragDoc.setFileSize(fileSize);
@@ -213,7 +213,7 @@ public class PersonalUploadStrategy implements UploadStrategy {
         ragDoc.setStorageKey(storageKey);
         ragDoc.setBucket(bucket);
         ragDoc.setUserId(userId);
-        ragDoc.setFileMd5(fileMd5);
+        ragDoc.setFileChecksum(fileChecksum);
         ragDoc.setStatus(EtlStatus.UPLOADED);
         ragDoc.setDeleted(0);
         ragDoc.setCreateTime(OffsetDateTime.now());
@@ -223,16 +223,16 @@ public class PersonalUploadStrategy implements UploadStrategy {
     }
 
     /**
-     * 计算 MultipartFile 的 MD5（hex 32 位）
+     * 计算 MultipartFile 的校验和（SHA-256，64 位 hex）
      * <p>
      * R1-L2: 失败时返回 null（保持现有行为，秒传去重对该文件降级为不可用），
-     * 但以 ERROR 级别记录，避免静默降级。U1 使用 commons-codec {@link DigestUtils#md5Hex(InputStream)}。
+     * 但以 ERROR 级别记录，避免静默降级。
      */
-    private String computeMd5(MultipartFile file) {
+    private String computeChecksum(MultipartFile file) {
         try (InputStream is = file.getInputStream()) {
-            return DigestUtils.md5Hex(is);
+            return ChecksumUtils.sha256Hex(is);
         } catch (Exception e) {
-            log.error("Failed to compute file MD5 (file loses quick-upload dedup): {}", e.getMessage());
+            log.error("Failed to compute file checksum (file loses quick-upload dedup): {}", e.getMessage());
             return null;
         }
     }

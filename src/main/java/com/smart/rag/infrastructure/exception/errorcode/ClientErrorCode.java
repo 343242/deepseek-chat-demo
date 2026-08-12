@@ -55,8 +55,8 @@ public enum ClientErrorCode implements IErrorCode {
     UPLOAD_FILE_TOO_LARGE(104003, "文件大小超出限制"),
     UPLOAD_MIME_UNSUPPORTED(104004, "不支持的文件类型"),
     UPLOAD_FAILED(104005, "上传失败"),
-    UPLOAD_CHUNK_MD5_MISMATCH(104006, "分片校验失败，请重传"),
-    UPLOAD_FILE_MD5_MISMATCH(104007, "文件校验失败"),
+    UPLOAD_CHUNK_CHECKSUM_MISMATCH(104006, "分片校验失败，请重传"),
+    UPLOAD_FILE_CHECKSUM_MISMATCH(104007, "文件校验失败"),
     UPLOAD_INCOMPLETE(104008, "文件未上传完整"),
 
     // ==================== 团队客户端 105001–105999 ====================

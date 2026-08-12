@@ -81,7 +81,7 @@ public class EtlExecutorConfig implements DisposableBean {
     }
 
     /**
-     * 分片上传合并线程池 — 异步执行 composeObject + MD5 校验 + DB 写入 + ETL 触发
+     * 分片上传合并线程池 — 异步执行 composeObject + 校验和（SHA-256）校验 + DB 写入 + ETL 触发
      */
     @Lazy
     @Bean("mergeExecutor")

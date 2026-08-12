@@ -28,7 +28,7 @@
     </update>
 
     <select id="findStaleSupersededTargets" resultType="com.smart.rag.rag.entity.RagDocument">
-        SELECT id, file_name, file_size, mime_type, storage_key, bucket, user_id, chunk_count, status, error_message, file_md5, team_id, version, superseded_by, document_group_id, create_time, update_time, deleted FROM rag_document WHERE superseded_by IS NOT NULL AND status != 'SUPERSEDED' AND deleted = 0
+        SELECT id, file_name, file_size, mime_type, storage_key, bucket, user_id, chunk_count, status, error_message, file_checksum, team_id, version, superseded_by, document_group_id, create_time, update_time, deleted FROM rag_document WHERE superseded_by IS NOT NULL AND status != 'SUPERSEDED' AND deleted = 0
     </select>
 
 </mapper>

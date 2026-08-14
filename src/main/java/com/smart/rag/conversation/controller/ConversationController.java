@@ -8,7 +8,6 @@ import com.smart.rag.conversation.dto.ConversationSummary;
 import com.smart.rag.conversation.dto.ConversationUpdateRequest;
 import com.smart.rag.conversation.dto.MessageCursorPage;
 import com.smart.rag.conversation.service.ConversationService;
-import com.smart.rag.common.util.ConversationIdUtil;
 import com.smart.rag.infrastructure.web.util.SecurityUtils;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
@@ -21,6 +20,9 @@ import org.springframework.web.bind.annotation.*;
  * 会话管理 API
  * <p>
  * 所有接口自动绑定当前登录用户，用户只能查看和管理自己的会话。
+ * <p>
+ * 路径变量 {@code conversationId} 一律为 isolated id（{@code u_{userId}_{raw}}），
+ * 即列表接口返回的值；归属与存在性校验统一在 service 层 findAndVerify 完成。
  */
 @RestController
 @RequestMapping("/api/conversations")
@@ -52,8 +54,7 @@ public class ConversationController {
     @GetMapping("/{conversationId}")
     public GlobalResponse<ConversationDetail> getDetail(@PathVariable String conversationId) {
         Long userId = SecurityUtils.getCurrentUserId();
-        String isolatedId = ConversationIdUtil.buildIsolatedId(userId, conversationId);
-        return GlobalResponse.ok(conversationService.getDetail(userId, isolatedId));
+        return GlobalResponse.ok(conversationService.getDetail(userId, conversationId));
     }
 
     @GetMapping("/{conversationId}/messages")
@@ -62,8 +63,7 @@ public class ConversationController {
             @RequestParam(value = "limit", defaultValue = "20") @Min(1) @Max(50) int limit,
             @RequestParam(value = "before", required = false) Long before) {
         Long userId = SecurityUtils.getCurrentUserId();
-        String isolatedId = ConversationIdUtil.buildIsolatedId(userId, conversationId);
-        return GlobalResponse.ok(conversationService.listMessagesPaged(userId, isolatedId, before, limit));
+        return GlobalResponse.ok(conversationService.listMessagesPaged(userId, conversationId, before, limit));
     }
 
     @PostMapping("/{conversationId}/update")
@@ -71,16 +71,14 @@ public class ConversationController {
             @PathVariable String conversationId,
             @Valid @RequestBody ConversationUpdateRequest request) {
         Long userId = SecurityUtils.getCurrentUserId();
-        String isolatedId = ConversationIdUtil.buildIsolatedId(userId, conversationId);
-        conversationService.update(userId, isolatedId, request);
+        conversationService.update(userId, conversationId, request);
         return GlobalResponse.ok("会话已更新");
     }
 
     @PostMapping("/{conversationId}/delete")
     public GlobalResponse<Void> delete(@PathVariable String conversationId) {
         Long userId = SecurityUtils.getCurrentUserId();
-        String isolatedId = ConversationIdUtil.buildIsolatedId(userId, conversationId);
-        conversationService.delete(userId, isolatedId);
+        conversationService.delete(userId, conversationId);
         return GlobalResponse.ok("会话已删除");
     }
 }

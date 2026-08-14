@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
+import com.smart.rag.infrastructure.mybatis.JsonbStringTypeHandler;
 
 import java.time.Instant;
 
@@ -41,7 +42,7 @@ public class AgentSessionEvent {
     @TableField(value = "priority", typeHandler = AgentEventPriorityHandler.class)
     private AgentEventPriority priority;
 
-    @TableField("data")
+    @TableField(value = "data", typeHandler = JsonbStringTypeHandler.class)
     private String data;
 
     @TableField("tool_name")

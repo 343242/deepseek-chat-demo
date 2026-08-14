@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.annotation.IdType;
 import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
+import com.smart.rag.infrastructure.mybatis.JsonbStringTypeHandler;
 import org.jspecify.annotations.Nullable;
 
 import java.time.Instant;
@@ -61,7 +62,7 @@ public class TraceEvent {
     private @Nullable Double topScore;
 
     /** 文档明细 JSONB（仅元数据，不含正文） */
-    @TableField("documents")
+    @TableField(value = "documents", typeHandler = JsonbStringTypeHandler.class)
     private @Nullable String documents;
 
     /** 检索路径模式：CHAT / AGENT / UNKNOWN */

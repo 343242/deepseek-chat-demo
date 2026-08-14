@@ -1,6 +1,7 @@
 package com.smart.rag.rag.etl;
 
 import com.smart.rag.rag.entity.RagDocument;
+import com.smart.rag.rag.event.DocumentStatusChangedEvent;
 import com.smart.rag.rag.event.EtlFailedEvent;
 import com.smart.rag.rag.mapper.RagDocumentMapper;
 import org.junit.jupiter.api.BeforeEach;
@@ -285,6 +286,86 @@ class EtlStatusManagerTest {
             assertThatCode(() -> statusManager.markVectorFailed(999L, new RuntimeException("err")))
                     .doesNotThrowAnyException();
             verify(ragDocumentMapper, never()).updateById(any(RagDocument.class));
+        }
+    }
+
+    @Nested
+    @DisplayName("DocumentStatusChangedEvent 发布（SSE 推送驱动）")
+    class StatusChangedEvent {
+
+        @Test
+        @DisplayName("updateStatus 事务后发 DocumentStatusChangedEvent")
+        void updateStatus_publishesEvent() {
+            RagDocument doc = new RagDocument();
+            doc.setId(50L);
+            doc.setUserId(7L);
+            when(ragDocumentMapper.selectById(50L)).thenReturn(doc);
+
+            statusManager.updateStatus(50L, EtlStatus.PARSING);
+
+            ArgumentCaptor<DocumentStatusChangedEvent> captor = ArgumentCaptor.forClass(DocumentStatusChangedEvent.class);
+            verify(eventPublisher).publishEvent(captor.capture());
+            DocumentStatusChangedEvent ev = captor.getValue();
+            assertThat(ev.documentId()).isEqualTo(50L);
+            assertThat(ev.userId()).isEqualTo(7L);
+            assertThat(ev.status()).isEqualTo(EtlStatus.PARSING);
+        }
+
+        @Test
+        @DisplayName("completeDocument 发 COMPLETED 事件（含 teamId）")
+        void completeDocument_publishesEvent() {
+            RagDocument doc = new RagDocument();
+            doc.setId(51L);
+            doc.setUserId(8L);
+            doc.setTeamId(2L);
+            when(ragDocumentMapper.selectById(51L)).thenReturn(doc);
+
+            statusManager.completeDocument(51L, 5);
+
+            ArgumentCaptor<DocumentStatusChangedEvent> captor = ArgumentCaptor.forClass(DocumentStatusChangedEvent.class);
+            verify(eventPublisher).publishEvent(captor.capture());
+            DocumentStatusChangedEvent ev = captor.getValue();
+            assertThat(ev.status()).isEqualTo(EtlStatus.COMPLETED);
+            assertThat(ev.teamId()).isEqualTo(2L);
+        }
+
+        @Test
+        @DisplayName("markVectorFailed 发 VECTOR_FAILED 事件")
+        void markVectorFailed_publishesEvent() {
+            RagDocument doc = new RagDocument();
+            doc.setId(52L);
+            doc.setUserId(9L);
+            when(ragDocumentMapper.selectById(52L)).thenReturn(doc);
+
+            statusManager.markVectorFailed(52L, new RuntimeException("timeout"));
+
+            ArgumentCaptor<DocumentStatusChangedEvent> captor = ArgumentCaptor.forClass(DocumentStatusChangedEvent.class);
+            verify(eventPublisher).publishEvent(captor.capture());
+            assertThat(captor.getValue().status()).isEqualTo(EtlStatus.VECTOR_FAILED);
+        }
+
+        @Test
+        @DisplayName("文档不存在时不发事件（selectById 返回 null）")
+        void noEvent_whenDocNotFound() {
+            when(ragDocumentMapper.selectById(60L)).thenReturn(null);
+
+            statusManager.updateStatus(60L, EtlStatus.PARSING);
+
+            verify(eventPublisher, never()).publishEvent(any(DocumentStatusChangedEvent.class));
+        }
+
+        @Test
+        @DisplayName("failDocument 同时发 EtlFailedEvent 和 DocumentStatusChangedEvent")
+        void failDocument_publishesBothEvents() {
+            RagDocument doc = new RagDocument();
+            doc.setId(53L);
+            doc.setUserId(10L);
+            when(ragDocumentMapper.selectById(53L)).thenReturn(doc);
+
+            statusManager.failDocument(53L, new RuntimeException("boom"));
+
+            verify(eventPublisher).publishEvent(any(EtlFailedEvent.class));
+            verify(eventPublisher).publishEvent(any(DocumentStatusChangedEvent.class));
         }
     }
 }

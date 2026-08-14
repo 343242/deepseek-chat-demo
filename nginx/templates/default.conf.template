@@ -94,7 +94,7 @@ server {
 
     # ── SSE 流式接口：关闭缓冲，长超时，HTTP/1.1 keep-alive ──
     # 匹配 chat 对话流（chat/completions 风格的 stream 端点 / agent ReAct 输出）
-    location ~ ^/api/(chat|agent).*(stream|sse) {
+    location ~ ^/api/(chat|agent).*(stream|sse)|^/api/documents/events {
         proxy_pass http://smart_rag_backend;
         proxy_http_version 1.1;
         proxy_set_header Connection "";          # 触发 upstream keepalive 复用

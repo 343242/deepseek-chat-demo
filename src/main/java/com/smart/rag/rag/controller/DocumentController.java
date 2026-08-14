@@ -2,14 +2,18 @@ package com.smart.rag.rag.controller;
 
 import com.smart.rag.infrastructure.response.GlobalResponse;
 import com.smart.rag.infrastructure.response.PagedResult;
+import com.smart.rag.infrastructure.web.util.SecurityUtils;
 import com.smart.rag.rag.dto.ChunkDTO;
 import com.smart.rag.rag.dto.DocumentDTO;
 import com.smart.rag.rag.dto.DocumentUploadResponse;
 import com.smart.rag.rag.service.DocumentApplicationService;
+import com.smart.rag.rag.sse.DocumentSseRegistry;
 import org.jspecify.annotations.Nullable;
+import org.springframework.http.MediaType;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.List;
 
@@ -22,9 +26,11 @@ import java.util.List;
 public class DocumentController {
 
     private final DocumentApplicationService documentService;
+    private final DocumentSseRegistry sseRegistry;
 
-    public DocumentController(DocumentApplicationService documentService) {
+    public DocumentController(DocumentApplicationService documentService, DocumentSseRegistry sseRegistry) {
         this.documentService = documentService;
+        this.sseRegistry = sseRegistry;
     }
 
     @PostMapping("/upload")
@@ -43,6 +49,19 @@ public class DocumentController {
             @RequestParam("files") MultipartFile[] files,
             @RequestParam(value = "teamId", required = false) @Nullable Long teamId) {
         return GlobalResponse.ok(documentService.uploadBatch(files, teamId));
+    }
+
+    /**
+     * 文档状态 SSE 订阅。后端 ETL 状态流转（PARSING→CHUNKING→VECTORIZING→COMPLETED/FAILED）实时推送，
+     * 前端无需轮询或手动刷新。连接按 userId 索引；多实例部署下经 Redis Pub/Sub 扇出。
+     * 超时 10 分钟，超时后前端 EventSource 自动重连。
+     */
+    @GetMapping(value = "/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public SseEmitter events() {
+        Long userId = SecurityUtils.getCurrentUserId();
+        SseEmitter emitter = new SseEmitter(600_000L);
+        sseRegistry.register(userId, emitter);
+        return emitter;
     }
 
     @GetMapping

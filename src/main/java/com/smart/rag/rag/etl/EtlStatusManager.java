@@ -1,6 +1,7 @@
 package com.smart.rag.rag.etl;
 
 import com.smart.rag.rag.entity.RagDocument;
+import com.smart.rag.rag.event.DocumentStatusChangedEvent;
 import com.smart.rag.rag.event.EtlFailedEvent;
 import com.smart.rag.rag.mapper.RagDocumentMapper;
 import org.slf4j.Logger;
@@ -17,6 +18,9 @@ import java.time.OffsetDateTime;
  * 封装文档状态的更新逻辑，使用 TransactionTemplate 独立事务。
  * 被 {@link StandardStrategy} 和 {@link FastTrackStrategy} 共享，
  * 消除重复的状态管理代码。
+ * <p>
+ * 每个写状态方法在事务提交后发布 {@link DocumentStatusChangedEvent}（驱动 SSE 实时推送）。
+ * 事件发送失败仅告警，不影响状态写入——DB 状态是事实来源，SSE 是 best-effort 推送。
  */
 @Component
 public class EtlStatusManager {
@@ -46,6 +50,7 @@ public class EtlStatusManager {
             update.setUpdateTime(OffsetDateTime.now());
             ragDocumentMapper.updateById(update);
         });
+        publishStatusEvent(documentId, status);
     }
 
     /**
@@ -60,6 +65,7 @@ public class EtlStatusManager {
             doc.setUpdateTime(OffsetDateTime.now());
             ragDocumentMapper.updateById(doc);
         });
+        publishStatusEvent(documentId, EtlStatus.COMPLETED);
     }
 
     /**
@@ -92,6 +98,7 @@ public class EtlStatusManager {
             });
             // 事务已提交、DB 状态可见 → 发布失败事件，供下游（pendingSupersede 加速层等）清理
             eventPublisher.publishEvent(new EtlFailedEvent(documentId, truncate(e.getMessage(), 2000)));
+            publishStatusEvent(documentId, EtlStatus.FAILED);
         } catch (Exception txEx) {
             log.error("Failed to persist FAILED status for document: id={}", documentId, txEx);
             // 事务失败 → 不发事件，保持「DB=FAILED ⟺ 发 EtlFailedEvent」一致
@@ -113,8 +120,27 @@ public class EtlStatusManager {
                     ragDocumentMapper.updateById(doc);
                 }
             });
+            publishStatusEvent(documentId, EtlStatus.VECTOR_FAILED);
         } catch (Exception txEx) {
             log.error("Failed to persist VECTOR_FAILED status: id={}", documentId, txEx);
+        }
+    }
+
+    /**
+     * 事务提交后发布状态变更事件（驱动 SSE 实时推送）。
+     * <p>
+     * 查 DB 拿 userId/teamId 作为 SSE 路由键（按 userId 推给上传者）。
+     * 状态变更低频（每文档整个生命周期 4-6 次），多一次 selectById 可忽略。
+     */
+    private void publishStatusEvent(Long documentId, EtlStatus status) {
+        try {
+            RagDocument doc = ragDocumentMapper.selectById(documentId);
+            if (doc != null) {
+                eventPublisher.publishEvent(new DocumentStatusChangedEvent(
+                        documentId, doc.getUserId(), doc.getTeamId(), status));
+            }
+        } catch (Exception e) {
+            log.warn("Failed to publish status event: doc={}, status={}", documentId, status, e);
         }
     }
 

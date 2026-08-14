@@ -13,6 +13,7 @@ import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.core.AuthenticationException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 /**
@@ -106,6 +107,16 @@ public class GlobalExceptionHandler {
         log.warn("Param type mismatch: name={}, value={}, msg={}", e.getName(), e.getValue(), e.getMessage());
         return ResponseEntity.ok(GlobalResponse.error(ClientErrorCode.BAD_REQUEST,
                 "参数 " + e.getName() + " 格式错误或无法解析"));
+    }
+
+    /**
+     * 异步请求（SSE / async dispatch）客户端已断开时，Servlet 6 抛此异常——属正常断连事件，
+     * 非服务端错误。若不在此拦截会落入 {@link #handleGeneric} 被记成 ERROR + 完整堆栈，污染日志。
+     * 客户端已断开，响应体无法送达，故返回 void 不写响应。
+     */
+    @ExceptionHandler(AsyncRequestNotUsableException.class)
+    public void handleAsyncClientDisconnect(AsyncRequestNotUsableException e) {
+        log.debug("Async client disconnected: {}", e.getMessage());
     }
 
     @ExceptionHandler(Exception.class)

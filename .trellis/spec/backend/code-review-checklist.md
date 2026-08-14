@@ -54,7 +54,7 @@ Code Review 分为 10 个维度，每个维度列出具体检查项。Review 时
 - [ ] **集合边界** — 空集合返回 `Collections.emptyList()` 而非 `null`。`List.get(index)` 前确认 index 范围
 - [ ] **数值溢出** — 大数值计算（如 token 用量累计）考虑 `long` 是否足够
 - [ ] **字符串边界** — 外部输入的字符串 trim 后再使用。超长输入有 `@Size` 限制
-- [ ] **时间边界** — `LocalDateTime` 不带时区信息，API 入口统一用 UTC，展示层再转换
+- [ ] **时间边界** — 实体/服务层时间字段统一用 `OffsetDateTime`（禁止 `LocalDateTime`）。时间架构单一事实源是 `TimeCodec`（`app.time-zone` 配置展示时区，默认 Asia/Shanghai）：DB 列全部 `TIMESTAMPTZ`（存储绝对时刻，Postgres 内部归一化 UTC），JSON 序列化经 `OffsetDateTimeJsonSerializer` 统一转展示时区并丢弃 offset。因此 `OffsetDateTime.now()` 与 `.now(ZoneOffset.UTC)` 写库/出参结果完全一致——**取当前时间统一写裸 `OffsetDateTime.now()`**（与 `MyBatisPlusMetaHandler` 自动填充及全库主流写法一致），不要混用 UTC 显式写法制造风格分裂；解析外部时间字符串必须走 `TimeCodec.parse`（先试 ISO-with-offset，无 offset 按 `app.time-zone` 解释），不要手写 `LocalDateTime.parse`
 
 ---
 

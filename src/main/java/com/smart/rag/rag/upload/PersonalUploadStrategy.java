@@ -108,15 +108,18 @@ public class PersonalUploadStrategy implements UploadStrategy {
         String bucket = bucketResolver.resolve(null);
         fileStorageService.ensureBucketExists(bucket);
 
+        // 预校验全部文件（任一失败在任何上传发生前拒绝），结果复用到上传循环，避免二次全量校验
+        List<ValidatedDocumentFile> validatedFiles = new ArrayList<>(files.size());
         for (MultipartFile file : files) {
-            documentValidator.validate(file);
+            validatedFiles.add(documentValidator.validate(file));
         }
 
         List<EtlCandidate> candidates = new ArrayList<>();
         List<DocumentUploadResponse> responses = new ArrayList<>();
 
-        for (MultipartFile file : files) {
-            ValidatedDocumentFile validated = documentValidator.validate(file);
+        for (int i = 0; i < files.size(); i++) {
+            MultipartFile file = files.get(i);
+            ValidatedDocumentFile validated = validatedFiles.get(i);
             String mimeType = validated.canonicalMimeType();
             String originalFilename = validated.fileName();
             String storageKey = buildStorageKey(userId, originalFilename);

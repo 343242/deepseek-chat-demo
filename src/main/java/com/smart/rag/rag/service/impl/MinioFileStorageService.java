@@ -1,7 +1,9 @@
 package com.smart.rag.rag.service.impl;
 
 import com.smart.rag.infrastructure.exception.RemoteException;
+import com.smart.rag.infrastructure.exception.ServiceException;
 import com.smart.rag.infrastructure.exception.errorcode.RemoteErrorCode;
+import com.smart.rag.infrastructure.exception.errorcode.ServiceErrorCode;
 import com.smart.rag.rag.service.FileStorageService;
 import com.smart.rag.rag.service.ObjectReadRange;
 import com.smart.rag.rag.service.StoredObjectContent;
@@ -122,11 +124,12 @@ public class MinioFileStorageService implements FileStorageService {
                         new LazyMinioResource(bucket, objectKey, null, null, totalSize), 0, totalSize);
             }
             ObjectReadRange.Bytes bytes = (ObjectReadRange.Bytes) range;
-            // 越界与加法溢出防护（设计 §6）
+            // 越界与加法溢出防护（设计 §6）；违反属调用方编程错误，按服务端内部错误暴露（细节见日志）
             if (bytes.offset() < 0 || bytes.length() <= 0
                     || bytes.offset() >= totalSize || bytes.length() > totalSize - bytes.offset()) {
-                throw new IllegalArgumentException("Invalid read range: offset=" + bytes.offset()
-                        + ", length=" + bytes.length() + ", totalSize=" + totalSize);
+                log.error("Invalid object read range: offset={}, length={}, totalSize={}",
+                        bytes.offset(), bytes.length(), totalSize);
+                throw new ServiceException(ServiceErrorCode.INTERNAL_ERROR);
             }
             return new StoredObjectContent(
                     new LazyMinioResource(bucket, objectKey, bytes.offset(), bytes.length(), bytes.length()),

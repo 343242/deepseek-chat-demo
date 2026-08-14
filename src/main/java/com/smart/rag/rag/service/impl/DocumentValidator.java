@@ -1,7 +1,9 @@
 package com.smart.rag.rag.service.impl;
 
 import com.smart.rag.infrastructure.exception.ClientException;
+import com.smart.rag.infrastructure.exception.RemoteException;
 import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;
+import com.smart.rag.infrastructure.exception.errorcode.RemoteErrorCode;
 import com.smart.rag.rag.config.DocumentProperties;
 import com.smart.rag.rag.service.DocumentMimePolicy;
 import org.apache.poi.openxml4j.opc.OPCPackage;
@@ -100,8 +102,12 @@ public class DocumentValidator {
             return new ValidatedDocumentFile(fileName, fileSize, canonical);
         } catch (ClientException e) {
             throw e;
+        } catch (IOException e) {
+            // 内容流读取中断（MinIO 对象流/上传暂存流故障）按存储不可用翻译，不是客户端类型错误
+            log.warn("MIME validation failed to read content: file={}", fileName, e);
+            throw new RemoteException(RemoteErrorCode.FILE_STORAGE_UNAVAILABLE, "文件存储暂不可用", e);
         } catch (Exception e) {
-            log.warn("MIME validation failed unexpectedly: file={}, err={}", fileName, e.getMessage());
+            log.warn("MIME validation failed unexpectedly: file={}", fileName, e);
             throw new ClientException(ClientErrorCode.UPLOAD_MIME_UNSUPPORTED, "文件类型校验失败");
         } finally {
             if (tempFile != null) {

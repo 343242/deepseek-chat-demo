@@ -5,9 +5,9 @@ import { EmptyState } from '@/components/common/empty-state'
 import { useInfiniteScroll } from '@/hooks/use-infinite-scroll'
 import { useChatStore } from '@/stores/chat-store'
 import { fetchMessages } from '@/api/conversations'
+import { flattenMessages } from '@/lib/chat/flatten-messages'
 import { time } from '@/lib/format'
 import { MessageSquare } from 'lucide-react'
-import type { RenderMessage } from '@/stores/chat-store'
 
 export function MessageList() {
   const conversationId = useChatStore((s) => s.conversationId)
@@ -46,7 +46,7 @@ export function MessageList() {
     try {
       const earliest = messages.find((m) => m.parentId == null)?.id
       const page = await fetchMessages(conversationId, 20, earliest)
-      if (page.items.length) prepend(page.items as RenderMessage[])
+      if (page.items.length) prepend(flattenMessages(page.items))
       setHasMore(page.hasMore)
     } finally {
       setLoadingMore(false)

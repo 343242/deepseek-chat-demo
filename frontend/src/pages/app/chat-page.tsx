@@ -6,8 +6,9 @@ import { ChatInput } from '@/components/chat/chat-input'
 import { ReferenceCard } from '@/components/chat/reference-card'
 import { AgentSummary } from '@/components/chat/agent-summary'
 import { Skeleton } from '@/components/ui/skeleton'
-import { useChatStore, type RenderMessage } from '@/stores/chat-store'
+import { useChatStore } from '@/stores/chat-store'
 import { useConversationDetail } from '@/api/conversations'
+import { flattenMessages } from '@/lib/chat/flatten-messages'
 
 export default function ChatPage() {
   const { conversationId = null } = useParams<{ conversationId?: string }>()
@@ -25,10 +26,10 @@ export default function ChatPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [conversationId])
 
-  // 加载会话详情（首批消息）
+  // 加载会话详情（首批消息）—— 后端返回一层子消息树，此处摊平为线性序列
   const { data, isLoading } = useConversationDetail(conversationId)
   useEffect(() => {
-    if (data?.messages) setMessages(data.messages as RenderMessage[])
+    if (data?.messages) setMessages(flattenMessages(data.messages))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data])
 

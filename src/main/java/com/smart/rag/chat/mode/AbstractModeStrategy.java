@@ -43,6 +43,8 @@ public abstract class AbstractModeStrategy implements ChatModeStrategy {
     private static final String MDC_RAG_SESSION_ID = "ragSessionId";
     /** MDC key：检索路径模式（注入 CHAT，供 trace 切面 + PATH_RECALL 兜底取 mode） */
     private static final String MDC_RAG_MODE = "ragMode";
+    /** MDC key：当前用户 ID（注入，供 trace 切面对无上下文参数的埋点方法兜底取 userId，如 ChatReferenceCollector.collect） */
+    private static final String MDC_RAG_USER_ID = "ragUserId";
 
     protected final AdvisorInfrastructure infra;
     protected final ChatRequestSpecFactory requestSpecFactory;
@@ -75,11 +77,13 @@ public abstract class AbstractModeStrategy implements ChatModeStrategy {
     public final StrategyExecuteResult execute(StrategyExecutionContext ctx) {
         MDC.put(MDC_RAG_SESSION_ID, ctx.conversationId());
         MDC.put(MDC_RAG_MODE, "CHAT");
+        putRagUserId(ctx);
         try {
             return doExecute(ctx);
         } finally {
             MDC.remove(MDC_RAG_SESSION_ID);
             MDC.remove(MDC_RAG_MODE);
+            MDC.remove(MDC_RAG_USER_ID);
         }
     }
 
@@ -124,11 +128,20 @@ public abstract class AbstractModeStrategy implements ChatModeStrategy {
     public StreamResult executeStream(StrategyExecutionContext ctx) {
         MDC.put(MDC_RAG_SESSION_ID, ctx.conversationId());
         MDC.put(MDC_RAG_MODE, "CHAT");
+        putRagUserId(ctx);
         try {
             return doExecuteStream(ctx);
         } finally {
             MDC.remove(MDC_RAG_SESSION_ID);
             MDC.remove(MDC_RAG_MODE);
+            MDC.remove(MDC_RAG_USER_ID);
+        }
+    }
+
+    private static void putRagUserId(StrategyExecutionContext ctx) {
+        Long userId = ctx.userId();
+        if (userId != null) {
+            MDC.put(MDC_RAG_USER_ID, Long.toString(userId));
         }
     }
 

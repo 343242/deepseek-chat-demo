@@ -24,7 +24,7 @@ import java.util.Map;
  * <ul>
  *   <li><b>sessionId/userId</b>：优先从参数中的 {@code ToolWorkspace}（Agent 路径，反射调用 getSessionId/getUserId）取；
  *       其次从 {@code StrategyExecutionContext}（Chat 路径，反射调用 conversationId/userId）取；
- *       最后从 MDC {@code ragSessionId} 兜底（Chat 路径入口注入）。</li>
+ *       最后从 MDC 兜底（Chat 路径入口注入 {@code ragSessionId} / {@code ragUserId}）。</li>
  *   <li><b>traceId</b>：从 MDC {@code traceId} 取（micrometer 自动注入）。</li>
  *   <li><b>返回值</b>：
  *     <ul>
@@ -47,6 +47,10 @@ public class TraceAspect {
     private static final String MDC_SESSION_ID = "ragSessionId";
     /** MDC key：检索路径模式（入口注入，供 PATH_RECALL 等非 AOP 路径兜底取 mode） */
     private static final String MDC_MODE = "ragMode";
+    /** MDC key：当前用户 ID（Chat 路径入口注入，供无上下文参数的埋点方法兜底取 userId） */
+    private static final String MDC_USER_ID = "ragUserId";
+    /** userId 兜底哨兵（NOT NULL 约束）：0 = 未知用户，含义同 sessionId 的 "unknown" */
+    private static final long UNKNOWN_USER_ID = 0L;
 
     private final TraceRecorder recorder;
     private final ObjectMapper objectMapper;
@@ -123,6 +127,14 @@ public class TraceAspect {
         }
         if (sessionId == null || sessionId.isBlank()) {
             sessionId = "unknown";
+        }
+        // 兜底：userId 未知时从 MDC 取（Chat 路径入口注入；如 ChatReferenceCollector.collect 的参数
+        // 是 List<Document>，provider 无法提取 userId）；仍未知用 0 哨兵（NOT NULL 约束）
+        if (userId == null) {
+            userId = mdcUserIdOrNull();
+        }
+        if (userId == null) {
+            userId = UNKNOWN_USER_ID;
         }
         // mode 兜底：provider 未命中时从 MDC 取（入口注入）
         if (mode == null) {
@@ -307,6 +319,18 @@ public class TraceAspect {
 
     private @Nullable String mdcTraceIdOrNull() {
         return org.slf4j.MDC.get(MDC_TRACE_ID);
+    }
+
+    private static @Nullable Long mdcUserIdOrNull() {
+        String v = org.slf4j.MDC.get(MDC_USER_ID);
+        if (v == null || v.isBlank()) {
+            return null;
+        }
+        try {
+            return Long.parseLong(v.trim());
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     // === 内部数据载体 ===

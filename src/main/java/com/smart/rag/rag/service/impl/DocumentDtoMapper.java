@@ -4,6 +4,7 @@ import com.smart.rag.rag.dto.ChunkDTO;
 import com.smart.rag.rag.dto.DocumentDTO;
 import com.smart.rag.rag.entity.RagDocument;
 import com.smart.rag.rag.mapper.VectorStoreMapper;
+import com.smart.rag.rag.service.DocumentPreviewPolicy;
 import org.springframework.stereotype.Component;
 
 import java.util.Map;
@@ -17,7 +18,14 @@ import java.util.Map;
 @Component
 public class DocumentDtoMapper {
 
+    private final DocumentPreviewPolicy previewPolicy;
+
+    public DocumentDtoMapper(DocumentPreviewPolicy previewPolicy) {
+        this.previewPolicy = previewPolicy;
+    }
+
     public DocumentDTO toDTO(RagDocument doc) {
+        long fileSize = doc.getFileSize() != null ? doc.getFileSize() : 0L;
         return new DocumentDTO(
                 doc.getId(),
                 doc.getFileName(),
@@ -31,7 +39,8 @@ public class DocumentDtoMapper {
                 doc.getVersion(),
                 doc.getSupersededBy(),
                 doc.getDocumentGroupId(),
-                doc.getCreateTime()
+                doc.getCreateTime(),
+                previewPolicy.previewable(doc.getMimeType(), fileSize)
         );
     }
 

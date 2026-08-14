@@ -58,6 +58,8 @@ public enum ClientErrorCode implements IErrorCode {
     UPLOAD_CHUNK_CHECKSUM_MISMATCH(104006, "分片校验失败，请重传"),
     UPLOAD_FILE_CHECKSUM_MISMATCH(104007, "文件校验失败"),
     UPLOAD_INCOMPLETE(104008, "文件未上传完整"),
+    DOCUMENT_PREVIEW_UNSUPPORTED(104009, "该文件类型不支持在线预览"),
+    DOCUMENT_PREVIEW_TOO_LARGE(104010, "文件超出预览大小限制"),
 
     // ==================== 团队客户端 105001–105999 ====================
     TEAM_NAME_DUPLICATE(105001, "团队名称已存在"),

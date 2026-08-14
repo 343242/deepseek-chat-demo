@@ -9,6 +9,8 @@ import com.smart.rag.rag.entity.RagDocument;
 import com.smart.rag.rag.etl.EtlStatus;
 import com.smart.rag.rag.mapper.RagDocumentMapper;
 import com.smart.rag.rag.mapper.VectorStoreMapper;
+import com.smart.rag.rag.config.DocumentProperties;
+import com.smart.rag.rag.service.DocumentPreviewPolicy;
 import com.smart.rag.rag.service.EtlDispatchService;
 import com.smart.rag.rag.service.TeamAccessGate;
 import com.smart.rag.rag.upload.UploadStrategyRouter;
@@ -53,7 +55,8 @@ class DocumentApplicationServiceImplAuthTest {
     private DocumentApplicationServiceImpl service() {
         return new DocumentApplicationServiceImpl(etlDispatchService, ragDocumentMapper,
                 documentLifecycleService, uploadStrategyRouter, teamAccessGate, vectorStoreMapper,
-                new DocumentDtoMapper(), new DocumentAccessGuard(ragDocumentMapper, teamAccessGate));
+                new DocumentDtoMapper(new DocumentPreviewPolicy(new DocumentProperties())),
+                new DocumentAccessGuard(ragDocumentMapper, teamAccessGate));
     }
 
     private static RagDocument doc(Long teamId, Long ownerId, EtlStatus status) {

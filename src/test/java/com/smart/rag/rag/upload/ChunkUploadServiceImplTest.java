@@ -1,6 +1,7 @@
 package com.smart.rag.rag.upload;
 
 import com.smart.rag.common.util.ChecksumUtils;
+import com.smart.rag.rag.service.DocumentMimePolicy;
 import com.smart.rag.rag.service.TeamAccessGate;
 import com.smart.rag.infrastructure.exception.ClientException;
 import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;
@@ -13,6 +14,7 @@ import com.smart.rag.rag.service.impl.DocumentValidator;
 import io.minio.GetObjectArgs;
 import io.minio.GetObjectResponse;
 import io.minio.MinioClient;
+import org.apache.poi.xwpf.usermodel.XWPFDocument;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -27,6 +29,7 @@ import org.springframework.data.redis.core.HashOperations;
 import org.springframework.data.redis.core.StringRedisTemplate;
 
 import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.Executor;
@@ -48,8 +51,9 @@ import static org.mockito.Mockito.when;
  * <ul>
  *   <li>(a) MIME 不匹配 → {@link ClientErrorCode#UPLOAD_MIME_UNSUPPORTED} + 合并对象删除 +
  *       Redis 合并锁清除（fail-closed cleanup，防止孤儿 MinIO 对象）</li>
- *   <li>(b) OOXML 声明 + zip 容器检测 → 用声明子类型路由 persist/dispatch（检测确认放行）</li>
- *   <li>(c) 探测失败（null）→ fail-closed 拒绝，不静默接受</li>
+ *   <li>(b) 真实 OOXML 包（POI 构造的 docx）→ 用服务端规范 MIME 路由 persist/dispatch</li>
+ *   <li>(b2) 裸 zip 容器伪装 .docx（无 OOXML 包结构）→ 拒绝，不能只按 ZIP 魔数/扩展名放行</li>
+ *   <li>(c) 探测失败（无法识别）→ fail-closed 拒绝，不静默接受</li>
  * </ul>
  */
 @ExtendWith(MockitoExtension.class)
@@ -126,13 +130,13 @@ class ChunkUploadServiceImplTest {
     void setUp() {
         DocumentProperties props = new DocumentProperties();
         // 默认白名单包含 pdf/docx/pptx/text 等，确认默认配置即可覆盖测试场景
-        documentValidator = new DocumentValidator(props);
+        documentValidator = new DocumentValidator(props, new DocumentMimePolicy(props));
 
         when(redisTemplate.opsForHash()).thenReturn(hashOperations);
 
         service = new ChunkUploadServiceImpl(
                 redisTemplate, minioClient, bucketResolver, chunkSizeStrategy,
-                props, documentValidator, fileStorageService, ragDocumentMapper,
+                props, documentValidator, new DocumentMimePolicy(props), fileStorageService, ragDocumentMapper,
                 etlDispatchService, teamAccessGate, DIRECT_EXECUTOR,
                 eventPublisher, null);
     }
@@ -164,13 +168,12 @@ class ChunkUploadServiceImplTest {
     }
 
     @Test
-    @DisplayName("(b) 声明 docx + 检测到 zip 容器 → 用 docx 声明子类型 persist 与 dispatch")
-    void ooxmlDeclared_zipDetected_routesWithDeclaredSubtype() throws Exception {
-        // 合并后真实字节：zip 容器（魔数无法区分 docx/pptx/xlsx，需依赖扩展名）
-        byte[] zipBytes = {0x50, 0x4B, 0x03, 0x04, 0x00, 0x00, 0x00, 0x00, 'a', 'b'};
-        stubMinioStreams(zipBytes);
+    @DisplayName("(b) 真实 OOXML docx 包 → 用服务端规范 MIME persist 与 dispatch")
+    void validDocx_routesWithCanonicalMime() throws Exception {
+        byte[] docxBytes = realDocxBytes();
+        stubMinioStreams(docxBytes);
 
-        when(hashOperations.entries(anyString())).thenReturn(sessionFixture(DOCX_MIME, ChecksumUtils.sha256Hex(zipBytes)));
+        when(hashOperations.entries(anyString())).thenReturn(sessionFixture(DOCX_MIME, ChecksumUtils.sha256Hex(docxBytes)));
         when(ragDocumentMapper.insert(any(RagDocument.class))).thenAnswer(inv -> {
             ((RagDocument) inv.getArgument(0)).setId(42L);
             return 1;
@@ -178,22 +181,50 @@ class ChunkUploadServiceImplTest {
 
         service.performMerge(UPLOAD_ID);
 
-        // (b.1) persist 使用 docx 声明子类型（检测仅确认 zip 容器，子类型由扩展名路由）
+        // (b.1) persist 使用服务端校验得出的规范 docx MIME
         ArgumentCaptor<RagDocument> docCaptor = ArgumentCaptor.forClass(RagDocument.class);
         verify(ragDocumentMapper).insert(docCaptor.capture());
         assertThat(docCaptor.getValue().getMimeType())
-                .as("persistDocument 必须使用检测确认的 docx MIME，而非 generic zip")
+                .as("persistDocument 必须使用服务端规范 docx MIME")
                 .isEqualTo(DOCX_MIME);
 
-        // (b.2) ETL dispatch 使用同一 docx MIME 路由解析器
+        // (b.2) ETL dispatch 使用同一规范 MIME 路由解析器
         ArgumentCaptor<String> mimeCaptor = ArgumentCaptor.forClass(String.class);
         verify(etlDispatchService).dispatchAsync(
                 eq(42L), eq(BUCKET), anyString(), anyString(),
                 mimeCaptor.capture(),
                 org.mockito.ArgumentMatchers.anyLong(), any(), any());
         assertThat(mimeCaptor.getValue())
-                .as("dispatchAsync 必须使用 effective(docx) MIME")
+                .as("dispatchAsync 必须使用规范 docx MIME")
                 .isEqualTo(DOCX_MIME);
+    }
+
+    @Test
+    @DisplayName("(b2) 裸 zip 容器伪装 .docx（无 OOXML 包结构）→ 拒绝，不按 ZIP 魔数放行")
+    void bareZipDisguisedAsDocx_rejected() throws Exception {
+        byte[] zipBytes = {0x50, 0x4B, 0x03, 0x04, 0x00, 0x00, 0x00, 0x00, 'a', 'b'};
+        stubMinioStreams(zipBytes);
+
+        when(hashOperations.entries(anyString())).thenReturn(sessionFixture(DOCX_MIME, ChecksumUtils.sha256Hex(zipBytes)));
+
+        assertThatThrownBy(() -> service.performMerge(UPLOAD_ID))
+                .isInstanceOfSatisfying(ClientException.class,
+                        ex -> assertThat(ex.getErrorCode())
+                                .as("无 OOXML 包结构的 zip 必须被拒绝")
+                                .isEqualTo(ClientErrorCode.UPLOAD_MIME_UNSUPPORTED));
+
+        verifyNoInteractions(ragDocumentMapper);
+        verifyNoInteractions(etlDispatchService);
+    }
+
+    /** 用 POI 构造真实可解析的 docx 包（含 [Content_Types].xml 与主文档关系） */
+    private static byte[] realDocxBytes() throws Exception {
+        try (XWPFDocument doc = new XWPFDocument();
+             ByteArrayOutputStream bos = new ByteArrayOutputStream()) {
+            doc.createParagraph().createRun().setText("chunk merge canonical mime test");
+            doc.write(bos);
+            return bos.toByteArray();
+        }
     }
 
     @Test

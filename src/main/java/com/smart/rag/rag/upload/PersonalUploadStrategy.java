@@ -14,6 +14,7 @@ import com.smart.rag.rag.service.EtlDispatchService;
 import com.smart.rag.rag.service.FileStorageService;
 import com.smart.rag.rag.service.DocumentDedupService;
 import com.smart.rag.rag.service.impl.DocumentValidator;
+import com.smart.rag.rag.service.impl.ValidatedDocumentFile;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -76,10 +77,9 @@ public class PersonalUploadStrategy implements UploadStrategy {
 
     @Override
     public DocumentUploadResponse upload(MultipartFile file, @Nullable Long teamId, @Nullable Long replaceDocumentId, Long userId) {
-        documentValidator.validate(file);
-
-        String mimeType = file.getContentType();
-        String originalFilename = file.getOriginalFilename();
+        ValidatedDocumentFile validated = documentValidator.validate(file);
+        String mimeType = validated.canonicalMimeType();
+        String originalFilename = validated.fileName();
         String bucket = bucketResolver.resolve(null);
 
         fileStorageService.ensureBucketExists(bucket);
@@ -87,14 +87,14 @@ public class PersonalUploadStrategy implements UploadStrategy {
         fileStorageService.upload(bucket, storageKey, file.getResource(), mimeType);
 
         String fileChecksum = computeChecksum(file);
-        RagDocument ragDoc = persistDocument(originalFilename, file.getSize(), mimeType, storageKey, bucket, userId, fileChecksum);
+        RagDocument ragDoc = persistDocument(originalFilename, validated.fileSize(), mimeType, storageKey, bucket, userId, fileChecksum);
         if (documentDedupService != null && ragDoc.getFileChecksum() != null) {
             documentDedupService.add(ragDoc.getFileChecksum());
         }
         eventPublisher.publishEvent(new DocumentCreatedEvent(ragDoc.getId(), replaceDocumentId, userId, ragDoc.getTeamId()));
-        log.info("Document uploaded: id={}, file={}, size={}, userId={}", ragDoc.getId(), originalFilename, file.getSize(), userId);
+        log.info("Document uploaded: id={}, file={}, size={}, userId={}", ragDoc.getId(), originalFilename, validated.fileSize(), userId);
 
-        etlDispatchService.dispatchAsync(ragDoc.getId(), bucket, storageKey, originalFilename, mimeType, file.getSize(), userId, ragDoc.getTeamId());
+        etlDispatchService.dispatchAsync(ragDoc.getId(), bucket, storageKey, originalFilename, mimeType, validated.fileSize(), userId, ragDoc.getTeamId());
 
         return new DocumentUploadResponse(ragDoc.getId(), originalFilename, EtlStatus.PROCESSING);
     }
@@ -116,20 +116,21 @@ public class PersonalUploadStrategy implements UploadStrategy {
         List<DocumentUploadResponse> responses = new ArrayList<>();
 
         for (MultipartFile file : files) {
-            String originalFilename = file.getOriginalFilename();
+            ValidatedDocumentFile validated = documentValidator.validate(file);
+            String mimeType = validated.canonicalMimeType();
+            String originalFilename = validated.fileName();
             String storageKey = buildStorageKey(userId, originalFilename);
             boolean uploaded = false;
             RagDocument ragDoc = null;
             try {
-                String mimeType = file.getContentType();
                 fileStorageService.upload(bucket, storageKey, file.getResource(), mimeType);
                 uploaded = true;
 
                 String fileChecksum = computeChecksum(file);
-                ragDoc = persistDocument(originalFilename, file.getSize(), mimeType, storageKey, bucket, userId, fileChecksum);
+                ragDoc = persistDocument(originalFilename, validated.fileSize(), mimeType, storageKey, bucket, userId, fileChecksum);
                 // persist 成功后立即登记 dispatch 候选 —— 即使后续 dedup/event 抛异常，
                 // 该文档仍会被 dispatch，避免落入 UPLOADED 死状态。
-                candidates.add(new EtlCandidate(ragDoc.getId(), bucket, storageKey, originalFilename, mimeType, file.getSize(), userId, ragDoc.getTeamId()));
+                candidates.add(new EtlCandidate(ragDoc.getId(), bucket, storageKey, originalFilename, mimeType, validated.fileSize(), userId, ragDoc.getTeamId()));
                 if (documentDedupService != null && ragDoc.getFileChecksum() != null) {
                     documentDedupService.add(ragDoc.getFileChecksum());
                 }

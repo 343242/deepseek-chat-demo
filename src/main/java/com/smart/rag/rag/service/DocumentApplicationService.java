@@ -80,4 +80,13 @@ public interface DocumentApplicationService {
      * @return chunk DTO
      */
     ChunkDTO getChunk(String chunkId);
+
+    /**
+     * 授权后的文件读取描述符（preview / download 共用，设计 §5）。
+     * <p>
+     * 复用 {@code DocumentAccessGuard.verifyAccess} 的统一权限语义（owner / manager /
+     * uploader 放行；非 COMPLETED 团队文档对非管理者返回 DOCUMENT_NOT_FOUND）。
+     * 仅在授权通过后返回；描述符携带的存储定位信息只在模块内部流转。
+     */
+    AuthorizedDocumentFile authorizeFileRead(Long id);
 }

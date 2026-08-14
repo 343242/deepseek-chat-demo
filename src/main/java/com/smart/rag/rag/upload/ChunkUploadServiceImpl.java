@@ -13,6 +13,7 @@ import com.smart.rag.rag.mapper.RagDocumentMapper;
 import com.smart.rag.rag.service.FileStorageService;
 import com.smart.rag.rag.service.EtlDispatchService;
 import com.smart.rag.rag.service.DocumentDedupService;
+import com.smart.rag.rag.service.DocumentMimePolicy;
 import com.smart.rag.rag.service.TeamAccessGate;
 import com.smart.rag.rag.service.impl.DocumentValidator;
 import com.smart.rag.infrastructure.web.util.SecurityUtils;
@@ -79,6 +80,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
     private final ChunkSessionStore sessionStore;
     private final ChunkMinioGateway minioGateway;
     private final ChunkMergeService mergeService;
+    private final DocumentMimePolicy documentMimePolicy;
     private final DefaultRedisScript<List> atomicChunkUploadScript;
 
     public ChunkUploadServiceImpl(
@@ -88,6 +90,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
             ChunkSizeStrategy chunkSizeStrategy,
             DocumentProperties documentProperties,
             DocumentValidator documentValidator,
+            DocumentMimePolicy documentMimePolicy,
             FileStorageService fileStorageService,
             RagDocumentMapper ragDocumentMapper,
             EtlDispatchService etlDispatchService,
@@ -101,6 +104,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         this.chunkSizeStrategy = chunkSizeStrategy;
         this.documentProperties = documentProperties;
         this.documentValidator = documentValidator;
+        this.documentMimePolicy = documentMimePolicy;
         this.fileStorageService = fileStorageService;
         this.ragDocumentMapper = ragDocumentMapper;
         this.mergeExecutor = mergeExecutor;
@@ -385,8 +389,8 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
     // ==================== 私有方法 ====================
 
     private void validateMimeType(String mimeType) {
-        // R1-M7: 委托 DocumentValidator 的单一解析入口，容忍配置中的空格
-        if (!documentValidator.isAllowedMimeType(mimeType)) {
+        // 声明值仅做白名单预筛（别名经 Policy 归一化）；最终落库的规范 MIME 由合并后服务端校验产出
+        if (!documentMimePolicy.isAllowed(mimeType)) {
             throw new ClientException(ClientErrorCode.UPLOAD_MIME_UNSUPPORTED, "不支持的文件类型: " + mimeType);
         }
     }
@@ -490,7 +494,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
                 Map.entry(ChunkSessionStore.FIELD_FILE_CHECKSUM, request.fileChecksum()),
                 Map.entry(ChunkSessionStore.FIELD_FILE_NAME, request.fileName()),
                 Map.entry(ChunkSessionStore.FIELD_FILE_SIZE, String.valueOf(request.fileSize())),
-                Map.entry(ChunkSessionStore.FIELD_MIME_TYPE, request.mimeType()),
+                Map.entry(ChunkSessionStore.FIELD_MIME_TYPE, documentMimePolicy.normalizeAlias(request.mimeType())),
                 Map.entry(ChunkSessionStore.FIELD_CHUNK_SIZE, String.valueOf(chunkSize)),
                 Map.entry(ChunkSessionStore.FIELD_TOTAL_CHUNKS, String.valueOf(totalChunks)),
                 Map.entry(ChunkSessionStore.FIELD_USER_ID, String.valueOf(userId)),

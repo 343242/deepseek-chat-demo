@@ -205,6 +205,17 @@
             </exclusions>
         </dependency>
 
+        <!-- Markdown 渲染（原文件预览）：依赖树已有 0.22.0（Tika 传递引入），声明为直接依赖避免业务代码依赖传递依赖 -->
+        <dependency>
+            <groupId>org.commonmark</groupId>
+            <artifactId>commonmark</artifactId>
+        </dependency>
+        <!-- HTML 净化（原文件预览）：依赖树已有 1.22.1（Tika 传递引入），声明为直接依赖 -->
+        <dependency>
+            <groupId>org.jsoup</groupId>
+            <artifactId>jsoup</artifactId>
+        </dependency>
+
         <!-- Spring AI Tika Document Reader (universal fallback parser) -->
         <dependency>
             <groupId>org.springframework.ai</groupId>
@@ -427,6 +438,20 @@
                 <groupId>org.apache.commons</groupId>
                 <artifactId>commons-compress</artifactId>
                 <version>1.28.0</version>
+            </dependency>
+            <!--
+                原文件预览：与依赖树实际版本保持一致（经 spring-ai-tika-document-reader 传递）。
+                显式 pin 防止 Tika 升级时业务代码（DocumentRenderService）静默漂移。
+            -->
+            <dependency>
+                <groupId>org.commonmark</groupId>
+                <artifactId>commonmark</artifactId>
+                <version>0.22.0</version>
+            </dependency>
+            <dependency>
+                <groupId>org.jsoup</groupId>
+                <artifactId>jsoup</artifactId>
+                <version>1.22.1</version>
             </dependency>
         </dependencies>
     </dependencyManagement>

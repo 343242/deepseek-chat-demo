@@ -1,10 +1,20 @@
 package com.smart.rag.rag.service.impl;
 
-import com.github.benmanes.caffeine.cache.Cache;
-import com.github.benmanes.caffeine.cache.Caffeine;
-import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;
 import com.smart.rag.infrastructure.exception.ClientException;
+import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;
 import com.smart.rag.rag.config.DocumentProperties;
+import com.smart.rag.rag.service.DocumentMimePolicy;
+import org.apache.poi.openxml4j.opc.OPCPackage;
+import org.apache.poi.openxml4j.opc.PackageAccess;
+import org.apache.poi.openxml4j.opc.PackagePart;
+import org.apache.poi.openxml4j.opc.PackagePartName;
+import org.apache.poi.openxml4j.opc.PackageRelationship;
+import org.apache.poi.openxml4j.opc.PackageRelationshipCollection;
+import org.apache.poi.openxml4j.opc.PackageRelationshipTypes;
+import org.apache.poi.openxml4j.opc.PackagingURIHelper;
+import org.apache.tika.Tika;
+import org.apache.tika.io.TikaInputStream;
+import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -13,23 +23,21 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
 import java.io.InputStream;
-import java.util.Arrays;
-import java.util.Map;
-import java.util.Set;
-import java.util.stream.Collectors;
+import java.nio.file.Files;
+import java.nio.file.Path;
 
 /**
- * 文档校验器（单一职责）
+ * 文档上传校验器 — 服务端规范 MIME 的产出点（原文件预览与下载设计 §3）。
  * <p>
- * 封装文件上传的所有校验逻辑：
- * <ul>
- *   <li>非空校验</li>
- *   <li>大小限制</li>
- *   <li>MIME 白名单（客户端声明）</li>
- *   <li>服务端 MIME 探测（魔数校验，防止 Content-Type 伪造）</li>
- * </ul>
- * <p>
- * 从 DocumentApplicationServiceImpl 中提取，符合 SRP。
+ * 校验流程：
+ * <ol>
+ *   <li>非空 + 大小上限</li>
+ *   <li>内容落临时文件后经 Tika 做文件支撑探测（流式探测无法兑现 OOXML 包关系校验）</li>
+ *   <li>OOXML 再经 POI {@code OPCPackage.open} 确认主关系、目标 part 与 content type</li>
+ *   <li>{@link DocumentMimePolicy} 对「探测结果 × 扩展名」做一致性二次校验</li>
+ * </ol>
+ * 客户端声明的 Content-Type 只可作为诊断信息，不参与类型决策。
+ * 加密、损坏、结构不完整或触发 ZIP 安全限制的 OOXML 一律拒绝。
  */
 @Component
 public class DocumentValidator {
@@ -37,31 +45,25 @@ public class DocumentValidator {
     private static final Logger log = LoggerFactory.getLogger(DocumentValidator.class);
 
     private final DocumentProperties documentProperties;
+    private final DocumentMimePolicy mimePolicy;
+    private final Tika tika = new Tika();
 
-    /** 运行时解析的 MIME 白名单（单值缓存，替代手写 double-checked locking） */
-    private final Cache<String, Set<String>> allowedMimeTypesCache =
-            Caffeine.newBuilder().maximumSize(1).build();
-
-    private static final Map<String, String> EXTENSION_MIME_MAP = Map.of(
-            ".docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-            ".pptx", "application/vnd.openxmlformats-officedocument.presentationml.presentation"
-    );
-
-    public DocumentValidator(DocumentProperties documentProperties) {
+    public DocumentValidator(DocumentProperties documentProperties, DocumentMimePolicy mimePolicy) {
         this.documentProperties = documentProperties;
+        this.mimePolicy = mimePolicy;
     }
 
     /**
-     * 校验上传文件：非空 + 大小限制 + MIME 白名单 + 服务端 MIME 校验
+     * 校验上传文件并返回服务端规范元数据。
      *
      * @param file 上传文件
-     * @throws ClientException 校验不通过
+     * @return 含规范 MIME 的校验结果
+     * @throws ClientException 校验不通过（空文件、超限、类型不支持、内容与扩展名不符）
      */
-    public void validate(MultipartFile file) {
+    public ValidatedDocumentFile validate(MultipartFile file) {
         if (file.isEmpty()) {
             throw new ClientException(ClientErrorCode.UPLOAD_FILE_EMPTY);
         }
-
         long maxBytes = DataSize.parse(documentProperties.getMaxFileSize()).toBytes();
         if (file.getSize() > maxBytes) {
             throw new ClientException(ClientErrorCode.UPLOAD_FILE_TOO_LARGE,
@@ -69,137 +71,141 @@ public class DocumentValidator {
                             DataSize.ofBytes(file.getSize()).toMegabytes() + "MB",
                             documentProperties.getMaxFileSize()));
         }
-
-        String declaredMimeType = file.getContentType();
-        Set<String> allowed = getAllowedMimeTypes();
-        if (declaredMimeType == null || !allowed.contains(declaredMimeType)) {
-            throw new ClientException(ClientErrorCode.UPLOAD_MIME_UNSUPPORTED, "不支持的文件类型: " + declaredMimeType);
-        }
-
-        String detectedMimeType = detectMimeType(file);
-        if (detectedMimeType != null && !allowed.contains(detectedMimeType)
-                && !isZipBasedOfficeDocument(declaredMimeType, detectedMimeType)) {
-            throw new ClientException(ClientErrorCode.UPLOAD_MIME_UNSUPPORTED,
-                    String.format("文件实际类型(%s)与声明类型(%s)不匹配", detectedMimeType, declaredMimeType));
-        }
-    }
-
-    /**
-     * 通过文件头部魔数探测真实 MIME 类型（MultipartFile 入口，保留向后兼容）。
-     * <p>
-     * 委托给 {@link #detectMimeType(InputStream, String)}，使魔数校验逻辑可被
-     * 非分片上传路径（如分片合并后的 MinIO 对象）复用。
-     */
-    String detectMimeType(MultipartFile file) {
         try (InputStream is = file.getInputStream()) {
-            return detectMimeType(is, file.getOriginalFilename());
+            return validate(is, file.getOriginalFilename(), file.getSize());
         } catch (IOException e) {
-            log.warn("Failed to open stream for MIME detection: {}", e.getMessage());
-            return null;
+            throw new ClientException(ClientErrorCode.UPLOAD_FAILED, "读取上传文件失败");
         }
     }
 
     /**
-     * 通过流头部魔数探测真实 MIME 类型。
+     * 对任意内容流执行类型校验（分片上传合并后的 MinIO 对象复用同一入口）。
      * <p>
-     * 仅消费流的前 8 字节用于嗅探，调用方负责流的生命周期与重读。
-     * 用于分片上传合并后对 MinIO 对象的真实类型校验（R2-H1）。
+     * 输入在大小上限内落临时文件支撑 Tika 探测，校验完成（无论成败）后删除。
      *
-     * @param is          已打开的输入流，方法不关闭它
-     * @param fileName    原始文件名（可为 null），用于 OOXML 子类型（docx/pptx）的扩展名判定
-     * @return 探测到的 MIME 类型，无法识别时返回 null
+     * @param content  已打开的内容流（本方法负责关闭）
+     * @param fileName 原始文件名（扩展名参与一致性判定，不可为 null）
+     * @param fileSize 声明的文件大小（仅回填结果，不作为上限依据；上限始终按实际拷贝字节数强制）
+     * @return 含规范 MIME 的校验结果
      */
-    public String detectMimeType(InputStream is, String fileName) {
+    public ValidatedDocumentFile validate(InputStream content, String fileName, long fileSize) {
+        long maxBytes = DataSize.parse(documentProperties.getMaxFileSize()).toBytes();
+        Path tempFile = null;
         try {
-            byte[] header = new byte[8];
-            int read = is.readNBytes(header, 0, 8);
-            if (read < 4) return null;
-
-            String headerStr = new String(header, 0, Math.min(read, 4));
-
-            if (headerStr.startsWith("%PDF")) {
-                return "application/pdf";
+            tempFile = copyToTempFile(content, maxBytes);
+            String canonical = detectCanonicalMime(tempFile, fileName);
+            if (mimePolicy.isOoxml(canonical)) {
+                confirmOoxmlStructure(tempFile, canonical);
             }
+            return new ValidatedDocumentFile(fileName, fileSize, canonical);
+        } catch (ClientException e) {
+            throw e;
+        } catch (Exception e) {
+            log.warn("MIME validation failed unexpectedly: file={}, err={}", fileName, e.getMessage());
+            throw new ClientException(ClientErrorCode.UPLOAD_MIME_UNSUPPORTED, "文件类型校验失败");
+        } finally {
+            if (tempFile != null) {
+                deleteQuietly(tempFile);
+            }
+        }
+    }
 
-            if (header[0] == 0x50 && header[1] == 0x4B && header[2] == 0x03 && header[3] == 0x04) {
-                if (fileName != null) {
-                    String lower = fileName.toLowerCase();
-                    for (Map.Entry<String, String> entry : EXTENSION_MIME_MAP.entrySet()) {
-                        if (lower.endsWith(entry.getKey())) {
-                            return entry.getValue();
-                        }
-                    }
+    // ==================== 内部步骤 ====================
+
+    /** 有界拷贝到临时文件；超出大小上限立即拒绝（读取 maxBytes+1 以区分恰好等于上限的情况） */
+    private Path copyToTempFile(InputStream content, long maxBytes) throws IOException {
+        Path temp = Files.createTempFile("rag-validate-", ".tmp");
+        try (InputStream in = content;
+             java.io.OutputStream out = Files.newOutputStream(temp)) {
+            byte[] buffer = new byte[8192];
+            long copied = 0;
+            int read;
+            while ((read = in.read(buffer)) > 0) {
+                copied += read;
+                if (copied > maxBytes) {
+                    throw new ClientException(ClientErrorCode.UPLOAD_FILE_TOO_LARGE,
+                            String.format("文件大小超出限制: > %s", documentProperties.getMaxFileSize()));
                 }
-                return "application/zip";
+                out.write(buffer, 0, read);
             }
+        }
+        return temp;
+    }
 
-            boolean allPrintable = true;
-            for (int i = 0; i < read; i++) {
-                byte b = header[i];
-                if (b < 0x09 || (b > 0x0D && b < 0x20 && b != 0x1B)) {
-                    allPrintable = false;
-                    break;
-                }
-            }
-            if (allPrintable) {
-                return "text/plain";
-            }
+    /**
+     * 文件支撑的 Tika 探测 + Policy 一致性校验。
+     * <p>
+     * 禁止对普通 InputStream 直接调用 {@code Tika.detect}：流式探测只解析
+     * {@code [Content_Types].xml} 即可能给出 OOXML 类型，无法兑现包关系校验。
+     * 探测不携带文件名——内容类别必须只由内容决定；扩展名仅经
+     * {@link DocumentMimePolicy} 参与细分与一致性判定，避免 NameDetector
+     * 让文件名影响内容类别。
+     */
+    private String detectCanonicalMime(Path tempFile, String fileName) throws IOException {
+        String probed;
+        try (TikaInputStream tis = TikaInputStream.get(tempFile)) {
+            probed = tika.detect(tis);
+        }
+        String canonical = mimePolicy.canonicalForProbe(probed, fileName);
+        if (canonical == null) {
+            log.warn("MIME probe/extension mismatch: file={}, probed={}", fileName, probed);
+            throw new ClientException(ClientErrorCode.UPLOAD_MIME_UNSUPPORTED,
+                    String.format("文件实际类型与扩展名不符（检测为 %s）",
+                            probed == null ? "未知" : probed));
+        }
+        return canonical;
+    }
 
-            return null;
+    /**
+     * OOXML 包结构确认（设计 §3.2）：恰有一个 office document 主关系、目标 part 存在，
+     * 且其 content type 与扩展名对应的规范 MIME 匹配。
+     * <p>
+     * POI 的 ZIP 安全限制（{@code ZipSecureFile} 阈值由 {@code ZipSecurityConfig} 启动期钉死）
+     * 触发时以异常形式暴露，统一按类型不支持拒绝。加密包为 OLE2 容器，{@code OPCPackage.open}
+     * 同样抛异常落入拒绝分支。
+     */
+    private void confirmOoxmlStructure(Path tempFile, String canonicalMime) {
+        try (OPCPackage pkg = OPCPackage.open(tempFile.toFile(), PackageAccess.READ)) {
+            PackageRelationshipCollection rels =
+                    pkg.getRelationshipsByType(PackageRelationshipTypes.CORE_DOCUMENT);
+            if (rels.size() != 1) {
+                throw new ClientException(ClientErrorCode.UPLOAD_MIME_UNSUPPORTED,
+                        "OOXML 包缺少唯一的 office document 主关系");
+            }
+            PackageRelationship mainRel = rels.getRelationship(0);
+            String targetPath = mainRel.getTargetURI().getPath();
+            PackagePartName partName = PackagingURIHelper.createPartName(
+                    targetPath.startsWith("/") ? targetPath : "/" + targetPath);
+            PackagePart mainPart = pkg.getPart(partName);
+            if (mainPart == null) {
+                throw new ClientException(ClientErrorCode.UPLOAD_MIME_UNSUPPORTED,
+                        "OOXML 主关系目标 part 不存在");
+            }
+            String expected = DocumentMimePolicy.OOXML_MAIN_PART_CONTENT_TYPE.get(canonicalMime);
+            if (!expected.equals(mainPart.getContentType())) {
+                log.warn("OOXML main part content type mismatch: expected={}, actual={}",
+                        expected, mainPart.getContentType());
+                throw new ClientException(ClientErrorCode.UPLOAD_MIME_UNSUPPORTED,
+                        "OOXML 包结构与扩展名不符");
+            }
+        } catch (ClientException e) {
+            throw e;
+        } catch (Exception e) {
+            // OLE2/加密/损坏包、zip-bomb 阈值触发等结构异常统一拒绝
+            log.warn("OOXML structure check failed: err={}", e.getMessage());
+            throw new ClientException(ClientErrorCode.UPLOAD_MIME_UNSUPPORTED,
+                    "文件不是有效的 OOXML 包或已损坏/加密");
+        }
+    }
+
+    private static void deleteQuietly(@Nullable Path path) {
+        if (path == null) {
+            return;
+        }
+        try {
+            Files.deleteIfExists(path);
         } catch (IOException e) {
-            log.warn("Failed to detect MIME type: {}", e.getMessage());
-            return null;
+            log.warn("Failed to delete validation temp file: {}", e.getMessage());
         }
-    }
-
-    /**
-     * 校验「检测到的 MIME」是否落在允许白名单内，用于分片上传合并后的安全校验（R2-H1）。
-     * <p>
-     * 与 {@link #validate(MultipartFile)} 的差异：
-     * <ul>
-     *   <li>仅做检测类型 vs 白名单校验，不重复声明类型校验（声明类型已在 init 时校验）</li>
-     *   <li>对 OOXML 子类型（声明 openxmlformats 但检测为 application/zip）放行</li>
-     * </ul>
-     *
-     * @param detectedMimeType 检测到的真实类型（null 视为无法识别，返回 false）
-     * @param declaredMimeType 客户端声明类型（用于 OOXML zip 兼容判定）
-     * @return true 表示检测类型可信/可放行；false 表示需拒绝
-     */
-    public boolean isDetectedMimeTypeAcceptable(String detectedMimeType, String declaredMimeType) {
-        if (detectedMimeType == null) {
-            return false;
-        }
-        Set<String> allowed = getAllowedMimeTypes();
-        if (allowed.contains(detectedMimeType)) {
-            return true;
-        }
-        // OOXML 容器：真实魔数是 zip，声明为 office 子类型 → 放行（子类型由扩展名路由决定）
-        return isZipBasedOfficeDocument(declaredMimeType, detectedMimeType);
-    }
-
-    private boolean isZipBasedOfficeDocument(String declared, String detected) {
-        return "application/zip".equals(detected) && declared.contains("openxmlformats-officedocument");
-    }
-
-    /**
-     * 校验给定 MIME 类型是否在配置白名单内（容忍配置中的空格，如 "application/pdf, text/plain"）。
-     * <p>
-     * 单一解析入口（R1-M7）：供 {@code ChunkUploadServiceImpl.validateMimeType} 和本类的
-     * {@link #validate(MultipartFile)} 复用，避免重复的 split 逻辑遗漏 trim。
-     *
-     * @param mimeType 待校验的 MIME 类型（精确匹配，不 trim 输入）
-     * @return true 表示该类型在允许列表中
-     */
-    public boolean isAllowedMimeType(String mimeType) {
-        return mimeType != null && getAllowedMimeTypes().contains(mimeType);
-    }
-
-    private Set<String> getAllowedMimeTypes() {
-        // R1-M7: trim 每段并过滤空值，容忍配置中的空格（如 "application/pdf, text/plain"）
-        return allowedMimeTypesCache.get("allowed", key ->
-                Arrays.stream(documentProperties.getAllowedMimeTypes().split(","))
-                        .map(String::trim)
-                        .filter(s -> !s.isEmpty())
-                        .collect(Collectors.toUnmodifiableSet()));
     }
 }

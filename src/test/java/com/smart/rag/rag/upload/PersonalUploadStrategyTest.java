@@ -8,6 +8,7 @@ import com.smart.rag.rag.service.DocumentDedupService;
 import com.smart.rag.rag.service.EtlDispatchService;
 import com.smart.rag.rag.service.FileStorageService;
 import com.smart.rag.rag.service.impl.DocumentValidator;
+import com.smart.rag.rag.service.impl.ValidatedDocumentFile;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -61,6 +62,11 @@ class PersonalUploadStrategyTest {
     @BeforeEach
     void setUp() {
         when(bucketResolver.resolve(isNull())).thenReturn(BUCKET);
+        // 校验器返回服务端规范 MIME（模拟 Tika 探测结果，与客户端声明无关）
+        when(documentValidator.validate(any(MultipartFile.class))).thenAnswer(inv -> {
+            MultipartFile file = inv.getArgument(0);
+            return new ValidatedDocumentFile(file.getOriginalFilename(), file.getSize(), "application/pdf");
+        });
         strategy = new PersonalUploadStrategy(fileStorageService, etlDispatchService,
                 ragDocumentMapper, bucketResolver, documentValidator, eventPublisher, null);
     }

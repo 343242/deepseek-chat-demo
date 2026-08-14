@@ -10,6 +10,7 @@ import com.smart.rag.rag.config.DocumentProperties;
 import com.smart.rag.rag.dto.DocumentDTO;
 import com.smart.rag.rag.entity.RagDocument;
 import com.smart.rag.rag.etl.EtlStatus;
+import com.smart.rag.rag.service.DocumentMimePolicy;
 import com.smart.rag.rag.mapper.RagDocumentMapper;
 import com.smart.rag.rag.mapper.VectorStoreMapper;
 import com.smart.rag.rag.service.EtlDispatchService;
@@ -91,7 +92,9 @@ class W2CorrectnessQuickWinsTest {
             service = new DocumentApplicationServiceImpl(
                     etlDispatchService, ragDocumentMapper, documentLifecycleService,
                     uploadStrategyRouter, teamAccessGate, vectorStoreMapper,
-                    new com.smart.rag.rag.service.impl.DocumentDtoMapper(),
+                    new com.smart.rag.rag.service.impl.DocumentDtoMapper(
+                            new com.smart.rag.rag.service.DocumentPreviewPolicy(
+                                    new com.smart.rag.rag.config.DocumentProperties())),
                     new com.smart.rag.rag.service.impl.DocumentAccessGuard(ragDocumentMapper, teamAccessGate));
         }
 
@@ -243,14 +246,14 @@ class W2CorrectnessQuickWinsTest {
             // 配置含空格的白名单：旧代码的 Set.of(split) 会保留 " text/plain"，导致拒绝
             DocumentProperties props = new DocumentProperties();
             props.setAllowedMimeTypes("application/pdf, text/plain");
-            DocumentValidator validator = new DocumentValidator(props);
+            DocumentValidator validator = new DocumentValidator(props, new DocumentMimePolicy(props));
 
             when(redisTemplate.opsForHash()).thenReturn(hashOperations);
             when(redisTemplate.opsForValue()).thenReturn(valueOperations);
 
             service = new ChunkUploadServiceImpl(
                     redisTemplate, minioClient, bucketResolver, chunkSizeStrategy,
-                    props, validator, fileStorageService, ragDocumentMapper,
+                    props, validator, new DocumentMimePolicy(props), fileStorageService, ragDocumentMapper,
                     etlDispatchService, teamAccessGate, Runnable::run,
                     eventPublisher, null);
         }
@@ -315,13 +318,13 @@ class W2CorrectnessQuickWinsTest {
         @BeforeEach
         void setUp() {
             DocumentProperties props = new DocumentProperties();
-            DocumentValidator validator = new DocumentValidator(props);
+            DocumentValidator validator = new DocumentValidator(props, new DocumentMimePolicy(props));
 
             when(redisTemplate.opsForHash()).thenReturn(hashOperations);
 
             service = new ChunkUploadServiceImpl(
                     redisTemplate, minioClient, bucketResolver, chunkSizeStrategy,
-                    props, validator, fileStorageService, ragDocumentMapper,
+                    props, validator, new DocumentMimePolicy(props), fileStorageService, ragDocumentMapper,
                     etlDispatchService, teamAccessGate, Runnable::run,
                     eventPublisher, null);
         }

@@ -20,6 +20,7 @@ import java.time.OffsetDateTime;
  * @param supersededBy    被哪个文档替代（null = 当前版本）
  * @param documentGroupId 文档逻辑标识（同一文档不同版本共享）
  * @param createTime      创建时间
+ * @param previewable     是否可在线预览（按数据库规范 MIME + 文件大小与预览策略计算）
  */
 public record DocumentDTO(
     Long id,
@@ -34,5 +35,6 @@ public record DocumentDTO(
     Integer version,
     Long supersededBy,
     String documentGroupId,
-    OffsetDateTime createTime
+    OffsetDateTime createTime,
+    boolean previewable
 ) {}

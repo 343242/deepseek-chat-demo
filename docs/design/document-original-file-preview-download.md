@@ -32,7 +32,7 @@ MinIO 只在内部网络提供服务，浏览器始终访问应用端点。该�
 
 原文件已经在上传时写入 MinIO，`rag_document` 也保存 bucket、storage key、文件名、大小和 MIME。缺陷不在对象缺失，而在应用层没有授权后的二进制输出契约。
 
-同时，当前上传校验虽然执行服务端 MIME 探测，个人和团队上传仍把 `MultipartFile.getContentType()` 写入数据库（分片上传路径已落服务端检测值，是三者中的例外）。浏览器声明值不是可信安全边界，不能用于决定是否内联预览。
+同时，当前上传校验虽然执行服务端 MIME 探测，个人和团队上传仍把 `MultipartFile.getContentType()` 写入数据库；分片上传路径相对最好但也不彻底——PDF / 文本已落服务端检测值，OOXML 子类型因魔数只能探出 `application/zip`，最终仍回退客户端声明值（`ChunkMergeService.resolveEffectiveMimeType`）。浏览器声明值不是可信安全边界，不能用于决定是否内联预览。
 
 因此本功能必须同时完成两项根因修正：
 
@@ -85,7 +85,7 @@ public record ValidatedDocumentFile(
 
 对 DOCX / PPTX / XLSX，候选 MIME 之后还必须通过项目已有 Apache POI `OPCPackage.open(...)` 做结构确认：包中恰有可解析的 office document 主关系、关系目标 part 存在，且目标 part 的 content type 与扩展名对应。Tika 检测结果和扩展名再由 `DocumentMimePolicy` 做一致性二次校验。客户端声明 MIME 只可作为诊断信息，不参与最终类型决策；加密包、损坏包、结构不完整包和触发 POI ZIP 安全限制的包一律拒绝。
 
-`DocumentMimePolicy` 解析现有 `DocumentProperties.allowedMimeTypes`，在应用启动时将别名规范化并校验其属于上表：`text/x-markdown` 归一化为 `text/markdown`，未知配置值使应用启动失败。运行时只通过该 Policy 获取启用的规范 MIME 集合，不直接读取或拆分配置字符串。`DocumentValidator` 内现有的 `getAllowedMimeTypes()` 双检锁缓存随之删除，避免两套解析路径并存。
+`DocumentMimePolicy` 解析现有 `DocumentProperties.allowedMimeTypes`，在应用启动时将别名规范化并校验其属于上表：`text/x-markdown` 归一化为 `text/markdown`，未知配置值使应用启动失败。运行时只通过该 Policy 获取启用的规范 MIME 集合，不直接读取或拆分配置字符串。`DocumentValidator` 内现有的 `getAllowedMimeTypes()` Caffeine 单值缓存随之删除，避免两套解析路径并存。
 
 ## 4. 预览能力
 
@@ -140,7 +140,9 @@ Markdown / HTML 响应额外设置：
 Content-Security-Policy: sandbox; default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'
 ```
 
-前端只能把 preview URL 作为不带 `allow-same-origin` 的 sandbox iframe `src` 打开，禁止 fetch 后通过 `innerHTML` 注入主应用 DOM。响应 CSP 负责直接访问时的隔离，iframe sandbox 负责前端集成时的隔离。
+前端只能把 preview URL 作为不带 `allow-same-origin` 的 sandbox iframe `src` 打开，禁止 fetch 后通过 `innerHTML` 注入主应用 DOM，也不采用 fetch + `srcdoc` / blob URL 方案——这类方案虽然能改用 `Authorization` 头取数，但浏览器不再直接导航到服务端响应，响应 CSP 头随之失效（`srcdoc` / blob 文档只继承创建方文档的 CSP），服务端隔离边界退化为纯前端控制。响应 CSP 负责直接访问时的隔离，iframe sandbox 负责前端集成时的隔离。
+
+iframe `src` 属于浏览器导航，无法携带 `Authorization` 头，预览因此走项目的主认证通道——HttpOnly `access_token` Cookie：前端所有 API 请求本就 `credentials: 'include'`，Cookie 在登录时写入，`Path=/api` 覆盖 preview / download，同源部署下 iframe 导航自动携带。这是本设计的显式部署前提：若未来认证收敛为纯 Header 方式，必须同步引入短时效、绑定用户与文档的一次性 preview token 查询参数，否则预览将退化为 401；当前不预留双轨实现。
 
 对 OOXML 调用 preview 端点时，抛出 `ClientException(ClientErrorCode.DOCUMENT_PREVIEW_UNSUPPORTED)`（新增 RAG 客户端错误码 104009）；文本对象超过预览上限时抛出 `DOCUMENT_PREVIEW_TOO_LARGE`（新增 104010）。download 不受预览策略限制。
 
@@ -159,7 +161,7 @@ Content-Security-Policy: sandbox; default-src 'none'; base-uri 'none'; form-acti
 | 团队非 `COMPLETED` | 其他 MEMBER | 文档不存在 |
 | 逻辑删除文档 | 任意用户 | 文档不存在 |
 
-该矩阵与现有 `DocumentApplicationServiceImpl.verifyAccess(id)` 的 R1-M1 语义一致（owner / manager / uploader 放行；非 `COMPLETED` 对非管理者返回 `DOCUMENT_NOT_FOUND` 以不泄露存在性；`@TableLogic` 自动过滤逻辑删除）。本设计复用该统一权限判断，不另起一套。
+该矩阵与现有统一权限判断 `DocumentAccessGuard.verifyAccess(id)`（`DocumentApplicationServiceImpl` 各读入口共用的守卫）的 R1-M1 语义一致（owner / manager / uploader 放行；非 `COMPLETED` 对非管理者返回 `DOCUMENT_NOT_FOUND` 以不泄露存在性；`@TableLogic` 自动过滤逻辑删除）。本设计复用该统一权限判断，不另起一套。
 
 说明：`SUPERSEDED`、`PENDING_APPROVAL`、`REJECTED` 等状态对 owner / manager 仍可访问（manager 检查通过即放行，不因状态拒绝），因此它们可被预览 / 下载。列表接口对全员排除 `SUPERSEDED` 与"按 id 直达预览"有意不同，不在预览端点额外加状态过滤。
 
@@ -216,6 +218,7 @@ public record StoredObjectContent(
 - `Full` 不设置 offset / length；
 - `Bytes` 设置精确 offset / length；
 - `StoredObjectContent.contentLength()` 返回 record 中已知长度，**不通过读流计算**；
+- 惰性 Resource 自身必须覆盖 `contentLength()` 返回已知长度（`Full` 为 stat 大小，`Bytes` 为截取长度）或 `-1`，禁止继承 `AbstractResource.contentLength()` 的全量读流计数；HTTP 输出层始终用 `DocumentFileResult.Body` 携带的显式长度设置 `Content-Length` 头，不回退读取 Resource；
 - 流正常结束、读取异常和客户端断开时都关闭 `GetObjectResponse`。
 
 `Bytes` 必须校验 `offset >= 0`、`length > 0`、`offset < totalSize` 且 `length <= totalSize - offset`，避免越界和加法溢出。对象 Content-Type 不进入读取 handle，也不参与响应类型决策；响应类型始终来自授权后取得的规范 MIME。
@@ -289,13 +292,13 @@ public enum RangeCapability { BYTES, NONE }
 | 一个合法范围 | `206 Partial Content`，精确 offset / length |
 | 一个合法后缀范围 | `206 Partial Content`，按总大小换算 |
 | 同时包含 `If-Range` | 忽略 Range，`200 OK` 返回完整对象 |
-| 语法错误 | `416 Range Not Satisfiable` |
+| 语法错误 | 忽略 Range，`200 OK` 完整对象 |
 | 起点越界或空范围 | `416 Range Not Satisfiable` |
 | 多个语法合法范围 | 不实现 multipart；忽略 Range，`200 OK` 返回完整对象 |
 
-多段范围不是“不可满足范围”，不能仅因服务端未实现 `multipart/byteranges` 就返回 416。这里选择 RFC 允许的忽略 Range 并返回完整 200，以保持单读取路径。单段范围使用 `HttpRange.getRangeStart(totalSize)` 与 `getRangeEnd(totalSize)` 计算 offset / length，再交给 MinIO `getObject(offset, length)`；禁止对已经从 MinIO 截取的 Resource 调用 `toResourceRegion()`，否则 Spring 写出器会再次跳过 offset。
+语法错误的 Range 头按 RFC 9110 视为不存在（与 Spring `ResourceHttpRequestHandler` 和 nginx 的处理一致），`416` 仅保留给语法合法但无法满足的范围（起点越界、空范围）。多段范围同样不是“不可满足范围”，不能仅因服务端未实现 `multipart/byteranges` 就返回 416。这里对语法错误与合法多段选择 RFC 允许的忽略 Range 并返回完整 200，以保持单读取路径。单段范围使用 `HttpRange.getRangeStart(totalSize)` 与 `getRangeEnd(totalSize)` 计算 offset / length，再交给 MinIO `getObject(offset, length)`；禁止对已经从 MinIO 截取的 Resource 调用 `toResourceRegion()`，否则 Spring 写出器会再次跳过 offset。
 
-HEAD 显式映射但不复用 GET body 写出：忽略 `Range` / `If-Range` 并返回 `200 OK`。PDF preview 和所有 download 的 `Content-Length` 来自 MinIO stat；TXT / MD / HTML preview 因不读取和渲染内容而省略 `Content-Length`。所有 HEAD 都不得调用 `handle.content(...)` 或 MinIO `getObject`。
+HEAD 显式映射但不复用 GET body 写出：忽略 `Range` / `If-Range` 并返回 `200 OK`。PDF preview 和所有 download 的 `Content-Length` 来自 MinIO stat；TXT / MD / HTML preview 因不读取和渲染内容而省略 `Content-Length`。所有 HEAD 都不得调用 `handle.content(...)` 或 MinIO `getObject`。HEAD 命中业务错误（不存在、无权、不可预览、预览过大）时与全项目错误约定一致：经全局异常处理器返回 HTTP 200 + 业务错误码，body 按 Servlet HEAD 语义丢弃；只有成功 HEAD 才走 `Metadata` 路径。
 
 Controller 对 `RangeNotSatisfiable` 直接构造：
 
@@ -354,7 +357,7 @@ preview 使用 `inline`，download 使用 `attachment`。文件名必须通过 S
 HTTP 测试：
 
 - preview / download 的 inline / attachment、UTF-8 文件名、缓存头和 nosniff。
-- PDF 透传预览：完整 GET 为 200；首段、中段、后缀段为 206，响应字节与请求范围精确一致且无双重 offset；语法错误和越界返回真实 416 与 `bytes */total`。
+- PDF 透传预览：完整 GET 为 200；首段、中段、后缀段为 206，响应字节与请求范围精确一致且无双重 offset；越界与空范围返回真实 416 与 `bytes */total`，语法错误 Range 被忽略并返回完整 200。
 - 合法多段 Range、`Range + If-Range` 返回完整 200；不返回错误的 416。
 - download 透传：所有类型 attachment，忠实返回原始字节。
 - 文本 / MD / HTML 预览：始终 200，不支持 Range（带 `Range` 头时返回完整渲染结果）。
@@ -386,7 +389,9 @@ MinIO 集成与资源测试：
 | `rag/service/DocumentPreviewPolicy.java` | 按规范 MIME 和文件大小单点定义 PassThrough / Transform / Deny 与 `previewable` |
 | `rag/upload/PersonalUploadStrategy.java` | 持久化并上传规范 MIME |
 | `team/upload/TeamUploadStrategy.java` | 持久化并上传规范 MIME |
-| `rag/upload/ChunkUploadServiceImpl.java` | 分片完成时持久化并上传规范 MIME（与已有检测逻辑收敛到 Policy） |
+| `rag/upload/ChunkUploadServiceImpl.java` | init 阶段声明 MIME 白名单校验（`validateMimeType`）改为经 Policy 解析 |
+| `rag/upload/ChunkMergeService.java` | 合并完成后以 Policy 产出的规范 MIME 落库与 ETL 派发；删除 `resolveEffectiveMimeType` 的声明值回退 |
+| `rag/upload/ChunkMinioGateway.java` | 合并对象的 8 字节魔数探测替换为 Validator 的文件支撑检测契约 |
 | `rag/dto/DocumentDTO.java` 及 `toDTO` 映射 | 增加必填 `previewable` |
 | `rag/service/DocumentApplicationService.java` | 增加内部 `authorizeFileRead` 与 `AuthorizedDocumentFile` |
 | `rag/service/impl/DocumentApplicationServiceImpl.java` | 复用 `verifyAccess` 返回内部描述符 |
@@ -410,6 +415,6 @@ MinIO 集成与资源测试：
 - 透传的完整 / Range GET 使用同一个 `StoredObjectHandle` 与惰性内容契约；HEAD 只使用 handle 元数据且无 body；渲染路径在专用大小上限内读全量后变换输出，不参与 Range。
 - PDF 预览与 download 的 GET 支持单段 Range；文本 / MD / HTML 预览不支持 Range，输入按检测编码解码，响应统一 UTF-8。
 - MD / HTML 预览同时使用明确 Safelist、CSP 和无同源权限的 iframe sandbox；上传时存储原始字节，download 忠实返回原文件。
-- 非法、越界 Range 返回真实 HTTP 416；合法多段、`If-Range` 和所有 HEAD Range 被忽略并返回完整 / 元数据 200。
+- 越界与空范围 Range 返回真实 HTTP 416；语法错误 Range、合法多段、`If-Range` 和所有 HEAD Range 被忽略并返回完整 / 元数据 200。
 - 透传过程不缓存完整文件；渲染输入和输出均有硬上限；对象存储失败经 `RemoteException` 脱敏，不暴露对象定位信息。
 - 不包含旧 `download` / `presignedUrl` 方法、`MinioStreamResource`、外部对象 URL 路径、ETag / 304 条件请求、功能开关或数据库结构变更。

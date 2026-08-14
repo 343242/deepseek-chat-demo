@@ -15,6 +15,7 @@ import com.smart.rag.rag.etl.EtlStatus;
 import com.smart.rag.rag.entity.RagDocument;
 import com.smart.rag.rag.mapper.RagDocumentMapper;
 import com.smart.rag.rag.mapper.VectorStoreMapper;
+import com.smart.rag.rag.service.AuthorizedDocumentFile;
 import com.smart.rag.rag.service.DocumentApplicationService;
 import com.smart.rag.rag.service.EtlDispatchService;
 import com.smart.rag.rag.service.TeamAccessGate;
@@ -145,6 +146,19 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
     public DocumentDTO getById(Long id) {
         RagDocument doc = accessGuard.verifyAccess(id);
         return dtoMapper.toDTO(doc);
+    }
+
+    @Override
+    public AuthorizedDocumentFile authorizeFileRead(Long id) {
+        RagDocument doc = accessGuard.verifyAccess(id);
+        return new AuthorizedDocumentFile(
+                doc.getId(),
+                doc.getFileName(),
+                doc.getFileSize() != null ? doc.getFileSize() : 0L,
+                doc.getMimeType(),
+                doc.getBucket(),
+                doc.getStorageKey()
+        );
     }
 
     @Override

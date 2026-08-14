@@ -1,9 +1,11 @@
 package com.smart.rag.rag.upload;
 
 import com.smart.rag.common.util.ChecksumUtils;
+import com.smart.rag.infrastructure.exception.AbstractException;
 import com.smart.rag.infrastructure.exception.ServiceException;
 import com.smart.rag.infrastructure.exception.errorcode.ServiceErrorCode;
 import com.smart.rag.rag.service.impl.DocumentValidator;
+import com.smart.rag.rag.service.impl.ValidatedDocumentFile;
 import io.minio.ComposeObjectArgs;
 import io.minio.GetObjectArgs;
 import io.minio.MinioClient;
@@ -12,7 +14,6 @@ import io.minio.RemoveObjectArgs;
 import io.minio.RemoveObjectsArgs;
 import io.minio.SourceObject;
 import io.minio.messages.DeleteRequest;
-import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -97,21 +98,21 @@ public class ChunkMinioGateway {
     }
 
     /**
-     * R2-H1: 下载对象头部并对真实 MIME 做魔数探测。
+     * R2-H1: 对合并后对象执行服务端完整类型校验（Tika 文件支撑探测 + OOXML 结构确认 + Policy 一致性）。
      * <p>
-     * 仅消费流头部（detectMimeType 内部读 8 字节），用于纠正/验证客户端声明的类型。
-     * 探测失败或 IO 异常时返回 null（由调用方决定拒绝策略）。
-     *
-     * @return 探测到的真实 MIME；失败返回 null
+     * 与非分片上传共用 {@link DocumentValidator} 同一校验契约，规范 MIME 直接用于落库与 ETL 路由，
+     * 不再依赖客户端声明值。类型校验失败抛 {@code ClientException}（UPLOAD_MIME_UNSUPPORTED），
+     * 由调用方回收对象后原样上抛；存储读取失败抛 {@code ServiceException}。
      */
-    public @Nullable String detectObjectMimeType(String bucket, String objectName, String fileName) {
+    public ValidatedDocumentFile validateObjectMime(String bucket, String objectName, String fileName, long fileSize) {
         try (InputStream is = minioClient.getObject(
                 GetObjectArgs.builder().bucket(bucket).object(objectName).build())) {
-            return documentValidator.detectMimeType(is, fileName);
+            return documentValidator.validate(is, fileName, fileSize);
+        } catch (AbstractException e) {
+            throw e;
         } catch (Exception e) {
-            log.warn("Failed to detect MIME on merged object: bucket={}, object={}, err={}",
-                    bucket, objectName, e.getMessage());
-            return null;
+            log.error("MinIO getObject error during MIME validation: bucket={}, object={}", bucket, objectName, e);
+            throw new ServiceException(ServiceErrorCode.INTERNAL_ERROR, "读取合并结果校验类型失败", e);
         }
     }
 

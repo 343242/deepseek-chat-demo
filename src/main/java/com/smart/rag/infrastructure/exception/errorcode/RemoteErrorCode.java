@@ -10,6 +10,7 @@ public enum RemoteErrorCode implements IErrorCode {
     PROVIDER_NOT_FOUND(300001, "厂商未配置"),
     MODEL_TIMEOUT(300002, "模型调用超时"),
     VECTOR_DB_UNAVAILABLE(300003, "向量数据库不可用"),
+    FILE_STORAGE_UNAVAILABLE(300004, "文件存储暂不可用"),
 
     // ==================== LLM 弹性层 301001–301999 ====================
     LLM_ALL_MODELS_FAILED(301001, "所有模型均不可用"),

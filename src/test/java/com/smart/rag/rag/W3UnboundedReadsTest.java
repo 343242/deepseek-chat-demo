@@ -73,7 +73,9 @@ class W3UnboundedReadsTest {
             service = new DocumentApplicationServiceImpl(
                     etlDispatchService, ragDocumentMapper, documentLifecycleService,
                     uploadStrategyRouter, teamAccessGate, vectorStoreMapper,
-                    new com.smart.rag.rag.service.impl.DocumentDtoMapper(),
+                    new com.smart.rag.rag.service.impl.DocumentDtoMapper(
+                            new com.smart.rag.rag.service.DocumentPreviewPolicy(
+                                    new com.smart.rag.rag.config.DocumentProperties())),
                     new com.smart.rag.rag.service.impl.DocumentAccessGuard(ragDocumentMapper, teamAccessGate));
         }
 

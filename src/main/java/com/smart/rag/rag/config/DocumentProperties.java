@@ -11,6 +11,8 @@ public class DocumentProperties {
     private String maxFileSize = "50MB";
     /** 允许的 MIME 类型，逗号分隔 */
     private String allowedMimeTypes = "application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.presentationml.presentation,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/plain,text/markdown,text/x-markdown,text/html";
+    /** 文本类预览的输入大小上限（只限制需全量消费的渲染路径，不影响下载与 PDF 透传） */
+    private String maxPreviewFileSize = "5MB";
 
     // === 分块策略 ===
     /** 分块策略: token / paragraph / parent-child */
@@ -36,6 +38,8 @@ public class DocumentProperties {
     public void setMaxFileSize(String maxFileSize) { this.maxFileSize = maxFileSize; }
     public String getAllowedMimeTypes() { return allowedMimeTypes; }
     public void setAllowedMimeTypes(String allowedMimeTypes) { this.allowedMimeTypes = allowedMimeTypes; }
+    public String getMaxPreviewFileSize() { return maxPreviewFileSize; }
+    public void setMaxPreviewFileSize(String maxPreviewFileSize) { this.maxPreviewFileSize = maxPreviewFileSize; }
     public String getChunkStrategy() { return chunkStrategy; }
     public void setChunkStrategy(String chunkStrategy) { this.chunkStrategy = chunkStrategy; }
     public int getChunkSize() { return chunkSize; }

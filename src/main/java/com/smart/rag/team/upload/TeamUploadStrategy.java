@@ -13,6 +13,7 @@ import com.smart.rag.rag.mapper.RagDocumentMapper;
 import com.smart.rag.rag.service.FileStorageService;
 import com.smart.rag.rag.service.EtlDispatchService;
 import com.smart.rag.rag.service.impl.DocumentValidator;
+import com.smart.rag.rag.service.impl.ValidatedDocumentFile;
 import com.smart.rag.team.entity.TeamMember;
 import com.smart.rag.team.entity.TeamUploadApproval;
 import com.smart.rag.team.enums.ApprovalStatus;
@@ -82,20 +83,21 @@ public class TeamUploadStrategy implements UploadStrategy {
 
     @Override
     public DocumentUploadResponse upload(MultipartFile file, @Nullable Long teamId, @Nullable Long replaceDocumentId, Long userId) {
-        documentValidator.validate(file);
+        ValidatedDocumentFile validated = documentValidator.validate(file);
+        String mimeType = validated.canonicalMimeType();
 
         // 校验成员上传额度
-        verifyUploadQuota(teamId, userId, file.getSize());
+        verifyUploadQuota(teamId, userId, validated.fileSize());
 
         String bucket = bucketResolver.resolve(teamId);
         fileStorageService.ensureBucketExists(bucket);
         String storageKey = UUID.randomUUID().toString();
-        fileStorageService.upload(bucket, storageKey, file.getResource(), file.getContentType());
+        fileStorageService.upload(bucket, storageKey, file.getResource(), mimeType);
 
         boolean autoApproved = isAutoApproved(teamId, userId);
         String fileChecksum = computeChecksum(file);
-        RagDocument ragDoc = persistDocument(file.getOriginalFilename(), file.getSize(),
-                file.getContentType(), storageKey, bucket, userId, teamId, autoApproved, fileChecksum);
+        RagDocument ragDoc = persistDocument(validated.fileName(), validated.fileSize(),
+                mimeType, storageKey, bucket, userId, teamId, autoApproved, fileChecksum);
         eventPublisher.publishEvent(new DocumentCreatedEvent(ragDoc.getId(), replaceDocumentId, userId, teamId));
 
         if (!autoApproved) {
@@ -105,12 +107,12 @@ public class TeamUploadStrategy implements UploadStrategy {
         // 管理员/创建者直接触发 ETL，普通成员等审批
         if (ragDoc.getStatus() == EtlStatus.PROCESSING) {
             etlDispatchService.dispatchAsync(ragDoc.getId(), bucket, storageKey,
-                    file.getOriginalFilename(), file.getContentType(), file.getSize(), userId, teamId);
+                    validated.fileName(), mimeType, validated.fileSize(), userId, teamId);
         }
 
         log.info("Team document uploaded: id={}, file={}, teamId={}, userId={}, status={}",
-                ragDoc.getId(), file.getOriginalFilename(), teamId, userId, ragDoc.getStatus());
-        return new DocumentUploadResponse(ragDoc.getId(), file.getOriginalFilename(), ragDoc.getStatus());
+                ragDoc.getId(), validated.fileName(), teamId, userId, ragDoc.getStatus());
+        return new DocumentUploadResponse(ragDoc.getId(), validated.fileName(), ragDoc.getStatus());
     }
 
     @Override
@@ -128,12 +130,13 @@ public class TeamUploadStrategy implements UploadStrategy {
         List<RagDocument> autoApprovedDocs = new ArrayList<>();
 
         for (MultipartFile file : files) {
-            documentValidator.validate(file);
+            ValidatedDocumentFile validated = documentValidator.validate(file);
+            String mimeType = validated.canonicalMimeType();
             String storageKey = UUID.randomUUID().toString();
-            fileStorageService.upload(bucket, storageKey, file.getResource(), file.getContentType());
+            fileStorageService.upload(bucket, storageKey, file.getResource(), mimeType);
 
-            RagDocument ragDoc = persistDocument(file.getOriginalFilename(), file.getSize(),
-                    file.getContentType(), storageKey, bucket, userId, teamId, autoApproved, computeChecksum(file));
+            RagDocument ragDoc = persistDocument(validated.fileName(), validated.fileSize(),
+                    mimeType, storageKey, bucket, userId, teamId, autoApproved, computeChecksum(file));
             eventPublisher.publishEvent(new DocumentCreatedEvent(ragDoc.getId(), null, userId, teamId));
 
             if (!autoApproved) {

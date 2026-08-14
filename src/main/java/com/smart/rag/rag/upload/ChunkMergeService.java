@@ -12,6 +12,7 @@ import com.smart.rag.rag.service.DocumentDedupService;
 import com.smart.rag.rag.service.EtlDispatchService;
 import com.smart.rag.rag.service.TeamAccessGate;
 import com.smart.rag.rag.service.impl.DocumentValidator;
+import com.smart.rag.rag.service.impl.ValidatedDocumentFile;
 import io.minio.SourceObject;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
@@ -89,11 +90,11 @@ public class ChunkMergeService {
                 ChunkSessionStore.parseSessionLong(session, ChunkSessionStore.FIELD_USER_ID), originalName);
         minioGateway.composeObjects(bucket, targetObjectKey, sources, declaredMimeType);
 
-        String detectedMimeType = validateMergedObject(uploadId, session, bucket, basePath,
-                targetObjectKey, declaredChecksum, declaredMimeType, originalName);
+        ValidatedDocumentFile validated = validateMergedObject(uploadId, session, bucket, basePath,
+                targetObjectKey, declaredChecksum, originalName);
 
         return finalizeMerge(uploadId, session, bucket, basePath, totalChunks,
-                targetObjectKey, declaredChecksum, declaredMimeType, detectedMimeType, teamId);
+                targetObjectKey, declaredChecksum, validated, teamId);
     }
 
     /**
@@ -131,16 +132,16 @@ public class ChunkMergeService {
     }
 
     /**
-     * 校验合并后对象：SHA-256 校验和 + 服务端魔数 MIME 检测（R2-H1）。
+     * 校验合并后对象：SHA-256 校验和 + 服务端完整类型校验（R2-H1）。
      * <p>
      * 校验失败时删除目标对象与临时分片，清除 __merging 标记（允许 complete 重试），
      * 并抛出对应业务异常。
      *
-     * @return 服务端魔数探测到的真实 MIME（探测失败为 null，由声明类型回退）
+     * @return 含服务端规范 MIME 的校验结果（落库与 ETL 路由的唯一类型来源）
      */
-    private @Nullable String validateMergedObject(String uploadId, Map<String, String> session,
+    private ValidatedDocumentFile validateMergedObject(String uploadId, Map<String, String> session,
                                       String bucket, String basePath, String targetObjectKey,
-                                      String declaredChecksum, String declaredMimeType, String originalName) {
+                                      String declaredChecksum, String originalName) {
         String actualChecksum = minioGateway.computeFileChecksum(bucket, targetObjectKey);
         if (!actualChecksum.equalsIgnoreCase(declaredChecksum)) {
             log.warn("File checksum mismatch: uploadId={}, expected={}, actual={}", uploadId, declaredChecksum, actualChecksum);
@@ -149,18 +150,17 @@ public class ChunkMergeService {
             throw new ClientException(ClientErrorCode.UPLOAD_FILE_CHECKSUM_MISMATCH, "文件校验失败");
         }
 
-        // R2-H1: 对合并后的对象做服务端魔数校验，用检测到的真实 MIME 路由解析器与落库，
-        // 而非 session 中客户端声明的 MIME（防止声明与实际内容不符的 confused-deputy）。
-        String detectedMimeType = minioGateway.detectObjectMimeType(bucket, targetObjectKey, originalName);
-        if (!documentValidator.isDetectedMimeTypeAcceptable(detectedMimeType, declaredMimeType)) {
-            log.warn("MIME bypass rejected: uploadId={}, declared={}, detected={}",
-                    uploadId, declaredMimeType, detectedMimeType);
+        // R2-H1: 对合并后的对象做服务端类型校验（Tika 探测 + OOXML 结构确认 + Policy 一致性），
+        // 规范 MIME 直接路由解析器与落库，不再回退客户端声明值。
+        long fileSize = ChunkSessionStore.parseSessionLong(session, ChunkSessionStore.FIELD_FILE_SIZE);
+        try {
+            return minioGateway.validateObjectMime(bucket, targetObjectKey, originalName, fileSize);
+        } catch (ClientException e) {
+            log.warn("MIME validation rejected: uploadId={}, err={}", uploadId, e.getUserMessage());
             discardMergedAndChunks(uploadId, bucket, basePath, targetObjectKey,
                     ChunkSessionStore.parseSessionInt(session, ChunkSessionStore.FIELD_TOTAL_CHUNKS));
-            throw new ClientException(ClientErrorCode.UPLOAD_MIME_UNSUPPORTED,
-                    String.format("文件实际类型(%s)与声明类型(%s)不匹配", detectedMimeType, declaredMimeType));
+            throw e;
         }
-        return detectedMimeType;
     }
 
     /** 校验失败后的资源回收：删除合并对象 + 临时分片，清除 __merging 标记 */
@@ -172,20 +172,20 @@ public class ChunkMergeService {
     }
 
     /**
-     * 合并成功后的收尾：落库 + BloomFilter 登记 + 清理 + ETL 派发 + 事件发布。
+     * 合并成功后的收尾：落库 + Bloomfilter 登记 + 清理 + ETL 派发 + 事件发布。
      *
      * @return 新文档 docId
      */
     private Long finalizeMerge(String uploadId, Map<String, String> session,
                                String bucket, String basePath, int totalChunks,
                                String targetObjectKey, String actualChecksum,
-                               String declaredMimeType, @Nullable String detectedMimeType, @Nullable Long teamId) {
-        String effectiveMimeType = resolveEffectiveMimeType(detectedMimeType, declaredMimeType);
+                               ValidatedDocumentFile validated, @Nullable Long teamId) {
+        String canonicalMimeType = validated.canonicalMimeType();
 
         Long userId = ChunkSessionStore.parseSessionLong(session, ChunkSessionStore.FIELD_USER_ID);
-        Long docId = persistDocument(session, targetObjectKey, actualChecksum, userId, teamId, effectiveMimeType);
-        log.info("Chunk upload merged: uploadId={}, docId={}, checksum={}, mime={} (declared={})",
-                uploadId, docId, actualChecksum, effectiveMimeType, declaredMimeType);
+        Long docId = persistDocument(session, targetObjectKey, actualChecksum, userId, teamId, canonicalMimeType);
+        log.info("Chunk upload merged: uploadId={}, docId={}, checksum={}, mime={}",
+                uploadId, docId, actualChecksum, canonicalMimeType);
 
         // 将文件校验和加入 BloomFilter 去重
         if (documentDedupService != null && actualChecksum != null) {
@@ -197,10 +197,10 @@ public class ChunkMergeService {
         sessionStore.cleanup(uploadId, session.get(ChunkSessionStore.FIELD_USER_ID),
                 session.get(ChunkSessionStore.FIELD_FILE_CHECKSUM));
 
-        // 触发 ETL（使用检测到的真实 MIME 路由解析器）
+        // 触发 ETL（使用服务端规范 MIME 路由解析器）
         etlDispatchService.dispatchAsync(
                 docId, bucket, targetObjectKey, session.get(ChunkSessionStore.FIELD_FILE_NAME),
-                effectiveMimeType, ChunkSessionStore.parseSessionLong(session, ChunkSessionStore.FIELD_FILE_SIZE),
+                canonicalMimeType, ChunkSessionStore.parseSessionLong(session, ChunkSessionStore.FIELD_FILE_SIZE),
                 userId, teamId
         );
 
@@ -212,27 +212,12 @@ public class ChunkMergeService {
         return docId;
     }
 
-    /**
-     * R2-H1: 解析最终生效的 MIME。
-     * <p>
-     * 优先使用检测到的具体类型（PDF/text/office 子类型）；
-     * 若检测仅得出容器类型 application/zip 而声明为 OOXML 子类型，则信任声明类型
-     * （魔数无法区分 docx/pptx/xlsx，子类型由扩展名路由决定）；
-     * 检测为 null 时回退声明类型（白名单校验在 isDetectedMimeTypeAcceptable 中已拦截）。
-     */
-    private String resolveEffectiveMimeType(@Nullable String detectedMimeType, String declaredMimeType) {
-        if (detectedMimeType != null && !"application/zip".equals(detectedMimeType)) {
-            return detectedMimeType;
-        }
-        return declaredMimeType;
-    }
-
     private Long persistDocument(Map<String, String> session, String targetObjectKey, String actualChecksum,
-                                 Long userId, @Nullable Long teamId, String effectiveMimeType) {
+                                 Long userId, @Nullable Long teamId, String canonicalMimeType) {
         RagDocument doc = new RagDocument();
         doc.setFileName(session.get(ChunkSessionStore.FIELD_FILE_NAME));
         doc.setFileSize(ChunkSessionStore.parseSessionLong(session, ChunkSessionStore.FIELD_FILE_SIZE));
-        doc.setMimeType(effectiveMimeType);
+        doc.setMimeType(canonicalMimeType);
         doc.setStorageKey(targetObjectKey);
         doc.setBucket(session.get(ChunkSessionStore.FIELD_BUCKET));
         doc.setUserId(userId);

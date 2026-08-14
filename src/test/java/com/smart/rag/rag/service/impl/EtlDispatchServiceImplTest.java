@@ -8,7 +8,9 @@ import com.smart.rag.rag.etl.EtlCandidate;
 import com.smart.rag.rag.etl.EtlDocumentConsumer;
 import com.smart.rag.rag.etl.EtlRouteStrategyFactory;
 import com.smart.rag.rag.etl.Loader;
+import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import org.springframework.beans.factory.ObjectProvider;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -45,7 +47,20 @@ class EtlDispatchServiceImplTest {
 
     private EtlDispatchServiceImpl newService() {
         return new EtlDispatchServiceImpl(
-            strategyFactory, loader, null, messageBus, null);
+            strategyFactory, loader, null, messageBus, registryProvider(null));
+    }
+
+    /** ObjectProvider 桩：getIfAvailable 返回给定 registry（可为 null，模拟 Bean 缺失） */
+    private static ObjectProvider<MeterRegistry> registryProvider(MeterRegistry registry) {
+        return new ObjectProvider<>() {
+            @Override public MeterRegistry getObject() {
+                if (registry == null) throw new java.util.NoSuchElementException("no registry");
+                return registry;
+            }
+            @Override public MeterRegistry getObject(Object... args) { return getObject(); }
+            @Override public MeterRegistry getIfAvailable() { return registry; }
+            @Override public MeterRegistry getIfUnique() { return registry; }
+        };
     }
 
     @Nested
@@ -93,7 +108,7 @@ class EtlDispatchServiceImplTest {
 
             SimpleMeterRegistry registry = new SimpleMeterRegistry();
             EtlDispatchServiceImpl service = new EtlDispatchServiceImpl(
-                strategyFactory, loader, null, messageBus, registry);
+                strategyFactory, loader, null, messageBus, registryProvider(registry));
 
             assertThatCode(() -> service.dispatchAsync(1L, "b", "k", "f.pdf", "application/pdf", 100, 1L, null))
                 .doesNotThrowAnyException();

@@ -1,5 +1,7 @@
 package com.smart.rag.rag.upload;
 
+import com.smart.rag.infrastructure.exception.ServiceException;
+import com.smart.rag.infrastructure.exception.errorcode.ServiceErrorCode;
 import io.minio.*;
 import io.minio.messages.DeleteRequest;
 import io.minio.messages.DeleteResult;
@@ -39,6 +41,12 @@ public class OrphanChunkCleaner {
     /** 孤儿判定阈值：创建超过此时间的临时对象视为孤儿 */
     private static final long ORPHAN_AGE_HOURS = 48;
 
+    /** 清理周期：6 小时 */
+    private static final long CLEANUP_INTERVAL_MS = 6 * 60 * 60 * 1000L;
+
+    /** 首次执行延迟：5 分钟，避免应用启动时立即执行 */
+    private static final long INITIAL_DELAY_MS = 5 * 60 * 1000L;
+
     private final StringRedisTemplate redisTemplate;
     private final MinioClient minioClient;
     private final BucketResolver bucketResolver;
@@ -56,7 +64,7 @@ public class OrphanChunkCleaner {
      * <p>
      * 延迟 5 分钟启动，避免应用启动时立即执行。
      */
-    @Scheduled(fixedRate = 6 * 60 * 60 * 1000, initialDelay = 5 * 60 * 1000)
+    @Scheduled(fixedRate = CLEANUP_INTERVAL_MS, initialDelay = INITIAL_DELAY_MS)
     public void cleanOrphanChunks() {
         log.info("Orphan chunk cleanup started");
 
@@ -67,9 +75,9 @@ public class OrphanChunkCleaner {
             int totalErrors = 0;
 
             for (String bucket : allBuckets) {
-                int[] result = cleanOrphansInBucket(bucket);
-                totalCleaned += result[0];
-                totalErrors += result[1];
+                CleanupStats result = cleanOrphansInBucket(bucket);
+                totalCleaned += result.cleaned();
+                totalErrors += result.errors();
             }
 
             if (totalCleaned > 0 || totalErrors > 0) {
@@ -84,20 +92,28 @@ public class OrphanChunkCleaner {
 
     /**
      * 获取所有需要扫描的 bucket（默认 + 所有 rag-team-*）。
+     *
+     * @throws ServiceException MinIO 列举失败（携带原因）
      */
-    private List<String> listManagedBuckets() throws Exception {
-        return minioClient.listBuckets().stream()
-                .map(ListAllMyBucketsResult.Bucket::name)
-                .filter(name -> name.equals(bucketResolver.defaultBucket()) || bucketResolver.isTeamBucket(name))
-                .toList();
+    private List<String> listManagedBuckets() {
+        try {
+            return minioClient.listBuckets().stream()
+                    .map(ListAllMyBucketsResult.Bucket::name)
+                    .filter(name -> name.equals(bucketResolver.defaultBucket()) || bucketResolver.isTeamBucket(name))
+                    .toList();
+        } catch (Exception e) {
+            log.error("Failed to list buckets for orphan chunk cleanup", e);
+            throw new ServiceException(ServiceErrorCode.INTERNAL_ERROR, "列举存储桶失败", e);
+        }
     }
+
+    /** 单个 bucket 的清理统计 */
+    record CleanupStats(int cleaned, int errors) {}
 
     /**
      * 清理单个 bucket 中的孤儿分片。
-     *
-     * @return [cleaned, errors]
      */
-    private int[] cleanOrphansInBucket(String bucket) {
+    private CleanupStats cleanOrphansInBucket(String bucket) {
         int cleaned = 0;
         int errors = 0;
 
@@ -107,7 +123,7 @@ public class OrphanChunkCleaner {
             Iterable<io.minio.Result<Item>> results = minioClient.listObjects(
                     ListObjectsArgs.builder()
                             .bucket(bucket)
-                            .prefix("chunks/")
+                            .prefix(UploadObjectKeys.CHUNKS_PREFIX)
                             .recursive(true)
                             .build()
             );
@@ -129,30 +145,40 @@ public class OrphanChunkCleaner {
             }
 
             if (!orphans.isEmpty()) {
-                Iterable<io.minio.Result<DeleteResult.Error>> deleteResults =
-                        minioClient.removeObjects(
-                                RemoveObjectsArgs.builder()
-                                        .bucket(bucket)
-                                        .objects(orphans)
-                                        .build()
-                        );
-                for (io.minio.Result<DeleteResult.Error> r : deleteResults) {
-                    try {
-                        DeleteResult.Error err = r.get();
-                        log.warn("Failed to delete {} in bucket {}: {}", err.objectName(), bucket, err.message());
-                        errors++;
-                    } catch (Exception e) {
-                        // 成功删除不会产生 Error，忽略
-                    }
-                }
-                cleaned = orphans.size();
+                int deleteFailures = deleteOrphans(bucket, orphans);
+                errors += deleteFailures;
+                cleaned = orphans.size() - deleteFailures;
             }
         } catch (Exception e) {
             log.error("Failed to clean orphans in bucket {}", bucket, e);
             errors++;
         }
 
-        return new int[]{cleaned, errors};
+        return new CleanupStats(cleaned, errors);
+    }
+
+    /**
+     * 批量删除孤儿对象，返回删除失败数（cleaned 需扣除失败数，避免高估）。
+     */
+    private int deleteOrphans(String bucket, List<DeleteRequest.Object> orphans) {
+        int failures = 0;
+        Iterable<io.minio.Result<DeleteResult.Error>> deleteResults =
+                minioClient.removeObjects(
+                        RemoveObjectsArgs.builder()
+                                .bucket(bucket)
+                                .objects(orphans)
+                                .build()
+                );
+        for (io.minio.Result<DeleteResult.Error> r : deleteResults) {
+            try {
+                DeleteResult.Error err = r.get();
+                log.warn("Failed to delete {} in bucket {}: {}", err.objectName(), bucket, err.message());
+                failures++;
+            } catch (Exception e) {
+                log.debug("removeObjects result iteration ended: bucket={}, err={}", bucket, e.getMessage());
+            }
+        }
+        return failures;
     }
 
     /**

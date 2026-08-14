@@ -40,6 +40,8 @@ public class DocumentDedupService {
     private static final Logger log = LoggerFactory.getLogger(DocumentDedupService.class);
 
     private static final String BLOOM_FILTER_NAME = "smart-rag:dedup:file-checksum";
+    // NOTE: 预期容量/误判率为部署级常量（无对应 properties 类，不为此新建配置管道）。
+    // 注意 tryInit 参数只在 Redis 中 BloomFilter 首次创建时生效，改小值需重建过滤器才有效。
     /** 预期容量：10 万文档 */
     private static final long EXPECTED_CAPACITY = 100_000;
     /** 误判率 1% */

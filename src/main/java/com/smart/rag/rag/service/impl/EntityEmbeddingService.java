@@ -54,9 +54,6 @@ public class EntityEmbeddingService {
             return;
         }
 
-        int batchSize = properties.embeddingBatchSize();
-        int maxLen = properties.descriptionMaxLength();
-
         // 过滤有效实体（description 非空）
         List<RagEntity> toEmbed = entities.stream()
                 .filter(e -> e.getDescription() != null && !e.getDescription().isEmpty())
@@ -67,10 +64,24 @@ public class EntityEmbeddingService {
             return;
         }
 
-        // 对超长 description 进行压缩
-        List<String> texts = new ArrayList<>(toEmbed.size());
-        ChatCapable chatClient = getChatClientSafe();
+        List<String> texts = compressLongDescriptions(toEmbed);
 
+        EmbeddingCapable embeddingClient = llmClientRegistry.getDefault(
+                LlmCapability.EMBEDDING, EmbeddingCapable.class);
+        embedInBatches(toEmbed, texts, embeddingClient);
+
+        log.info("Embedded {} entities (batchSize={})", toEmbed.size(), properties.embeddingBatchSize());
+    }
+
+    /**
+     * 对超长 description 进行 LLM 压缩（无 CHAT client 时保持原文）。
+     *
+     * @return 与 toEmbed 一一对应的待嵌入文本
+     */
+    private List<String> compressLongDescriptions(List<RagEntity> toEmbed) {
+        int maxLen = properties.descriptionMaxLength();
+        ChatCapable chatClient = getChatClientSafe();
+        List<String> texts = new ArrayList<>(toEmbed.size());
         for (RagEntity entity : toEmbed) {
             String text = entity.getDescription();
             if (text.length() > maxLen && chatClient != null) {
@@ -78,34 +89,41 @@ public class EntityEmbeddingService {
             }
             texts.add(text);
         }
+        return texts;
+    }
 
-        // 分批 embed
-        EmbeddingCapable embeddingClient = llmClientRegistry.getDefault(
-                LlmCapability.EMBEDDING, EmbeddingCapable.class);
-
+    /**
+     * 分批 embed 并回写（failure isolation per batch：单批失败继续下一批）
+     */
+    private void embedInBatches(List<RagEntity> toEmbed, List<String> texts,
+                                EmbeddingCapable embeddingClient) {
+        int batchSize = properties.embeddingBatchSize();
         for (int i = 0; i < texts.size(); i += batchSize) {
             int end = Math.min(i + batchSize, texts.size());
-            List<String> batch = texts.subList(i, end);
-            List<RagEntity> batchEntities = toEmbed.subList(i, end);
-
             try {
-                List<float[]> embeddings = embeddingClient.embedBatch(batch, EmbeddingType.DOCUMENT);
-
-                // 逐条更新
-                for (int j = 0; j < batchEntities.size() && j < embeddings.size(); j++) {
-                    RagEntity entity = batchEntities.get(j);
-                    float[] embedding = embeddings.get(j);
-                    if (embedding != null && embedding.length > 0) {
-                        entityMapper.updateEmbedding(entity.getId(), embedding);
-                    }
-                }
+                List<float[]> embeddings =
+                        embeddingClient.embedBatch(texts.subList(i, end), EmbeddingType.DOCUMENT);
+                updateEmbeddings(toEmbed.subList(i, end), embeddings);
             } catch (Exception e) {
-                log.error("Failed to embed entity batch [{}-{}]: {}", i, end, e.getMessage());
-                // 继续下一批（failure isolation per batch）
+                log.error("Failed to embed entity batch [{}-{}]: {}", i, end, e);
             }
         }
+    }
 
-        log.info("Embedded {} entities (batchSize={})", toEmbed.size(), batchSize);
+    /**
+     * 批量回写 embedding（过滤空结果）
+     */
+    private void updateEmbeddings(List<RagEntity> batchEntities, List<float[]> embeddings) {
+        List<EntityMapper.EmbeddingUpdate> updates = new ArrayList<>(batchEntities.size());
+        for (int j = 0; j < batchEntities.size() && j < embeddings.size(); j++) {
+            float[] embedding = embeddings.get(j);
+            if (embedding != null && embedding.length > 0) {
+                updates.add(new EntityMapper.EmbeddingUpdate(batchEntities.get(j).getId(), embedding));
+            }
+        }
+        if (!updates.isEmpty()) {
+            entityMapper.updateEmbeddingBatch(updates);
+        }
     }
 
     /**

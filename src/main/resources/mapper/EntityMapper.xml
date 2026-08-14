@@ -48,6 +48,20 @@
         WHERE id = #{id}
     </update>
 
+    <!-- 批量更新 embedding（EntityEmbeddingService 分批 embed 后回写），UPDATE...FROM VALUES 单语句 -->
+    <update id="updateEmbeddingBatch">
+        UPDATE rag_entity e
+        SET embedding = v.embedding,
+            updated_at = NOW()
+        FROM (
+            VALUES
+            <foreach collection="items" item="item" separator=",">
+                (#{item.id}, #{item.embedding,typeHandler=com.smart.rag.rag.mapper.VectorTypeHandler}::vector)
+            </foreach>
+        ) AS v(id, embedding)
+        WHERE e.id = v.id
+    </update>
+
     <!-- 查询需要 embed 的实体 -->
     <select id="selectEntitiesNeedingEmbedding" resultType="com.smart.rag.rag.entity.RagEntity">
         SELECT id, name_norm, name_display, description, user_id, team_id,

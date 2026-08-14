@@ -16,6 +16,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.file.*;
 import java.nio.file.attribute.BasicFileAttributes;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -79,8 +80,7 @@ public class OpenDataLoaderPdfParser implements DocumentParser {
                 throw new DocumentParseException(
                         resource.getFilename(), "opendataloader",
                         String.format("PDF 超过最大允许大小 %s（拒绝写入以避免磁盘填充）",
-                                documentProperties.getMaxFileSize()),
-                        null);
+                                documentProperties.getMaxFileSize()));
             }
             log.debug("PDF written to temp file: {} ({} bytes)", tempPdf, written);
 
@@ -138,12 +138,20 @@ public class OpenDataLoaderPdfParser implements DocumentParser {
      * OpenDataLoader 输出文件名格式：{originalName}_output.md
      */
     private String readMarkdownOutput(Path outputDir) throws IOException {
+        List<Path> mdFiles = new ArrayList<>();
         try (var stream = Files.newDirectoryStream(outputDir, "*.md")) {
             for (Path mdFile : stream) {
-                String content = Files.readString(mdFile);
-                if (!content.isBlank()) {
-                    return content;
-                }
+                mdFiles.add(mdFile);
+            }
+        }
+        if (mdFiles.size() > 1) {
+            log.warn("Multiple ({}) markdown outputs found in {}, using the first non-empty one: {}",
+                    mdFiles.size(), outputDir, mdFiles);
+        }
+        for (Path mdFile : mdFiles) {
+            String content = Files.readString(mdFile);
+            if (!content.isBlank()) {
+                return content;
             }
         }
         return null;

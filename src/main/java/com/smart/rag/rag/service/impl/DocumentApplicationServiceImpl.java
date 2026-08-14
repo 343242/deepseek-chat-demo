@@ -28,7 +28,6 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.util.Arrays;
 import java.util.List;
-import java.util.Map;
 
 /**
  * 文档应用服务实现
@@ -53,19 +52,25 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
     private final UploadStrategyRouter uploadStrategyRouter;
     private final TeamAccessGate teamAccessGate;
     private final VectorStoreMapper vectorStoreMapper;
+    private final DocumentDtoMapper dtoMapper;
+    private final DocumentAccessGuard accessGuard;
 
     public DocumentApplicationServiceImpl(EtlDispatchService etlDispatchService,
                                           RagDocumentMapper ragDocumentMapper,
                                           DocumentLifecycleService documentLifecycleService,
                                           UploadStrategyRouter uploadStrategyRouter,
                                           TeamAccessGate teamAccessGate,
-                                          VectorStoreMapper vectorStoreMapper) {
+                                          VectorStoreMapper vectorStoreMapper,
+                                          DocumentDtoMapper dtoMapper,
+                                          DocumentAccessGuard accessGuard) {
         this.etlDispatchService = etlDispatchService;
         this.ragDocumentMapper = ragDocumentMapper;
         this.documentLifecycleService = documentLifecycleService;
         this.uploadStrategyRouter = uploadStrategyRouter;
         this.teamAccessGate = teamAccessGate;
         this.vectorStoreMapper = vectorStoreMapper;
+        this.dtoMapper = dtoMapper;
+        this.accessGuard = accessGuard;
     }
 
     @Override
@@ -110,7 +115,7 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
                 .ne(RagDocument::getStatus, EtlStatus.SUPERSEDED)
                 .orderByDesc(RagDocument::getCreateTime);
         Page<RagDocument> result = ragDocumentMapper.selectPage(mpPage, wrapper);
-        return PagedResult.of(result, this::toDTO);
+        return PagedResult.of(result, dtoMapper::toDTO);
     }
 
     @Override
@@ -133,26 +138,26 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
         }
 
         Page<RagDocument> result = ragDocumentMapper.selectPage(mpPage, wrapper);
-        return PagedResult.of(result, this::toDTO);
+        return PagedResult.of(result, dtoMapper::toDTO);
     }
 
     @Override
     public DocumentDTO getById(Long id) {
-        RagDocument doc = verifyAccess(id);
-        return toDTO(doc);
+        RagDocument doc = accessGuard.verifyAccess(id);
+        return dtoMapper.toDTO(doc);
     }
 
     @Override
     public boolean delete(Long id) {
-        RagDocument doc = verifyAccess(id);
-        assertCanMutate(doc);
+        RagDocument doc = accessGuard.verifyAccess(id);
+        accessGuard.assertCanMutate(doc);
         return documentLifecycleService.cascadeDelete(doc);
     }
 
     @Override
     public DocumentUploadResponse retry(Long id) {
-        RagDocument doc = verifyAccess(id);
-        assertCanMutate(doc);
+        RagDocument doc = accessGuard.verifyAccess(id);
+        accessGuard.assertCanMutate(doc);
         if (doc.getSupersededBy() != null) {
             throw new ClientException(ClientErrorCode.BAD_REQUEST, "文档已被新版本替代，无法重试");
         }
@@ -185,22 +190,22 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
      */
     @Override
     public List<DocumentDTO> getHistory(Long id) {
-        RagDocument doc = verifyAccess(id);
+        RagDocument doc = accessGuard.verifyAccess(id);
         String groupId = doc.getDocumentGroupId();
         if (groupId == null) {
-            return List.of(toDTO(doc));
+            return List.of(dtoMapper.toDTO(doc));
         }
         return ragDocumentMapper.selectList(
                 new LambdaQueryWrapper<RagDocument>()
                         .eq(RagDocument::getDocumentGroupId, groupId)
                         .orderByDesc(RagDocument::getVersion)
-        ).stream().map(this::toDTO).toList();
+        ).stream().map(dtoMapper::toDTO).toList();
     }
 
     @Override
     public PagedResult<ChunkDTO> listChunks(Long documentId, int page, int size) {
         // 复用文档归属校验（个人文档 owner / 团队文档成员 + R1-M1 可见性分层）
-        verifyAccess(documentId);
+        accessGuard.verifyAccess(documentId);
         int[] normalized = normalizePaging(page, size);
         int p = normalized[0];
         int s = normalized[1];
@@ -209,7 +214,7 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
         List<VectorStoreMapper.VectorStoreRow> rows =
                 vectorStoreMapper.selectChunksByDocumentIdPaged(docIdStr, offset, s);
         long total = vectorStoreMapper.countChunksByDocumentId(docIdStr);
-        List<ChunkDTO> content = rows.stream().map(this::toChunkDTO).toList();
+        List<ChunkDTO> content = rows.stream().map(dtoMapper::toChunkDTO).toList();
         int totalPages = s > 0 ? (int) ((total + s - 1) / s) : 0;
         return new PagedResult<>(content, p, s, total, totalPages);
     }
@@ -220,15 +225,15 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
         if (row == null) {
             throw new ServiceException(ServiceErrorCode.NOT_FOUND, "片段不存在: " + chunkId);
         }
-        Long documentId = parseDocumentId(row.metadata());
+        Long documentId = dtoMapper.parseDocumentId(row.metadata());
         if (documentId == null) {
             // 脏数据防御：无 documentId 的 chunk 拒绝访问，不泄露存在性
             log.warn("Chunk {} has no parseable documentId in metadata, denying access", chunkId);
             throw new ServiceException(ServiceErrorCode.NOT_FOUND, "片段不存在: " + chunkId);
         }
         // 复用文档归属校验：个人文档需 owner；团队文档需成员（R1-M1 可见性分层）
-        verifyAccess(documentId);
-        return toChunkDTO(row);
+        accessGuard.verifyAccess(documentId);
+        return dtoMapper.toChunkDTO(row);
     }
 
     // === 私有方法 ===
@@ -260,115 +265,5 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
             size = PageRequest.MAX_PAGE_SIZE;
         }
         return new int[]{page, size};
-    }
-
-    /**
-     * 统一文档访问权限校验
-     * <p>
-     * 个人文档：userId 匹配
-     * 团队文档：团队成员 + (管理员/创建者 或 上传者)
-     * <p>
-     * R1-H4: 不存在时抛 {@link ServiceErrorCode#DOCUMENT_NOT_FOUND}（→ 204001），
-     * 无权访问时抛 {@link ClientErrorCode#FORBIDDEN}（→ 100004）。
-     * 调用方无需再做 null 判断。
-     */
-    private RagDocument verifyAccess(Long id) {
-        RagDocument doc = ragDocumentMapper.selectById(id);
-        if (doc == null) {
-            throw new ServiceException(ServiceErrorCode.DOCUMENT_NOT_FOUND, "文档不存在: " + id);
-        }
-
-        Long currentUserId = SecurityUtils.getCurrentUserId();
-
-        if (doc.getTeamId() == null) {
-            // 个人文档
-            if (!currentUserId.equals(doc.getUserId())) {
-                log.warn("Access denied: userId={} attempted to access personal document id={}", currentUserId, id);
-                throw new ClientException(ClientErrorCode.FORBIDDEN, "无权操作该文档");
-            }
-        } else {
-            // 团队文档 — 必须是成员
-            TeamAccessGate.TeamAccess access = teamAccessGate.verifyAccess(doc.getTeamId(), currentUserId);
-            // R1-M1 可见性分层（方案 B）：非 owner/ADMIN/CREATOR 只能访问 COMPLETED 文档；
-            // 中间态/失败/被替代等对其他成员不可见，返回 NOT_FOUND（不泄露存在性）。
-            if (!isOwnerOrManager(doc.getUserId(), currentUserId, access)
-                    && doc.getStatus() != EtlStatus.COMPLETED) {
-                log.warn("Visibility denied (R1-M1): userId={} accessed non-completed team doc id={} status={}",
-                        currentUserId, id, doc.getStatus());
-                throw new ServiceException(ServiceErrorCode.DOCUMENT_NOT_FOUND, "文档不存在: " + id);
-            }
-        }
-
-        return doc;
-    }
-
-    /**
-     * R1-M1: 团队文档变更权限（delete / retry）——仅文档所有者或团队管理员/创建者。
-     * <p>
-     * 个人文档已由 {@link #verifyAccess} 保证 owner。读（getById/getHistory）由
-     * verifyAccess 的可见性分层管控：COMPLETED 全队可读，其余仅 owner/管理员可见。
-     */
-    private void assertCanMutate(RagDocument doc) {
-        if (doc.getTeamId() == null) {
-            return; // 个人文档：verifyAccess 已校验 owner
-        }
-        Long currentUserId = SecurityUtils.getCurrentUserId();
-        TeamAccessGate.TeamAccess access = teamAccessGate.verifyAccess(doc.getTeamId(), currentUserId);
-        if (!isOwnerOrManager(doc.getUserId(), currentUserId, access)) {
-            log.warn("Mutation denied (R1-M1): userId={} attempted to mutate team doc id={} owned by {}",
-                    currentUserId, doc.getId(), doc.getUserId());
-            throw new ServiceException(ServiceErrorCode.DOCUMENT_OWNERSHIP_DENIED,
-                    "仅文档所有者或团队管理员可操作该文档");
-        }
-    }
-
-    /** 文档所有者本人 或 团队 ADMIN / CREATOR */
-    private static boolean isOwnerOrManager(Long ownerId, Long currentUserId, TeamAccessGate.TeamAccess access) {
-        return currentUserId.equals(ownerId) || access.manager();
-    }
-
-    private DocumentDTO toDTO(RagDocument doc) {
-        return new DocumentDTO(
-                doc.getId(),
-                doc.getFileName(),
-                doc.getFileSize(),
-                doc.getMimeType(),
-                doc.getChunkCount(),
-                doc.getStatus(),
-                doc.getErrorMessage(),
-                doc.getUserId(),
-                doc.getTeamId(),
-                doc.getVersion(),
-                doc.getSupersededBy(),
-                doc.getDocumentGroupId(),
-                doc.getCreateTime()
-        );
-    }
-
-    private ChunkDTO toChunkDTO(VectorStoreMapper.VectorStoreRow row) {
-        Map<String, Object> metadata = row.metadata() != null ? row.metadata() : Map.of();
-        Long documentId = parseDocumentId(metadata);
-        String fileName = metadata.get("fileName") instanceof String s ? s : null;
-        return new ChunkDTO(row.id(), row.content(), documentId, fileName, metadata);
-    }
-
-    /**
-     * 从 metadata 解析 documentId（Long）。metadata 中 documentId 存为字符串。
-     *
-     * @return documentId；缺失或不可解析返回 null
-     */
-    private static Long parseDocumentId(Map<String, Object> metadata) {
-        if (metadata == null) {
-            return null;
-        }
-        Object raw = metadata.get("documentId");
-        if (raw == null) {
-            return null;
-        }
-        try {
-            return Long.valueOf(raw.toString());
-        } catch (NumberFormatException e) {
-            return null;
-        }
     }
 }

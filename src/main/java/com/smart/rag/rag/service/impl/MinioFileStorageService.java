@@ -1,5 +1,7 @@
 package com.smart.rag.rag.service.impl;
 
+import com.smart.rag.infrastructure.exception.ServiceException;
+import com.smart.rag.infrastructure.exception.errorcode.ServiceErrorCode;
 import com.smart.rag.rag.config.MinioProperties;
 import com.smart.rag.rag.service.FileStorageService;
 import io.minio.Http;
@@ -137,9 +139,13 @@ public class MinioFileStorageService implements FileStorageService {
         }
     }
 
-    public static class FileStorageException extends RuntimeException {
+    /**
+     * 文件存储异常 — 归入项目异常体系（ServiceException/B 类），便于统一
+     * 全局异常处理与错误码映射；所有抛出点均保留 cause。
+     */
+    public static class FileStorageException extends ServiceException {
         public FileStorageException(String message, Throwable cause) {
-            super(message, cause);
+            super(ServiceErrorCode.INTERNAL_ERROR, message, cause);
         }
     }
 }

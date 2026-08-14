@@ -68,10 +68,7 @@ class EntityIndexCleanupServiceTest {
 
             when(chunkEntityMapper.selectEntityIdsByDocumentId(docId))
                     .thenReturn(List.of(10L, 20L));
-            when(vectorStoreMapper.selectChunksByDocumentId("1"))
-                    .thenReturn(List.of(
-                            new VectorStoreMapper.VectorStoreRow("uuid-1", "content1", Map.of()),
-                            new VectorStoreMapper.VectorStoreRow("uuid-2", "content2", Map.of())));
+            when(vectorStoreMapper.countChunksByDocumentId("1")).thenReturn(2);
 
             service.cleanupByDocumentId(docId);
 
@@ -103,7 +100,7 @@ class EntityIndexCleanupServiceTest {
             verify(eventMapper).deleteByDocumentId(eq(1L));
             verify(transactionTemplate).executeWithoutResult(any());
             verify(chunkEntityMapper, never()).deleteByDocumentId(anyLong());
-            verify(vectorStoreMapper, never()).selectChunksByDocumentId(anyString());
+            verify(vectorStoreMapper, never()).countChunksByDocumentId(anyString());
         }
 
         @Test
@@ -111,8 +108,7 @@ class EntityIndexCleanupServiceTest {
         void dirtyDataStillCleansByDocumentId() {
             when(chunkEntityMapper.selectEntityIdsByDocumentId(1L))
                     .thenReturn(List.of(10L));
-            when(vectorStoreMapper.selectChunksByDocumentId("1"))
-                    .thenReturn(List.of());
+            when(vectorStoreMapper.countChunksByDocumentId("1")).thenReturn(0);
 
             service.cleanupByDocumentId(1L);
 
@@ -129,9 +125,7 @@ class EntityIndexCleanupServiceTest {
         void allStepsInTransaction() {
             when(chunkEntityMapper.selectEntityIdsByDocumentId(1L))
                     .thenReturn(List.of(10L, 20L));
-            when(vectorStoreMapper.selectChunksByDocumentId("1"))
-                    .thenReturn(List.of(
-                            new VectorStoreMapper.VectorStoreRow("uuid-1", "c", Map.of())));
+            when(vectorStoreMapper.countChunksByDocumentId("1")).thenReturn(1);
 
             service.cleanupByDocumentId(1L);
 

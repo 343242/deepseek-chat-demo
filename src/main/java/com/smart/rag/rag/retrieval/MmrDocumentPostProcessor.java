@@ -1,5 +1,7 @@
 package com.smart.rag.rag.retrieval;
 
+import com.smart.rag.infrastructure.exception.ServiceException;
+import com.smart.rag.infrastructure.exception.errorcode.ServiceErrorCode;
 import com.smart.rag.rag.mapper.VectorStoreMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -8,7 +10,6 @@ import org.springframework.ai.rag.Query;
 import org.springframework.ai.rag.postretrieval.document.DocumentPostProcessor;
 
 import java.util.*;
-import java.util.stream.Collectors;
 
 /**
  * MMR (Maximal Marginal Relevance) 多样性重排处理器
@@ -40,16 +41,22 @@ public class MmrDocumentPostProcessor implements DocumentPostProcessor {
 
     private final double lambda;
     private final int topK;
-    /** 召回上限，联动 pairwiseCosineDistance 截断阈值 max(MAX_PAIRWISE_DOCS, fusionTopK) */
+    /**
+     * 召回上限，联动 pairwiseCosineDistance 截断阈值 max(MAX_PAIRWISE_DOCS, fusionTopK)：
+     * 截断下限在 mapper 侧取 {@code max(MAX_PAIRWISE_DOCS, fusionTopK)}，
+     * 保证召回 fusionTopK 条时距离矩阵覆盖全量候选，避免 distance key miss。
+     */
     private final int fusionTopK;
     private final VectorStoreMapper vectorStoreMapper;
 
     public MmrDocumentPostProcessor(double lambda, int topK, int fusionTopK, VectorStoreMapper vectorStoreMapper) {
         if (lambda < 0.0 || lambda > 1.0) {
-            throw new IllegalArgumentException("MMR lambda must be in [0, 1], got: " + lambda);
+            throw new ServiceException(ServiceErrorCode.INTERNAL_ERROR,
+                    "MMR lambda must be in [0, 1], got: " + lambda);
         }
         if (topK <= 0) {
-            throw new IllegalArgumentException("MMR topK must be > 0, got: " + topK);
+            throw new ServiceException(ServiceErrorCode.INTERNAL_ERROR,
+                    "MMR topK must be > 0, got: " + topK);
         }
         this.lambda = lambda;
         this.topK = topK;
@@ -74,7 +81,7 @@ public class MmrDocumentPostProcessor implements DocumentPostProcessor {
     /**
      * 预取文档间 cosine 距离矩阵（DB pgvector），失败→null（调用方走 relevance-only 降级）。
      * <p>
-     * 截断阈值联动 fusionTopK（{@code max(MAX_PAIRWISE_DOCS, fusionTopK)}），召回 60 时覆盖全 60 条，
+     * 截断阈值联动 fusionTopK（mapper 侧实际下限 {@code max(MAX_PAIRWISE_DOCS, fusionTopK)}），召回 60 时覆盖全 60 条，
      * 避免 Rerank top20 落在 RRF 51-60 位时 distance key miss（被误判无冗余）。
      * <p>
      * B3 无状态：只读 vectorStoreMapper/fusionTopK 字段，无中间实例状态。
@@ -117,7 +124,7 @@ public class MmrDocumentPostProcessor implements DocumentPostProcessor {
             return documents.stream()
                     .sorted(Comparator.comparingDouble(this::resolveRelevanceScore).reversed())
                     .limit(topK)
-                    .collect(Collectors.toList());
+                    .toList();
         }
 
         double[] relevanceScores = new double[n];
@@ -125,11 +132,13 @@ public class MmrDocumentPostProcessor implements DocumentPostProcessor {
             relevanceScores[i] = resolveRelevanceScore(documents.get(i));
         }
 
-        List<String> docIds = documents.stream().map(Document::getId).toList();
+        double[][] similarity = buildSimilarityMatrix(documents, distance);
 
         // 贪心 MMR 选择
         List<Integer> selected = new ArrayList<>(topK);
         boolean[] used = new boolean[n];
+        // maxSimToSelected[i] = 候选 i 与已选集 S 的最大相似度（增量维护，避免每轮重扫 selected）
+        double[] maxSimToSelected = new double[n];
 
         // 第一步：选相关性最高的
         int bestIdx = 0;
@@ -140,34 +149,15 @@ public class MmrDocumentPostProcessor implements DocumentPostProcessor {
         }
         selected.add(bestIdx);
         used[bestIdx] = true;
+        updateMaxSimilarity(maxSimToSelected, similarity, used, bestIdx);
 
         // 后续步：MMR 公式迭代选择
         while (selected.size() < topK && selected.size() < n) {
-            int nextIdx = -1;
-            double bestMmr = Double.NEGATIVE_INFINITY;
-
-            for (int i = 0; i < n; i++) {
-                if (used[i]) continue;
-
-                double relevance = relevanceScores[i];
-                double maxSim = 0.0;
-                for (int selIdx : selected) {
-                    String key = docIds.get(i) + "|" + docIds.get(selIdx);
-                    Double dist = distance.get(key);
-                    double sim = dist != null ? 1.0 - dist : 0.0;
-                    maxSim = Math.max(maxSim, sim);
-                }
-
-                double mmr = lambda * relevance - (1 - lambda) * maxSim;
-                if (mmr > bestMmr) {
-                    bestMmr = mmr;
-                    nextIdx = i;
-                }
-            }
-
+            int nextIdx = selectNextCandidate(relevanceScores, maxSimToSelected, used);
             if (nextIdx == -1) break;
             selected.add(nextIdx);
             used[nextIdx] = true;
+            updateMaxSimilarity(maxSimToSelected, similarity, used, nextIdx);
         }
 
         List<Document> result = new ArrayList<>(selected.size());
@@ -177,6 +167,59 @@ public class MmrDocumentPostProcessor implements DocumentPostProcessor {
 
         log.info("MMR: {} docs → {} docs (lambda={}, db_cosine)", documents.size(), result.size(), lambda);
         return result;
+    }
+
+    /**
+     * 贪心选择下一个 MMR 候选：argmax λ·relevance - (1-λ)·maxSim。
+     *
+     * @return 最优候选下标；无可选候选时 -1
+     */
+    private int selectNextCandidate(double[] relevanceScores, double[] maxSimToSelected, boolean[] used) {
+        int nextIdx = -1;
+        double bestMmr = Double.NEGATIVE_INFINITY;
+        for (int i = 0; i < relevanceScores.length; i++) {
+            if (used[i]) continue;
+            double mmr = lambda * relevanceScores[i] - (1 - lambda) * maxSimToSelected[i];
+            if (mmr > bestMmr) {
+                bestMmr = mmr;
+                nextIdx = i;
+            }
+        }
+        return nextIdx;
+    }
+
+    /** 新选中 newlySelected 后，增量更新各未选候选与已选集的最大相似度。 */
+    private void updateMaxSimilarity(double[] maxSimToSelected, double[][] similarity,
+                                     boolean[] used, int newlySelected) {
+        for (int i = 0; i < maxSimToSelected.length; i++) {
+            if (used[i]) continue;
+            maxSimToSelected[i] = Math.max(maxSimToSelected[i], similarity[i][newlySelected]);
+        }
+    }
+
+    /**
+     * 将 "idA|idB" 字符串 key 的距离矩阵预处理为下标对称相似度矩阵，
+     * 避免贪心循环内反复字符串拼接 + Map 查找；缺失项相似度按 0（无冗余）处理。
+     * <p>docId 为 UUID（不含分隔符），indexOf('|') 拆分安全。
+     */
+    private double[][] buildSimilarityMatrix(List<Document> documents, Map<String, Double> distance) {
+        int n = documents.size();
+        Map<String, Integer> idxById = new HashMap<>(n);
+        for (int i = 0; i < n; i++) {
+            idxById.put(documents.get(i).getId(), i);
+        }
+        double[][] similarity = new double[n][n];
+        for (var entry : distance.entrySet()) {
+            int sep = entry.getKey().indexOf('|');
+            if (sep < 0) continue;
+            Integer a = idxById.get(entry.getKey().substring(0, sep));
+            Integer b = idxById.get(entry.getKey().substring(sep + 1));
+            if (a == null || b == null) continue;
+            double sim = 1.0 - entry.getValue();
+            similarity[a][b] = sim;
+            similarity[b][a] = sim;
+        }
+        return similarity;
     }
 
     /**

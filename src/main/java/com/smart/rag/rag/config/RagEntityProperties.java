@@ -44,8 +44,9 @@ public record RagEntityProperties(
         if (expansionHops < 0) expansionHops = 1;
         if (expansionDecay <= 0 || expansionDecay > 1) expansionDecay = 0.7;
         if (alpha < 0 || beta < 0 || gamma < 0)
-            throw new IllegalArgumentException("entity α/β/γ must be >= 0");
+            throw new IllegalArgumentException("实体检索权重 α/β/γ 必须均 >= 0（alpha=" + alpha
+                    + ", beta=" + beta + ", gamma=" + gamma + "）");
         if (alpha + beta + gamma == 0)
-            throw new IllegalArgumentException("entity α/β/γ cannot all be 0");
+            throw new IllegalArgumentException("实体检索权重 α/β/γ 不能同时为 0，请至少配置一个非零权重");
     }
 }

@@ -45,6 +45,14 @@ public interface EntityMapper extends BaseMapper<RagEntity> {
      */
     void updateEmbedding(@Param("id") Long id, @Param("embedding") float[] embedding);
 
+    /** updateEmbeddingBatch 批量项（id + embedding） */
+    record EmbeddingUpdate(Long id, float[] embedding) {}
+
+    /**
+     * 批量更新 embedding（foreach UPDATE，见 EntityMapper.xml）
+     */
+    int updateEmbeddingBatch(@Param("items") List<EmbeddingUpdate> items);
+
     /**
      * 查询需要 embed 的实体（description 非空且 embedding 为空）
      */

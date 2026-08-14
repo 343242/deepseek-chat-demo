@@ -30,15 +30,32 @@ public class VectorStoreLoader implements Loader {
 
     @Override
     public void load(List<Document> documents) {
+        if (documents == null || documents.isEmpty()) {
+            return;
+        }
+        // 幂等性：先删除同 documentId 的既有向量再写入（delete-before-load）。
+        // WHY：消息总线 redelivery / 部分失败重试会导致同一文档被重复 load，
+        // 而 vectorStore.add 是追加语义——不先删会产生重复向量。此层实现幂等
+        // 使 ANY 重投递（含 PARTIAL 失败后的总线重试）安全，无需依赖上游状态守卫。
+        documents.stream()
+                .map(d -> (String) d.getMetadata().get("documentId"))
+                .filter(java.util.Objects::nonNull)
+                .distinct()
+                .forEach(documentId ->
+                        vectorStore.delete(new FilterExpressionBuilder()
+                                .eq("documentId", documentId).build()));
         vectorStore.add(documents);
         log.info("Loaded {} documents into vector store", documents.size());
     }
 
     @Override
     public void deleteByDocumentId(Long documentId) {
-        FilterExpressionBuilder builder = new FilterExpressionBuilder();
-        Filter.Expression filter = builder.eq("documentId", String.valueOf(documentId)).build();
-        vectorStore.delete(filter);
+        vectorStore.delete(buildDocumentIdFilter(documentId));
         log.info("Deleted vectors for documentId={}", documentId);
+    }
+
+    private Filter.Expression buildDocumentIdFilter(Long documentId) {
+        FilterExpressionBuilder builder = new FilterExpressionBuilder();
+        return builder.eq("documentId", String.valueOf(documentId)).build();
     }
 }

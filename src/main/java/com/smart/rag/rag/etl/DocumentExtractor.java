@@ -46,7 +46,7 @@ public class DocumentExtractor implements Extractor {
                 try {
                     closeable.close();
                 } catch (java.io.IOException e) {
-                    log.warn("Failed to close MinIO resource: {}/{}", bucket, objectKey);
+                    log.warn("Failed to close MinIO resource: {}/{}", bucket, objectKey, e);
                 }
             }
         }

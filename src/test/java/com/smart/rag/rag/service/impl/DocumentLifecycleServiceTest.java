@@ -9,7 +9,6 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.context.ApplicationEventPublisher;
@@ -38,8 +37,23 @@ class DocumentLifecycleServiceTest {
     @Mock
     private ApplicationEventPublisher eventPublisher;
 
-    @InjectMocks
+    /** ObjectProvider 桩：getIfAvailable 返回 null（模拟 EntityIndexCleanupService Bean 缺失） */
+    private static org.springframework.beans.factory.ObjectProvider<EntityIndexCleanupService> noCleanupProvider() {
+        return new org.springframework.beans.factory.ObjectProvider<>() {
+            @Override public EntityIndexCleanupService getObject() { throw new java.util.NoSuchElementException("no bean"); }
+            @Override public EntityIndexCleanupService getObject(Object... args) { return getObject(); }
+            @Override public EntityIndexCleanupService getIfAvailable() { return null; }
+            @Override public EntityIndexCleanupService getIfUnique() { return null; }
+        };
+    }
+
     private DocumentLifecycleService service;
+
+    @org.junit.jupiter.api.BeforeEach
+    void setUp() {
+        service = new DocumentLifecycleService(vectorStoreLoader, fileStorageService,
+                ragDocumentMapper, eventPublisher, noCleanupProvider());
+    }
 
     @Test
     @DisplayName("cascadeDelete: DB 删除后发布 DocumentDeletedEvent")

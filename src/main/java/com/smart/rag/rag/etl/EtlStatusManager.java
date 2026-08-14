@@ -27,6 +27,9 @@ public class EtlStatusManager {
 
     private static final Logger log = LoggerFactory.getLogger(EtlStatusManager.class);
 
+    /** 错误信息截断上限（UI/日志体积控制，见 truncate 注释） */
+    private static final int MAX_ERROR_MESSAGE_LENGTH = 2000;
+
     private final RagDocumentMapper ragDocumentMapper;
     private final TransactionTemplate transactionTemplate;
     private final ApplicationEventPublisher eventPublisher;
@@ -91,13 +94,13 @@ public class EtlStatusManager {
                 RagDocument doc = ragDocumentMapper.selectById(documentId);
                 if (doc != null) {
                     doc.setStatus(EtlStatus.FAILED);
-                    doc.setErrorMessage(truncate(e.getMessage(), 2000));
+                    doc.setErrorMessage(truncate(e.getMessage(), MAX_ERROR_MESSAGE_LENGTH));
                     doc.setUpdateTime(OffsetDateTime.now());
                     ragDocumentMapper.updateById(doc);
                 }
             });
             // 事务已提交、DB 状态可见 → 发布失败事件，供下游（pendingSupersede 加速层等）清理
-            eventPublisher.publishEvent(new EtlFailedEvent(documentId, truncate(e.getMessage(), 2000)));
+            eventPublisher.publishEvent(new EtlFailedEvent(documentId, truncate(e.getMessage(), MAX_ERROR_MESSAGE_LENGTH)));
             publishStatusEvent(documentId, EtlStatus.FAILED);
         } catch (Exception txEx) {
             log.error("Failed to persist FAILED status for document: id={}", documentId, txEx);
@@ -115,7 +118,7 @@ public class EtlStatusManager {
                 RagDocument doc = ragDocumentMapper.selectById(documentId);
                 if (doc != null) {
                     doc.setStatus(EtlStatus.VECTOR_FAILED);
-                    doc.setErrorMessage(truncate("Async vectorize failed: " + ex.getMessage(), 2000));
+                    doc.setErrorMessage(truncate("Async vectorize failed: " + ex.getMessage(), MAX_ERROR_MESSAGE_LENGTH));
                     doc.setUpdateTime(OffsetDateTime.now());
                     ragDocumentMapper.updateById(doc);
                 }

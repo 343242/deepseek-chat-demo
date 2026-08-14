@@ -62,7 +62,8 @@ class ChunkViewTest {
     void setUp() {
         service = new DocumentApplicationServiceImpl(
                 etlDispatchService, ragDocumentMapper, documentLifecycleService,
-                uploadStrategyRouter, teamAccessGate, vectorStoreMapper);
+                uploadStrategyRouter, teamAccessGate, vectorStoreMapper,
+                new DocumentDtoMapper(), new DocumentAccessGuard(ragDocumentMapper, teamAccessGate));
     }
 
     @AfterEach

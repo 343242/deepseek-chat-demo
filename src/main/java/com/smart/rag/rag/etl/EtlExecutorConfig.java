@@ -1,12 +1,14 @@
 package com.smart.rag.rag.etl;
 
 import com.smart.rag.config.NamedThreadFactory;
+import com.smart.rag.infrastructure.concurrent.ScopedTasks;
 import com.smart.rag.rag.config.EtlExecutorProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.DisposableBean;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Lazy;
@@ -78,6 +80,21 @@ public class EtlExecutorConfig implements DisposableBean {
             @Qualifier("etlIoExecutor") ThreadPoolExecutor etlIoExecutor,
             @Qualifier("etlCpuExecutor") ThreadPoolExecutor etlCpuExecutor) {
         return new EtlTaskExecutorBridge(etlIoExecutor, etlCpuExecutor);
+    }
+
+    /**
+     * ETL 策略共享上下文 — 打包 IO/CPU 线程池 + ScopedTasks + 事件发布器，
+     * 供 {@link com.smart.rag.rag.etl.StandardStrategy} / FastTrackStrategy 注入，
+     * 避免策略构造器参数膨胀。
+     */
+    @Lazy
+    @Bean
+    public EtlStrategyContext etlStrategyContext(
+            @Qualifier("etlIoExecutor") ThreadPoolExecutor etlIoExecutor,
+            @Qualifier("etlCpuExecutor") ThreadPoolExecutor etlCpuExecutor,
+            ScopedTasks scopedTasks,
+            ApplicationEventPublisher eventPublisher) {
+        return new EtlStrategyContext(etlIoExecutor, etlCpuExecutor, scopedTasks, eventPublisher);
     }
 
     /**

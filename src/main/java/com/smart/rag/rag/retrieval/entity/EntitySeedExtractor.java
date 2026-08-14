@@ -69,7 +69,9 @@ public class EntitySeedExtractor {
             ChatRequest request = ChatRequest.withSystem(SEED_SYSTEM_PROMPT, query);
             LlmResponse response = chatClient.chat(request);
             return parseEntities(response.content());
-        } catch (Exception e) {
+        } catch (RuntimeException e) {
+            // 失败隔离（§8.3）：LLM 调用链（registry 解析 / chat / 解析）均只抛 unchecked 异常
+            // （ChatCapable.chat 无 checked 声明），捕获 RuntimeException 即可覆盖全部失败面。
             log.warn("Seed entity extraction failed, returning empty list (Path A/B unaffected): {}", e.getMessage());
             return List.of();
         }

@@ -19,9 +19,10 @@ import org.redisson.api.RLock;
 import org.redisson.api.RedissonClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
@@ -45,18 +46,19 @@ public class EtlDispatchServiceImpl implements EtlDispatchService {
     private final Loader loader;
     private final @Nullable RedissonClient redissonClient;
     private final MessageBus messageBus;
-    private final @Nullable MeterRegistry meterRegistry;
+    /** MeterRegistry 为可选依赖（无 actuator 时 Bean 不存在） */
+    private final ObjectProvider<MeterRegistry> meterRegistryProvider;
 
     public EtlDispatchServiceImpl(EtlRouteStrategyFactory strategyFactory,
                                   Loader loader,
                                   @Nullable RedissonClient redissonClient,
                                   MessageBus messageBus,
-                                  @Autowired(required = false) @Nullable MeterRegistry meterRegistry) {
+                                  ObjectProvider<MeterRegistry> meterRegistryProvider) {
         this.strategyFactory = strategyFactory;
         this.loader = loader;
         this.redissonClient = redissonClient;
         this.messageBus = messageBus;
-        this.meterRegistry = meterRegistry;
+        this.meterRegistryProvider = meterRegistryProvider;
     }
 
     @Override
@@ -73,8 +75,10 @@ public class EtlDispatchServiceImpl implements EtlDispatchService {
             return strategy.execute(candidates);
         }
 
-        // Acquire distributed locks for all candidates
+        // Acquire distributed locks for all candidates.
+        // 按确定性顺序（documentId 升序）加锁，保证多实例/多请求的加锁顺序一致，避免环形死锁。
         List<RLock> locks = candidates.stream()
+            .sorted(Comparator.comparingLong(EtlCandidate::documentId))
             .map(c -> redissonClient.getLock(ETL_LOCK_PREFIX + c.documentId()))
             .toList();
 
@@ -132,8 +136,13 @@ public class EtlDispatchServiceImpl implements EtlDispatchService {
             messageBus.send(new MessageEnvelope<>(null, EtlDocumentConsumer.TOPIC, null, candidate,
                 dedupKey, dedupKey, Map.of(), System.currentTimeMillis()));
         } catch (MessagingException e) {
+            // WHY 仅告警不抛出（吞异常）：outbox 已是唯一投递路径（线程池兜底已删除），
+            // 此处落库失败属 DB 硬故障——向调用方抛出也无法恢复投递，只会把上传/重试
+            // 的成功语义变成失败。唯一兜底是计数告警（rag.etl.publish_failed）供运维介入；
+            // 消息视为丢失，文档停留在 PROCESSING，可由用户手动 retry 重建投递。
             log.error("Outbox persist failed for ETL dispatch (message lost): documentId={}, file={}",
                 documentId, fileName, e);
+            MeterRegistry meterRegistry = meterRegistryProvider.getIfAvailable();
             if (meterRegistry != null) {
                 meterRegistry.counter("rag.etl.publish_failed").increment();
             }

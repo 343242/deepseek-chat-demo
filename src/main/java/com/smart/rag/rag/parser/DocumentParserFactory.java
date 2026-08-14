@@ -26,14 +26,19 @@ public class DocumentParserFactory {
         this.defaultParser = tikaParser;
         Map<String, DocumentParser> map = new HashMap<>();
         for (DocumentParser parser : parsers) {
-            if (parser instanceof TikaDocumentParser) {
+            if (parser.isFallback()) {
                 continue;
             }
             for (String mime : parser.supportedMimeTypes()) {
-                map.put(mime, parser);
+                DocumentParser previous = map.put(mime, parser);
+                if (previous != null) {
+                    log.warn("Duplicate MIME registration '{}': parser {} overwrites {}",
+                            mime, parser.getClass().getSimpleName(),
+                            previous.getClass().getSimpleName());
+                }
             }
         }
-        this.parserMap = map;
+        this.parserMap = Map.copyOf(map);
         log.info("DocumentParserFactory initialized: {} specific parsers registered, default: TikaDocumentParser",
                 map.size());
     }
@@ -42,6 +47,10 @@ public class DocumentParserFactory {
      * 根据 MIME 类型获取对应的解析器，无匹配时返回 Tika 兜底。
      */
     public DocumentParser getParser(String mimeType) {
+        // 不可变 Map（Map.copyOf）的 get(null) 会抛 NPE，null MIME 需直接走 Tika 兜底
+        if (mimeType == null) {
+            return defaultParser;
+        }
         return Optional.ofNullable(parserMap.get(mimeType)).orElse(defaultParser);
     }
 }

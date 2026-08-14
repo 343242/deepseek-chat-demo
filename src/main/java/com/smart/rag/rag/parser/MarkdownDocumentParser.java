@@ -1,10 +1,12 @@
 package com.smart.rag.rag.parser;
 
+import com.smart.rag.rag.config.DocumentProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.document.Document;
 import org.springframework.ai.reader.markdown.MarkdownDocumentReader;
 import org.springframework.ai.reader.markdown.config.MarkdownDocumentReaderConfig;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.Resource;
 import org.springframework.stereotype.Component;
 
@@ -29,6 +31,18 @@ public class MarkdownDocumentParser implements DocumentParser {
 
     private static final Logger log = LoggerFactory.getLogger(MarkdownDocumentParser.class);
 
+    private final DocumentProperties documentProperties;
+
+    /** 便捷无参构造（测试/独立使用），使用默认配置 */
+    public MarkdownDocumentParser() {
+        this(new DocumentProperties());
+    }
+
+    @Autowired
+    public MarkdownDocumentParser(DocumentProperties documentProperties) {
+        this.documentProperties = documentProperties;
+    }
+
     @Override
     public List<String> supportedMimeTypes() {
         return List.of("text/markdown", "text/x-markdown");
@@ -38,8 +52,12 @@ public class MarkdownDocumentParser implements DocumentParser {
     public List<Document> parse(Resource resource, String mimeType) {
         log.debug("Parsing Markdown: file={}", resource.getFilename());
 
+        long maxBytes = org.springframework.util.unit.DataSize
+                .parse(documentProperties.getMaxFileSize()).toBytes();
+
         // 编码检测：确保传入 MarkdownDocumentReader 的内容是 UTF-8
-        Resource transcoded = EncodingDetector.detectAndTranscode(resource);
+        // （读取上限来自 DocumentProperties，与上游校验一致）
+        Resource transcoded = EncodingDetector.detectAndTranscode(resource, maxBytes);
 
         MarkdownDocumentReaderConfig config = MarkdownDocumentReaderConfig.builder()
                 .withHorizontalRuleCreateDocument(true)
@@ -47,8 +65,13 @@ public class MarkdownDocumentParser implements DocumentParser {
                 .withIncludeBlockquote(false)
                 .build();
 
-        MarkdownDocumentReader reader = new MarkdownDocumentReader(transcoded, config);
-        List<Document> documents = reader.get();
+        List<Document> documents;
+        try {
+            MarkdownDocumentReader reader = new MarkdownDocumentReader(transcoded, config);
+            documents = reader.get();
+        } catch (Exception e) {
+            throw new DocumentParseException(resource.getFilename(), "markdown", "Failed to parse Markdown", e);
+        }
 
         for (Document doc : documents) {
             doc.getMetadata().put("parser", "markdown");

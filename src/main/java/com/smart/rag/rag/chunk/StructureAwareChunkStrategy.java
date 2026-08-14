@@ -7,8 +7,11 @@ import org.springframework.ai.document.Document;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Function;
+import java.util.regex.Pattern;
 
 /**
  * 结构感知分块策略（Structure-aware Chunking）
@@ -29,6 +32,9 @@ import java.util.Map;
  *
  * <p>替代原有 {@code ParagraphChunkStrategy}，在保留段落切分能力的同时
  * 增加结构感知。配置中策略名仍为 "paragraph" 以保持向后兼容。</p>
+ *
+ * <p>本类负责结构检测 + 分发 + chunk 创建；段落切分/合并/HTML 清理
+ * 委托给 {@link ParagraphSplitter}。</p>
  */
 @Component
 public class StructureAwareChunkStrategy implements ChunkStrategy {
@@ -37,6 +43,9 @@ public class StructureAwareChunkStrategy implements ChunkStrategy {
 
     /** 超过此字符数的 section/page 需要进一步切分 */
     private static final int LONG_SECTION_THRESHOLD = 3000;
+
+    /** Markdown 标题行（用于无 metadata 时的兜底检测） */
+    private static final Pattern HEADING_LINE = Pattern.compile("^#{1,6}\\s.+");
 
     private final DocumentProperties properties;
 
@@ -100,7 +109,7 @@ public class StructureAwareChunkStrategy implements ChunkStrategy {
         // 兜底：检查文本内容是否包含 Markdown 标记
         for (Document doc : documents) {
             String text = doc.getText();
-            if (text != null && text.lines().anyMatch(line -> line.matches("^#{1,6}\\s.+"))) {
+            if (text != null && text.lines().anyMatch(line -> HEADING_LINE.matcher(line).matches())) {
                 return StructureType.MARKDOWN;
             }
         }
@@ -108,7 +117,7 @@ public class StructureAwareChunkStrategy implements ChunkStrategy {
         return StructureType.PLAIN;
     }
 
-    // ==================== Markdown 结构切分 ====================
+    // ==================== 各结构类型切分 ====================
 
     /**
      * Markdown 切分：Parser 已按标题拆分，这里处理超大 section
@@ -121,38 +130,9 @@ public class StructureAwareChunkStrategy implements ChunkStrategy {
      * </ol>
      */
     private List<Document> chunkMarkdown(List<Document> documents, String sourceFileName) {
-        int minLength = properties.getParagraphMinLength();
-        List<Document> allChunks = new ArrayList<>();
-        int globalIndex = 0;
-
-        for (Document doc : documents) {
-            String text = doc.getText();
-            if (text == null || text.isBlank()) continue;
-
-            // 短 section 直接保留
-            if (text.length() <= LONG_SECTION_THRESHOLD) {
-                Document chunk = createChunk(doc.getText(), doc.getMetadata(), sourceFileName, globalIndex, "markdown-section");
-                allChunks.add(chunk);
-                globalIndex++;
-                continue;
-            }
-
-            // 长 section：按段落边界再切，保留标题在首段
-            List<String> paragraphs = splitIntoParagraphs(text);
-            List<String> merged = mergeShortParagraphs(paragraphs, minLength);
-
-            for (String para : merged) {
-                if (para.isBlank()) continue;
-                Document chunk = createChunk(para, doc.getMetadata(), sourceFileName, globalIndex, "markdown-paragraph");
-                allChunks.add(chunk);
-                globalIndex++;
-            }
-        }
-
-        return allChunks;
+        return chunkDocuments(documents, sourceFileName,
+                "markdown-section", "markdown-paragraph", ParagraphSplitter::splitIntoParagraphs);
     }
-
-    // ==================== PDF 页级切分 ====================
 
     /**
      * PDF 切分：Parser 已按页拆分
@@ -165,32 +145,63 @@ public class StructureAwareChunkStrategy implements ChunkStrategy {
      */
     private List<Document> chunkPdf(List<Document> documents, String sourceFileName) {
         int minLength = properties.getParagraphMinLength();
+        List<Document> mergedPages = mergeShortPages(documents, minLength);
+        return chunkDocuments(mergedPages, sourceFileName,
+                "pdf-page", "pdf-paragraph", ParagraphSplitter::splitIntoParagraphs);
+    }
+
+    /**
+     * HTML 切分：按块级标签边界识别段落
+     * <p>
+     * 识别 &lt;h1&gt;-&lt;h6&gt;、&lt;p&gt;、&lt;div&gt;、&lt;li&gt; 作为切分点。
+     * HTML 专用 Parser 产出更有结构的 Document，这里做兜底处理。
+     */
+    private List<Document> chunkHtml(List<Document> documents, String sourceFileName) {
+        return chunkDocuments(documents, sourceFileName,
+                null, "html-block", ParagraphSplitter::splitHtmlBlocks);
+    }
+
+    /**
+     * 无结构信息的纯文本切分 — 与原 ParagraphChunkStrategy 等价
+     */
+    private List<Document> chunkPlain(List<Document> documents, String sourceFileName) {
+        return chunkDocuments(documents, sourceFileName,
+                null, "paragraph", ParagraphSplitter::splitIntoParagraphs);
+    }
+
+    // ==================== 通用切分管线 ====================
+
+    /**
+     * 通用切分管线：遍历文档 →（可选）短文档直接保留 → 切分 → 合并短段 → 创建 chunk
+     *
+     * @param directChunkType 非 null 时，长度 ≤ threshold 的文档作为整体保留并标记该类型
+     * @param splitChunkType  切分后产出的 chunk 类型标记
+     * @param splitter        文本 → 段落列表的切分函数
+     */
+    private List<Document> chunkDocuments(List<Document> documents, String sourceFileName,
+                                          String directChunkType, String splitChunkType,
+                                          Function<String, List<String>> splitter) {
+        int minLength = properties.getParagraphMinLength();
         List<Document> allChunks = new ArrayList<>();
         int globalIndex = 0;
 
-        // 先合并过短的连续页
-        List<Document> mergedPages = mergeShortPages(documents, minLength);
-
-        for (Document page : mergedPages) {
-            String text = page.getText();
+        for (Document doc : documents) {
+            String text = doc.getText();
             if (text == null || text.isBlank()) continue;
 
-            // 短页直接保留
-            if (text.length() <= LONG_SECTION_THRESHOLD) {
-                Document chunk = createChunk(text, page.getMetadata(), sourceFileName, globalIndex, "pdf-page");
-                allChunks.add(chunk);
+            // 短文档直接保留（仅结构化路径启用）
+            if (directChunkType != null && text.length() <= LONG_SECTION_THRESHOLD) {
+                allChunks.add(createChunk(text, doc.getMetadata(), sourceFileName, globalIndex, directChunkType));
                 globalIndex++;
                 continue;
             }
 
-            // 超长页：按段落边界再切
-            List<String> paragraphs = splitIntoParagraphs(text);
-            List<String> merged = mergeShortParagraphs(paragraphs, minLength);
+            // 长文档：按结构边界切分并合并短段
+            List<String> merged = ParagraphSplitter.mergeShortParagraphs(splitter.apply(text), minLength);
 
             for (String para : merged) {
                 if (para.isBlank()) continue;
-                Document chunk = createChunk(para, page.getMetadata(), sourceFileName, globalIndex, "pdf-paragraph");
-                allChunks.add(chunk);
+                allChunks.add(createChunk(para, doc.getMetadata(), sourceFileName, globalIndex, splitChunkType));
                 globalIndex++;
             }
         }
@@ -206,7 +217,7 @@ public class StructureAwareChunkStrategy implements ChunkStrategy {
 
         List<Document> result = new ArrayList<>();
         StringBuilder currentText = new StringBuilder();
-        Map<String, Object> currentMeta = new java.util.HashMap<>(pages.getFirst().getMetadata());
+        Map<String, Object> currentMeta = new HashMap<>(pages.getFirst().getMetadata());
 
         for (Document page : pages) {
             String text = page.getText();
@@ -215,7 +226,7 @@ public class StructureAwareChunkStrategy implements ChunkStrategy {
             if (!currentText.isEmpty() && currentText.length() >= minLength) {
                 result.add(new Document(currentText.toString(), currentMeta));
                 currentText = new StringBuilder();
-                currentMeta = new java.util.HashMap<>(page.getMetadata());
+                currentMeta = new HashMap<>(page.getMetadata());
             }
 
             if (!currentText.isEmpty()) {
@@ -231,142 +242,7 @@ public class StructureAwareChunkStrategy implements ChunkStrategy {
         return result;
     }
 
-    // ==================== HTML 结构切分 ====================
-
-    /**
-     * HTML 切分：按块级标签边界识别段落
-     * <p>
-     * 识别 &lt;h1&gt;-&lt;h6&gt;、&lt;p&gt;、&lt;div&gt;、&lt;li&gt; 作为切分点。
-     * HTML 专用 Parser 产出更有结构的 Document，这里做兜底处理。
-     */
-    private List<Document> chunkHtml(List<Document> documents, String sourceFileName) {
-        int minLength = properties.getParagraphMinLength();
-        List<Document> allChunks = new ArrayList<>();
-        int globalIndex = 0;
-
-        for (Document doc : documents) {
-            String text = doc.getText();
-            if (text == null || text.isBlank()) continue;
-
-            // 按 HTML 块级标签切分
-            List<String> blocks = splitHtmlBlocks(text);
-            List<String> merged = mergeShortParagraphs(blocks, minLength);
-
-            for (String block : merged) {
-                if (block.isBlank()) continue;
-                Document chunk = createChunk(block, doc.getMetadata(), sourceFileName, globalIndex, "html-block");
-                allChunks.add(chunk);
-                globalIndex++;
-            }
-        }
-
-        return allChunks;
-    }
-
-    /**
-     * 按 HTML 块级标签边界切分文本
-     * <p>
-     * Tika 输出的 HTML 文本通常已去除标签，但保留了一些结构痕迹（如连续换行）。
-     * 如果文本中仍有 HTML 标签（如来自原始 HTML），按标签切。
-     * 否则退化到段落切分。
-     */
-    private List<String> splitHtmlBlocks(String text) {
-        // 如果文本中仍有 HTML 标签
-        if (text.contains("<")) {
-            List<String> blocks = new ArrayList<>();
-            // 按 </p> </div> </li> </h1-6> 等块级闭合标签切分
-            String[] parts = text.split("(?i)</(?:p|div|li|h[1-6]|section|article|blockquote|pre|table|tr)>");
-            for (String part : parts) {
-                String cleaned = stripHtmlTags(part).trim();
-                if (!cleaned.isBlank()) {
-                    blocks.add(cleaned);
-                }
-            }
-            return blocks.isEmpty() ? splitIntoParagraphs(text) : blocks;
-        }
-
-        // 纯文本退化到段落切分
-        return splitIntoParagraphs(text);
-    }
-
-    /**
-     * 简单去除 HTML 标签（不做完整解析）
-     */
-    private String stripHtmlTags(String text) {
-        return text.replaceAll("<[^>]+>", " ").replaceAll("\\s+", " ").trim();
-    }
-
-    // ==================== 纯文本切分（降级路径） ====================
-
-    /**
-     * 无结构信息的纯文本切分 — 与原 ParagraphChunkStrategy 等价
-     */
-    private List<Document> chunkPlain(List<Document> documents, String sourceFileName) {
-        int minLength = properties.getParagraphMinLength();
-        List<Document> allChunks = new ArrayList<>();
-        int globalIndex = 0;
-
-        for (Document doc : documents) {
-            String text = doc.getText();
-            List<String> paragraphs = splitIntoParagraphs(text);
-            List<String> merged = mergeShortParagraphs(paragraphs, minLength);
-
-            for (String para : merged) {
-                if (para.isBlank()) continue;
-                Document chunk = createChunk(para, doc.getMetadata(), sourceFileName, globalIndex, "paragraph");
-                allChunks.add(chunk);
-                globalIndex++;
-            }
-        }
-
-        return allChunks;
-    }
-
     // ==================== 通用工具方法 ====================
-
-    /**
-     * 按双换行或 Markdown 标题切分段落
-     */
-    private List<String> splitIntoParagraphs(String text) {
-        List<String> paragraphs = new ArrayList<>();
-        String[] sections = text.split("(?m)(?=^#{1,6}\\s)");
-
-        for (String section : sections) {
-            if (section.isBlank()) continue;
-            String[] parts = section.split("\\n\\s*\\n");
-            for (String part : parts) {
-                String trimmed = part.trim();
-                if (!trimmed.isBlank()) {
-                    paragraphs.add(trimmed);
-                }
-            }
-        }
-
-        return paragraphs;
-    }
-
-    /**
-     * 合并过短的段落到上一段
-     */
-    private List<String> mergeShortParagraphs(List<String> paragraphs, int minLength) {
-        if (paragraphs.isEmpty()) return paragraphs;
-
-        List<String> merged = new ArrayList<>();
-        StringBuilder current = new StringBuilder(paragraphs.getFirst());
-
-        for (int i = 1; i < paragraphs.size(); i++) {
-            String para = paragraphs.get(i);
-            if (current.length() < minLength) {
-                current.append("\n\n").append(para);
-            } else {
-                merged.add(current.toString());
-                current = new StringBuilder(para);
-            }
-        }
-        merged.add(current.toString());
-
-        return merged;
-    }
 
     /**
      * 创建切分后的 Document，保留原始 metadata 并追加切分元数据

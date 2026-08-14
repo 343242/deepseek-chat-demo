@@ -6,6 +6,7 @@ import org.springframework.ai.rag.Query;
 import org.springframework.ai.rag.retrieval.search.DocumentRetriever;
 
 import java.util.List;
+import java.util.Objects;
 
 /**
  * 混合检索器 -- 向量检索 + BM25 全文检索 + RRF 融合 + 用户/团队隔离
@@ -29,8 +30,10 @@ public class HybridDocumentRetriever implements DocumentRetriever {
     public HybridDocumentRetriever(HybridSearchService hybridSearchService,
                                    Long userId,
                                    @Nullable Long teamId) {
+        // 构造期快速失败：userId 为 null 时 retrieve() 自动拆箱会抛出难定位的 NPE
+        // 构造期快速失败：userId 为 null 时 retrieve() 自动拆箱会抛出难定位的 NPE
+        this.userId = Objects.requireNonNull(userId, "userId must not be null");
         this.hybridSearchService = hybridSearchService;
-        this.userId = userId;
         this.teamId = teamId;
     }
 

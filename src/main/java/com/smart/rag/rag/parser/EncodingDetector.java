@@ -9,7 +9,6 @@ import org.springframework.core.io.Resource;
 import java.io.InputStream;
 import java.nio.charset.Charset;
 import java.nio.charset.StandardCharsets;
-import java.nio.charset.UnsupportedCharsetException;
 
 /**
  * 文本编码检测与转码工具。
@@ -117,7 +116,7 @@ public final class EncodingDetector {
             if (bytes.length > maxBytes) {
                 throw new DocumentParseException(
                         resource.getFilename(), "EncodingDetector",
-                        String.format("文件超过读取上限 %d 字节", maxBytes), null);
+                        String.format("文件超过读取上限 %d 字节", maxBytes));
             }
 
             if (bytes.length == 0) {
@@ -179,22 +178,20 @@ public final class EncodingDetector {
         }
 
         UniversalDetector detector = new UniversalDetector(null);
-        try {
-            detector.handleData(sample);
-            detector.dataEnd();
-            return detector.getDetectedCharset();
-        } finally {
-            detector.reset();
-        }
+        // detector 为局部一次性对象，检测完成即废弃，无需 reset()
+        detector.handleData(sample);
+        detector.dataEnd();
+        return detector.getDetectedCharset();
     }
 
     /**
-     * 安全获取 Charset，UnsupportedCharsetException 时降级为 UTF-8。
+     * 安全获取 Charset，UnsupportedCharsetException / IllegalCharsetNameException 等异常时降级为 UTF-8。
+     * （二者均为 IllegalArgumentException 子类，故统一捕获 IllegalArgumentException）
      */
     private static Charset safeCharset(String encodingName, String filename) {
         try {
             return Charset.forName(encodingName);
-        } catch (UnsupportedCharsetException e) {
+        } catch (IllegalArgumentException e) {
             log.warn("Detected encoding '{}' is not supported by JVM for file {}, falling back to UTF-8: {}",
                     encodingName, filename, e.getMessage());
             return StandardCharsets.UTF_8;
@@ -204,7 +201,7 @@ public final class EncodingDetector {
     /**
      * 判断给定编码是否与 UTF-8 兼容（UTF-8/ASCII）。
      * <p>
-     * 使用 {@link StandardCharsets#UTF_8#contains(Charset)} 语义判断，
+     * 使用 {@link Charset#contains(Charset)} 语义判断，
      * 同时覆盖 UTF-8 with BOM 等变体名称。
      */
     static boolean isUtf8Compatible(Charset charset) {

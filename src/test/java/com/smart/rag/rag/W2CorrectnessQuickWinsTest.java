@@ -90,7 +90,9 @@ class W2CorrectnessQuickWinsTest {
         void setUp() {
             service = new DocumentApplicationServiceImpl(
                     etlDispatchService, ragDocumentMapper, documentLifecycleService,
-                    uploadStrategyRouter, teamAccessGate, vectorStoreMapper);
+                    uploadStrategyRouter, teamAccessGate, vectorStoreMapper,
+                    new com.smart.rag.rag.service.impl.DocumentDtoMapper(),
+                    new com.smart.rag.rag.service.impl.DocumentAccessGuard(ragDocumentMapper, teamAccessGate));
         }
 
         @AfterEach

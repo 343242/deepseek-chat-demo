@@ -5,10 +5,9 @@ import com.smart.rag.rag.entity.RagDocument;
 import com.smart.rag.rag.event.DocumentDeletedEvent;
 import com.smart.rag.rag.mapper.RagDocumentMapper;
 import com.smart.rag.rag.service.FileStorageService;
-import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 
@@ -33,18 +32,19 @@ public class DocumentLifecycleService {
     private final FileStorageService fileStorageService;
     private final RagDocumentMapper ragDocumentMapper;
     private final ApplicationEventPublisher eventPublisher;
-    @Autowired(required = false)
-    @Nullable
-    private EntityIndexCleanupService entityIndexCleanupService;
+    /** 实体索引清理为可选依赖（app.rag.entity.enabled=false 时 Bean 不存在） */
+    private final ObjectProvider<EntityIndexCleanupService> entityIndexCleanupProvider;
 
     public DocumentLifecycleService(Loader vectorStoreLoader,
                                     FileStorageService fileStorageService,
                                     RagDocumentMapper ragDocumentMapper,
-                                    ApplicationEventPublisher eventPublisher) {
+                                    ApplicationEventPublisher eventPublisher,
+                                    ObjectProvider<EntityIndexCleanupService> entityIndexCleanupProvider) {
         this.vectorStoreLoader = vectorStoreLoader;
         this.fileStorageService = fileStorageService;
         this.ragDocumentMapper = ragDocumentMapper;
         this.eventPublisher = eventPublisher;
+        this.entityIndexCleanupProvider = entityIndexCleanupProvider;
     }
 
     /**
@@ -59,11 +59,12 @@ public class DocumentLifecycleService {
         Long id = doc.getId();
 
         // 0. 清理实体索引（在删向量之前）
+        EntityIndexCleanupService entityIndexCleanupService = entityIndexCleanupProvider.getIfAvailable();
         if (entityIndexCleanupService != null) {
             try {
                 entityIndexCleanupService.cleanupByDocumentId(id);
             } catch (Exception e) {
-                log.error("Failed to cleanup entity index for deleted docId={}: {}", id, e.getMessage(), e);
+                log.error("Failed to cleanup entity index for deleted docId={}", id, e);
             }
         }
 
@@ -72,14 +73,14 @@ public class DocumentLifecycleService {
             vectorStoreLoader.deleteByDocumentId(id);
             vectorDeleted = true;
         } catch (Exception e) {
-            log.error("Failed to delete vectors for documentId={}, will retry on next cleanup pass: {}", id, e.getMessage());
+            log.error("Failed to delete vectors for documentId={}, will retry on next cleanup pass: {}", id, e);
         }
 
         // 2. 清理文件存储
         try {
             fileStorageService.delete(doc.getBucket(), doc.getStorageKey());
         } catch (Exception e) {
-            log.error("Failed to delete file for documentId={}, storageKey={}: {}", id, doc.getStorageKey(), e.getMessage());
+            log.error("Failed to delete file for documentId={}, storageKey={}: {}", id, doc.getStorageKey(), e);
         }
 
         // 3. 逻辑删除数据库记录

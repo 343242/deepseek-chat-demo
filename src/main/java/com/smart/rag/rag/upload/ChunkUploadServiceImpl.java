@@ -7,7 +7,6 @@ import com.smart.rag.infrastructure.exception.AbstractException;
 import com.smart.rag.infrastructure.exception.ClientException;
 import com.smart.rag.infrastructure.exception.ServiceException;
 import com.smart.rag.rag.config.DocumentProperties;
-import com.smart.rag.rag.event.DocumentCreatedEvent;
 import com.smart.rag.rag.entity.RagDocument;
 import com.smart.rag.rag.etl.EtlStatus;
 import com.smart.rag.rag.mapper.RagDocumentMapper;
@@ -18,29 +17,37 @@ import com.smart.rag.rag.service.TeamAccessGate;
 import com.smart.rag.rag.service.impl.DocumentValidator;
 import com.smart.rag.infrastructure.web.util.SecurityUtils;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import io.minio.*;
-import io.minio.SourceObject;
+import io.minio.MinioClient;
+import io.minio.messages.DeleteRequest;
+import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.util.unit.DataSize;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.core.io.ClassPathResource;
-import org.jspecify.annotations.Nullable;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
 import java.util.concurrent.Executor;
 import org.springframework.stereotype.Service;
 
-import java.io.ByteArrayInputStream;
-import java.io.InputStream;
-import java.time.OffsetDateTime;
-import java.util.*;
-import java.util.stream.Collectors;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.TreeSet;
+import java.util.UUID;
+import java.util.regex.Pattern;
 
 /**
- * 分片上传服务实现。
+ * 分片上传服务实现（薄门面）。
  * <p>
- * 编排 Redis（会话状态 + Lua 原子操作）+ MinIO（putObject 分片 + composeObject 合并）+ DB（文档元数据）。
+ * 编排 Redis（会话状态 + Lua 原子操作）+ MinIO（putObject 分片 + composeObject 合并）+ DB（文档元数据），
+ * 具体职责委托给三个协作对象：
+ * <ul>
+ *   <li>{@link ChunkSessionStore} — Redis 会话 Hash 读写与字段名常量</li>
+ *   <li>{@link ChunkMinioGateway} — MinIO 对象读写与批量清理</li>
+ *   <li>{@link ChunkMergeService} — 分片合并流程</li>
+ * </ul>
  * <p>
  * MinIO SDK 9.0.0 不对外暴露 Multipart Upload API（createMultipartUpload/uploadPart/completeMultipartUpload），
  * 因此采用 composeObject 方案：
@@ -55,20 +62,24 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
 
     private static final Logger log = LoggerFactory.getLogger(ChunkUploadServiceImpl.class);
 
+    /** uploadId 格式（UUID v4 形态的 hex + 连字符），用于路径遍历防护 */
+    private static final Pattern UPLOAD_ID_PATTERN =
+            Pattern.compile("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$");
+
     private final StringRedisTemplate redisTemplate;
-    private final MinioClient minioClient;
     private final BucketResolver bucketResolver;
     private final ChunkSizeStrategy chunkSizeStrategy;
     private final DocumentProperties documentProperties;
     private final DocumentValidator documentValidator;
     private final FileStorageService fileStorageService;
     private final RagDocumentMapper ragDocumentMapper;
-    private final EtlDispatchService etlDispatchService;
-    private final TeamAccessGate teamAccessGate;
-    private final DefaultRedisScript<List> atomicChunkUploadScript;
     private final Executor mergeExecutor;
-    private final ApplicationEventPublisher eventPublisher;
     private final @Nullable DocumentDedupService documentDedupService;
+
+    private final ChunkSessionStore sessionStore;
+    private final ChunkMinioGateway minioGateway;
+    private final ChunkMergeService mergeService;
+    private final DefaultRedisScript<List> atomicChunkUploadScript;
 
     public ChunkUploadServiceImpl(
             StringRedisTemplate redisTemplate,
@@ -86,18 +97,19 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
             @Nullable DocumentDedupService documentDedupService
     ) {
         this.redisTemplate = redisTemplate;
-        this.minioClient = minioClient;
         this.bucketResolver = bucketResolver;
         this.chunkSizeStrategy = chunkSizeStrategy;
         this.documentProperties = documentProperties;
         this.documentValidator = documentValidator;
         this.fileStorageService = fileStorageService;
         this.ragDocumentMapper = ragDocumentMapper;
-        this.etlDispatchService = etlDispatchService;
-        this.teamAccessGate = teamAccessGate;
         this.mergeExecutor = mergeExecutor;
-        this.eventPublisher = eventPublisher;
         this.documentDedupService = documentDedupService;
+
+        this.sessionStore = new ChunkSessionStore(redisTemplate);
+        this.minioGateway = new ChunkMinioGateway(minioClient, documentValidator);
+        this.mergeService = new ChunkMergeService(sessionStore, minioGateway, teamAccessGate,
+                documentValidator, ragDocumentMapper, etlDispatchService, eventPublisher, documentDedupService);
 
         this.atomicChunkUploadScript = new DefaultRedisScript<>();
         this.atomicChunkUploadScript.setLocation(new ClassPathResource("scripts/atomic_chunk_upload.lua"));
@@ -116,19 +128,13 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         // init 端点速率限制
         checkRateLimit(userId);
 
-        // 秒传检查：BloomFilter 预筛 + DB 确认
-        if (documentDedupService != null && !documentDedupService.mayExist(request.fileChecksum())) {
-            log.debug("BloomFilter miss for fileChecksum={}, skipping quick-upload check", request.fileChecksum());
-        } else {
-            RagDocument existing = findExistingForQuickUpload(request.fileChecksum(), userId, request.teamId());
-            if (existing != null) {
-                log.info("Quick upload hit: fileChecksum={}, userId={}, teamId={}, docId={}", request.fileChecksum(), userId, request.teamId(), existing.getId());
-                return ChunkUploadResult.quickUploaded(existing.getId(), existing.getFileName());
-            }
+        // 秒传：BloomFilter 预筛 + DB 确认
+        if (tryQuickUpload(request, userId) instanceof ChunkUploadResult result) {
+            return result;
         }
 
         // 续传检查
-        String existingUploadId = redisTemplate.opsForValue().get(UploadRedisConstants.fileKey(userId, request.fileChecksum()));
+        String existingUploadId = sessionStore.findResumableUploadId(userId, request.fileChecksum());
         if (existingUploadId != null) {
             ChunkUploadResult resumed = tryResume(existingUploadId, request, userId);
             if (resumed != null) {
@@ -139,6 +145,21 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         return createNewSession(request, userId);
     }
 
+    /** 秒传检查：命中返回 ChunkUploadResult，未命中返回 null */
+    private @Nullable ChunkUploadResult tryQuickUpload(ChunkUploadInitRequest request, Long userId) {
+        if (documentDedupService != null && !documentDedupService.mayExist(request.fileChecksum())) {
+            log.debug("BloomFilter miss for fileChecksum={}, skipping quick-upload check", request.fileChecksum());
+            return null;
+        }
+        RagDocument existing = findExistingForQuickUpload(request.fileChecksum(), userId, request.teamId());
+        if (existing != null) {
+            log.info("Quick upload hit: fileChecksum={}, userId={}, teamId={}, docId={}",
+                    request.fileChecksum(), userId, request.teamId(), existing.getId());
+            return ChunkUploadResult.quickUploaded(existing.getId(), existing.getFileName());
+        }
+        return null;
+    }
+
     // ==================== uploadChunk ====================
 
     @Override
@@ -146,71 +167,84 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         Long userId = SecurityUtils.getCurrentUserId();
         Map<String, String> session = validateSession(uploadId, userId);
 
-        int totalChunks = parseSessionInt(session, "totalChunks");
+        int totalChunks = ChunkSessionStore.parseSessionInt(session, ChunkSessionStore.FIELD_TOTAL_CHUNKS);
 
         if (chunkIndex < 0 || chunkIndex >= totalChunks) {
             throw new ClientException(ClientErrorCode.BAD_REQUEST, "分片序号超出范围: " + chunkIndex);
         }
-        if (chunkData.length > 50 * 1024 * 1024) {
+        if (chunkData.length > ChunkUploadInitRequest.MAX_CHUNK_SIZE) {
             throw new ClientException(ClientErrorCode.BAD_REQUEST, "单分片大小不能超过50MB");
         }
 
-        // 幂等检查
-        Boolean exists = redisTemplate.opsForHash().hasKey(
-                UploadRedisConstants.partsKey(uploadId), String.valueOf(chunkIndex));
-        if (Boolean.TRUE.equals(exists)) {
-            log.debug("Chunk already uploaded: uploadId={}, index={}", uploadId, chunkIndex);
+        if (skipDuplicateChunk(uploadId, chunkIndex)) {
             return ChunkUploadResponse.uploaded(uploadId, chunkIndex);
         }
 
-        // 分片校验和（SHA-256）校验
+        String actualChunkChecksum = verifyChunkChecksum(uploadId, chunkIndex, chunkChecksum, chunkData);
+
+        // 上传分片到 MinIO 临时路径
+        String bucket = session.get(ChunkSessionStore.FIELD_BUCKET);
+        String chunkObjectKey = UploadObjectKeys.chunkObjectKey(
+                session.get(ChunkSessionStore.FIELD_OBJECT_NAME), chunkIndex);
+        minioGateway.putObject(bucket, chunkObjectKey, chunkData, session.get(ChunkSessionStore.FIELD_MIME_TYPE));
+
+        if (recordPartAndCheckMergeTrigger(uploadId, chunkIndex, actualChunkChecksum, totalChunks)) {
+            log.info("All chunks uploaded, triggering async merge: uploadId={}", uploadId);
+            dispatchAsyncMerge(uploadId);
+            return ChunkUploadResponse.merging(uploadId, chunkIndex);
+        }
+
+        return ChunkUploadResponse.uploaded(uploadId, chunkIndex);
+    }
+
+    /** 幂等检查：分片已上传则返回 true */
+    private boolean skipDuplicateChunk(String uploadId, int chunkIndex) {
+        if (sessionStore.hasPart(uploadId, chunkIndex)) {
+            log.debug("Chunk already uploaded: uploadId={}, index={}", uploadId, chunkIndex);
+            return true;
+        }
+        return false;
+    }
+
+    /** 分片校验和（SHA-256）校验，通过则返回实际校验和 */
+    private String verifyChunkChecksum(String uploadId, int chunkIndex, String chunkChecksum, byte[] chunkData) {
         String actualChunkChecksum = ChecksumUtils.sha256Hex(chunkData);
         if (!actualChunkChecksum.equalsIgnoreCase(chunkChecksum)) {
             log.warn("Chunk checksum mismatch: uploadId={}, index={}, expected={}, actual={}",
                     uploadId, chunkIndex, chunkChecksum, actualChunkChecksum);
             throw new ClientException(ClientErrorCode.UPLOAD_CHUNK_CHECKSUM_MISMATCH);
         }
+        return actualChunkChecksum;
+    }
 
-        // 上传分片到 MinIO 临时路径
-        String bucket = session.get("bucket");
-        String chunkObjectKey = session.get("objectName") + "/part-" + chunkIndex;
-        putObjectToMinio(bucket, chunkObjectKey, chunkData, session.get("mimeType"));
-
-        // 分片校验和存入 Redis parts Hash（composeObject 不依赖 S3 ETag，此处仅为记录）
-        String checksum = actualChunkChecksum;
-
-        // Lua 原子操作
+    /** Lua 原子记录分片；返回是否应触发合并 */
+    private boolean recordPartAndCheckMergeTrigger(String uploadId, int chunkIndex, String checksum, int totalChunks) {
         List result = redisTemplate.execute(
                 atomicChunkUploadScript,
                 List.of(UploadRedisConstants.partsKey(uploadId)),
                 String.valueOf(chunkIndex), checksum,
                 String.valueOf(totalChunks), UploadRedisConstants.MERGING_FIELD
         );
+        return result != null && !result.isEmpty() && ((Number) result.get(0)).longValue() == 1;
+    }
 
-        boolean shouldMerge = false;
-        if (result != null && !result.isEmpty()) {
-            long trigger = ((Number) result.get(0)).longValue();
-            shouldMerge = trigger == 1;
-        }
-
-        if (shouldMerge) {
-            log.info("All chunks uploaded, triggering async merge: uploadId={}", uploadId);
-            mergeExecutor.execute(() -> {
-                try {
-                    performMerge(uploadId); // docId ignored for async path
-                } catch (AbstractException e) {
-                    // 业务异常（如团队解散）：清理 __merging 标记，前端可感知
-                    log.warn("Auto-merge rejected: uploadId={}, reason={}", uploadId, e.getMessage());
-                    redisTemplate.opsForHash().delete(UploadRedisConstants.partsKey(uploadId), UploadRedisConstants.MERGING_FIELD);
-                } catch (Exception e) {
-                    log.error("Auto-merge failed: uploadId={}", uploadId, e);
-                    // 不清除 __merging 标记，允许客户端通过 complete 接口手动重试
-                }
-            });
-            return ChunkUploadResponse.merging(uploadId, chunkIndex);
-        }
-
-        return ChunkUploadResponse.uploaded(uploadId, chunkIndex);
+    /**
+     * 异步合并。CRITICAL: __merging 标记必须在 finally 中无条件清除，
+     * 否则任一非业务异常（网络/存储故障）会把会话卡死到 TTL 过期，complete 无法重试。
+     */
+    private void dispatchAsyncMerge(String uploadId) {
+        mergeExecutor.execute(() -> {
+            try {
+                mergeService.performMerge(uploadId); // docId ignored for async path
+            } catch (AbstractException e) {
+                // 业务异常（如团队解散）：清理 __merging 标记，前端可感知
+                log.warn("Auto-merge rejected: uploadId={}, reason={}", uploadId, e.getMessage());
+            } catch (Exception e) {
+                log.error("Auto-merge failed: uploadId={}", uploadId, e);
+            } finally {
+                sessionStore.clearMergingFlag(uploadId);
+            }
+        });
     }
 
     // ==================== status ====================
@@ -220,23 +254,13 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         Long userId = SecurityUtils.getCurrentUserId();
         Map<String, String> session = validateSession(uploadId, userId);
 
-        String partsKey = UploadRedisConstants.partsKey(uploadId);
-        Set<Object> keys = redisTemplate.opsForHash().keys(partsKey);
-
-        List<Integer> uploadedChunks = keys.stream()
-                .map(Object::toString)
-                .filter(k -> !UploadRedisConstants.MERGING_FIELD.equals(k))
-                .map(Integer::parseInt)
-                .sorted()
-                .collect(Collectors.toList());
-
-        int totalChunks = parseSessionInt(session, "totalChunks");
+        List<Integer> uploadedChunks = new ArrayList<>(new TreeSet<>(sessionStore.uploadedPartIndexes(uploadId)));
+        int totalChunks = ChunkSessionStore.parseSessionInt(session, ChunkSessionStore.FIELD_TOTAL_CHUNKS);
         boolean completed = uploadedChunks.size() == totalChunks;
-        Boolean merging = redisTemplate.opsForHash().hasKey(partsKey, UploadRedisConstants.MERGING_FIELD);
 
         return new ChunkUploadStatusResponse(
-                uploadId, session.get("fileName"), totalChunks,
-                uploadedChunks, completed, Boolean.TRUE.equals(merging), null
+                uploadId, session.get(ChunkSessionStore.FIELD_FILE_NAME), totalChunks,
+                uploadedChunks, completed, sessionStore.isMerging(uploadId), null
         );
     }
 
@@ -251,10 +275,8 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
     public Long complete(String uploadId, String fileChecksum, @Nullable Long expectedTeamId) {
         Long userId = SecurityUtils.getCurrentUserId();
 
-        String sessionKey = UploadRedisConstants.sessionKey(uploadId);
-        Map<Object, Object> rawSession = redisTemplate.opsForHash().entries(sessionKey);
-
-        if (rawSession.isEmpty()) {
+        Map<String, String> session = sessionStore.load(uploadId);
+        if (session.isEmpty()) {
             // Session already cleaned — merge was done. 用路径 teamId 做幂等回查，保留团队维度
             RagDocument doc = findExistingForQuickUpload(fileChecksum, userId, expectedTeamId);
             if (doc != null) {
@@ -264,37 +286,46 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
             throw new ServiceException(ServiceErrorCode.UPLOAD_SESSION_NOT_FOUND);
         }
 
-        Map<String, String> session = toStringMap(rawSession);
         validateOwner(session, userId);
         // 团队端点：校验会话 teamId 与路径 teamId 一致，避免同用户跨团队会话混用
         validateTeamScope(session, expectedTeamId);
 
         // Extract teamId from session for team-scoped quick-upload lookup
-        Long teamId = parseNullableLong(session.get("teamId"), "teamId");
+        Long teamId = ChunkSessionStore.parseNullableLong(
+                session.get(ChunkSessionStore.FIELD_TEAM_ID), ChunkSessionStore.FIELD_TEAM_ID);
 
-        if (!fileChecksum.equalsIgnoreCase(session.get("fileChecksum"))) {
+        if (!fileChecksum.equalsIgnoreCase(session.get(ChunkSessionStore.FIELD_FILE_CHECKSUM))) {
             throw new ClientException(ClientErrorCode.UPLOAD_FILE_CHECKSUM_MISMATCH, "声明的文件校验和与会话不匹配");
         }
 
-        // 防止 autoMerge 进行中重复触发：检查 __merging 标记
-        String partsKey = UploadRedisConstants.partsKey(uploadId);
-        Boolean merging = redisTemplate.opsForHash().hasKey(partsKey, UploadRedisConstants.MERGING_FIELD);
-        if (Boolean.TRUE.equals(merging)) {
-            // autoMerge 正在进行中，等待完成后再查结果
-            log.info("Complete deferred: auto-merge in progress, uploadId={}", uploadId);
-            RagDocument existing = findExistingForQuickUpload(fileChecksum, userId, teamId);
-            if (existing != null) {
-                return existing.getId();
-            }
-            throw new ClientException(ClientErrorCode.BAD_REQUEST, "文件合并正在进行中，请稍后重试");
+        if (deferWhileMerging(uploadId, fileChecksum, userId, teamId) instanceof Long docId) {
+            return docId;
         }
 
-        Long docId = performMerge(uploadId);
+        return resolveMergeResult(uploadId, fileChecksum, userId, teamId);
+    }
 
-        // R1-H1: performMerge 现在直接返回新持久化的 docId，
-        // 不再依赖可能因竞态/延迟查不到的 findExistingForQuickUpload。
-        // 防御性兜底：docId 为 null（如会话已被并发清理）则回退查询，
-        // 仍查不到时抛 ServiceException，绝不返回 null 包成 200。
+    /** 防止 autoMerge 进行中重复触发：检查 __merging 标记；命中返回既有 docId 或抛出重试提示，否则返回 null */
+    private @Nullable Long deferWhileMerging(String uploadId, String fileChecksum, Long userId, @Nullable Long teamId) {
+        if (!sessionStore.isMerging(uploadId)) {
+            return null;
+        }
+        // autoMerge 正在进行中，等待完成后再查结果
+        log.info("Complete deferred: auto-merge in progress, uploadId={}", uploadId);
+        RagDocument existing = findExistingForQuickUpload(fileChecksum, userId, teamId);
+        if (existing != null) {
+            return existing.getId();
+        }
+        throw new ClientException(ClientErrorCode.BAD_REQUEST, "文件合并正在进行中，请稍后重试");
+    }
+
+    /**
+     * R1-H1: performMerge 直接返回新持久化的 docId。
+     * 防御性兜底：docId 为 null（如会话已被并发清理）则回退查询，
+     * 仍查不到时抛 ServiceException，绝不返回 null 包成 200。
+     */
+    private Long resolveMergeResult(String uploadId, String fileChecksum, Long userId, @Nullable Long teamId) {
+        Long docId = mergeService.performMerge(uploadId);
         if (docId != null) {
             return docId;
         }
@@ -313,144 +344,42 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         Long userId = SecurityUtils.getCurrentUserId();
         Map<String, String> session = validateSession(uploadId, userId);
 
-        String bucket = session.get("bucket");
-        String basePath = session.get("objectName");
+        deleteUploadedChunks(uploadId, session);
+        log.info("Chunk upload aborted: uploadId={}, user={}", uploadId, userId);
 
-        // 删除所有已上传的临时分片
-        try {
-            int totalChunks = parseSessionInt(session, "totalChunks");
-            for (int i = 0; i < totalChunks; i++) {
-                try {
-                    String chunkKey = basePath + "/part-" + i;
-                    Boolean exists = redisTemplate.opsForHash().hasKey(
-                            UploadRedisConstants.partsKey(uploadId), String.valueOf(i));
-                    if (Boolean.TRUE.equals(exists)) {
-                        minioClient.removeObject(RemoveObjectArgs.builder()
-                                .bucket(bucket).object(chunkKey).build());
-                    }
-                } catch (Exception e) {
-                    log.warn("Failed to delete chunk {} during abort: {}", i, e.getMessage());
-                }
+        sessionStore.cleanup(uploadId, session.get(ChunkSessionStore.FIELD_USER_ID),
+                session.get(ChunkSessionStore.FIELD_FILE_CHECKSUM));
+    }
+
+    /** 批量删除已上传的临时分片（仅删除 Redis parts 中确实存在的对象），尽力而为 */
+    private void deleteUploadedChunks(String uploadId, Map<String, String> session) {
+        String bucket = session.get(ChunkSessionStore.FIELD_BUCKET);
+        String basePath = session.get(ChunkSessionStore.FIELD_OBJECT_NAME);
+        int totalChunks = ChunkSessionStore.parseSessionInt(session, ChunkSessionStore.FIELD_TOTAL_CHUNKS);
+
+        List<DeleteRequest.Object> toDelete = new ArrayList<>();
+        for (int i = 0; i < totalChunks; i++) {
+            if (sessionStore.hasPart(uploadId, i)) {
+                toDelete.add(new DeleteRequest.Object(UploadObjectKeys.chunkObjectKey(basePath, i)));
             }
-            log.info("Chunk upload aborted: uploadId={}, user={}", uploadId, userId);
+        }
+        try {
+            minioGateway.removeObjects(bucket, toDelete);
         } catch (Exception e) {
             log.error("Error during abort cleanup: uploadId={}", uploadId, e);
         }
-
-        cleanupRedis(uploadId, session.get("userId"), session.get("fileChecksum"));
     }
 
-    // ==================== 合并流程 ====================
+    // ==================== 合并流程（委托 ChunkMergeService） ====================
 
     /**
      * 执行分片合并流程。
-     * <p>
-     * R1-H1: 返回新持久化的 docId，避免 {@code complete()} 依赖重新查询；
-     * 会话已被清理（幂等重复触发）时返回 {@code null}。
      *
      * @return 新文档的 docId；会话已不存在则返回 null
+     * @see ChunkMergeService#performMerge(String)
      */
     Long performMerge(String uploadId) {
-        String sessionKey = UploadRedisConstants.sessionKey(uploadId);
-        Map<String, String> session = toStringMap(redisTemplate.opsForHash().entries(sessionKey));
-
-        if (session.isEmpty()) {
-            log.warn("Merge skipped: session already cleaned, uploadId={}", uploadId);
-            return null;
-        }
-
-        // 团队状态校验：团队已解散则拒绝合并
-        String teamIdStr = session.get("teamId");
-        Long teamId = null;
-        if (teamIdStr != null) {
-            teamId = parseNullableLong(teamIdStr, "teamId");
-            if (!teamAccessGate.isTeamActive(teamId)) {
-                log.warn("Merge rejected: team dissolved, teamId={}, uploadId={}", teamId, uploadId);
-                String bucket = session.get("bucket");
-                cleanupTempChunks(bucket, session.get("objectName"), parseSessionInt(session, "totalChunks"));
-                cleanupRedis(uploadId, session.get("userId"), session.get("fileChecksum"));
-                throw new ServiceException(ServiceErrorCode.TEAM_NOT_FOUND, "团队已解散，上传已取消");
-            }
-        }
-
-        String bucket = session.get("bucket");
-        String basePath = session.get("objectName");
-        int totalChunks = parseSessionInt(session, "totalChunks");
-
-        // 1. 构建 Source 列表用于 composeObject
-        List<SourceObject> sources = new ArrayList<>();
-        for (int i = 0; i < totalChunks; i++) {
-            String chunkObjectKey = basePath + "/part-" + i;
-            sources.add(SourceObject.builder()
-                    .bucket(bucket)
-                    .object(chunkObjectKey)
-                    .build());
-        }
-
-        // 2. 合并目标路径：documents/{userId}/{shortId}_{原始文件名}
-        String originalName = session.get("fileName");
-        String targetObjectKey = "documents/" + session.get("userId") + "/" + generateShortId(8) + "_" + sanitizeFilename(originalName);
-
-        // 3. composeObject 合并（携带 Content-Type）
-        String mimeType = session.get("mimeType");
-        composeObjects(bucket, targetObjectKey, sources, mimeType);
-
-        // 4. 流式读取合并后文件，计算实际校验和（SHA-256）
-        String actualChecksum = computeFileChecksumFromMinio(bucket, targetObjectKey);
-        String declaredChecksum = session.get("fileChecksum");
-
-        if (!actualChecksum.equalsIgnoreCase(declaredChecksum)) {
-            log.warn("File checksum mismatch: uploadId={}, expected={}, actual={}", uploadId, declaredChecksum, actualChecksum);
-            deleteFromMinio(bucket, targetObjectKey);
-            cleanupTempChunks(bucket, basePath, totalChunks);
-            redisTemplate.opsForHash().delete(UploadRedisConstants.partsKey(uploadId), UploadRedisConstants.MERGING_FIELD);
-            throw new ClientException(ClientErrorCode.UPLOAD_FILE_CHECKSUM_MISMATCH, "文件校验失败");
-        }
-
-        // 4.1 R2-H1: 对合并后的对象做服务端魔数校验，用检测到的真实 MIME 路由解析器与落库，
-        // 而非 session 中客户端声明的 MIME（防止声明与实际内容不符的 confused-deputy）。
-        String detectedMimeType = detectMergedObjectMimeType(bucket, targetObjectKey, originalName);
-        String effectiveMimeType = resolveEffectiveMimeType(detectedMimeType, mimeType);
-        if (!documentValidator.isDetectedMimeTypeAcceptable(detectedMimeType, mimeType)) {
-            log.warn("MIME bypass rejected: uploadId={}, declared={}, detected={}, effective={}",
-                    uploadId, mimeType, detectedMimeType, effectiveMimeType);
-            deleteFromMinio(bucket, targetObjectKey);
-            cleanupTempChunks(bucket, basePath, totalChunks);
-            redisTemplate.opsForHash().delete(UploadRedisConstants.partsKey(uploadId), UploadRedisConstants.MERGING_FIELD);
-            throw new ClientException(ClientErrorCode.UPLOAD_MIME_UNSUPPORTED,
-                    String.format("文件实际类型(%s)与声明类型(%s)不匹配", detectedMimeType, mimeType));
-        }
-
-        // 5. 持久化 rag_document（使用检测到的真实 MIME）
-        Long userId = parseSessionLong(session, "userId");
-        Long docId = persistDocument(session, targetObjectKey, actualChecksum, userId, teamId, effectiveMimeType);
-        log.info("Chunk upload merged: uploadId={}, docId={}, checksum={}, mime={} (declared={})",
-                uploadId, docId, actualChecksum, effectiveMimeType, mimeType);
-
-        // 5.1 将文件校验和加入 BloomFilter 去重
-        if (documentDedupService != null && actualChecksum != null) {
-            documentDedupService.add(actualChecksum);
-        }
-
-        // 6. 清理临时分片
-        cleanupTempChunks(bucket, basePath, totalChunks);
-
-        // 7. 清理 Redis
-        cleanupRedis(uploadId, session.get("userId"), declaredChecksum);
-
-        // 8. 触发 ETL（使用检测到的真实 MIME 路由解析器）
-        etlDispatchService.dispatchAsync(
-                docId, bucket, targetObjectKey, session.get("fileName"),
-                effectiveMimeType, parseSessionLong(session, "fileSize"), userId,
-                teamId
-        );
-
-        // 9. 发布 DocumentCreatedEvent（用于增量更新版本链接）
-        String replaceDocIdStr = session.get("replaceDocumentId");
-        Long replaceDocumentId = parseNullableLong(replaceDocIdStr, "replaceDocumentId");
-        eventPublisher.publishEvent(new DocumentCreatedEvent(docId, replaceDocumentId, userId, teamId));
-
-        return docId;
+        return mergeService.performMerge(uploadId);
     }
 
     // ==================== 私有方法 ====================
@@ -509,27 +438,19 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         return ragDocumentMapper.selectOne(wrapper.last("LIMIT 1"));
     }
 
-    private ChunkUploadResult tryResume(String uploadId, ChunkUploadInitRequest request, Long userId) {
-        String sessionKey = UploadRedisConstants.sessionKey(uploadId);
-        Map<Object, Object> rawSession = redisTemplate.opsForHash().entries(sessionKey);
-        if (rawSession.isEmpty()) {
-            redisTemplate.delete(UploadRedisConstants.fileKey(userId, request.fileChecksum()));
+    private @Nullable ChunkUploadResult tryResume(String uploadId, ChunkUploadInitRequest request, Long userId) {
+        Map<String, String> session = sessionStore.load(uploadId);
+        if (session.isEmpty()) {
+            sessionStore.deleteFileIndex(userId, request.fileChecksum());
             return null;
         }
 
-        Map<String, String> session = toStringMap(rawSession);
         validateOwner(session, userId);
 
-        int chunkSize = parseSessionInt(session, "chunkSize");
-        int totalChunks = parseSessionInt(session, "totalChunks");
+        int chunkSize = ChunkSessionStore.parseSessionInt(session, ChunkSessionStore.FIELD_CHUNK_SIZE);
+        int totalChunks = ChunkSessionStore.parseSessionInt(session, ChunkSessionStore.FIELD_TOTAL_CHUNKS);
 
-        Set<Object> keys = redisTemplate.opsForHash().keys(UploadRedisConstants.partsKey(uploadId));
-        List<Integer> uploadedChunks = keys.stream()
-                .map(Object::toString)
-                .filter(k -> !UploadRedisConstants.MERGING_FIELD.equals(k))
-                .map(Integer::parseInt)
-                .sorted()
-                .collect(Collectors.toList());
+        List<Integer> uploadedChunks = new ArrayList<>(new TreeSet<>(sessionStore.uploadedPartIndexes(uploadId)));
 
         log.info("Chunk upload resumed: uploadId={}, uploaded={}/{}", uploadId, uploadedChunks.size(), totalChunks);
         return ChunkUploadResult.resumeSession(uploadId, chunkSize, totalChunks, uploadedChunks);
@@ -543,41 +464,12 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
             chunkSize = (int) (long) request.fileSize();
         }
 
-        String bucket = bucketResolver.resolve(request.teamId());
-        fileStorageService.ensureBucketExists(bucket);
-        String objectBasePath = "chunks/" + userId + "/" + UUID.randomUUID();
+        String bucket = resolveBucket(request.teamId());
+        String objectBasePath = UploadObjectKeys.CHUNKS_PREFIX + userId + "/" + UUID.randomUUID();
         String uploadId = UUID.randomUUID().toString();
 
-        // Redis 写入 session
-        String sessionKey = UploadRedisConstants.sessionKey(uploadId);
-        Map<String, String> sessionFields = new HashMap<>(Map.ofEntries(
-                Map.entry("fileChecksum", request.fileChecksum()),
-                Map.entry("fileName", request.fileName()),
-                Map.entry("fileSize", String.valueOf(request.fileSize())),
-                Map.entry("mimeType", request.mimeType()),
-                Map.entry("chunkSize", String.valueOf(chunkSize)),
-                Map.entry("totalChunks", String.valueOf(totalChunks)),
-                Map.entry("userId", String.valueOf(userId)),
-                Map.entry("bucket", bucket),
-                Map.entry("objectName", objectBasePath),
-                Map.entry("createdAt", String.valueOf(System.currentTimeMillis()))
-        ));
-        if (request.teamId() != null) {
-            sessionFields.put("teamId", String.valueOf(request.teamId()));
-        }
-        if (request.replaceDocumentId() != null) {
-            sessionFields.put("replaceDocumentId", String.valueOf(request.replaceDocumentId()));
-        }
-        redisTemplate.opsForHash().putAll(sessionKey, sessionFields);
-        redisTemplate.expire(sessionKey, UploadRedisConstants.SESSION_TTL);
-
-        // parts key TTL
-        redisTemplate.expire(UploadRedisConstants.partsKey(uploadId), UploadRedisConstants.SESSION_TTL);
-
-        // 反向索引
-        redisTemplate.opsForValue().set(
-                UploadRedisConstants.fileKey(userId, request.fileChecksum()),
-                uploadId, UploadRedisConstants.SESSION_TTL);
+        sessionStore.save(uploadId, buildSessionFields(request, bucket, objectBasePath, chunkSize, totalChunks, userId));
+        sessionStore.putFileIndex(userId, request.fileChecksum(), uploadId);
 
         log.info("Chunk upload init: uploadId={}, file={}, size={}, chunks={}, user={}",
                 uploadId, request.fileName(), request.fileSize(), totalChunks, userId);
@@ -585,36 +477,65 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         return ChunkUploadResult.newSession(uploadId, chunkSize, totalChunks);
     }
 
+    private String resolveBucket(@Nullable Long teamId) {
+        String bucket = bucketResolver.resolve(teamId);
+        fileStorageService.ensureBucketExists(bucket);
+        return bucket;
+    }
+
+    /** 组装会话 Hash 字段 */
+    private Map<String, String> buildSessionFields(ChunkUploadInitRequest request, String bucket,
+                                                   String objectBasePath, int chunkSize, int totalChunks, Long userId) {
+        Map<String, String> fields = new HashMap<>(Map.ofEntries(
+                Map.entry(ChunkSessionStore.FIELD_FILE_CHECKSUM, request.fileChecksum()),
+                Map.entry(ChunkSessionStore.FIELD_FILE_NAME, request.fileName()),
+                Map.entry(ChunkSessionStore.FIELD_FILE_SIZE, String.valueOf(request.fileSize())),
+                Map.entry(ChunkSessionStore.FIELD_MIME_TYPE, request.mimeType()),
+                Map.entry(ChunkSessionStore.FIELD_CHUNK_SIZE, String.valueOf(chunkSize)),
+                Map.entry(ChunkSessionStore.FIELD_TOTAL_CHUNKS, String.valueOf(totalChunks)),
+                Map.entry(ChunkSessionStore.FIELD_USER_ID, String.valueOf(userId)),
+                Map.entry(ChunkSessionStore.FIELD_BUCKET, bucket),
+                Map.entry(ChunkSessionStore.FIELD_OBJECT_NAME, objectBasePath),
+                Map.entry(ChunkSessionStore.FIELD_CREATED_AT, String.valueOf(System.currentTimeMillis()))
+        ));
+        if (request.teamId() != null) {
+            fields.put(ChunkSessionStore.FIELD_TEAM_ID, String.valueOf(request.teamId()));
+        }
+        if (request.replaceDocumentId() != null) {
+            fields.put(ChunkSessionStore.FIELD_REPLACE_DOCUMENT_ID, String.valueOf(request.replaceDocumentId()));
+        }
+        return fields;
+    }
+
     private Map<String, String> validateSession(String uploadId, Long userId) {
         // 格式校验：防止路径遍历
-        if (uploadId == null || !uploadId.matches("^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")) {
+        if (uploadId == null || !UPLOAD_ID_PATTERN.matcher(uploadId).matches()) {
             throw new ClientException(ClientErrorCode.BAD_REQUEST, "无效的上传会话ID");
         }
-        String sessionKey = UploadRedisConstants.sessionKey(uploadId);
-        Map<Object, Object> rawSession = redisTemplate.opsForHash().entries(sessionKey);
-        if (rawSession.isEmpty()) {
+        Map<String, String> session = sessionStore.load(uploadId);
+        if (session.isEmpty()) {
             throw new ServiceException(ServiceErrorCode.UPLOAD_SESSION_NOT_FOUND);
         }
-        Map<String, String> session = toStringMap(rawSession);
         validateOwner(session, userId);
         return session;
     }
 
     private void validateOwner(Map<String, String> session, Long userId) {
-        Long owner = parseSessionLong(session, "userId");
+        Long owner = ChunkSessionStore.parseSessionLong(session, ChunkSessionStore.FIELD_USER_ID);
         if (!owner.equals(userId)) {
             log.warn("Upload owner mismatch: expected={}, actual={}", owner, userId);
             throw new ClientException(ClientErrorCode.FORBIDDEN);
         }
     }
+
     /**
      * 校验会话 teamId 与期望 teamId 一致（团队端点专用）。
      * <p>
      * teamId 是会话的强约束字段，而非仅由 controller 门禁保证：服务层主动发现并拒绝不一致。
      */
     private void validateTeamScope(Map<String, String> session, @Nullable Long expectedTeamId) {
-        String sessionTeamIdStr = session.get("teamId");
-        Long sessionTeamId = sessionTeamIdStr != null ? parseNullableLong(sessionTeamIdStr, "teamId") : null;
+        Long sessionTeamId = ChunkSessionStore.parseNullableLong(
+                session.get(ChunkSessionStore.FIELD_TEAM_ID), ChunkSessionStore.FIELD_TEAM_ID);
         boolean mismatch;
         if (expectedTeamId == null) {
             // 个人端点访问了团队会话 → 拒绝
@@ -624,7 +545,7 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         }
         if (mismatch) {
             log.warn("Upload team-scope mismatch: expected={}, session={}, uploadId={}",
-                    expectedTeamId, sessionTeamId, session.get("userId"));
+                    expectedTeamId, sessionTeamId, session.get(ChunkSessionStore.FIELD_USER_ID));
             throw new ClientException(ClientErrorCode.FORBIDDEN, "上传会话与请求的团队不匹配");
         }
     }
@@ -636,202 +557,20 @@ public class ChunkUploadServiceImpl implements ChunkUploadService {
         validateTeamScope(session, expectedTeamId);
     }
 
-    // ==================== MinIO 操作 ====================
+    // ==================== R1-M2: session 字段安全解析（委托 ChunkSessionStore，保留入口以便既有调用方） ====================
 
-    private void putObjectToMinio(String bucket, String objectKey, byte[] data, String contentType) {
-        try {
-            minioClient.putObject(
-                    PutObjectArgs.builder()
-                            .bucket(bucket)
-                            .object(objectKey)
-                            .stream(new ByteArrayInputStream(data), (long) data.length, -1L)
-                            .contentType(contentType)
-                            .build()
-            );
-            log.debug("Uploaded chunk to MinIO: {}/{}", bucket, objectKey);
-        } catch (Exception e) {
-            log.error("MinIO putObject error: bucket={}, object={}", bucket, objectKey, e);
-            throw new ClientException(ClientErrorCode.UPLOAD_FAILED, "存储服务异常");
-        }
-    }
-
-    private void composeObjects(String bucket, String targetObjectKey, List<SourceObject> sources, String contentType) {
-        try {
-            minioClient.composeObject(
-                    ComposeObjectArgs.builder()
-                            .bucket(bucket)
-                            .object(targetObjectKey)
-                            .sources(sources)
-                            .headers(Map.of("Content-Type", contentType))
-                            .build()
-            );
-            log.info("Composed object: {}/{} from {} parts, contentType={}", bucket, targetObjectKey, sources.size(), contentType);
-        } catch (Exception e) {
-            log.error("MinIO composeObject error: bucket={}, target={}", bucket, targetObjectKey, e);
-            throw new ClientException(ClientErrorCode.UPLOAD_FAILED, "合并分片失败");
-        }
-    }
-
-    private static final char[] NANOID_CHARS =
-            "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ".toCharArray();
-    private static final java.util.Random RANDOM = new java.security.SecureRandom();
-
-    private String generateShortId(int length) {
-        StringBuilder sb = new StringBuilder(length);
-        for (int i = 0; i < length; i++) {
-            sb.append(NANOID_CHARS[RANDOM.nextInt(NANOID_CHARS.length)]);
-        }
-        return sb.toString();
-    }
-
-    /**
-     * 净化文件名为安全的 MinIO object key 片段。R1-L3: 仅替换路径分隔符（/ \）与 NUL，
-     * 刻意保留 {@code ..} —— object key 是扁平字符串而非文件系统路径，{@code ..} 不会触发
-     * 目录穿越；实际存储路径为 {@code documents/{userId}/{shortId}_{name}}，userId/shortId
-     * 由服务端生成，用户无法借此逃逸到他人目录。
-     */
-    private String sanitizeFilename(String fileName) {
-        if (fileName == null || fileName.isBlank()) {
-            return "unnamed";
-        }
-        return fileName.replace("/", "_").replace("\\", "_").replace("\0", "_");
-    }
-
-    // ==================== R1-M2: session 字段安全解析 ====================
-
-    /** 解析 session 中必填 Long 字段；缺失/非法 → ServiceException(UPLOAD_SESSION_NOT_FOUND) */
+    /** @see ChunkSessionStore#parseSessionLong(Map, String) */
     static long parseSessionLong(Map<String, String> session, String key) {
-        try {
-            return Long.parseLong(session.get(key));
-        } catch (NumberFormatException e) {
-            throw new ServiceException(ServiceErrorCode.UPLOAD_SESSION_NOT_FOUND, "上传会话字段非法: " + key);
-        }
+        return ChunkSessionStore.parseSessionLong(session, key);
     }
 
-    /** 解析 session 中必填 int 字段；缺失/非法 → ServiceException */
+    /** @see ChunkSessionStore#parseSessionInt(Map, String) */
     static int parseSessionInt(Map<String, String> session, String key) {
-        try {
-            return Integer.parseInt(session.get(key));
-        } catch (NumberFormatException e) {
-            throw new ServiceException(ServiceErrorCode.UPLOAD_SESSION_NOT_FOUND, "上传会话字段非法: " + key);
-        }
+        return ChunkSessionStore.parseSessionInt(session, key);
     }
 
-    /** 解析可选 Long（null → null；非 null 但非法 → ServiceException） */
+    /** @see ChunkSessionStore#parseNullableLong(String, String) */
     static Long parseNullableLong(String v, String label) {
-        if (v == null) return null;
-        try {
-            return Long.parseLong(v);
-        } catch (NumberFormatException e) {
-            throw new ServiceException(ServiceErrorCode.UPLOAD_SESSION_NOT_FOUND, "上传会话字段非法: " + label);
-        }
-    }
-
-    private String computeFileChecksumFromMinio(String bucket, String objectName) {
-        try (InputStream is = minioClient.getObject(
-                GetObjectArgs.builder().bucket(bucket).object(objectName).build())) {
-            return ChecksumUtils.sha256Hex(is);
-        } catch (Exception e) {
-            log.error("Failed to compute file checksum from MinIO: bucket={}, object={}", bucket, objectName, e);
-            throw new ClientException(ClientErrorCode.UPLOAD_FAILED, "文件校验失败");
-        }
-    }
-
-    /**
-     * R2-H1: 下载合并后对象头部并对真实 MIME 做魔数探测。
-     * <p>
-     * 仅消费流头部（detectMimeType 内部读 8 字节），用于纠正/验证客户端声明的类型。
-     * detectMimeType 不关闭流，由 try-with-resources 负责。
-     *
-     * @param bucket      MinIO bucket
-     * @param objectName  合并后的目标对象 key
-     * @param fileName    原始文件名（用于 OOXML 子类型扩展名判定）
-     * @return 探测到的真实 MIME；探测失败或 IO 异常时返回 null（由调用方决定拒绝策略）
-     */
-    private String detectMergedObjectMimeType(String bucket, String objectName, String fileName) {
-        try (InputStream is = minioClient.getObject(
-                GetObjectArgs.builder().bucket(bucket).object(objectName).build())) {
-            return documentValidator.detectMimeType(is, fileName);
-        } catch (Exception e) {
-            log.warn("Failed to detect MIME on merged object: bucket={}, object={}, err={}",
-                    bucket, objectName, e.getMessage());
-            return null;
-        }
-    }
-
-    /**
-     * R2-H1: 解析最终生效的 MIME。
-     * <p>
-     * 优先使用检测到的具体类型（PDF/text/office 子类型）；
-     * 若检测仅得出容器类型 application/zip 而声明为 OOXML 子类型，则信任声明类型
-     * （魔数无法区分 docx/pptx/xlsx，子类型由扩展名路由决定）；
-     * 检测为 null 时回退声明类型（白名单校验在 isDetectedMimeTypeAcceptable 中已拦截）。
-     */
-    private String resolveEffectiveMimeType(String detectedMimeType, String declaredMimeType) {
-        if (detectedMimeType != null && !"application/zip".equals(detectedMimeType)) {
-            return detectedMimeType;
-        }
-        return declaredMimeType;
-    }
-
-    private void deleteFromMinio(String bucket, String objectName) {
-        try {
-            minioClient.removeObject(
-                    RemoveObjectArgs.builder().bucket(bucket).object(objectName).build());
-        } catch (Exception e) {
-            log.error("Failed to delete from MinIO: bucket={}, object={}", bucket, objectName, e);
-        }
-    }
-
-    private void cleanupTempChunks(String bucket, String basePath, int totalChunks) {
-        for (int i = 0; i < totalChunks; i++) {
-            try {
-                minioClient.removeObject(RemoveObjectArgs.builder()
-                        .bucket(bucket)
-                        .object(basePath + "/part-" + i)
-                        .build());
-            } catch (Exception e) {
-                log.warn("Failed to cleanup chunk {}: {}", i, e.getMessage());
-            }
-        }
-    }
-
-    // ==================== DB 持久化 ====================
-
-    private Long persistDocument(Map<String, String> session, String targetObjectKey, String actualChecksum,
-                                 Long userId, @Nullable Long teamId, String effectiveMimeType) {
-        RagDocument doc = new RagDocument();
-        doc.setFileName(session.get("fileName"));
-        doc.setFileSize(parseSessionLong(session, "fileSize"));
-        doc.setMimeType(effectiveMimeType);
-        doc.setStorageKey(targetObjectKey);
-        doc.setBucket(session.get("bucket"));
-        doc.setUserId(userId);
-        doc.setTeamId(teamId);
-        doc.setFileChecksum(actualChecksum);
-        doc.setStatus(EtlStatus.PROCESSING);
-        doc.setDeleted(0);
-        doc.setCreateTime(OffsetDateTime.now());
-        doc.setUpdateTime(OffsetDateTime.now());
-        ragDocumentMapper.insert(doc);
-        return doc.getId();
-    }
-
-    // ==================== Redis 清理 ====================
-
-    private void cleanupRedis(String uploadId, String userId, String fileChecksum) {
-        redisTemplate.delete(UploadRedisConstants.sessionKey(uploadId));
-        redisTemplate.delete(UploadRedisConstants.partsKey(uploadId));
-        if (userId != null && fileChecksum != null) {
-            redisTemplate.delete(UploadRedisConstants.fileKey(Long.parseLong(userId), fileChecksum));
-        }
-    }
-
-    // ==================== 工具方法 ====================
-
-    private static Map<String, String> toStringMap(Map<Object, Object> raw) {
-        Map<String, String> result = new HashMap<>(raw.size());
-        raw.forEach((k, v) -> result.put(k.toString(), v != null ? v.toString() : ""));
-        return Collections.unmodifiableMap(result);
+        return ChunkSessionStore.parseNullableLong(v, label);
     }
 }

@@ -4,16 +4,15 @@ import com.smart.rag.infrastructure.concurrent.ExecutorMode;
 import com.smart.rag.infrastructure.concurrent.ScopeJoiner;
 import com.smart.rag.infrastructure.concurrent.ScopeOptions;
 import com.smart.rag.infrastructure.concurrent.ScopePolicy;
-import com.smart.rag.infrastructure.concurrent.ScopedTasks;
 import com.smart.rag.infrastructure.concurrent.TaskScope;
 import com.smart.rag.rag.config.EtlFastTrackProperties;
 import com.smart.rag.rag.event.EtlVectorizedEvent;
 import com.smart.rag.rag.mapper.VectorStoreMapper;
+import jakarta.annotation.PreDestroy;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.document.Document;
-import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
@@ -24,6 +23,7 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
 /**
@@ -45,16 +45,16 @@ public class FastTrackStrategy implements EtlRouteStrategy {
 
     private static final Logger log = LoggerFactory.getLogger(FastTrackStrategy.class);
 
+    /** 异步向量化任务等待超时（优雅停机时最多等待时长） */
+    private static final Duration ASYNC_SHUTDOWN_TIMEOUT = Duration.ofMinutes(5);
+
     private final Extractor extractor;
     private final Transformer transformer;
     private final Loader loader;
     private final EtlStatusManager statusManager;
     private final EtlFastTrackProperties fastTrackProperties;
     private final VectorStoreMapper vectorStoreMapper;
-    private final ApplicationEventPublisher eventPublisher;
-    private final ExecutorService ioExecutor;
-    private final ExecutorService cpuExecutor;
-    private final ScopedTasks scopedTasks;
+    private final EtlStrategyContext ctx;
 
     /** 追踪进行中的异步向量化任务，支持优雅停机 */
     private final Set<CompletableFuture<?>> activeAsyncTasks = ConcurrentHashMap.newKeySet();
@@ -65,20 +65,14 @@ public class FastTrackStrategy implements EtlRouteStrategy {
                              EtlStatusManager statusManager,
                              EtlFastTrackProperties fastTrackProperties,
                              VectorStoreMapper vectorStoreMapper,
-                             ApplicationEventPublisher eventPublisher,
-                             ExecutorService etlIoExecutor,
-                             ExecutorService etlCpuExecutor,
-                             ScopedTasks scopedTasks) {
+                             EtlStrategyContext etlStrategyContext) {
         this.extractor = extractor;
         this.transformer = transformer;
         this.loader = loader;
         this.statusManager = statusManager;
         this.fastTrackProperties = fastTrackProperties;
         this.vectorStoreMapper = vectorStoreMapper;
-        this.eventPublisher = eventPublisher;
-        this.ioExecutor = etlIoExecutor;
-        this.cpuExecutor = etlCpuExecutor;
-        this.scopedTasks = scopedTasks;
+        this.ctx = etlStrategyContext;
     }
 
     @Override
@@ -144,13 +138,26 @@ public class FastTrackStrategy implements EtlRouteStrategy {
     }
 
     /**
+     * 等待所有进行中的异步向量化任务完成（用于优雅停机）。
+     * <p>
+     * 销毁顺序安全性：本策略直接依赖 etlIoExecutor/etlCpuExecutor 等 Bean，
+     * Spring 按创建的逆序销毁——依赖方（本策略）先于被依赖方（线程池）销毁，
+     * 因此本 @PreDestroy 执行时线程池仍然存活，in-flight 任务可正常跑完；
+     * {@link EtlExecutorConfig#destroy()}（配置类先于线程池创建，故后销毁）随后才关闭线程池。
+     */
+    @PreDestroy
+    public void shutdown() {
+        awaitAsyncCompletion();
+    }
+
+    /**
      * 等待所有进行中的异步向量化任务完成（用于优雅停机）
      */
     public void awaitAsyncCompletion() {
         if (activeAsyncTasks.isEmpty()) return;
         log.info("Waiting for {} async vectorize tasks to complete...", activeAsyncTasks.size());
         CompletableFuture.allOf(activeAsyncTasks.toArray(CompletableFuture[]::new))
-                .orTimeout(5, java.util.concurrent.TimeUnit.MINUTES)
+                .orTimeout(ASYNC_SHUTDOWN_TIMEOUT.toMinutes(), TimeUnit.MINUTES)
                 .join();
     }
 
@@ -175,36 +182,11 @@ public class FastTrackStrategy implements EtlRouteStrategy {
     private void asyncVectorize(EtlCandidate c, List<Document> docs) {
         CompletableFuture<Void> future = CompletableFuture
                 .runAsync(() -> {
-                    List<Document> chunks;
-                    try (TaskScope scope = openExternalScope("fast-track-vectorize", cpuExecutor)) {
-                        scope.fork("transform-" + c.documentId(), () -> {
-                            List<Document> transformed = transformer.transform(docs, c.fileName());
-                            String docIdStr = String.valueOf(c.documentId());
-                            String userIdStr = String.valueOf(c.userId());
-                            String teamIdStr = c.teamId() != null ? String.valueOf(c.teamId()) : null;
-                            String fileName = (c.fileName() != null && !c.fileName().isBlank()) ? c.fileName() : docIdStr;
-                            for (Document chunk : transformed) {
-                                chunk.getMetadata().put("documentId", docIdStr);
-                                chunk.getMetadata().put("userId", userIdStr);
-                                chunk.getMetadata().put("fileName", fileName);
-                                if (teamIdStr != null) {
-                                    chunk.getMetadata().put("teamId", teamIdStr);
-                                }
-                            }
-                            return transformed;
-                        });
-                        chunks = scope.join(ScopeJoiner.successfulResults(List.class)).stream()
-                                .flatMap(List::stream)
-                                .toList();
-                    }
+                    List<Document> chunks = transformChunks(c, docs);
 
                     loader.load(chunks);
-                    eventPublisher.publishEvent(new EtlVectorizedEvent(
-                            c.documentId(), c.userId(), c.teamId()));
-                    vectorStoreMapper.deleteFastTrackRows(c.documentId());
-                    statusManager.updateChunkCount(c.documentId(), chunks.size());
-                    log.info("FastTrack async completed: id={}, chunks={}", c.documentId(), chunks.size());
-                }, ioExecutor)
+                    eventComplete(c, chunks);
+                }, ctx.ioExecutor())
                 .exceptionally(ex -> {
                     log.error("FastTrack async vectorize failed: id={}, BM25 still available", c.documentId(), ex);
                     statusManager.markVectorFailed(c.documentId(), ex);
@@ -215,10 +197,42 @@ public class FastTrackStrategy implements EtlRouteStrategy {
         future.whenComplete((v, ex) -> activeAsyncTasks.remove(future));
     }
 
+    /**
+     * Transform（CPU 池 TaskScope 内执行）+ 元数据填充。
+     */
+    private List<Document> transformChunks(EtlCandidate c, List<Document> docs) {
+        try (TaskScope scope = openExternalScope("fast-track-vectorize", ctx.cpuExecutor())) {
+            scope.fork("transform-" + c.documentId(), () -> {
+                List<Document> transformed = transformer.transform(docs, c.fileName());
+                ChunkMetadataEnricher.enrich(transformed, c.documentId(), c.userId(), c.teamId(), c.fileName());
+                return transformed;
+            });
+            return scope.join(ScopeJoiner.successfulResults(List.class)).stream()
+                    .flatMap(List::stream)
+                    .toList();
+        }
+    }
+
+    /**
+     * 异步收尾：发布向量化事件 + 更新分块数 + 清理 BM25 占位行。
+     * <p>
+     * 顺序说明：先 updateChunkCount 再 deleteFastTrackRows（非事务两步）——
+     * 若两步之间失败，最坏情况是残留 BM25 占位行（BM25 可检索性不受影响，
+     * 后续重建/重投递可幂等清理）；反之若先删后计数失败，chunk_count 永久丢失，
+     * UI 分块数错误，危害更大。故选择「计数先行」。
+     */
+    private void eventComplete(EtlCandidate c, List<Document> chunks) {
+        ctx.eventPublisher().publishEvent(new EtlVectorizedEvent(
+                c.documentId(), c.userId(), c.teamId()));
+        statusManager.updateChunkCount(c.documentId(), chunks.size());
+        vectorStoreMapper.deleteFastTrackRows(c.documentId());
+        log.info("FastTrack async completed: id={}, chunks={}", c.documentId(), chunks.size());
+    }
+
     // ==================== Extract ====================
 
     private Map<Long, List<Document>> extractAll(List<EtlCandidate> candidates) {
-        try (TaskScope scope = openExternalScope("fast-track-extract", ioExecutor)) {
+        try (TaskScope scope = openExternalScope("fast-track-extract", ctx.ioExecutor())) {
             for (EtlCandidate c : candidates) {
                 scope.fork("extract-" + c.documentId(), () -> {
                     try {
@@ -244,9 +258,9 @@ public class FastTrackStrategy implements EtlRouteStrategy {
                 .policy(ScopePolicy.COLLECT_ALL)
                 .executorMode(ExecutorMode.SHARED_EXECUTOR)
                 .executorOwnedByScope(false)
-                .defaultTimeout(Duration.ofMinutes(5))
+                .defaultTimeout(ChunkMetadataEnricher.DEFAULT_SCOPE_TIMEOUT)
                 .build();
-        return scopedTasks.open(name, options, executor);
+        return ctx.scopedTasks().open(name, options, executor);
     }
 
     private record ExtractOutput(Long documentId, List<Document> documents) {}

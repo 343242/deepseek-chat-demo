@@ -22,6 +22,10 @@ public class DocumentParseException extends RuntimeException {
     private final String fileName;
     private final String parserName;
 
+    public DocumentParseException(String fileName, String parserName, String message) {
+        this(fileName, parserName, message, null);
+    }
+
     public DocumentParseException(String fileName, String parserName, String message, Throwable cause) {
         super(String.format("[%s] Failed to parse '%s': %s", parserName, fileName, message), cause);
         this.fileName = fileName;

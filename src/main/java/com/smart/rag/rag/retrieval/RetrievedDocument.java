@@ -39,6 +39,18 @@ public record RetrievedDocument(
     private static final String UNKNOWN_FILE_NAME = "未知";
 
     /**
+     * 防御性拷贝：每次构造（含 {@code with*} 重建）复制 metadata，隔离调用方对该 map 的后续修改。
+     * <p>
+     * WHY 拷贝为可变 HashMap 而非 {@code Map.copyOf}：现有调用方（如
+     * {@code ParentDocLookupTool}）依赖在 {@code metadata()} 返回的 map 上追加键
+     * （sourceDocId / parentId），不可变 map 会破坏该契约；{@code with*} 方法经由本构造器
+     * 重建，自动获得独立副本。
+     */
+    public RetrievedDocument {
+        metadata = metadata != null ? new HashMap<>(metadata) : new HashMap<>();
+    }
+
+    /**
      * 从 Spring AI {@link Document} 统一构造：提取 chunkId/documentId/fileName/page，
      * content/score/metadata 取自文档；source/subQueryIndex 留默认（null/-1），refNumber=0（由收集器赋值）。
      * <p>

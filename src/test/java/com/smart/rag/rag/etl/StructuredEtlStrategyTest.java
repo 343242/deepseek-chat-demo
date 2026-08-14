@@ -45,7 +45,8 @@ class StructuredEtlStrategyTest {
 
         try {
             StandardStrategy strategy = new StandardStrategy(
-                    extractor, transformer, loader, statusManager, ioExecutor, cpuExecutor, scopedTasks, eventPublisher);
+                    extractor, transformer, loader, statusManager,
+                    new EtlStrategyContext(ioExecutor, cpuExecutor, scopedTasks, eventPublisher));
 
             List<EtlResult> results = strategy.execute(List.of(candidate));
 
@@ -85,11 +86,8 @@ class StructuredEtlStrategyTest {
                     statusManager,
                     new EtlFastTrackProperties(),
                     vectorStoreMapper,
-                    mock(ApplicationEventPublisher.class),
-                    ioExecutor,
-                    cpuExecutor,
-                    scopedTasks
-            );
+                    new EtlStrategyContext(ioExecutor, cpuExecutor, scopedTasks,
+                            mock(ApplicationEventPublisher.class)));
 
             List<EtlResult> results = strategy.execute(List.of(candidate));
             strategy.awaitAsyncCompletion();

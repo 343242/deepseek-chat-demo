@@ -73,7 +73,7 @@ class EntityEmbeddingServiceTest {
             service.embedEntities(List.of(entity));
 
             verify(embeddingCapable).embedBatch(anyList(), eq(EmbeddingType.DOCUMENT));
-            verify(entityMapper).updateEmbedding(eq(1L), any(float[].class));
+            verify(entityMapper).updateEmbeddingBatch(argThat(items -> items.size() == 1 && items.get(0).id() == 1L));
         }
 
         @Test
@@ -106,8 +106,8 @@ class EntityEmbeddingServiceTest {
             service.embedEntities(List.of(entity1, entity2));
 
             verify(embeddingCapable).embedBatch(anyList(), eq(EmbeddingType.DOCUMENT));
-            verify(entityMapper).updateEmbedding(eq(1L), any(float[].class));
-            verify(entityMapper).updateEmbedding(eq(2L), any(float[].class));
+            verify(entityMapper).updateEmbeddingBatch(argThat(items -> items.size() == 2
+                    && items.get(0).id() == 1L && items.get(1).id() == 2L));
         }
 
         @Test
@@ -142,7 +142,7 @@ class EntityEmbeddingServiceTest {
 
             // 验证 ChatCapable 被调用进行压缩
             verify(chatCapable).chat(any(ChatRequest.class));
-            verify(entityMapper).updateEmbedding(eq(1L), any(float[].class));
+            verify(entityMapper).updateEmbeddingBatch(argThat(items -> items.size() == 1 && items.get(0).id() == 1L));
         }
     }
 }

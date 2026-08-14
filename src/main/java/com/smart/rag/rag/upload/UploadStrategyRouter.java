@@ -1,5 +1,7 @@
 package com.smart.rag.rag.upload;
 
+import com.smart.rag.infrastructure.exception.ServiceException;
+import com.smart.rag.infrastructure.exception.errorcode.ServiceErrorCode;
 import org.jspecify.annotations.Nullable;
 import org.springframework.stereotype.Component;
 
@@ -26,12 +28,13 @@ public class UploadStrategyRouter {
      *
      * @param teamId 团队 ID（null = 个人上传）
      * @return 唯一匹配的上传策略
-     * @throws IllegalStateException 无匹配策略（容器配置错误）
+     * @throws ServiceException 无匹配策略（容器配置错误，服务端内部错误）
      */
     public UploadStrategy route(@Nullable Long teamId) {
         return strategies.stream()
                 .filter(s -> s.supports(teamId))
                 .findFirst()
-                .orElseThrow(() -> new IllegalStateException("No UploadStrategy for teamId=" + teamId));
+                .orElseThrow(() -> new ServiceException(ServiceErrorCode.INTERNAL_ERROR,
+                        "No UploadStrategy for teamId=" + teamId));
     }
 }

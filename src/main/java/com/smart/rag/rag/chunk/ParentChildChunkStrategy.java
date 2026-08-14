@@ -122,8 +122,7 @@ public class ParentChildChunkStrategy implements ChunkStrategy {
             chunk.getMetadata().put("totalChunks", allChunks.size());
         }
 
-        log.info("[ParentChildChunk] {} raw docs → {} parents + children = {} total " +
-                        "(parentSize={}, childSize={}, source={})",
+        log.info("[ParentChildChunk] {} raw docs → {} parents + children = {} total (parentSize={}, childSize={}, source={})",
                 documents.size(), parentCount, allChunks.size(),
                 parentSize, childSize, sourceFileName);
 

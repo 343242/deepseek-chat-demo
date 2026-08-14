@@ -37,7 +37,8 @@ class EtlDocumentConsumerTest {
 
     @BeforeEach
     void setUp() {
-        consumer = new EtlDocumentConsumer(messageBus, etlDispatchService, eventPublisher);
+        consumer = new EtlDocumentConsumer(new com.smart.rag.rag.config.EtlConsumerProperties(),
+                messageBus, etlDispatchService, eventPublisher);
     }
 
     @Nested

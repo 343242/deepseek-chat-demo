@@ -27,4 +27,12 @@ public interface DocumentParser {
      * @return 解析后的文档列表
      */
     List<Document> parse(Resource resource, String mimeType);
+
+    /**
+     * 是否为兜底解析器（如 Tika）。兜底解析器不注册到工厂的 MIME 路由表，
+     * 仅作为无匹配时的默认解析器。
+     */
+    default boolean isFallback() {
+        return false;
+    }
 }

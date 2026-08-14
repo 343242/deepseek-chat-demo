@@ -21,6 +21,17 @@ public class DefaultChunkSizeStrategy implements ChunkSizeStrategy {
     private static final int MB = 1024 * 1024;
     private static final int MAX_TOTAL_CHUNKS = 10_000;
 
+    /** 不分片阈值：小于此大小整体作为一个分片 */
+    private static final long NO_CHUNK_THRESHOLD = 5L * MB;
+    /** 小文件上限：此范围内使用 5 MB 分片 */
+    private static final long SMALL_FILE_MAX = 100L * MB;
+    /** 中文件上限：此范围内使用 10 MB 分片 */
+    private static final long MEDIUM_FILE_MAX = 500L * MB;
+
+    private static final int SMALL_FILE_CHUNK_SIZE = 5 * MB;
+    private static final int MEDIUM_FILE_CHUNK_SIZE = 10 * MB;
+    private static final int LARGE_FILE_CHUNK_SIZE = 20 * MB;
+
     @Override
     public int calculateChunkSize(long fileSize) {
         int chunkSize = resolveChunkSize(fileSize);
@@ -34,15 +45,15 @@ public class DefaultChunkSizeStrategy implements ChunkSizeStrategy {
     }
 
     private int resolveChunkSize(long fileSize) {
-        if (fileSize < 5L * MB) {
+        if (fileSize < NO_CHUNK_THRESHOLD) {
             return (int) fileSize;  // 不分片
         }
-        if (fileSize <= 100L * MB) {
-            return 5 * MB;
+        if (fileSize <= SMALL_FILE_MAX) {
+            return SMALL_FILE_CHUNK_SIZE;
         }
-        if (fileSize <= 500L * MB) {
-            return 10 * MB;
+        if (fileSize <= MEDIUM_FILE_MAX) {
+            return MEDIUM_FILE_CHUNK_SIZE;
         }
-        return 20 * MB;
+        return LARGE_FILE_CHUNK_SIZE;
     }
 }

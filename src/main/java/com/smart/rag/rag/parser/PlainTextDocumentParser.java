@@ -10,9 +10,11 @@ import org.springframework.stereotype.Component;
 import org.springframework.util.unit.DataSize;
 
 import java.io.InputStream;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 /**
  * 纯文本专用解析器
@@ -31,6 +33,12 @@ import java.util.Map;
 public class PlainTextDocumentParser implements DocumentParser {
 
     private static final Logger log = LoggerFactory.getLogger(PlainTextDocumentParser.class);
+
+    /** 大文件日志阈值（字节）：超过此值的文本文件内存峰值可能达 3x，记录提示 */
+    private static final long LARGE_FILE_LOG_THRESHOLD = 5L * 1024 * 1024;
+
+    /** 段落切分正则：连续 2 个及以上换行（兼容 \r\n 与 \n） */
+    private static final Pattern PARAGRAPH_PATTERN = Pattern.compile("(?:\\r?\\n){2,}");
 
     private final DocumentProperties documentProperties;
 
@@ -58,10 +66,9 @@ public class PlainTextDocumentParser implements DocumentParser {
             if (bytes.length > maxBytes) {
                 throw new DocumentParseException(
                         resource.getFilename(), "plain-text",
-                        String.format("文本文件超过上限 %s", documentProperties.getMaxFileSize()),
-                        null);
+                        String.format("文本文件超过上限 %s", documentProperties.getMaxFileSize()));
             }
-            if (bytes.length > 5L * 1024 * 1024) {
+            if (bytes.length > LARGE_FILE_LOG_THRESHOLD) {
                 log.info("Large text file detected ({} MB), memory peak may reach 3x: file={}",
                         bytes.length / (1024 * 1024), resource.getFilename());
             }
@@ -73,13 +80,13 @@ public class PlainTextDocumentParser implements DocumentParser {
             }
 
             // 按空行分段落
-            String[] paragraphs = content.split("(?:\\r?\\n){2,}");
+            String[] paragraphs = PARAGRAPH_PATTERN.split(content);
 
             Map<String, Object> metadata = new HashMap<>();
             metadata.put("parser", "plain-text");
             metadata.put("mimeType", mimeType);
 
-            List<Document> documents = new java.util.ArrayList<>();
+            List<Document> documents = new ArrayList<>();
             for (int i = 0; i < paragraphs.length; i++) {
                 String text = paragraphs[i].trim();
                 if (text.isEmpty()) {

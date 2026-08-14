@@ -2,18 +2,15 @@ package com.smart.rag.rag.etl;
 
 import com.smart.rag.infrastructure.concurrent.ExecutorMode;
 import com.smart.rag.rag.event.EtlVectorizedEvent;
-import org.springframework.context.ApplicationEventPublisher;
 import com.smart.rag.infrastructure.concurrent.ScopeJoiner;
 import com.smart.rag.infrastructure.concurrent.ScopeOptions;
 import com.smart.rag.infrastructure.concurrent.ScopePolicy;
-import com.smart.rag.infrastructure.concurrent.ScopedTasks;
 import com.smart.rag.infrastructure.concurrent.TaskScope;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.document.Document;
 import org.springframework.stereotype.Component;
 
-import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
@@ -36,27 +33,18 @@ public class StandardStrategy implements EtlRouteStrategy {
     private final Transformer transformer;
     private final Loader loader;
     private final EtlStatusManager statusManager;
-    private final ExecutorService ioExecutor;
-    private final ExecutorService cpuExecutor;
-    private final ScopedTasks scopedTasks;
-    private final ApplicationEventPublisher eventPublisher;
+    private final EtlStrategyContext ctx;
 
     public StandardStrategy(Extractor extractor,
                             Transformer transformer,
                             Loader loader,
                             EtlStatusManager statusManager,
-                            ExecutorService etlIoExecutor,
-                            ExecutorService etlCpuExecutor,
-                            ScopedTasks scopedTasks,
-                            ApplicationEventPublisher eventPublisher) {
+                            EtlStrategyContext etlStrategyContext) {
         this.extractor = extractor;
         this.transformer = transformer;
         this.loader = loader;
         this.statusManager = statusManager;
-        this.ioExecutor = etlIoExecutor;
-        this.cpuExecutor = etlCpuExecutor;
-        this.scopedTasks = scopedTasks;
-        this.eventPublisher = eventPublisher;
+        this.ctx = etlStrategyContext;
     }
 
     @Override
@@ -91,7 +79,7 @@ public class StandardStrategy implements EtlRouteStrategy {
     // ==================== Extract ====================
 
     private Map<Long, List<Document>> extractAll(List<EtlCandidate> candidates) {
-        try (TaskScope scope = openExternalScope("standard-extract", ioExecutor)) {
+        try (TaskScope scope = openExternalScope("standard-extract", ctx.ioExecutor())) {
             for (EtlCandidate c : candidates) {
                 scope.fork("extract-" + c.documentId(), () -> {
                     try {
@@ -116,25 +104,14 @@ public class StandardStrategy implements EtlRouteStrategy {
 
     private Map<Long, List<Document>> transformAll(List<EtlCandidate> candidates,
                                                     Map<Long, List<Document>> extractedMap) {
-        try (TaskScope scope = openExternalScope("standard-transform", cpuExecutor)) {
+        try (TaskScope scope = openExternalScope("standard-transform", ctx.cpuExecutor())) {
             candidates.stream()
                     .filter(c -> extractedMap.containsKey(c.documentId()))
                     .forEach(c -> scope.fork("transform-" + c.documentId(), () -> {
                         try {
                             statusManager.updateStatus(c.documentId(), EtlStatus.CHUNKING);
                             List<Document> chunks = transformer.transform(extractedMap.get(c.documentId()), c.fileName());
-                            String docIdStr = String.valueOf(c.documentId());
-                            String userIdStr = String.valueOf(c.userId());
-                            String teamIdStr = c.teamId() != null ? String.valueOf(c.teamId()) : null;
-                            String fileName = (c.fileName() != null && !c.fileName().isBlank()) ? c.fileName() : docIdStr;
-                            for (Document chunk : chunks) {
-                                chunk.getMetadata().put("documentId", docIdStr);
-                                chunk.getMetadata().put("userId", userIdStr);
-                                chunk.getMetadata().put("fileName", fileName);
-                                if (teamIdStr != null) {
-                                    chunk.getMetadata().put("teamId", teamIdStr);
-                                }
-                            }
+                            ChunkMetadataEnricher.enrich(chunks, c.documentId(), c.userId(), c.teamId(), c.fileName());
                             return new TransformOutput(c.documentId(), chunks, null);
                         } catch (Exception e) {
                             log.error("Transform failed: id={}, file={}", c.documentId(), c.fileName(), e);
@@ -153,7 +130,7 @@ public class StandardStrategy implements EtlRouteStrategy {
 
     private Map<Long, Integer> loadAll(List<EtlCandidate> candidates,
                                         Map<Long, List<Document>> chunkMap) {
-        try (TaskScope scope = openExternalScope("standard-load", ioExecutor)) {
+        try (TaskScope scope = openExternalScope("standard-load", ctx.ioExecutor())) {
             candidates.stream()
                     .filter(c -> chunkMap.containsKey(c.documentId()))
                     .forEach(c -> scope.fork("load-" + c.documentId(), () -> {
@@ -192,7 +169,7 @@ public class StandardStrategy implements EtlRouteStrategy {
         if (chunkCount == null) {
             return EtlResult.failed(c.documentId(), "Load failed");
         }
-        eventPublisher.publishEvent(new EtlVectorizedEvent(c.documentId(), c.userId(), c.teamId()));
+        ctx.eventPublisher().publishEvent(new EtlVectorizedEvent(c.documentId(), c.userId(), c.teamId()));
         return EtlResult.success(c.documentId(), chunkCount);
     }
 
@@ -201,9 +178,9 @@ public class StandardStrategy implements EtlRouteStrategy {
                 .policy(ScopePolicy.COLLECT_ALL)
                 .executorMode(ExecutorMode.SHARED_EXECUTOR)
                 .executorOwnedByScope(false)
-                .defaultTimeout(Duration.ofMinutes(5))
+                .defaultTimeout(ChunkMetadataEnricher.DEFAULT_SCOPE_TIMEOUT)
                 .build();
-        return scopedTasks.open(name, options, executor);
+        return ctx.scopedTasks().open(name, options, executor);
     }
 
     private record ExtractOutput(Long documentId, List<Document> documents, Exception error) {}

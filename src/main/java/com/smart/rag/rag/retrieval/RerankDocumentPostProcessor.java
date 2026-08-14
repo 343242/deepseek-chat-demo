@@ -66,12 +66,13 @@ public class RerankDocumentPostProcessor implements DocumentPostProcessor {
             results = reranker.rerank(request, topN);
         } catch (RuntimeException e) {
             // R1-M8 降级契约：rerank 失败 → 原样透传，不中断检索与 chat 链路。
-            log.warn("Rerank failed, returning original order (query='{}'): {}", query.text(), e.getMessage());
+            // R1-L4 PII 策略（与 QueryNormalizer 一致）：WARN 级不记录原始 query，仅记录长度。
+            log.warn("Rerank failed, returning original order (queryLen={}): {}", query.text().length(), e.getMessage());
             return documents;
         }
 
         if (results.isEmpty()) {
-            log.warn("Rerank returned empty results for query: {}", query.text());
+            log.warn("Rerank returned empty results (queryLen={})", query.text().length());
             return documents;
         }
 

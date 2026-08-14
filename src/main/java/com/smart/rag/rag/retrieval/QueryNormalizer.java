@@ -4,6 +4,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
+import java.util.regex.Pattern;
+
 /**
  * 查询文本归一化处理器。
  * <p>
@@ -32,6 +34,12 @@ import org.springframework.stereotype.Component;
 public class QueryNormalizer {
 
     private static final Logger log = LoggerFactory.getLogger(QueryNormalizer.class);
+
+    /** 连续空白 → 单个半角空格（每次查询执行，预编译避免重复 Pattern.compile） */
+    private static final Pattern WHITESPACE_PATTERN = Pattern.compile("\\s+");
+
+    /** tsquery 运算符/引号字符类（BM25 每次查询执行，预编译避免重复 Pattern.compile） */
+    private static final Pattern TSQUERY_OPERATOR_PATTERN = Pattern.compile("[&|!()\\[\\]{}:*\\\\\"']");
 
     /**
      * 对查询文本进行归一化处理。
@@ -119,7 +127,7 @@ public class QueryNormalizer {
      * 将连续空白字符（空格、制表符、换行等）压缩为单个半角空格。
      */
     private String compressWhitespace(String text) {
-        return text.replaceAll("\\s+", " ").trim();
+        return WHITESPACE_PATTERN.matcher(text).replaceAll(" ").trim();
     }
 
     // ======================== BM25 / tsquery 净化 ========================
@@ -140,11 +148,12 @@ public class QueryNormalizer {
      */
     public String sanitizeForTsQuery(String query) {
         if (query == null || query.isBlank()) return "";
-        return query
-                .replace('“', ' ').replace('”', ' ')   // left/right double quotation
-                .replace('‘', ' ').replace('’', ' ')   // left/right single quotation
-                .replace('«', ' ').replace('»', ' ')   // << >>
-                .replaceAll("[&|!()\\[\\]{}:*\\\\\"']", " ")
+        return TSQUERY_OPERATOR_PATTERN
+                .matcher(query
+                        .replace('“', ' ').replace('”', ' ')   // left/right double quotation
+                        .replace('‘', ' ').replace('’', ' ')   // left/right single quotation
+                        .replace('«', ' ').replace('»', ' '))  // << >>
+                .replaceAll(" ")
                 .trim();
     }
 }

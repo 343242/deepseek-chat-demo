@@ -1,5 +1,7 @@
 package com.smart.rag.rag.service.impl;
 
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
 import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;
 import com.smart.rag.infrastructure.exception.ClientException;
 import com.smart.rag.rag.config.DocumentProperties;
@@ -36,8 +38,9 @@ public class DocumentValidator {
 
     private final DocumentProperties documentProperties;
 
-    /** 运行时解析的 MIME 白名单 */
-    private volatile Set<String> cachedAllowedMimeTypes;
+    /** 运行时解析的 MIME 白名单（单值缓存，替代手写 double-checked locking） */
+    private final Cache<String, Set<String>> allowedMimeTypesCache =
+            Caffeine.newBuilder().maximumSize(1).build();
 
     private static final Map<String, String> EXTENSION_MIME_MAP = Map.of(
             ".docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -192,18 +195,11 @@ public class DocumentValidator {
     }
 
     private Set<String> getAllowedMimeTypes() {
-        if (cachedAllowedMimeTypes == null) {
-            synchronized (this) {
-                if (cachedAllowedMimeTypes == null) {
-                    // R1-M7: trim 每段并过滤空值，容忍配置中的空格（如 "application/pdf, text/plain"）
-                    cachedAllowedMimeTypes = Arrays.stream(
-                                    documentProperties.getAllowedMimeTypes().split(","))
-                            .map(String::trim)
-                            .filter(s -> !s.isEmpty())
-                            .collect(Collectors.toUnmodifiableSet());
-                }
-            }
-        }
-        return cachedAllowedMimeTypes;
+        // R1-M7: trim 每段并过滤空值，容忍配置中的空格（如 "application/pdf, text/plain"）
+        return allowedMimeTypesCache.get("allowed", key ->
+                Arrays.stream(documentProperties.getAllowedMimeTypes().split(","))
+                        .map(String::trim)
+                        .filter(s -> !s.isEmpty())
+                        .collect(Collectors.toUnmodifiableSet()));
     }
 }

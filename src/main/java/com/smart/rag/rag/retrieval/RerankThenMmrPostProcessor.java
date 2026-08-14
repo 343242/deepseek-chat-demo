@@ -1,5 +1,10 @@
 package com.smart.rag.rag.retrieval;
 
+import com.smart.rag.infrastructure.concurrent.context.ContextCarrier;
+import com.smart.rag.infrastructure.concurrent.context.ContextRestorer;
+import com.smart.rag.infrastructure.concurrent.context.ContextSnapshot;
+import com.smart.rag.infrastructure.concurrent.context.MdcContextCarrier;
+import com.smart.rag.infrastructure.concurrent.context.SecurityContextCarrier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.document.Document;
@@ -46,6 +51,16 @@ public class RerankThenMmrPostProcessor implements DocumentPostProcessor {
     private final MmrDocumentPostProcessor mmrProcessor;
     private final ExecutorService ragPostProcessExecutor;
 
+    /**
+     * ragPostProcessExecutor（{@code RagSearchExecutorConfig} 的
+     * {@code Executors.newVirtualThreadPerTaskExecutor()}）本身不做上下文传播，
+     * 因此在提交前于调用线程捕获 MDC + SecurityContext，在异步任务内恢复——
+     * 与 ScopedTasks 的 {@code inheritMdc}/{@code inheritSecurityContext} 默认载体一致
+     * （见 DefaultScopedTasks.carriers）。RequestContext 为容器 filter 作用域，此处不传播。
+     */
+    private static final List<ContextCarrier<?>> CONTEXT_CARRIERS =
+            List.of(new MdcContextCarrier(), new SecurityContextCarrier());
+
     public RerankThenMmrPostProcessor(RerankDocumentPostProcessor rerankProcessor,
                                       MmrDocumentPostProcessor mmrProcessor,
                                       ExecutorService ragPostProcessExecutor) {
@@ -61,10 +76,15 @@ public class RerankThenMmrPostProcessor implements DocumentPostProcessor {
         }
 
         // rerank 异步到虚拟线程 bean（LLM IO 百 ms 级）；.exceptionally 降级透传（B2：无静默吞）
+        ContextSnapshot contextSnapshot = ContextSnapshot.capture(CONTEXT_CARRIERS);
         CompletableFuture<List<Document>> rerankFut = CompletableFuture
-                .supplyAsync(() -> rerankProcessor.rerankOnly(query, documents), ragPostProcessExecutor)
+                .supplyAsync(() -> {
+                    try (ContextRestorer ignored = contextSnapshot.restore()) {
+                        return rerankProcessor.rerankOnly(query, documents);
+                    }
+                }, ragPostProcessExecutor)
                 .exceptionally(ex -> {
-                    log.warn("Rerank async failed, passthrough original docs: {}", ex.toString());
+                    log.warn("Rerank async failed, passthrough original docs", ex);
                     return documents;
                 });
 

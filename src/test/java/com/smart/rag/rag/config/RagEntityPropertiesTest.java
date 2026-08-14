@@ -95,7 +95,7 @@ class RagEntityPropertiesTest {
                     false, 10, 500, 0.85, 50, 20, 10, 1, 0.7,
                     0, 0, 0, true, null, true))
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageContaining("cannot all be 0");
+                    .hasMessageContaining("不能同时为 0");
         }
     }
 }

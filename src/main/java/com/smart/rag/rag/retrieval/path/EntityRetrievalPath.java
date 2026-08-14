@@ -43,7 +43,7 @@ import java.util.UUID;
 public class EntityRetrievalPath implements RetrievalPath {
 
     private static final Logger log = LoggerFactory.getLogger(EntityRetrievalPath.class);
-    private static final ObjectMapper TRACE_MAPPER = new ObjectMapper();
+    private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
     private static final long STEP_TIMEOUT_MS = 5000;
 
     private final EntitySeedExtractor seedExtractor;
@@ -103,21 +103,9 @@ public class EntityRetrievalPath implements RetrievalPath {
 
         // PC4a ∥ PC4b: vote backlink ∥ SAG expansion (parallel via ScopedTasks)
         t = System.currentTimeMillis();
-        ScopeOptions options = ScopeOptions.builder("entity-path-c4")
-                .policy(ScopePolicy.COLLECT_ALL)
-                .defaultTimeout(Duration.ofMillis(STEP_TIMEOUT_MS))
-                .build();
-        List<VotedChunk> voted;
-        List<ExpandedChunk> expanded;
-        try (var scope = scopedTasks.open("entity-path-c4", options)) {
-            Subtask<List<VotedChunk>> voteTask =
-                    scope.fork("vote", () -> voteRetriever.retrieve(frontier, userId));
-            Subtask<List<ExpandedChunk>> expandTask =
-                    scope.fork("expand", () -> expansionRetriever.retrieve(frontier, userId, teamId));
-            scope.join();
-            voted = taskResult(voteTask, "vote");
-            expanded = taskResult(expandTask, "expand");
-        }
+        VoteAndExpand pc4 = voteAndExpand(frontier, userId, teamId);
+        List<VotedChunk> voted = pc4.voted();
+        List<ExpandedChunk> expanded = pc4.expanded();
         long c4Ms = System.currentTimeMillis() - t;
         steps.add(step("vote_backlink", c4Ms, Map.of("voteChunks", voted.size())));
         steps.add(step("sag_expansion", c4Ms, Map.of("expandChunks", expanded.size())));
@@ -130,6 +118,49 @@ public class EntityRetrievalPath implements RetrievalPath {
                         "mergedChunks", merged.size())));
 
         return finishTrace(steps, totalStart, merged.size(), merged);
+    }
+
+    /** PC4a∥PC4b 并行结果载体 */
+    private record VoteAndExpand(List<VotedChunk> voted, List<ExpandedChunk> expanded) {}
+
+    /**
+     * PC4：vote backlink（PC4a）∥ SAG expansion（PC4b）并行执行。
+     * <p>
+     * COLLECT_ALL + 每路独立降级：单路失败降级为空列表，另一路结果保留。
+     */
+    private VoteAndExpand voteAndExpand(List<ScoredEntity> frontier, long userId, @Nullable Long teamId) {
+        ScopeOptions options = ScopeOptions.builder("entity-path-c4")
+                .policy(ScopePolicy.COLLECT_ALL)
+                .defaultTimeout(Duration.ofMillis(STEP_TIMEOUT_MS))
+                .build();
+        try (var scope = scopedTasks.open("entity-path-c4", options)) {
+            Subtask<List<VotedChunk>> voteTask =
+                    scope.fork("vote", () -> voteRetriever.retrieve(frontier, userId));
+            Subtask<List<ExpandedChunk>> expandTask =
+                    scope.fork("expand", () -> expansionRetriever.retrieve(frontier, userId, teamId));
+            scope.join();
+            return new VoteAndExpand(votedResult(voteTask), expandedResult(expandTask));
+        }
+    }
+
+    /** vote 子任务（PC4a）失败降级为空列表，不影响 expand 路 */
+    private List<VotedChunk> votedResult(Subtask<List<VotedChunk>> task) {
+        if (task.exception() != null) {
+            log.warn("Path C vote subtask failed (degraded to empty): {}",
+                    task.exception().getMessage(), task.exception());
+            return List.of();
+        }
+        return task.result();
+    }
+
+    /** expand 子任务（PC4b）失败降级为空列表，不影响 vote 路 */
+    private List<ExpandedChunk> expandedResult(Subtask<List<ExpandedChunk>> task) {
+        if (task.exception() != null) {
+            log.warn("Path C expand subtask failed (degraded to empty): {}",
+                    task.exception().getMessage(), task.exception());
+            return List.of();
+        }
+        return task.result();
     }
 
     /**
@@ -160,10 +191,9 @@ public class EntityRetrievalPath implements RetrievalPath {
             UUID chunkId = entry.getKey();
             double score = entry.getValue();
             VotedChunk vc = votedById.get(chunkId);
-            String content = vc != null ? vc.content()
-                    : (expandedById.containsKey(chunkId) ? expandedById.get(chunkId).content() : "");
-            String metadataJson = vc != null ? vc.metadata()
-                    : (expandedById.containsKey(chunkId) ? expandedById.get(chunkId).metadata() : "{}");
+            ExpandedChunk ec = expandedById.get(chunkId);
+            String content = vc != null ? vc.content() : (ec != null ? ec.content() : "");
+            String metadataJson = vc != null ? vc.metadata() : (ec != null ? ec.metadata() : "{}");
 
             Map<String, Object> meta = parseMetadata(metadataJson);
             meta.put("chunkId", chunkId.toString());
@@ -181,19 +211,12 @@ public class EntityRetrievalPath implements RetrievalPath {
     private Map<String, Object> parseMetadata(String json) {
         if (json == null || json.isBlank()) return new HashMap<>();
         try {
-            return TRACE_MAPPER.readValue(json, Map.class);
+            return OBJECT_MAPPER.readValue(json, Map.class);
         } catch (Exception e) {
+            // 失败降级为空 metadata（chunk 仍保留 content/score，仅丢失原文档元信息）
+            log.warn("Path C metadata parse failed (degraded to empty, len={}): {}", json.length(), e.getMessage(), e);
             return new HashMap<>();
         }
-    }
-
-    @SuppressWarnings("unchecked")
-    private <T> T taskResult(Subtask<T> task, String name) {
-        if (task.exception() != null) {
-            log.warn("Path C {} subtask failed (degraded to empty): {}", name, task.exception().getMessage(), task.exception());
-            return (T) List.of();
-        }
-        return task.result();
     }
 
     private Map<String, Object> step(String name, long durationMs, Map<String, Object> extra) {
@@ -215,7 +238,14 @@ public class EntityRetrievalPath implements RetrievalPath {
         trace.put("steps", steps);
         trace.put("totalDurationMs", System.currentTimeMillis() - totalStart);
         trace.put("resultSize", resultSize);
-        log.info("Path C trace: {}", TRACE_MAPPER.valueToTree(trace).toString());
+        if (log.isInfoEnabled()) {
+            try {
+                log.info("Path C trace: {}", OBJECT_MAPPER.writeValueAsString(trace));
+            } catch (Exception e) {
+                log.info("Path C trace: {} steps, resultSize={} (serialization failed: {})",
+                        steps.size(), resultSize, e.getMessage());
+            }
+        }
         return result;
     }
 }

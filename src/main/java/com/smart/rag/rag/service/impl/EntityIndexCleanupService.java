@@ -74,7 +74,7 @@ public class EntityIndexCleanupService {
         }
 
         // Step 2: chunk 数（日志计数用，删除本身按 document_id 经 rag_event 关联完成）
-        int chunkCount = vectorStoreMapper.selectChunksByDocumentId(docIdStr).size();
+        int chunkCount = vectorStoreMapper.countChunksByDocumentId(docIdStr);
 
         // Step 3-7: 在事务中执行清理
         transactionTemplate.executeWithoutResult(status -> {

@@ -19,7 +19,6 @@ import org.springframework.stereotype.Service;
 
 import java.time.Duration;
 import java.util.*;
-import java.util.concurrent.TimeoutException;
 
 /**
  * 混合检索服务 -- RAG 检索域的核心实现
@@ -153,6 +152,10 @@ public class HybridSearchService {
                 .map(e -> {
                     Document doc = docMap.get(e.getKey());
                     if (doc != null) {
+                        // WHY in-place mutation：直接改写共享 Document 的 metadata 而非重建 Document——
+                        // 重建会丢失 vector store 写入的 score 字段（Document 构造器不接收 score），
+                        // 下游 RetrievedDocument.from 依赖 d.getScore()。rrfScore/sources 为本方法
+                        // 独占追加键，docMap 中每个 doc 只被本融合流程消费，无跨请求泄漏。
                         doc.getMetadata().put("rrfScore", e.getValue());
                         doc.getMetadata().put("sources", sourcesByDoc.getOrDefault(e.getKey(), List.of()));
                     }
@@ -187,32 +190,17 @@ public class HybridSearchService {
             boolean success = task.exception() == null;
             List<ScoredDocument> docs = success ? safePathResults(task) : List.of();
 
-            // documents JSONB（仅元数据，不含正文——与 trace_event 约定一致）
-            List<Map<String, Object>> documents = new ArrayList<>(docs.size());
-            for (ScoredDocument sd : docs) {
-                Map<String, Object> m = new LinkedHashMap<>();
-                m.put("chunkId", sd.doc().getId());
-                m.put("rank", sd.rank());
-                m.put("score", sd.score());
-                Map<String, Object> md = sd.doc().getMetadata();
-                if (md != null) {
-                    Object documentId = md.get("documentId");
-                    if (documentId != null) m.put("documentId", documentId);
-                    Object fileName = md.get("fileName");
-                    if (fileName != null) m.put("fileName", fileName);
-                    Object page = md.get("page_number");
-                    if (page != null) m.put("page", page);
-                }
-                documents.add(m);
-            }
+            List<Map<String, Object>> documents = summarizeDocuments(docs);
 
-            log.info("Path recall: path={}, ok={}, count={}, chunks={}",
-                    path.name(), success, docs.size(),
-                    documents.stream().map(d ->
-                        "[" + d.get("rank") + "]" + d.get("chunkId")
-                        + " doc=" + d.getOrDefault("documentId", "?")
-                        + " file=" + d.getOrDefault("fileName", "?"))
-                    .toList());
+            if (log.isInfoEnabled()) {
+                log.info("Path recall: path={}, ok={}, count={}, chunks={}",
+                        path.name(), success, docs.size(),
+                        documents.stream().map(d ->
+                            "[" + d.get("rank") + "]" + d.get("chunkId")
+                            + " doc=" + d.getOrDefault("documentId", "?")
+                            + " file=" + d.getOrDefault("fileName", "?"))
+                        .toList());
+            }
 
             if (traceRecorder != null) {
                 traceRecorder.record(traceId, sessionId, userId, "PATH_RECALL", mode, path.name(),
@@ -220,6 +208,30 @@ public class HybridSearchService {
                         docs.size(), null, documents);
             }
         }
+    }
+
+    /**
+     * 将一路召回结果压缩为 documents JSONB（仅元数据，不含正文——与 trace_event 约定一致）。
+     */
+    private List<Map<String, Object>> summarizeDocuments(List<ScoredDocument> docs) {
+        List<Map<String, Object>> documents = new ArrayList<>(docs.size());
+        for (ScoredDocument sd : docs) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("chunkId", sd.doc().getId());
+            m.put("rank", sd.rank());
+            m.put("score", sd.score());
+            Map<String, Object> md = sd.doc().getMetadata();
+            if (md != null) {
+                Object documentId = md.get("documentId");
+                if (documentId != null) m.put("documentId", documentId);
+                Object fileName = md.get("fileName");
+                if (fileName != null) m.put("fileName", fileName);
+                Object page = md.get("page_number");
+                if (page != null) m.put("page", page);
+            }
+            documents.add(m);
+        }
+        return documents;
     }
 
     /** 安全提取 subtask 结果（不抛异常，供 trace 记录用；rrfFusion 仍用 taskResultOrEmpty 做严格错误传播） */
@@ -251,21 +263,26 @@ public class HybridSearchService {
     // Utility
     // ========================================================================
 
+    /**
+     * 提取 subtask 结果，路径内部失败（含超时/取消）一律降级为空列表 + WARN。
+     * <p>
+     * 部分降级契约由 {@code hybridSearch} 的 "全部路径失败" 守卫兜底：
+     * 所有路径都失败时在那里抛出唯一的 {@link ServiceException}，避免单路异常
+     * 以裸 CompletionException 形式撕裂 partial-degradation 语义。
+     */
     private List<ScoredDocument> taskResultOrEmpty(
             Subtask<List<ScoredDocument>> task,
             String branchName
     ) {
         if (task.state() == TaskState.CANCELLED) {
-            throw new java.util.concurrent.CompletionException(
-                    new TimeoutException(branchName + " cancelled before completion"));
+            log.warn("Retrieval branch {} cancelled before completion, degrading to empty", branchName);
+            return List.of();
         }
         Throwable failure = task.exception();
         if (failure == null) {
             return task.result();
         }
-        if (failure instanceof TimeoutException) {
-            throw new java.util.concurrent.CompletionException(failure);
-        }
+        log.warn("Retrieval branch {} failed, degrading to empty", branchName, failure);
         return List.of();
     }
 }

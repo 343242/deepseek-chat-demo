@@ -3,6 +3,13 @@ package com.smart.rag.rag.service.impl;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.smart.rag.infrastructure.concurrent.ExecutorMode;
+import com.smart.rag.infrastructure.concurrent.ScopeOptions;
+import com.smart.rag.infrastructure.concurrent.ScopePolicy;
+import com.smart.rag.infrastructure.concurrent.ScopedTasks;
+import com.smart.rag.infrastructure.concurrent.Subtask;
+import com.smart.rag.infrastructure.concurrent.TaskScope;
+import com.smart.rag.infrastructure.concurrent.TaskState;
 import com.smart.rag.infrastructure.llm.ChatCapable;
 import com.smart.rag.infrastructure.llm.ChatRequest;
 import com.smart.rag.infrastructure.llm.LlmCapability;
@@ -22,9 +29,9 @@ import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 
 /**
@@ -85,6 +92,7 @@ public class EntityExtractionService {
     private final ExecutorService etlCpuExecutor;
     private final EntityIndexService entityIndexService;
     private final CommunityDetectionJob communityDetectionJob;
+    private final ScopedTasks scopedTasks;
 
     public EntityExtractionService(EntityCanonicalizationService canonicalizationService,
                                     EntityEmbeddingService embeddingService,
@@ -94,7 +102,8 @@ public class EntityExtractionService {
                                     LlmClientRegistry llmClientRegistry,
                                     ExecutorService etlCpuExecutor,
                                     EntityIndexService entityIndexService,
-                                    CommunityDetectionJob communityDetectionJob) {
+                                    CommunityDetectionJob communityDetectionJob,
+                                    ScopedTasks scopedTasks) {
         this.canonicalizationService = canonicalizationService;
         this.embeddingService = embeddingService;
         this.entityMapper = entityMapper;
@@ -104,6 +113,7 @@ public class EntityExtractionService {
         this.etlCpuExecutor = etlCpuExecutor;
         this.entityIndexService = entityIndexService;
         this.communityDetectionJob = communityDetectionJob;
+        this.scopedTasks = scopedTasks;
     }
 
 
@@ -121,42 +131,17 @@ public class EntityExtractionService {
                 documentId, userId, teamId);
         try {
             // Step 1: 从 vector_store 查文档所有 chunk
-            String docIdStr = String.valueOf(documentId);
-            List<VectorStoreMapper.VectorStoreRow> chunkRows =
-                    vectorStoreMapper.selectChunksByDocumentId(docIdStr);
-
+            List<VectorStoreMapper.VectorStoreRow> chunkRows = vectorStoreMapper.selectChunksByDocumentId(
+                    String.valueOf(documentId));
             if (chunkRows.isEmpty()) {
                 log.info("No chunks found for documentId={}, skipping entity extraction", documentId);
                 return;
             }
-
             log.info("Found {} chunks for documentId={}", chunkRows.size(), documentId);
 
             // Step 2: 并行 LLM 抽取（per chunk，failure-isolated）
-            ChatCapable chatClient = llmClientRegistry.getDefault(
-                    LlmCapability.CHAT, ChatCapable.class);
-
-            List<EntityCanonicalizationService.ParsedExtraction> extractions = new ArrayList<>();
-
-            List<CompletableFuture<EntityCanonicalizationService.ParsedExtraction>> futures =
-                    chunkRows.stream()
-                            .map(row -> CompletableFuture.supplyAsync(
-                                    () -> extractChunk(row.id(), row.content(), chatClient),
-                                    etlCpuExecutor))
-                            .toList();
-
-            for (CompletableFuture<EntityCanonicalizationService.ParsedExtraction> future : futures) {
-                try {
-                    EntityCanonicalizationService.ParsedExtraction ext = future.join();
-                    if (ext != null && !ext.entities().isEmpty()) {
-                        extractions.add(ext);
-                    }
-                } catch (Exception e) {
-                    // 单个 chunk 失败不影响其他 chunk（failure isolation per §8.3）
-                    log.warn("Chunk extraction failed, skipping (failure isolation): {}", e.getMessage());
-                }
-            }
-
+            List<EntityCanonicalizationService.ParsedExtraction> extractions =
+                    extractChunksConcurrently(chunkRows);
             if (extractions.isEmpty()) {
                 log.info("No entities extracted from any chunk for documentId={}", documentId);
                 return;
@@ -167,26 +152,11 @@ public class EntityExtractionService {
                     extractions, userId, teamId);
 
             // Step 4: 写 rag_event（per chunk）
-            for (EntityCanonicalizationService.ParsedExtraction ext : extractions) {
-                if (ext.eventSummary() != null && !ext.eventSummary().isEmpty()) {
-                    RagEvent event = new RagEvent();
-                    event.setChunkId(ext.chunkId());
-                    event.setSummary(ext.eventSummary());
-                    event.setUserId(userId);
-                    event.setTeamId(teamId);
-                    event.setDocumentId(documentId);
-                    eventMapper.insertIgnore(event);
-                }
-            }
+            insertEvents(extractions, documentId, userId, teamId);
 
-            // Step 5: 委托 embedding
+            // Step 5-7: embedding + community_stale + 结构分重算
             if (!affectedEntityIds.isEmpty()) {
-                List<RagEntity> entitiesToEmbed = entityMapper.selectByIds(affectedEntityIds);
-                embeddingService.embedEntities(entitiesToEmbed);
-
-                // Step 6: 标记 community_stale=TRUE
-                entityMapper.markCommunityStale(affectedEntityIds);
-
+                embedAndMarkStale(affectedEntityIds);
                 // Step 7: 触发离线结构分批处理（§8.1 Step 6 续：共现图 + weak_tie + Leiden + bridge）
                 // failure-isolated（§8.3）：结构分计算失败不影响 Path A/B，下次 ETL 重试
                 recomputeStructureScores(userId, teamId);
@@ -199,6 +169,66 @@ public class EntityExtractionService {
             // 整体失败不影响 Path A/B（§8.3 / AC7）
             log.error("Entity extraction failed for documentId={}: {}", documentId, e.getMessage(), e);
         }
+    }
+
+    /**
+     * Step 2: 结构化并发并行抽取所有 chunk（etlCpuExecutor 共享线程池）。
+     * 单个 chunk 失败不影响其他 chunk（failure isolation per §8.3，extractChunk 内部兜底返回 null）。
+     */
+    private List<EntityCanonicalizationService.ParsedExtraction> extractChunksConcurrently(
+            List<VectorStoreMapper.VectorStoreRow> chunkRows) {
+        ChatCapable chatClient = llmClientRegistry.getDefault(LlmCapability.CHAT, ChatCapable.class);
+        List<EntityCanonicalizationService.ParsedExtraction> extractions = new ArrayList<>();
+
+        ScopeOptions options = ScopeOptions.builder("entity-extract")
+                .policy(ScopePolicy.COLLECT_ALL)
+                .executorMode(ExecutorMode.SHARED_EXECUTOR)
+                .executorOwnedByScope(false)
+                .defaultTimeout(Duration.ofMinutes(5))
+                .build();
+        try (TaskScope scope = scopedTasks.open("entity-extract", options, etlCpuExecutor)) {
+            for (VectorStoreMapper.VectorStoreRow row : chunkRows) {
+                scope.fork("extract-chunk-" + row.id(),
+                        () -> extractChunk(row.id(), row.content(), chatClient));
+            }
+            scope.join();
+            for (Subtask<?> subtask : scope.subtasks()) {
+                if (subtask.state() == TaskState.FAILED) {
+                    log.warn("Chunk extraction failed, skipping (failure isolation)",
+                            subtask.exception());
+                }
+                Object result = subtask.result();
+                if (subtask.state() == TaskState.SUCCESS
+                        && result instanceof EntityCanonicalizationService.ParsedExtraction ext
+                        && !ext.entities().isEmpty()) {
+                    extractions.add(ext);
+                }
+            }
+        }
+        return extractions;
+    }
+
+    /** Step 4: 写 rag_event（per chunk，仅非空 eventSummary） */
+    private void insertEvents(List<EntityCanonicalizationService.ParsedExtraction> extractions,
+                              Long documentId, Long userId, @Nullable Long teamId) {
+        for (EntityCanonicalizationService.ParsedExtraction ext : extractions) {
+            if (ext.eventSummary() != null && !ext.eventSummary().isEmpty()) {
+                RagEvent event = new RagEvent();
+                event.setChunkId(ext.chunkId());
+                event.setSummary(ext.eventSummary());
+                event.setUserId(userId);
+                event.setTeamId(teamId);
+                event.setDocumentId(documentId);
+                eventMapper.insertIgnore(event);
+            }
+        }
+    }
+
+    /** Step 5-6: 委托 embedding + 标记 community_stale=TRUE */
+    private void embedAndMarkStale(List<Long> affectedEntityIds) {
+        List<RagEntity> entitiesToEmbed = entityMapper.selectByIds(affectedEntityIds);
+        embeddingService.embedEntities(entitiesToEmbed);
+        entityMapper.markCommunityStale(affectedEntityIds);
     }
 
     /**
@@ -238,24 +268,9 @@ public class EntityExtractionService {
             }
 
             JsonNode root = OBJECT_MAPPER.readTree(json);
-
             String eventSummary = root.has("event") ? root.get("event").asText("") : "";
-
-            List<EntityCanonicalizationService.ParsedEntity> entities = new ArrayList<>();
-            if (root.has("entities") && root.get("entities").isArray()) {
-                for (JsonNode entityNode : root.get("entities")) {
-                    String name = entityNode.has("name") ? entityNode.get("name").asText("") : "";
-                    String description = entityNode.has("description")
-                            ? entityNode.get("description").asText("") : "";
-                    String type = entityNode.has("type") ? entityNode.get("type").asText("") : "";
-                    if (!name.isEmpty()) {
-                        entities.add(new EntityCanonicalizationService.ParsedEntity(
-                                name, description, type));
-                    }
-                }
-            }
-
-            return new EntityCanonicalizationService.ParsedExtraction(chunkId, eventSummary, entities);
+            return new EntityCanonicalizationService.ParsedExtraction(
+                    chunkId, eventSummary, parseEntities(root));
 
         } catch (JsonProcessingException e) {
             log.warn("Failed to parse LLM extraction JSON for chunk {}: {}", chunkId, e.getMessage());
@@ -264,5 +279,25 @@ public class EntityExtractionService {
             log.warn("LLM extraction failed for chunk {}: {}", chunkId, e.getMessage());
             return null;
         }
+    }
+
+    /**
+     * 解析 LLM 输出 JSON 根节点的 entities 数组（过滤空 name 项）
+     */
+    private static List<EntityCanonicalizationService.ParsedEntity> parseEntities(JsonNode root) {
+        List<EntityCanonicalizationService.ParsedEntity> entities = new ArrayList<>();
+        if (root.has("entities") && root.get("entities").isArray()) {
+            for (JsonNode entityNode : root.get("entities")) {
+                String name = entityNode.has("name") ? entityNode.get("name").asText("") : "";
+                String description = entityNode.has("description")
+                        ? entityNode.get("description").asText("") : "";
+                String type = entityNode.has("type") ? entityNode.get("type").asText("") : "";
+                if (!name.isEmpty()) {
+                    entities.add(new EntityCanonicalizationService.ParsedEntity(
+                            name, description, type));
+                }
+            }
+        }
+        return entities;
     }
 }

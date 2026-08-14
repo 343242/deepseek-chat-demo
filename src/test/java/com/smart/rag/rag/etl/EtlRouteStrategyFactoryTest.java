@@ -67,7 +67,7 @@ class EtlRouteStrategyFactoryTest {
         }
 
         @Test
-        @DisplayName("没有任何策略匹配时抛出 IllegalStateException")
+        @DisplayName("没有任何策略匹配时抛出 ServiceException")
         void resolve_noMatch_throws() {
             when(fastTrackStrategy.shouldApply(anyList())).thenReturn(false);
             when(standardStrategy.shouldApply(anyList())).thenReturn(false);
@@ -77,7 +77,7 @@ class EtlRouteStrategyFactoryTest {
 
             List<EtlCandidate> candidates = List.of(candidate(100));
             assertThatThrownBy(() -> factory.resolve(candidates))
-                    .isInstanceOf(IllegalStateException.class)
+                    .isInstanceOf(com.smart.rag.infrastructure.exception.ServiceException.class)
                     .hasMessageContaining("No ETL route strategy matched");
         }
     }
@@ -108,7 +108,7 @@ class EtlRouteStrategyFactoryTest {
             EtlRouteStrategyFactory factory = new EtlRouteStrategyFactory(Collections.emptyList());
 
             assertThatThrownBy(() -> factory.resolve(List.of(candidate(100))))
-                    .isInstanceOf(IllegalStateException.class);
+                    .isInstanceOf(com.smart.rag.infrastructure.exception.ServiceException.class);
         }
     }
 

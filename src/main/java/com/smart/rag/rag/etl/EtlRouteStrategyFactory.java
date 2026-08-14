@@ -1,5 +1,8 @@
 package com.smart.rag.rag.etl;
 
+import com.smart.rag.infrastructure.exception.ServiceException;
+import com.smart.rag.infrastructure.exception.errorcode.ServiceErrorCode;
+
 import java.util.Comparator;
 import java.util.List;
 
@@ -27,7 +30,7 @@ public class EtlRouteStrategyFactory {
      *
      * @param candidates 待处理的文档候选列表
      * @return 第一个匹配的策略
-     * @throws IllegalStateException 如果没有任何策略匹配（不应发生，StandardStrategy 兜底）
+     * @throws ServiceException 如果没有任何策略匹配（不应发生，StandardStrategy 兜底）
      */
     public EtlRouteStrategy resolve(List<EtlCandidate> candidates) {
         for (EtlRouteStrategy strategy : strategies) {
@@ -35,6 +38,7 @@ public class EtlRouteStrategyFactory {
                 return strategy;
             }
         }
-        throw new IllegalStateException("No ETL route strategy matched for " + candidates.size() + " candidates");
+        throw new ServiceException(ServiceErrorCode.INTERNAL_ERROR,
+                "No ETL route strategy matched for " + candidates.size() + " candidates");
     }
 }

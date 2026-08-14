@@ -13,7 +13,6 @@ import com.smart.rag.rag.service.FileStorageService;
 import com.smart.rag.rag.service.TeamAccessGate;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DuplicateKeyException;
@@ -55,11 +54,22 @@ class DocumentSupersedeServiceTest {
     @Mock
     private TeamAccessGate teamAccessGate;
 
-    @InjectMocks
     private DocumentSupersedeService service;
+
+    /** ObjectProvider 桩：getIfAvailable 返回 null（模拟 EntityIndexCleanupService Bean 缺失） */
+    private static org.springframework.beans.factory.ObjectProvider<EntityIndexCleanupService> noCleanupProvider() {
+        return new org.springframework.beans.factory.ObjectProvider<>() {
+            @Override public EntityIndexCleanupService getObject() { throw new java.util.NoSuchElementException("no bean"); }
+            @Override public EntityIndexCleanupService getObject(Object... args) { return getObject(); }
+            @Override public EntityIndexCleanupService getIfAvailable() { return null; }
+            @Override public EntityIndexCleanupService getIfUnique() { return null; }
+        };
+    }
 
     @BeforeEach
     void setUp() {
+        service = new DocumentSupersedeService(ragDocumentMapper, vectorStoreMapper, vectorStoreLoader,
+                fileStorageService, transactionTemplate, teamAccessGate, noCleanupProvider());
         // 模拟 TransactionTemplate：立即执行 Consumer 回调
         lenient().doAnswer(invocation -> {
             @SuppressWarnings("unchecked")

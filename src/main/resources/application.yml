@@ -27,6 +27,13 @@ app:
   date-format: yyyy-MM-dd HH:mm:ss
   cors:
     allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000}
+  etl:
+    consumer:
+      # ETL 索引任务消费配置（EtlDocumentConsumer）；topic 与 OutboxRelay 有序主题白名单保持一致
+      topic: ${ETL_CONSUMER_TOPIC:rag_index_document}
+      group: ${ETL_CONSUMER_GROUP:index-group}
+      batch-size: ${ETL_CONSUMER_BATCH_SIZE:5}
+      invisible-duration: ${ETL_CONSUMER_INVISIBLE_DURATION:30m}
   chat:
     memory:
       max-messages: ${CHAT_MEMORY_MAX_MESSAGES:20}

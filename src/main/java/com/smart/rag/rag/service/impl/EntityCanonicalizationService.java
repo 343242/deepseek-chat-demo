@@ -36,6 +36,9 @@ public class EntityCanonicalizationService {
 
     private static final Logger log = LoggerFactory.getLogger(EntityCanonicalizationService.class);
 
+    /** 分批插入大小（MyBatis foreach 限制） */
+    private static final int INSERT_BATCH_SIZE = 500;
+
     private final EntityMapper entityMapper;
     private final ChunkEntityMapper chunkEntityMapper;
     private final TransactionTemplate transactionTemplate;
@@ -86,12 +89,7 @@ public class EntityCanonicalizationService {
                                          @Nullable Long teamId) {
         // 1. 按 name_norm 分组，拼接 description
         Map<String, AggregatedEntity> aggregated = new LinkedHashMap<>();
-        List<String> allChunkIds = new ArrayList<>();
-
         for (ParsedExtraction ext : extractions) {
-            if (ext.chunkId() != null) {
-                allChunkIds.add(ext.chunkId());
-            }
             for (ParsedEntity pe : ext.entities()) {
                 String nameNorm = canonicalize(pe.name());
                 if (nameNorm.isEmpty()) {
@@ -106,13 +104,33 @@ public class EntityCanonicalizationService {
                 });
             }
         }
-
         if (aggregated.isEmpty()) {
             return List.of();
         }
 
         // 2. 构建 RagEntity 列表用于 UPSERT
-        List<RagEntity> entitiesToUpsert = aggregated.values().stream()
+        List<RagEntity> entitiesToUpsert = buildEntitiesToUpsert(aggregated, userId, teamId);
+
+        // 3-6. 在事务中执行 UPSERT + chunk_entity 插入 + degree 重算
+        //    防止并发 cleanup 看到中间态 degree=0 导致实体被误删
+        AtomicReference<List<Long>> entityIdsRef = new AtomicReference<>();
+        transactionTemplate.executeWithoutResult(status -> {
+            entityMapper.upsertByNormUserTeam(entitiesToUpsert);
+            List<RagEntity> upserted = findEntitiesByNameNorms(aggregated.keySet(), userId, teamId);
+            insertChunkEntities(extractions, upserted);
+            List<Long> ids = recomputeDegrees(upserted);
+            entityIdsRef.set(ids);
+        });
+
+        log.info("Canonicalized {} entities for {} chunks", aggregated.size(), extractions.size());
+
+        return entityIdsRef.get();
+    }
+
+    /** Step 2: 聚合结果 → RagEntity 列表 */
+    private List<RagEntity> buildEntitiesToUpsert(Map<String, AggregatedEntity> aggregated,
+                                                  Long userId, @Nullable Long teamId) {
+        return aggregated.values().stream()
                 .map(ae -> {
                     RagEntity e = new RagEntity();
                     e.setNameNorm(ae.nameNorm());
@@ -123,60 +141,47 @@ public class EntityCanonicalizationService {
                     return e;
                 })
                 .toList();
+    }
 
-        // 3-6. 在事务中执行 UPSERT + chunk_entity 插入 + degree 重算
-        //    防止并发 cleanup 看到中间态 degree=0 导致实体被误删
-        AtomicReference<List<Long>> entityIdsRef = new AtomicReference<>();
-        transactionTemplate.executeWithoutResult(status -> {
-            // 3. 批量 UPSERT
-            entityMapper.upsertByNormUserTeam(entitiesToUpsert);
+    /** Step 5: 组装 chunk-entity 关联并分批 INSERT（MyBatis foreach 限制） */
+    private void insertChunkEntities(List<ParsedExtraction> extractions, List<RagEntity> upserted) {
+        // name_norm → entity id 的 O(1) 索引（避免对每个 ParsedEntity 线性扫描 upserted）
+        Map<String, Long> nameNormToId = new LinkedHashMap<>(upserted.size());
+        for (RagEntity e : upserted) {
+            nameNormToId.put(e.getNameNorm(), e.getId());
+        }
 
-            // 4. 查询 UPSERT 后的 entity ids（按 name_norm + user_id + team_id 查回）
-            List<RagEntity> upserted = findEntitiesByNameNorms(
-                    aggregated.keySet(), userId, teamId);
-
-            // 5. 批量 INSERT rag_chunk_entity
-            List<RagChunkEntity> chunkEntities = new ArrayList<>();
-            for (ParsedExtraction ext : extractions) {
-                for (ParsedEntity pe : ext.entities()) {
-                    String nameNorm = canonicalize(pe.name());
-                    if (nameNorm.isEmpty()) {
-                        continue;
-                    }
-                    // 找到对应的 entity id
-                    upserted.stream()
-                            .filter(e -> e.getNameNorm().equals(nameNorm))
-                            .findFirst()
-                            .ifPresent(entity -> {
-                                RagChunkEntity ce = new RagChunkEntity();
-                                ce.setChunkId(ext.chunkId());
-                                ce.setEntityId(entity.getId());
-                                chunkEntities.add(ce);
-                            });
+        List<RagChunkEntity> chunkEntities = new ArrayList<>();
+        for (ParsedExtraction ext : extractions) {
+            for (ParsedEntity pe : ext.entities()) {
+                String nameNorm = canonicalize(pe.name());
+                if (nameNorm.isEmpty()) {
+                    continue;
+                }
+                Long entityId = nameNormToId.get(nameNorm);
+                if (entityId != null) {
+                    RagChunkEntity ce = new RagChunkEntity();
+                    ce.setChunkId(ext.chunkId());
+                    ce.setEntityId(entityId);
+                    chunkEntities.add(ce);
                 }
             }
+        }
 
-            if (!chunkEntities.isEmpty()) {
-                // 分批插入（MyBatis foreach 限制）
-                int batchSize = 500;
-                for (int i = 0; i < chunkEntities.size(); i += batchSize) {
-                    List<RagChunkEntity> batch = chunkEntities.subList(i, Math.min(i + batchSize, chunkEntities.size()));
-                    chunkEntityMapper.insertBatch(batch);
-                }
-            }
+        for (int i = 0; i < chunkEntities.size(); i += INSERT_BATCH_SIZE) {
+            List<RagChunkEntity> batch = chunkEntities.subList(
+                    i, Math.min(i + INSERT_BATCH_SIZE, chunkEntities.size()));
+            chunkEntityMapper.insertBatch(batch);
+        }
+    }
 
-            // 6. 重算 degree
-            List<Long> ids = upserted.stream().map(RagEntity::getId).toList();
-            if (!ids.isEmpty()) {
-                entityMapper.recalculateDegree(ids);
-            }
-            entityIdsRef.set(ids);
-        });
-
-        log.info("Canonicalized {} entities for {} chunks",
-                aggregated.size(), allChunkIds.size());
-
-        return entityIdsRef.get();
+    /** Step 6: 重算受影响实体 degree */
+    private List<Long> recomputeDegrees(List<RagEntity> upserted) {
+        List<Long> ids = upserted.stream().map(RagEntity::getId).toList();
+        if (!ids.isEmpty()) {
+            entityMapper.recalculateDegree(ids);
+        }
+        return ids;
     }
 
     /**

@@ -8,6 +8,7 @@ import org.springframework.stereotype.Component;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * 分块策略工厂
@@ -56,7 +57,7 @@ public class ChunkStrategyFactory {
     /**
      * 获取所有已注册策略名称
      */
-    public java.util.Set<String> availableStrategies() {
+    public Set<String> availableStrategies() {
         return strategyMap.keySet();
     }
 }

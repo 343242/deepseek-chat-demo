@@ -50,13 +50,6 @@ public class EtlPipelineServiceImpl implements EtlPipelineService {
         this.statusManager = statusManager;
     }
 
-    @Override
-    public int execute(Long documentId, String bucket, String objectKey, String fileName, String mimeType) {
-        // 委托给带 userId 的方法，兼容旧接口调用方
-        // 注意：缺少 userId 的调用无法进行用户隔离，不建议使用
-        throw new UnsupportedOperationException("Use EtlDispatchService.dispatchAsync() instead");
-    }
-
     /**
      * 带用户隔离的 ETL 执行（由 EtlDispatchService 委托调用）
      */
@@ -102,7 +95,7 @@ public class EtlPipelineServiceImpl implements EtlPipelineService {
 
         } catch (Exception e) {
             statusManager.failDocument(documentId, e);
-            throw new ServiceException(ServiceErrorCode.ETL_FAILED, "文档处理失败: " + fileName);
+            throw new ServiceException(ServiceErrorCode.ETL_FAILED, "文档处理失败: " + fileName, e);
         }
     }
 }

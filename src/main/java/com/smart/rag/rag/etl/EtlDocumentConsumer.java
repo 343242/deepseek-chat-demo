@@ -6,6 +6,7 @@ import com.smart.rag.infrastructure.messaging.MessageHandler;
 import com.smart.rag.infrastructure.messaging.MessageBus;
 import com.smart.rag.infrastructure.messaging.RetryPolicy;
 import com.smart.rag.infrastructure.messaging.Subscription;
+import com.smart.rag.rag.config.EtlConsumerProperties;
 import com.smart.rag.rag.event.EtlCompletedEvent;
 import com.smart.rag.rag.service.EtlDispatchService;
 import org.slf4j.Logger;
@@ -14,7 +15,6 @@ import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.context.SmartLifecycle;
 import org.springframework.stereotype.Component;
 
-import java.time.Duration;
 import java.util.List;
 
 /**
@@ -30,15 +30,14 @@ public class EtlDocumentConsumer implements SmartLifecycle {
 
     private static final Logger log = LoggerFactory.getLogger(EtlDocumentConsumer.class);
 
+    /**
+     * 生产侧主题常量 — {@link EtlDispatchServiceImpl} 通过 outbox 投递时引用。
+     * 消费侧主题以 {@link EtlConsumerProperties#getTopic()} 为准；
+     * 若覆盖该配置，须同步更新 application.yml 的 messaging.ordered-topics 白名单。
+     */
     public static final String TOPIC = "rag_index_document";
-    static final String GROUP = "index-group";
 
-    private static final ConsumerConfig CONSUMER_CONFIG = ConsumerConfig.builder()
-        .consumerMode(ConsumerMode.SIMPLE)
-        .batchSize(5)
-        .invisibleDuration(Duration.ofMinutes(30))
-        .retryPolicy(RetryPolicy.SIMPLE_DEFAULT)
-        .build();
+    private final EtlConsumerProperties consumerProperties;
 
     private final MessageBus messageBus;
     private final EtlDispatchService etlDispatchService;
@@ -47,9 +46,11 @@ public class EtlDocumentConsumer implements SmartLifecycle {
     private volatile Subscription subscription;
     private volatile boolean running;
 
-    public EtlDocumentConsumer(MessageBus messageBus,
+    public EtlDocumentConsumer(EtlConsumerProperties consumerProperties,
+                               MessageBus messageBus,
                                EtlDispatchService etlDispatchService,
                                ApplicationEventPublisher eventPublisher) {
+        this.consumerProperties = consumerProperties;
         this.messageBus = messageBus;
         this.etlDispatchService = etlDispatchService;
         this.eventPublisher = eventPublisher;
@@ -58,6 +59,13 @@ public class EtlDocumentConsumer implements SmartLifecycle {
     @Override
     public void start() {
         if (running) return;
+
+        ConsumerConfig consumerConfig = ConsumerConfig.builder()
+            .consumerMode(ConsumerMode.SIMPLE)
+            .batchSize(consumerProperties.getBatchSize())
+            .invisibleDuration(consumerProperties.getInvisibleDuration())
+            .retryPolicy(RetryPolicy.SIMPLE_DEFAULT)
+            .build();
 
         MessageHandler<EtlCandidate> handler = msg -> {
             EtlCandidate candidate = msg.payload();
@@ -71,9 +79,10 @@ public class EtlDocumentConsumer implements SmartLifecycle {
             }
         };
 
-        subscription = messageBus.subscribe(TOPIC, GROUP, CONSUMER_CONFIG, EtlCandidate.class, handler);
+        String topic = consumerProperties.getTopic();
+        subscription = messageBus.subscribe(topic, consumerProperties.getGroup(), consumerConfig, EtlCandidate.class, handler);
         running = true;
-        log.info("ETL document consumer started: topic={}, group={}", TOPIC, GROUP);
+        log.info("ETL document consumer started: topic={}, group={}", topic, consumerProperties.getGroup());
     }
 
     @Override

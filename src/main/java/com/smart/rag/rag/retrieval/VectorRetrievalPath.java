@@ -23,6 +23,12 @@ public class VectorRetrievalPath implements RetrievalPath {
 
     private static final Logger log = LoggerFactory.getLogger(VectorRetrievalPath.class);
 
+    /**
+     * WHY 0.5：pgvector 相似度缺失（null score）时的中性兜底——RRF SCORE_WEIGHTED 融合中
+     * 不抬高也不压低该 chunk 的贡献，避免缺分文档被系统性排除或过度加权。
+     */
+    private static final double DEFAULT_FALLBACK_SCORE = 0.5;
+
     private final VectorStore vectorStore;
     private final RagRetrievalProperties properties;
 
@@ -56,7 +62,7 @@ public class VectorRetrievalPath implements RetrievalPath {
         List<ScoredDocument> results = new ArrayList<>(docs.size());
         for (int i = 0; i < docs.size(); i++) {
             Document doc = docs.get(i);
-            double vectorScore = doc.getScore() != null ? doc.getScore() : 0.5;
+            double vectorScore = doc.getScore() != null ? doc.getScore() : DEFAULT_FALLBACK_SCORE;
             results.add(new ScoredDocument(doc, i + 1, vectorScore, name()));
         }
         return results;

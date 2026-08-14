@@ -1,6 +1,7 @@
 package com.smart.rag.rag.parser;
 
 import com.smart.rag.rag.config.DocumentProperties;
+import org.apache.commons.io.input.BoundedInputStream;
 import org.apache.fesod.sheet.FesodSheet;
 import org.apache.fesod.sheet.context.AnalysisContext;
 import org.apache.fesod.sheet.read.listener.ReadListener;
@@ -10,13 +11,13 @@ import org.slf4j.LoggerFactory;
 import org.springframework.ai.document.Document;
 import org.springframework.core.io.Resource;
 import org.springframework.stereotype.Component;
+import org.springframework.util.unit.DataSize;
 
 import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.regex.Pattern;
 
 /**
  * XLSX 专用解析器
@@ -24,9 +25,9 @@ import java.util.regex.Pattern;
  * 使用 Apache Fesod（EasyExcel Apache 孵化版）流式读取 XLSX 文件，保留表格结构信息：
  * <ul>
  *   <li>每个 Sheet 独立处理</li>
- *   <li>启发式表头检测（detectHeader）</li>
+ *   <li>启发式表头检测（{@link HeaderDetector}）</li>
  *   <li>流式分块：大 Sheet 按行数阈值边读边输出，避免全量加载到内存</li>
- *   <li>Markdown table 格式输出</li>
+ *   <li>Markdown table 格式输出（{@link MarkdownTableBuilder}）</li>
  * </ul>
  * <p>
  * 相比 Tika 的优势：保留 Sheet 名称、行列结构，避免全部拍平为纯文本。
@@ -37,10 +38,8 @@ public class ExcelDocumentParser implements DocumentParser {
 
     private static final Logger log = LoggerFactory.getLogger(ExcelDocumentParser.class);
 
-    /** 预编译正则：纯数字（整数或小数，可能为负） */
-    private static final Pattern NUMERIC_PATTERN = Pattern.compile("-?\\d+(\\.\\d+)?");
-    /** 预编译正则：日期格式（YYYY-MM-DD, YYYY/MM/DD 等） */
-    private static final Pattern DATE_PATTERN = Pattern.compile("\\d{4}[-/]\\d{1,2}[-/]\\d{1,2}.*");
+    /** Excel Document 的 metadata 条目数（load factor 0.75 下容量 16 避免扩容） */
+    private static final int META_INITIAL_CAPACITY = 16;
 
     private final DocumentProperties documentProperties;
 
@@ -61,11 +60,21 @@ public class ExcelDocumentParser implements DocumentParser {
         log.debug("Parsing XLSX with Apache Fesod: file={}", fileName);
 
         List<Document> documents = new ArrayList<>();
+        long maxBytes = DataSize.parse(documentProperties.getMaxFileSize()).toBytes();
 
-        try (InputStream is = resource.getInputStream()) {
+        try (InputStream is = resource.getInputStream();
+             // 流级读取上限（MinIO 流 contentLength()=-1 时元信息检查失效，故在流级兜底）
+             BoundedInputStream bounded = BoundedInputStream.builder()
+                     .setInputStream(is).setMaxCount(maxBytes).get()) {
             // 单次打开 InputStream：先获取 Sheet 元数据，再逐 Sheet 流式读取
-            var readerBuilder = FesodSheet.read(is);
-            List<ReadSheet> readSheets = readerBuilder.build().excelExecutor().sheetList();
+            var readerBuilder = FesodSheet.read(bounded);
+
+            // ExcelReader 是 Closeable，sheetList() 阶段结束后及时关闭；
+            // 后续 doRead 由 builder 重新构建 reader（原逻辑即复用同一 builder）
+            List<ReadSheet> readSheets;
+            try (var reader = readerBuilder.build()) {
+                readSheets = reader.excelExecutor().sheetList();
+            }
             int sheetCount = readSheets.size();
 
             for (int sheetIndex = 0; sheetIndex < sheetCount; sheetIndex++) {
@@ -74,7 +83,8 @@ public class ExcelDocumentParser implements DocumentParser {
                     processSheetStreaming(readerBuilder, sheetIndex, sheetName, sheetCount,
                             fileName, mimeType, documents);
                 } catch (Exception e) {
-                    log.warn("Failed to parse sheet '{}' in file '{}': {}", sheetName, fileName, e.getMessage());
+                    // 传入异常对象本身，保留堆栈（e.getMessage() 可能为 null）
+                    log.warn("Failed to parse sheet '{}' in file '{}'", sheetName, fileName, e);
                 }
             }
 
@@ -122,11 +132,11 @@ public class ExcelDocumentParser implements DocumentParser {
     }
 
     /**
-     * 流式 Sheet 读取监听器。
+     * 流式 Sheet 读取监听器（静态嵌套类，无外部类隐式引用）。
      * <p>
      * 状态机：
      * <ol>
-     *   <li>收到第一行 → 表头检测 → 确定列名</li>
+     *   <li>收到第一行 → 表头检测（{@link HeaderDetector}）→ 确定列名</li>
      *   <li>累积数据行到 chunk buffer</li>
      *   <li>buffer 满了 → flush 为一个 Document → 清空 buffer</li>
      *   <li>全部读完 → flush 剩余行</li>
@@ -134,7 +144,7 @@ public class ExcelDocumentParser implements DocumentParser {
      * <p>
      * 内存中最多持有 {@code rowsPerChunk} 行数据。
      */
-    private class StreamingSheetListener implements ReadListener<Map<Integer, String>> {
+    private static final class StreamingSheetListener implements ReadListener<Map<Integer, String>> {
 
         private final int rowsPerChunk;
         private final int sheetIndex;
@@ -179,12 +189,12 @@ public class ExcelDocumentParser implements DocumentParser {
 
             // 第一行：表头检测
             if (totalRowCount == 1) {
-                hasHeader = detectHeader(data);
+                hasHeader = HeaderDetector.detectHeader(data);
                 if (hasHeader) {
-                    headers = extractHeaders(data);
+                    headers = HeaderDetector.extractHeaders(data);
                     return; // 表头行不进入数据缓冲区
                 } else {
-                    headers = generateColumnNames(getMaxColumn(data));
+                    headers = MarkdownTableBuilder.generateColumnNames(HeaderDetector.getMaxColumn(data));
                 }
             }
 
@@ -219,197 +229,32 @@ public class ExcelDocumentParser implements DocumentParser {
          * 将当前 chunk buffer 输出为一个 Document，然后清空 buffer。
          */
         private void flushChunk() {
-            String tableMd = buildMarkdownTable(headers, chunkBuffer);
+            String tableMd = MarkdownTableBuilder.buildMarkdownTable(headers, chunkBuffer);
             documents.add(buildDocument(tableMd, sheetIndex, sheetName, sheetCount,
                     totalRowCount, chunkIndex, hasHeader, fileName, mimeType));
             chunkBuffer = new ArrayList<>(rowsPerChunk);
             chunkIndex++;
         }
-    }
 
-    // ======================== 表头检测 ========================
-
-    /**
-     * 启发式判断第一行是否为表头。
-     * <p>
-     * 规则：
-     * <ol>
-     *   <li>默认第一行为表头（最常见情况）</li>
-     *   <li>如果第一行所有非空值都是纯数字或日期格式 → 判定为无表头，用 A, B, C... 做列名</li>
-     * </ol>
-     *
-     * @param firstRow 第一行数据（列索引 → 单元格文本）
-     * @return true 表示第一行是表头
-     */
-    private boolean detectHeader(Map<Integer, String> firstRow) {
-        if (firstRow == null || firstRow.isEmpty()) {
-            return false;
+        /**
+         * 构建 Excel Document 的 metadata。
+         *
+         * @param rowCount 该 Sheet 的总行数（含表头行，如有）
+         */
+        private static Document buildDocument(String content, int sheetIndex, String sheetName,
+                                              int sheetCount, int rowCount, int chunkIndex,
+                                              boolean hasHeader, String fileName, String mimeType) {
+            Map<String, Object> meta = new HashMap<>(META_INITIAL_CAPACITY);
+            meta.put("parser", "excel");
+            meta.put("mimeType", mimeType);
+            meta.put("sheetName", sheetName);
+            meta.put("sheetIndex", sheetIndex);
+            meta.put("sheetCount", sheetCount);
+            meta.put("rowCount", rowCount);
+            meta.put("chunkIndex", chunkIndex);
+            meta.put("hasHeader", hasHeader);
+            meta.put("source", fileName != null ? fileName : "unknown");
+            return new Document(content, meta);
         }
-
-        boolean allNumericOrDate = true;
-        boolean hasNonEmpty = false;
-
-        for (String value : firstRow.values()) {
-            if (value == null || value.isBlank()) {
-                continue;
-            }
-            hasNonEmpty = true;
-            String trimmed = value.trim();
-
-            if (NUMERIC_PATTERN.matcher(trimmed).matches()) {
-                continue;
-            }
-            if (DATE_PATTERN.matcher(trimmed).matches()) {
-                continue;
-            }
-
-            allNumericOrDate = false;
-            break;
-        }
-
-        return !(allNumericOrDate && hasNonEmpty);
-    }
-
-    // ======================== 列名处理 ========================
-
-    /**
-     * 从第一行提取表头名称。
-     */
-    private List<String> extractHeaders(Map<Integer, String> headerRow) {
-        int maxCol = getMaxColumn(headerRow);
-        List<String> headers = new ArrayList<>(maxCol);
-        for (int i = 0; i < maxCol; i++) {
-            String val = headerRow.get(i);
-            headers.add(val != null && !val.isBlank() ? val.trim() : generateColumnName(i));
-        }
-        return headers;
-    }
-
-    /**
-     * 生成 A, B, C, ... Z, AA, AB, ... 列名。
-     */
-    private List<String> generateColumnNames(int count) {
-        List<String> names = new ArrayList<>(count);
-        for (int i = 0; i < count; i++) {
-            names.add(generateColumnName(i));
-        }
-        return names;
-    }
-
-    /**
-     * 根据列索引生成列名（A, B, C, ... Z, AA, AB, ...）。
-     */
-    private String generateColumnName(int index) {
-        StringBuilder sb = new StringBuilder(3);
-        int n = index;
-        do {
-            sb.insert(0, (char) ('A' + (n % 26)));
-            n = n / 26 - 1;
-        } while (n >= 0);
-        return sb.toString();
-    }
-
-    /**
-     * 获取单行中的最大列数（key + 1）。
-     */
-    private int getMaxColumn(Map<Integer, String> row) {
-        int max = 0;
-        for (Integer key : row.keySet()) {
-            if (key + 1 > max) {
-                max = key + 1;
-            }
-        }
-        return max == 0 ? 1 : max;
-    }
-
-    // ======================== Markdown 构建 ========================
-
-    /**
-     * 将行数据转为 Markdown 表格。
-     * <p>
-     * 优化：cell 值只在包含需要转义的字符时才做 replace 操作。
-     *
-     * @param headers 表头
-     * @param rows    数据行
-     * @return Markdown 表格字符串
-     */
-    private String buildMarkdownTable(List<String> headers, List<Map<Integer, String>> rows) {
-        int colCount = headers.size();
-        // 预估容量：表头行 + 分隔行 + 数据行（每行约 colCount * 15 字符）
-        int estimatedSize = (2 + rows.size()) * (colCount * 20);
-        StringBuilder sb = new StringBuilder(Math.min(estimatedSize, 65536));
-
-        // Header row
-        sb.append("| ");
-        sb.append(String.join(" | ", headers));
-        sb.append(" |\n");
-
-        // Separator row
-        sb.append("|");
-        for (int c = 0; c < colCount; c++) {
-            sb.append("---|");
-        }
-        sb.append("\n");
-
-        // Data rows
-        for (Map<Integer, String> row : rows) {
-            sb.append("| ");
-            for (int c = 0; c < colCount; c++) {
-                if (c > 0) sb.append(" | ");
-                String val = row.get(c);
-                if (val != null) {
-                    sb.append(escapeCell(val));
-                }
-            }
-            sb.append(" |\n");
-        }
-
-        return sb.toString();
-    }
-
-    /**
-     * 转义 cell 值中的管道符和换行符。
-     * <p>
-     * 优化：先用 {@link String#indexOf} 检查是否包含需要转义的字符，
-     * 避免对大多数不含特殊字符的 cell 做无谓的 replace。
-     *
-     * @param val 原始 cell 值
-     * @return 转义后的值
-     */
-    private static String escapeCell(String val) {
-        boolean hasPipe = val.indexOf('|') >= 0;
-        boolean hasNewline = val.indexOf('\n') >= 0;
-
-        if (!hasPipe && !hasNewline) {
-            return val.trim();
-        }
-
-        String result = val;
-        if (hasPipe) result = result.replace("|", "\\|");
-        if (hasNewline) result = result.replace("\n", " ");
-        return result.trim();
-    }
-
-    // ======================== Metadata 构建 ========================
-
-    /**
-     * 构建 Excel Document 的 metadata。
-     *
-     * @param rowCount 该 Sheet 的总行数（含表头行，如有）
-     */
-    private Document buildDocument(String content, int sheetIndex, String sheetName,
-                                   int sheetCount, int rowCount, int chunkIndex,
-                                   boolean hasHeader, String fileName, String mimeType) {
-        Map<String, Object> meta = new HashMap<>(10);
-        meta.put("parser", "excel");
-        meta.put("mimeType", mimeType);
-        meta.put("sheetName", sheetName);
-        meta.put("sheetIndex", sheetIndex);
-        meta.put("sheetCount", sheetCount);
-        meta.put("rowCount", rowCount);
-        meta.put("chunkIndex", chunkIndex);
-        meta.put("hasHeader", hasHeader);
-        meta.put("source", fileName != null ? fileName : "unknown");
-        return new Document(content, meta);
     }
 }

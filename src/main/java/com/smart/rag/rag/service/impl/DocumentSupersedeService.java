@@ -16,7 +16,7 @@ import com.smart.rag.infrastructure.exception.ServiceException;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.dao.DuplicateKeyException;
@@ -28,20 +28,11 @@ import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * 文档版本替换服务
- * <p>
- * 职责单一：处理文档版本替换逻辑。
+ * 文档版本替换服务（SRP：仅处理版本替换）
  * <ul>
- *   <li>监听 DocumentCreatedEvent — 建立版本关系</li>
- *   <li>监听 EtlCompletedEvent — 执行旧版本清理</li>
+ *   <li>监听 DocumentCreatedEvent — 建立版本关系（linkVersion 事务内同时写 superseded_by，崩溃安全）</li>
+ *   <li>监听 EtlCompletedEvent — 执行旧版本清理（先查内存 pendingSupersede，再查 DB 兜底）</li>
  *   <li>应用启动补偿 — 恢复因重启丢失的 pendingSupersede</li>
- * </ul>
- * <p>
- * 崩溃安全设计：
- * <ul>
- *   <li>linkVersion 在事务中同时写入 superseded_by 到旧文档（标记 PENDING）</li>
- *   <li>onEtlCompleted 双重查找：先查内存 pendingSupersede，再查 DB</li>
- *   <li>recoverPendingSupersede 在启动时补偿未完成的替换</li>
  * </ul>
  */
 @Service
@@ -56,9 +47,8 @@ public class DocumentSupersedeService {
     private final FileStorageService fileStorageService;
     private final TransactionTemplate transactionTemplate;
     private final TeamAccessGate teamAccessGate;
-    @Autowired(required = false)
-    @Nullable
-    private EntityIndexCleanupService entityIndexCleanupService;
+    /** 实体索引清理为可选依赖（app.rag.entity.enabled=false 时 Bean 不存在） */
+    private final ObjectProvider<EntityIndexCleanupService> entityIndexCleanupProvider;
 
     /** 待替换关系：newDocId → oldDocId（ETL 完成后执行替换）— 内存加速层 */
     private final ConcurrentHashMap<Long, Long> pendingSupersede = new ConcurrentHashMap<>();
@@ -68,17 +58,20 @@ public class DocumentSupersedeService {
                                     Loader vectorStoreLoader,
                                     FileStorageService fileStorageService,
                                     TransactionTemplate transactionTemplate,
-                                    TeamAccessGate teamAccessGate) {
+                                    TeamAccessGate teamAccessGate,
+                                    ObjectProvider<EntityIndexCleanupService> entityIndexCleanupProvider) {
         this.ragDocumentMapper = ragDocumentMapper;
         this.vectorStoreMapper = vectorStoreMapper;
         this.vectorStoreLoader = vectorStoreLoader;
         this.fileStorageService = fileStorageService;
         this.transactionTemplate = transactionTemplate;
         this.teamAccessGate = teamAccessGate;
+        this.entityIndexCleanupProvider = entityIndexCleanupProvider;
     }
 
     /**
-     * 监听文档创建事件：根据 replaceDocumentId 建立版本关系
+     * 监听文档创建事件：根据 replaceDocumentId 建立版本关系。
+     * 目标不可替换（不存在/已删/已被替代/非本人）时降级为新文档。
      */
     @EventListener
     @Async("etlIoExecutor")
@@ -88,36 +81,40 @@ public class DocumentSupersedeService {
                 assignNewGroupId(event.documentId());
                 return;
             }
-
-            RagDocument oldDoc = ragDocumentMapper.selectById(event.replaceDocumentId());
-            if (oldDoc == null || oldDoc.getDeleted() == 1) {
-                log.warn("Replace target not found or deleted: replaceDocumentId={}, degrading to new document",
-                         event.replaceDocumentId());
+            RagDocument oldDoc = resolveReplaceTarget(event);
+            if (oldDoc != null) {
+                linkVersion(event.documentId(), oldDoc);
+            } else {
                 assignNewGroupId(event.documentId());
-                return;
             }
-
-            if (oldDoc.getSupersededBy() != null) {
-                log.warn("Replace target is already superseded: replaceDocumentId={}, degrading to new document",
-                         event.replaceDocumentId());
-                assignNewGroupId(event.documentId());
-                return;
-            }
-
-            if (!isOwner(oldDoc, event.userId(), event.teamId())) {
-                log.warn("Replace target ownership mismatch: replaceDocumentId={}, userId={}, teamId={}",
-                         event.replaceDocumentId(), event.userId(), event.teamId());
-                assignNewGroupId(event.documentId());
-                return;
-            }
-
-            linkVersion(event.documentId(), oldDoc);
-
         } catch (Exception e) {
             log.warn("Supersede setup failed for docId={}, degrading to new document: {}",
                      event.documentId(), e.getMessage());
             assignNewGroupId(event.documentId());
         }
+    }
+
+    /**
+     * 校验替换目标；不可替换时返回 null（调用方降级为新文档）。
+     */
+    private @Nullable RagDocument resolveReplaceTarget(DocumentCreatedEvent event) {
+        RagDocument oldDoc = ragDocumentMapper.selectById(event.replaceDocumentId());
+        if (oldDoc == null || oldDoc.getDeleted() == 1) {
+            log.warn("Replace target not found or deleted: replaceDocumentId={}, degrading to new document",
+                     event.replaceDocumentId());
+            return null;
+        }
+        if (oldDoc.getSupersededBy() != null) {
+            log.warn("Replace target is already superseded: replaceDocumentId={}, degrading to new document",
+                     event.replaceDocumentId());
+            return null;
+        }
+        if (!isOwner(oldDoc, event.userId(), event.teamId())) {
+            log.warn("Replace target ownership mismatch: replaceDocumentId={}, userId={}, teamId={}",
+                     event.replaceDocumentId(), event.userId(), event.teamId());
+            return null;
+        }
+        return oldDoc;
     }
 
     /**
@@ -138,71 +135,53 @@ public class DocumentSupersedeService {
             }
 
             // 策略 2：DB 查找（崩溃恢复 + 时序竞争兜底）
-            // 如果新文档有 groupId 且 version > 1，查找同组中需要被替换的旧版本
-            RagDocument newDoc = ragDocumentMapper.selectById(event.documentId());
-            if (newDoc == null || newDoc.getDocumentGroupId() == null || newDoc.getVersion() <= 1) {
-                return;
-            }
-
-            // 查找同 groupId 中 superseded_by = 新文档ID 但 status != SUPERSEDED 的旧文档
-            List<RagDocument> pendingDocs = ragDocumentMapper.selectList(
-                    new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<RagDocument>()
-                            .eq(RagDocument::getDocumentGroupId, newDoc.getDocumentGroupId())
-                            .eq(RagDocument::getSupersededBy, event.documentId())
-                            .ne(RagDocument::getStatus, EtlStatus.SUPERSEDED)
-                            .eq(RagDocument::getDeleted, 0)
-            );
-
-            for (RagDocument pending : pendingDocs) {
-                log.info("DB-based supersede recovery: oldDocId={} → newDocId={}", pending.getId(), event.documentId());
-                supersedeOldVersion(pending.getId(), event.documentId());
-            }
+            recoverFromDb(event);
         } catch (Exception e) {
             log.error("onEtlCompleted failed for docId={}: {}", event.documentId(), e.getMessage(), e);
         }
     }
 
     /**
-     * 监听 ETL 失败事件：清理 pendingSupersede 加速层中该文档的 entry。
-     * <p>
-     * 文档进入 FAILED 终态后不会再走向 completed，对应 entry（newDocId → oldDocId）
-     * 已无意义；清理释放内存。失败后用户若重试并成功，{@link #onEtlCompleted} 的
-     * DB 兜底（策略 2）仍能正确执行替换，故清理不影响功能正确性。
-     * <p>
-     * 幂等：未命中（remove 返回 null）不报错。
+     * DB 兜底查找：新文档有 groupId 且 version &gt; 1 时，
+     * 查找同 groupId 中 superseded_by = 新文档ID 但 status != SUPERSEDED 的旧文档并替换。
      */
-    @EventListener
-    @Async("etlIoExecutor")
-    public void onEtlFailed(EtlFailedEvent event) {
-        try {
-            Long removed = pendingSupersede.remove(event.documentId());
-            if (removed != null) {
-                log.info("pendingSupersede cleared on ETL failure: newDocId={} → oldDocId={}",
-                         event.documentId(), removed);
-            }
-        } catch (Exception e) {
-            log.warn("onEtlFailed cleanup failed for docId={}: {}", event.documentId(), e.getMessage());
+    private void recoverFromDb(EtlCompletedEvent event) {
+        RagDocument newDoc = ragDocumentMapper.selectById(event.documentId());
+        if (newDoc == null || newDoc.getDocumentGroupId() == null || newDoc.getVersion() <= 1) {
+            return;
+        }
+        List<RagDocument> pendingDocs = ragDocumentMapper.selectList(
+                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<RagDocument>()
+                        .eq(RagDocument::getDocumentGroupId, newDoc.getDocumentGroupId())
+                        .eq(RagDocument::getSupersededBy, event.documentId())
+                        .ne(RagDocument::getStatus, EtlStatus.SUPERSEDED)
+                        .eq(RagDocument::getDeleted, 0)
+        );
+        for (RagDocument pending : pendingDocs) {
+            log.info("DB-based supersede recovery: oldDocId={} → newDocId={}", pending.getId(), event.documentId());
+            supersedeOldVersion(pending.getId(), event.documentId());
         }
     }
 
-    /**
-     * 监听文档删除事件：清理 pendingSupersede 加速层中该文档的 entry。
-     * <p>
-     * 文档被级联删除后不会再走向 completed，对应 entry 已无意义；清理释放内存。
-     * <p>
-     * 幂等：未命中（remove 返回 null）不报错。
-     */
+    /** 监听 ETL 失败事件：FAILED 终态 entry 已无意义，清理释放内存（重试成功后 DB 兜底仍可替换） */
+    @EventListener
+    @Async("etlIoExecutor")
+    public void onEtlFailed(EtlFailedEvent event) {
+        clearPending(event.documentId(), "ETL failure");
+    }
+
+    /** 监听文档删除事件：级联删除后 entry 已无意义，清理释放内存 */
     @EventListener
     @Async("etlIoExecutor")
     public void onDocumentDeleted(DocumentDeletedEvent event) {
-        try {
-            Long removed = pendingSupersede.remove(event.documentId());
-            if (removed != null) {
-                log.info("pendingSupersede cleared on document delete: newDocId={} → oldDocId={}",
-                         event.documentId(), removed);
-            }
-        } catch (Exception e) {
-            log.warn("onDocumentDeleted cleanup failed for docId={}: {}", event.documentId(), e.getMessage());
+        clearPending(event.documentId(), "document delete");
+    }
+
+    /** 幂等清理 pendingSupersede：未命中（remove 返回 null）不报错 */
+    private void clearPending(Long documentId, String reason) {
+        Long removed = pendingSupersede.remove(documentId);
+        if (removed != null) {
+            log.info("pendingSupersede cleared on {}: newDocId={} → oldDocId={}", reason, documentId, removed);
         }
     }
 
@@ -258,63 +237,17 @@ public class DocumentSupersedeService {
 
         while (retryCount < MAX_VERSION_RETRY) {
             try {
-                // 在 lambda 外部解析所有需要的值，确保 effectively final
-                final Long oldDocId = oldDoc.getId();
-                final String oldDocGroupId = oldDoc.getDocumentGroupId();
-                final int oldDocVersion = oldDoc.getVersion();
-
-                String groupId = oldDocGroupId;
-                if (groupId == null) {
-                    groupId = UuidGeneratorUtil.generateCompact();
-                }
-                final String finalGroupId = groupId;
-                final int nextVersion = oldDocVersion + 1;
-                final boolean needsGroupIdCas = (oldDocGroupId == null);
-
-                // 事务内：同时写入新文档的 groupId/version 和旧文档的 superseded_by
-                transactionTemplate.executeWithoutResult(status -> {
-                    // CAS 防护：仅当 document_group_id IS NULL 时才写入（避免并发覆盖）
-                    if (needsGroupIdCas) {
-                        int updated = ragDocumentMapper.updateGroupIdCas(oldDocId, finalGroupId);
-                        if (updated == 0) {
-                            // CAS 失败：其他线程已经分配了 groupId
-                            throw new RuntimeException("CAS groupId conflict for oldDocId=" + oldDocId);
-                        }
-                    }
-                    ragDocumentMapper.updateGroupIdAndVersion(newDocId, finalGroupId, nextVersion);
-                    // 在同一事务中标记旧文档的 superseded_by（崩溃安全）
-                    ragDocumentMapper.updateSupersededByOnly(oldDocId, newDocId);
-                });
-
-                // 事务提交成功后，加入内存加速层
-                pendingSupersede.put(newDocId, oldDocId);
-
-                log.info("Document version linked: newDocId={}, oldDocId={}, groupId={}, version={}",
-                         newDocId, oldDocId, finalGroupId, nextVersion);
+                linkVersionOnce(newDocId, oldDoc);
                 return;
-
-            } catch (DuplicateKeyException e) {
-                log.info("Version conflict for groupId={}, retrying ({}/{})",
-                         oldDoc.getDocumentGroupId(), retryCount + 1, MAX_VERSION_RETRY);
+            } catch (DuplicateKeyException | GroupIdCasConflictException e) {
+                log.info("Version conflict ({}), retrying ({}/{})",
+                         e.getClass().getSimpleName(), retryCount + 1, MAX_VERSION_RETRY);
                 retryCount++;
                 oldDoc = ragDocumentMapper.selectById(oldDoc.getId());
                 if (oldDoc == null) {
                     assignNewGroupId(newDocId);
                     return;
                 }
-            } catch (RuntimeException e) {
-                if (e.getMessage() != null && e.getMessage().startsWith("CAS groupId conflict")) {
-                    log.info("CAS groupId conflict for oldDocId={}, retrying ({}/{})",
-                             oldDoc.getId(), retryCount + 1, MAX_VERSION_RETRY);
-                    retryCount++;
-                    oldDoc = ragDocumentMapper.selectById(oldDoc.getId());
-                    if (oldDoc == null) {
-                        assignNewGroupId(newDocId);
-                        return;
-                    }
-                    continue;
-                }
-                throw e;
             }
         }
 
@@ -323,53 +256,109 @@ public class DocumentSupersedeService {
     }
 
     /**
+     * 单次尝试建立版本关系：事务内同时写入 groupId/version 和 superseded_by。
+     * <p>
+     * 并发冲突时抛 {@link DuplicateKeyException}（version 唯一约束）或
+     * {@link GroupIdCasConflictException}（groupId CAS 失败），由调用方重试。
+     */
+    private void linkVersionOnce(Long newDocId, RagDocument oldDoc) {
+        final Long oldDocId = oldDoc.getId();
+        final String oldDocGroupId = oldDoc.getDocumentGroupId();
+
+        String groupId = oldDocGroupId;
+        if (groupId == null) {
+            groupId = UuidGeneratorUtil.generateCompact();
+        }
+        final String finalGroupId = groupId;
+        final int nextVersion = oldDoc.getVersion() + 1;
+        final boolean needsGroupIdCas = (oldDocGroupId == null);
+
+        // 事务内：同时写入新文档的 groupId/version 和旧文档的 superseded_by
+        transactionTemplate.executeWithoutResult(status -> {
+            // CAS 防护：仅当 document_group_id IS NULL 时才写入（避免并发覆盖）
+            if (needsGroupIdCas) {
+                int updated = ragDocumentMapper.updateGroupIdCas(oldDocId, finalGroupId);
+                if (updated == 0) {
+                    // CAS 失败：其他线程已经分配了 groupId
+                    throw new GroupIdCasConflictException(oldDocId);
+                }
+            }
+            ragDocumentMapper.updateGroupIdAndVersion(newDocId, finalGroupId, nextVersion);
+            // 在同一事务中标记旧文档的 superseded_by（崩溃安全）
+            ragDocumentMapper.updateSupersededByOnly(oldDocId, newDocId);
+        });
+
+        // 事务提交成功后，加入内存加速层
+        pendingSupersede.put(newDocId, oldDocId);
+
+        log.info("Document version linked: newDocId={}, oldDocId={}, groupId={}, version={}",
+                 newDocId, oldDocId, finalGroupId, nextVersion);
+    }
+
+    /**
      * 执行旧版本替换
      * <p>
      * 步骤 1 事务内更新状态，步骤 2-4 各自独立 try-catch
      */
     private void supersedeOldVersion(Long oldDocId, Long newDocId) {
-        // 步骤 1: 事务内更新旧文档状态为 SUPERSEDED
-        try {
-            transactionTemplate.executeWithoutResult(status -> {
-                ragDocumentMapper.updateSuperseded(oldDocId, newDocId);
-            });
-        } catch (Exception e) {
-            log.error("Failed to mark old doc as SUPERSEDED: oldDocId={}, skipping cleanup: {}", oldDocId, e.getMessage());
+        if (!markSuperseded(oldDocId, newDocId)) {
             return;
         }
+        cleanupEntityIndex(oldDocId);
+        cleanupVectors(oldDocId);
+        cleanupStorageFile(oldDocId);
+        log.info("Document superseded: oldDocId={} → newDocId={}", oldDocId, newDocId);
+    }
 
-        // 步骤 1.5: 清理实体索引（在删向量之前，捕获受影响 entity_id）
-        if (entityIndexCleanupService != null) {
-            try {
-                entityIndexCleanupService.cleanupByDocumentId(oldDocId);
-            } catch (Exception e) {
-                log.error("Failed to cleanup entity index for superseded docId={}: {}", oldDocId, e.getMessage());
-            }
+    /** 步骤 1: 事务内更新旧文档状态为 SUPERSEDED。false = 失败，跳过后续清理 */
+    private boolean markSuperseded(Long oldDocId, Long newDocId) {
+        try {
+            transactionTemplate.executeWithoutResult(status ->
+                    ragDocumentMapper.updateSuperseded(oldDocId, newDocId));
+            return true;
+        } catch (Exception e) {
+            log.error("Failed to mark old doc as SUPERSEDED: oldDocId={}, skipping cleanup: {}", oldDocId, e);
+            return false;
         }
+    }
 
-        // 步骤 2: 清理旧文档的 vectors
+    /** 步骤 1.5: 清理实体索引（在删向量之前，捕获受影响 entity_id） */
+    private void cleanupEntityIndex(Long oldDocId) {
+        EntityIndexCleanupService entityIndexCleanupService = entityIndexCleanupProvider.getIfAvailable();
+        if (entityIndexCleanupService == null) {
+            return;
+        }
+        try {
+            entityIndexCleanupService.cleanupByDocumentId(oldDocId);
+        } catch (Exception e) {
+            log.error("Failed to cleanup entity index for superseded docId={}: {}", oldDocId, e);
+        }
+    }
+
+    /** 步骤 2: 清理旧文档的向量与 BM25 fastTrack 行 */
+    private void cleanupVectors(Long oldDocId) {
         try {
             vectorStoreLoader.deleteByDocumentId(oldDocId);
         } catch (Exception e) {
-            log.error("Failed to delete vectors for superseded docId={}: {}", oldDocId, e.getMessage());
+            log.error("Failed to delete vectors for superseded docId={}: {}", oldDocId, e);
         }
-
         try {
             vectorStoreMapper.deleteFastTrackRows(oldDocId);
         } catch (Exception e) {
-            log.error("Failed to delete BM25 fastTrack for superseded docId={}: {}", oldDocId, e.getMessage());
+            log.error("Failed to delete BM25 fastTrack for superseded docId={}: {}", oldDocId, e);
         }
+    }
 
-        // 步骤 3: 清理旧文档的 MinIO 文件
+    /** 步骤 3: 清理旧文档的 MinIO 文件 */
+    private void cleanupStorageFile(Long oldDocId) {
         RagDocument oldDoc = ragDocumentMapper.selectById(oldDocId);
-        if (oldDoc != null) {
-            try {
-                fileStorageService.delete(oldDoc.getBucket(), oldDoc.getStorageKey());
-            } catch (Exception e) {
-                log.error("Failed to delete MinIO file for superseded docId={}: {}", oldDocId, e.getMessage());
-            }
+        if (oldDoc == null) {
+            return;
         }
-
-        log.info("Document superseded: oldDocId={} → newDocId={}", oldDocId, newDocId);
+        try {
+            fileStorageService.delete(oldDoc.getBucket(), oldDoc.getStorageKey());
+        } catch (Exception e) {
+            log.error("Failed to delete MinIO file for superseded docId={}: {}", oldDocId, e);
+        }
     }
 }

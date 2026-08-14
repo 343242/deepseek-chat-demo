@@ -12,13 +12,13 @@ import org.springframework.web.bind.annotation.*;
 /**
  * 分片上传 REST 控制器。
  * <p>
- * URL 设计遵循 RESTful 风格：
+ * URL 设计（与实际动词一致）：
  * <ul>
- *   <li>POST   /api/documents/multipart          — 创建上传会话（init）</li>
- *   <li>PUT    /api/documents/multipart/{id}/chunks/{index} — 上传分片</li>
- *   <li>GET    /api/documents/multipart/{id}      — 查询上传状态</li>
- *   <li>POST   /api/documents/multipart/{id}/complete — 完成上传（手动合并）</li>
- *   <li>DELETE /api/documents/multipart/{id}      — 取消上传</li>
+ *   <li>POST /api/documents/multipart               — 创建上传会话（init）</li>
+ *   <li>POST /api/documents/multipart/{id}/chunks/{index} — 上传分片</li>
+ *   <li>GET  /api/documents/multipart/{id}          — 查询上传状态</li>
+ *   <li>POST /api/documents/multipart/{id}/complete — 完成上传（手动合并）</li>
+ *   <li>POST /api/documents/multipart/{id}/delete   — 取消上传</li>
  * </ul>
  */
 @RestController

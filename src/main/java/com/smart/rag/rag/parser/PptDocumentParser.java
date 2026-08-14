@@ -1,5 +1,7 @@
 package com.smart.rag.rag.parser;
 
+import com.smart.rag.rag.config.DocumentProperties;
+import org.apache.commons.io.input.BoundedInputStream;
 import org.apache.poi.xslf.usermodel.XMLSlideShow;
 import org.apache.poi.xslf.usermodel.XSLFGroupShape;
 import org.apache.poi.xslf.usermodel.XSLFNotes;
@@ -7,13 +9,14 @@ import org.apache.poi.xslf.usermodel.XSLFPictureShape;
 import org.apache.poi.xslf.usermodel.XSLFShape;
 import org.apache.poi.xslf.usermodel.XSLFSlide;
 import org.apache.poi.xslf.usermodel.XSLFTable;
-import org.apache.poi.xslf.usermodel.XSLFTableCell;
 import org.apache.poi.xslf.usermodel.XSLFTextShape;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.document.Document;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.Resource;
 import org.springframework.stereotype.Component;
+import org.springframework.util.unit.DataSize;
 
 import java.io.InputStream;
 import java.util.ArrayList;
@@ -34,6 +37,7 @@ import java.util.Map;
  * </ul>
  * <p>
  * 相比 Tika 的优势：保留 Slide 结构、表格格式、备注信息，避免全部拍平为纯文本。
+ * 表格渲染委托给 {@link PptTableRenderer}。
  */
 @Component
 public class PptDocumentParser implements DocumentParser {
@@ -49,6 +53,18 @@ public class PptDocumentParser implements DocumentParser {
      */
     private static final int MAX_SLIDES = 5_000;
 
+    private final DocumentProperties documentProperties;
+
+    /** 便捷无参构造（测试/独立使用），使用默认配置 */
+    public PptDocumentParser() {
+        this(new DocumentProperties());
+    }
+
+    @Autowired
+    public PptDocumentParser(DocumentProperties documentProperties) {
+        this.documentProperties = documentProperties;
+    }
+
     @Override
     public List<String> supportedMimeTypes() {
         return List.of(
@@ -62,9 +78,13 @@ public class PptDocumentParser implements DocumentParser {
         log.debug("Parsing PPTX with Apache POI XSLF: file={}", fileName);
 
         List<Document> documents = new ArrayList<>();
+        long maxBytes = DataSize.parse(documentProperties.getMaxFileSize()).toBytes();
 
         try (InputStream is = resource.getInputStream();
-             XMLSlideShow slideShow = new XMLSlideShow(is)) {
+             // 流级读取上限（MinIO 流 contentLength()=-1 时元信息检查失效，故在流级兜底）
+             BoundedInputStream bounded = BoundedInputStream.builder()
+                     .setInputStream(is).setMaxCount(maxBytes).get();
+             XMLSlideShow slideShow = new XMLSlideShow(bounded)) {
 
             List<XSLFSlide> slides = slideShow.getSlides();
             int slideCount = slides.size();
@@ -72,9 +92,8 @@ public class PptDocumentParser implements DocumentParser {
             // R2-H2: 幻灯片总数上限，超限即中止，避免恶意构造拖垮内存
             if (slideCount > MAX_SLIDES) {
                 throw new DocumentParseException(
-                        fileName, "ppt",
-                        String.format("幻灯片数 %d 超过上限 %d（疑似解压炸弹）", slideCount, MAX_SLIDES),
-                        null);
+                        fileName != null ? fileName : "unknown", "ppt",
+                        String.format("幻灯片数 %d 超过上限 %d（疑似解压炸弹）", slideCount, MAX_SLIDES));
             }
 
             for (int slideIndex = 0; slideIndex < slideCount; slideIndex++) {
@@ -85,7 +104,8 @@ public class PptDocumentParser implements DocumentParser {
         } catch (DocumentParseException e) {
             throw e;
         } catch (Exception e) {
-            throw new DocumentParseException(fileName, "ppt", "Unexpected error", e);
+            throw new DocumentParseException(
+                    fileName != null ? fileName : "unknown", "ppt", "Unexpected error", e);
         }
 
         log.debug("PPTX parsed: {} documents from {}", documents.size(), fileName);
@@ -115,28 +135,33 @@ public class PptDocumentParser implements DocumentParser {
                 if (shape instanceof XSLFTextShape textShape) {
                     collectTextShape(textShape, textBuffer);
                 } else if (shape instanceof XSLFTable table) {
-                    // 先 flush 已累积的文本
+                    // 先 flush 已累积的文本，再独立输出表格
                     flushText(textBuffer, hasImage, slideIndex, slideCount, fileName, mimeType, documents);
                     textBuffer = new StringBuilder();
                     hasImage = false;
 
-                    String tableMd = tableToMarkdown(table);
-                    if (tableMd != null && !tableMd.isBlank()) {
-                        Map<String, Object> meta = buildMetadata(slideIndex, slideCount, fileName, mimeType, "table");
-                        meta.put("hasImage", false);
-                        documents.add(new Document(tableMd, meta));
-                    }
+                    flushTable(table, slideIndex, slideCount, fileName, mimeType, documents);
                 } else if (shape instanceof XSLFPictureShape) {
                     hasImage = true;
                 } else if (shape instanceof XSLFGroupShape groupShape) {
                     processGroupShape(groupShape, textBuffer, 1, fileName);
                 }
             } catch (Exception e) {
-                log.warn("Failed to process shape on slide {}: {}", slideIndex, e.getMessage());
+                log.warn("Failed to process shape on slide {}: {}", slideIndex, e);
             }
         }
 
-        // 处理 Notes
+        processNotes(slide, slideIndex, slideCount, fileName, mimeType, documents);
+
+        // flush 剩余文本
+        flushText(textBuffer, hasImage, slideIndex, slideCount, fileName, mimeType, documents);
+    }
+
+    /**
+     * 处理 Slide 备注（Notes），独立输出为一个 Document。
+     */
+    private void processNotes(XSLFSlide slide, int slideIndex, int slideCount,
+                              String fileName, String mimeType, List<Document> documents) {
         try {
             XSLFNotes notes = slide.getNotes();
             if (notes != null) {
@@ -159,11 +184,21 @@ public class PptDocumentParser implements DocumentParser {
                 }
             }
         } catch (Exception e) {
-            log.warn("Failed to process notes on slide {}: {}", slideIndex, e.getMessage());
+            log.warn("Failed to process notes on slide {}: {}", slideIndex, e);
         }
+    }
 
-        // flush 剩余文本
-        flushText(textBuffer, hasImage, slideIndex, slideCount, fileName, mimeType, documents);
+    /**
+     * 将单个表格渲染为 Markdown 并独立输出为一个 Document（空表格跳过）。
+     */
+    private void flushTable(XSLFTable table, int slideIndex, int slideCount,
+                            String fileName, String mimeType, List<Document> documents) {
+        String tableMd = PptTableRenderer.tableToMarkdown(table);
+        if (tableMd != null && !tableMd.isBlank()) {
+            Map<String, Object> meta = buildMetadata(slideIndex, slideCount, fileName, mimeType, "table");
+            meta.put("hasImage", false);
+            documents.add(new Document(tableMd, meta));
+        }
     }
 
     /**
@@ -228,7 +263,7 @@ public class PptDocumentParser implements DocumentParser {
                     processGroupShape(innerGroup, textBuffer, depth + 1, fileName);
                 }
             } catch (Exception e) {
-                log.warn("Failed to process shape in GroupShape (depth={}): {}", depth, e.getMessage());
+                log.warn("Failed to process shape in GroupShape (depth={}): {}", depth, e);
             }
         }
     }
@@ -252,66 +287,6 @@ public class PptDocumentParser implements DocumentParser {
         Map<String, Object> meta = buildMetadata(slideIndex, slideCount, fileName, mimeType, "content");
         meta.put("hasImage", hasImage);
         documents.add(new Document(text, meta));
-    }
-
-    /**
-     * 将 XSLFTable 转为 Markdown 表格字符串。
-     *
-     * @param table PPT 表格
-     * @return Markdown 格式表格
-     */
-    /** R2-L2: 病态大表格（rows*cols）OOM 防御上限 */
-    private static final int MAX_TABLE_ROWS = 500;
-    private static final int MAX_TABLE_COLS = 50;
-
-    private String tableToMarkdown(XSLFTable table) {
-        int rows = table.getNumberOfRows();
-        int cols = table.getNumberOfColumns();
-        if (rows == 0 || cols == 0) {
-            return null;
-        }
-
-        int effRows = Math.min(rows, MAX_TABLE_ROWS);
-        int effCols = Math.min(cols, MAX_TABLE_COLS);
-        if (effRows < rows || effCols < cols) {
-            log.warn("PPT table truncated: rows {}→{}, cols {}→{}", rows, effRows, cols, effCols);
-        }
-
-        StringBuilder sb = new StringBuilder();
-
-        // 表头行
-        sb.append("| ");
-        for (int c = 0; c < effCols; c++) {
-            if (c > 0) sb.append(" | ");
-            sb.append(getCellText(table.getCell(0, c)));
-        }
-        sb.append(" |\n");
-
-        // 分隔行
-        sb.append("|");
-        sb.repeat("---|", effCols);
-        sb.append("\n");
-
-        // 数据行
-        for (int r = 1; r < effRows; r++) {
-            sb.append("| ");
-            for (int c = 0; c < effCols; c++) {
-                if (c > 0) sb.append(" | ");
-                sb.append(getCellText(table.getCell(r, c)));
-            }
-            sb.append(" |\n");
-        }
-
-        return sb.toString();
-    }
-
-    /**
-     * 安全获取单元格文本。
-     */
-    private String getCellText(XSLFTableCell cell) {
-        if (cell == null) return "";
-        String text = cell.getText();
-        return text == null ? "" : text.replace("|", "\\|").replace("\n", " ").trim();
     }
 
     /**

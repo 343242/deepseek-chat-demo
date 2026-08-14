@@ -1,6 +1,7 @@
 package com.smart.rag.rag.upload;
 
 import com.smart.rag.common.util.ChecksumUtils;
+import com.smart.rag.infrastructure.exception.AbstractException;
 import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;
 import com.smart.rag.infrastructure.exception.ClientException;
 import com.smart.rag.rag.event.DocumentCreatedEvent;
@@ -135,9 +136,11 @@ public class PersonalUploadStrategy implements UploadStrategy {
                 eventPublisher.publishEvent(new DocumentCreatedEvent(ragDoc.getId(), null, userId, ragDoc.getTeamId()));
                 log.debug("Document uploaded (batch): id={}, file={}, size={}, userId={}", ragDoc.getId(), originalFilename, file.getSize(), userId);
                 responses.add(new DocumentUploadResponse(ragDoc.getId(), originalFilename, EtlStatus.PROCESSING));
-            } catch (Exception e) {
-                // R1-H3: 单文件失败不中断整批。仅在"已上传但未成功 persist"时回滚 MinIO 对象，
-                // 避免无 DB 记录的孤儿对象；已 persist 的（ragDoc != null）保留并照常 dispatch。
+            } catch (RuntimeException e) {
+                // R1-H3: 单文件失败不中断整批。业务异常（AbstractException 子类）按原语义继续批处理，
+                // 其余运行时异常同样降级为单文件失败；受检异常不在此吞掉。
+                // 仅在"已上传但未成功 persist"时回滚 MinIO 对象，避免无 DB 记录的孤儿对象；
+                // 已 persist 的（ragDoc != null）保留并照常 dispatch。
                 log.error("Batch upload failed for file (continuing batch): file={}, userId={}", originalFilename, userId, e);
                 if (uploaded && ragDoc == null) {
                     rollbackMinioObject(bucket, storageKey, originalFilename);
@@ -171,34 +174,14 @@ public class PersonalUploadStrategy implements UploadStrategy {
 
     // === 私有方法 ===
 
-    private static final char[] NANOID_CHARS =
-            "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ".toCharArray();
-    private static final java.util.Random RANDOM = new java.security.SecureRandom();
-
     /**
      * 构建存储路径：documents/{userId}/{shortId}_{originalFilename}
      * shortId 为 8 位随机字母数字，用于避免同名文件冲突。
+     *
+     * @see StorageKeys#documentObjectKey(Long, String)
      */
     private String buildStorageKey(Long userId, String originalFilename) {
-        String shortId = generateShortId(8);
-        String safeName = sanitizeFilename(originalFilename);
-        return "documents/" + userId + "/" + shortId + "_" + safeName;
-    }
-
-    private String generateShortId(int length) {
-        StringBuilder sb = new StringBuilder(length);
-        for (int i = 0; i < length; i++) {
-            sb.append(NANOID_CHARS[RANDOM.nextInt(NANOID_CHARS.length)]);
-        }
-        return sb.toString();
-    }
-
-    private String sanitizeFilename(String fileName) {
-        if (fileName == null || fileName.isBlank()) {
-            return "unnamed";
-        }
-        // 保留原始文件名（含扩展名），仅去除路径分隔符等危险字符
-        return fileName.replace("/", "_").replace("\\", "_").replace("\0", "_");
+        return StorageKeys.documentObjectKey(userId, originalFilename);
     }
 
     /**
@@ -216,8 +199,9 @@ public class PersonalUploadStrategy implements UploadStrategy {
         ragDoc.setFileChecksum(fileChecksum);
         ragDoc.setStatus(EtlStatus.UPLOADED);
         ragDoc.setDeleted(0);
-        ragDoc.setCreateTime(OffsetDateTime.now());
-        ragDoc.setUpdateTime(OffsetDateTime.now());
+        OffsetDateTime now = OffsetDateTime.now();
+        ragDoc.setCreateTime(now);
+        ragDoc.setUpdateTime(now);
         ragDocumentMapper.insert(ragDoc);
         return ragDoc;
     }

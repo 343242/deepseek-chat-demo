@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback } from 'react'
+import { useState, useRef, useCallback, useEffect } from 'react'
 import { Upload, X, FileUp } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
@@ -43,6 +43,20 @@ export function UploadButton({
   const [dragOver, setDragOver] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
+  // 上传成功后短暂保留"完成"态作为反馈，随后自动移除进度卡——文件已出现在列表，避免冗余视觉。
+  // 失败 / 上传中的卡片不在移除范围（保留给用户查看 / 取消）。
+  const dismissTimers = useRef<Set<ReturnType<typeof setTimeout>>>(new Set())
+  const scheduleDismiss = useCallback((taskId: string) => {
+    const id = setTimeout(() => {
+      dismissTimers.current.delete(id)
+      setTasks((t) => t.filter((x) => x.id !== taskId))
+    }, 1500)
+    dismissTimers.current.add(id)
+  }, [])
+  useEffect(() => () => {
+    dismissTimers.current.forEach((t) => clearTimeout(t))
+  }, [])
+
   const validate = (file: File): string | null => {
     if (!(UPLOAD_LIMITS.allowedExtensions as readonly string[]).includes(extOf(file.name))) {
       return '不支持的文件格式，仅支持 PDF/DOCX/PPTX/XLSX/TXT/MD/HTML'
@@ -72,6 +86,7 @@ export function UploadButton({
             // 小文件直传
             await uploadDirect(file, teamId)
             setTasks((t) => t.map((x) => (x.id === taskId ? { ...x, progress: 100, status: 'success' } : x)))
+            scheduleDismiss(taskId)
           } else {
             // 分片上传
             const fileChecksum = await computeChecksum(file)
@@ -85,6 +100,7 @@ export function UploadButton({
               // 秒传
               setTasks((t) => t.map((x) => (x.id === taskId ? { ...x, progress: 100, status: 'instant' } : x)))
               toast.success(`${file.name} 秒传成功`)
+              scheduleDismiss(taskId)
             } else {
               const uploadId = init.uploadId!
               for (let i = 0; i < totalChunks; i++) {
@@ -98,8 +114,12 @@ export function UploadButton({
                 const speed = (uploadedBytes - base.lastBytes) / ((now - base.lastTime) / 1000)
                 setTasks((t) => t.map((x) => (x.id === taskId ? { ...x, progress, speed, lastBytes: uploadedBytes, lastTime: now, uploadId } : x)))
               }
-              await chunkUploadComplete(uploadId)
+              // 最后一片上传后，后端 Lua 脚本已自动触发异步合并（performMerge → 落库 → ETL dispatch）。
+              // 文档状态变化由 SSE 实时推送（见 knowledge-page.tsx），前端无需等待 complete 结果。
+              // complete 仅作"自动合并未触发"的兜底，fire-and-forget，不影响上传成功状态。
               setTasks((t) => t.map((x) => (x.id === taskId ? { ...x, progress: 100, status: 'success' } : x)))
+              scheduleDismiss(taskId)
+              void chunkUploadComplete(uploadId, fileChecksum).catch(() => {})
             }
           }
           queryClient.invalidateQueries({ queryKey: docKeys.all })
@@ -171,7 +191,7 @@ function ProgressCard({ task, onCancel }: { task: UploadTask; onCancel: (t: Uplo
         <div className="flex items-center justify-between gap-2">
           <span className="truncate text-sm font-medium text-fg">{task.fileName}</span>
           <span className="shrink-0 text-xs text-subtle">
-            {task.status === 'success' ? '完成' : task.status === 'instant' ? '秒传' : task.status === 'error' ? '失败' : `${task.progress}%`}
+            {task.status === 'success' ? '已上传' : task.status === 'instant' ? '秒传' : task.status === 'error' ? '失败' : `${task.progress}%`}
           </span>
         </div>
         <Progress value={task.progress} className={cn('mt-1.5 h-1.5', task.status === 'error' && '[&_[data-slot]]:bg-error-600')} />

@@ -117,8 +117,8 @@ export async function uploadChunk(
 }
 
 /** 分片上传完成 → documentId */
-export function chunkUploadComplete(uploadId: string) {
-  return api.post<{ documentId: number }>(`/documents/multipart/${uploadId}/complete`)
+export function chunkUploadComplete(uploadId: string, fileChecksum: string) {
+  return api.post<{ documentId: number }>(`/documents/multipart/${uploadId}/complete`, { fileChecksum })
 }
 
 /** 取消/清理分片上传 session */

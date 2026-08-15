@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 17
-- **Last Active**: 2026-07-13
+- **Total Sessions**: 18
+- **Last Active**: 2026-08-16
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~590 | Active |
+| `journal-1.md` | ~625 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 18 | 2026-08-16 | 前端 spec 最佳实践审查修订 + ESLint/tsconfig 严格化落地 | `16f36da`, `0e2001a`, `462b969` | `agentic-rag-dev` |
 | 17 | 2026-07-13 | MCP DB source-of-truth: review fixes, cleanup, and batch archive | `6a40c11`, `0d6581a`, `8ac3804`, `4ef2f95`, `26644a8` | `agentic-rag-dev` |
 | 16 | 2026-07-10 | 完成 MCP 代码审查修复与并发竞态修复 | `3eb3734`, `9c89c0a` | `agentic-rag-dev` |
 | 15 | 2026-06-18 | Phase D 消息总线收尾（legacy DLQ 退役 + 迁移补全） | `c53783a`, `b5868cb`, `58cad50`, `1edd16a`, `747bcf2`, `3734e65` | `agentic-rag-dev` |

@@ -588,3 +588,38 @@ Completed mcp-db-source-of-truth task: code review P0-P3 fixes (13 issues), dele
 ### Next Steps
 
 - None - task complete
+
+
+## Session 18: 前端 spec 最佳实践审查修订 + ESLint/tsconfig 严格化落地
+
+**Date**: 2026-08-16
+**Task**: 前端 spec 最佳实践审查修订 + ESLint/tsconfig 严格化落地
+**Branch**: `agentic-rag-dev`
+
+### Summary
+
+按 React/TS 当前最佳实践审查并修订 .trellis/spec/frontend 五份规范（Effect 使用边界、React 19 用法边界与 memo 策略、Query v5 细则、RHF z.input、DTO 漂移风险、satisfies）；随后落地两项技术债：接入 ESLint 10 flat config（typescript-eslint type-aware + react-hooks v7 recommended 含 React Compiler 派生规则 + import-x/no-restricted-paths 强制分层依赖方向，唯一 except chat-store→api/conversations）与 tsconfig 开启 noUncheckedIndexedAccess/erasableSyntaxOnly；修复 59 个 lint error（ReferenceCard 数据 prop ref→reference、async 回调 void 包装、RHF handleSubmit 事件期求值、effect 同步 setState 改渲染期推导/事件处理器/状态下沉）与 18 个 type error，四道门全绿（lint 仅剩 5 条 TEMP-DEBUG warn）。顺带提交工作区预存的 KB-2/KB-3 预览/下载真实端点接入与后端 AsyncRequestTimeoutException SSE 超时静默处理（GlobalExceptionHandlerTest 12/12 通过）。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `16f36da` | (see git log) |
+| `0e2001a` | (see git log) |
+| `462b969` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

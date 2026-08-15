@@ -56,57 +56,78 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                                     @NonNull FilterChain filterChain) throws ServletException, IOException {
         String token = SecurityUtils.extractToken(request);
 
-        if (token != null && jwtTokenProvider.validateToken(token)) {
-            try {
-                // Only process access tokens
-                if (!"access".equals(jwtTokenProvider.getTokenType(token))) {
-                    filterChain.doFilter(request, response);
-                    return;
-                }
+        // 诊断留痕：各拒绝分支记录 DispatcherType + URI。SSE 流式请求在 emitter 收尾时以 ASYNC/ERROR
+        // dispatch 重走本过滤器，若此时 token 已过 access-expiration TTL，重认证会静默降级为匿名，
+        // 下游只剩「响应已提交的 Access Denied」，无法定位原始请求。
+        // 注意 validateToken 吞掉异常，过期与签名非法在此不可区分。
+        if (token == null) {
+            filterChain.doFilter(request, response);
+            return;
+        }
 
-                Long userId = jwtTokenProvider.getUserIdFromToken(token);
+        if (!jwtTokenProvider.validateToken(token)) {
+            log.debug("JWT rejected: {} {} — validation failed (expired or invalid), continuing as anonymous",
+                request.getDispatcherType(), request.getRequestURI());
+            filterChain.doFilter(request, response);
+            return;
+        }
 
-                // Check token revocation using jti (P2-11: stable ID)
-                String tokenId = jwtTokenProvider.getJtiFromToken(token);
-                if (tokenId == null || !tokenCacheService.isAccessTokenValid(userId, tokenId)) {
-                    filterChain.doFilter(request, response);
-                    return;
-                }
+        try {
+            // Only process access tokens
+            String tokenType = jwtTokenProvider.getTokenType(token);
+            if (!"access".equals(tokenType)) {
+                log.debug("JWT rejected: {} {} — token type '{}', not 'access'",
+                    request.getDispatcherType(), request.getRequestURI(), tokenType);
+                filterChain.doFilter(request, response);
+                return;
+            }
 
-                // Check user status
-                String userStatus = tokenCacheService.getUserStatus(userId);
-                if ("disabled".equals(userStatus) || "deleted".equals(userStatus)) {
-                    filterChain.doFilter(request, response);
-                    return;
-                }
+            Long userId = jwtTokenProvider.getUserIdFromToken(token);
 
-                // Get permissions (prefer Redis cache)
-                Set<String> permissions = tokenCacheService.getUserPermissions(userId);
-                if (permissions == null) {
-                    permissions = userPermissionProvider.loadUserPermissions(userId);
-                }
+            // Check token revocation using jti (P2-11: stable ID)
+            String tokenId = jwtTokenProvider.getJtiFromToken(token);
+            if (tokenId == null || !tokenCacheService.isAccessTokenValid(userId, tokenId)) {
+                log.debug("JWT rejected: {} {} — jti not in Redis (revoked/TTL lapsed/flushed), userId={}, jti={}",
+                    request.getDispatcherType(), request.getRequestURI(), userId, tokenId);
+                filterChain.doFilter(request, response);
+                return;
+            }
 
-                // Build authorities from permissions
-                List<SimpleGrantedAuthority> authorities = permissions.stream()
-                    .map(SimpleGrantedAuthority::new)
-                    .collect(Collectors.toCollection(ArrayList::new));
+            // Check user status
+            String userStatus = tokenCacheService.getUserStatus(userId);
+            if ("disabled".equals(userStatus) || "deleted".equals(userStatus)) {
+                log.debug("JWT rejected: {} {} — user {} is {}",
+                    request.getDispatcherType(), request.getRequestURI(), userId, userStatus);
+                filterChain.doFilter(request, response);
+                return;
+            }
 
-                // Add ROLE_ prefixed role authorities
-                List<String> roles = jwtTokenProvider.getRolesFromToken(token);
-                if (roles != null) {
-                    roles.forEach(role -> authorities.add(new SimpleGrantedAuthority("ROLE_" + role)));
-                }
+            // Get permissions (prefer Redis cache)
+            Set<String> permissions = tokenCacheService.getUserPermissions(userId);
+            if (permissions == null) {
+                permissions = userPermissionProvider.loadUserPermissions(userId);
+            }
 
-                UsernamePasswordAuthenticationToken auth =
-                    new UsernamePasswordAuthenticationToken(userId, null, authorities);
-                SecurityContextHolder.getContext().setAuthentication(auth);
-            } catch (Exception e) {
-                // Log for operational visibility; do NOT set authentication on failure
-                if (e instanceof io.jsonwebtoken.ExpiredJwtException) {
-                    log.debug("JWT expired: {}", e.getMessage());
-                } else {
-                    log.warn("JWT authentication failed: {}", e.getMessage());
-                }
+            // Build authorities from permissions
+            List<SimpleGrantedAuthority> authorities = permissions.stream()
+                .map(SimpleGrantedAuthority::new)
+                .collect(Collectors.toCollection(ArrayList::new));
+
+            // Add ROLE_ prefixed role authorities
+            List<String> roles = jwtTokenProvider.getRolesFromToken(token);
+            if (roles != null) {
+                roles.forEach(role -> authorities.add(new SimpleGrantedAuthority("ROLE_" + role)));
+            }
+
+            UsernamePasswordAuthenticationToken auth =
+                new UsernamePasswordAuthenticationToken(userId, null, authorities);
+            SecurityContextHolder.getContext().setAuthentication(auth);
+        } catch (Exception e) {
+            // Log for operational visibility; do NOT set authentication on failure
+            if (e instanceof io.jsonwebtoken.ExpiredJwtException) {
+                log.debug("JWT expired: {}", e.getMessage());
+            } else {
+                log.warn("JWT authentication failed: {}", e.getMessage());
             }
         }
 

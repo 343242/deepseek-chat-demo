@@ -118,6 +118,25 @@
             <AppenderRef ref="ErrorFile"/>
         </AsyncLogger>
 
+        <!-- ===== 诊断：SSE 收尾 ASYNC/ERROR dispatch 重认证失败定位 ===== -->
+        <!-- FilterChainProxy 逐次打 "Securing {method} {url}"（含 emitter 收尾的 dispatch），
+             与 JwtAuthenticationFilter 的拒绝日志按时间戳对照即可还原完整链路。
+             Spring Security 6.5 无分组 logger security.web.chain，此经典名即最细粒度。
+             排查完成后 -DLOG_SECURITY_CHAIN_LEVEL=INFO 关闭。 -->
+        <AsyncLogger name="org.springframework.security.web.FilterChainProxy" level="${sys:LOG_SECURITY_CHAIN_LEVEL:-DEBUG}" additivity="false">
+            <AppenderRef ref="Console"/>
+            <AppenderRef ref="DebugFile"/>
+        </AsyncLogger>
+
+        <!-- 过滤器各拒绝分支的 debug 留痕（默认开，仅拒绝时触发）；生产 -DLOG_JWT_FILTER_LEVEL=INFO 关闭 -->
+        <AsyncLogger name="com.smart.rag.infrastructure.web.filter.JwtAuthenticationFilter" level="${sys:LOG_JWT_FILTER_LEVEL:-DEBUG}" additivity="false">
+            <AppenderRef ref="Console"/>
+            <AppenderRef ref="ErrorFile"/>
+            <AppenderRef ref="WarnFile"/>
+            <AppenderRef ref="InfoFile"/>
+            <AppenderRef ref="DebugFile"/>
+        </AsyncLogger>
+
         <AsyncLogger name="org.springframework.ai" level="ERROR" additivity="false">
             <AppenderRef ref="Console"/>
             <AppenderRef ref="ErrorFile"/>

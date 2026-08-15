@@ -144,7 +144,7 @@ export function DocumentTable({
       {/* 分页（加载更多） */}
       {hasNextPage && (
         <div className="mt-3 flex justify-center">
-          <Button variant="secondary" size="sm" onClick={() => fetchNextPage()} loading={isFetchingNextPage}>
+          <Button variant="secondary" size="sm" onClick={() => void fetchNextPage()} loading={isFetchingNextPage}>
             加载更多
           </Button>
         </div>

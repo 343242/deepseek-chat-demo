@@ -24,7 +24,7 @@ export function AdminSidebar() {
       {/* 返回前台（顶部固定） */}
       <div className="p-3">
         <button
-          onClick={() => navigate('/app/chat')}
+          onClick={() => void navigate('/app/chat')}
           className={cn(
             'flex items-center gap-2.5 rounded-md px-3 py-2 text-sm text-muted transition-colors hover:bg-hover hover:text-fg focus-visible:shadow-focus',
             collapsed && 'mx-auto justify-center w-10 h-10',

@@ -105,7 +105,7 @@ export function ModelSelector({ value, onChange }: { value: string; onChange: (i
           <div className="border-t border-line-subtle p-1">
             <button
               type="button"
-              onClick={handleRefresh}
+              onClick={() => void handleRefresh()}
               disabled={refresh.isPending}
               className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-sm text-muted transition-colors hover:bg-hover hover:text-fg"
             >

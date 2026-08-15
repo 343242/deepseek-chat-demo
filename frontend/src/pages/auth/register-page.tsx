@@ -12,7 +12,7 @@ import { SliderCaptcha, type SliderCaptchaHandle } from '@/components/auth/slide
 import { useRegister, fetchMe, authKeys } from '@/api/auth'
 import { useAuthStore } from '@/stores/auth-store'
 import { ROLE } from '@/lib/constants'
-import { ApiError } from '@/types/api'
+import type { ApiError } from '@/types/api'
 
 // 校验与后端注解对齐（RegisterRequest：username 2-50 / password 8-72 / email / nickname ≤50）
 const schema = z
@@ -52,7 +52,7 @@ export default function RegisterPage() {
     if (!pendingNavRef.current || !user) return
     pendingNavRef.current = false
     const isAdmin = user.roles?.includes(ROLE.ADMIN)
-    navigate(isAdmin ? '/admin' : '/app/chat', { replace: true })
+    void navigate(isAdmin ? '/admin' : '/app/chat', { replace: true })
   }, [user, navigate])
 
   async function onSubmit(values: FormValues) {
@@ -80,7 +80,7 @@ export default function RegisterPage() {
   }
 
   return (
-    <form onSubmit={handleSubmit(onSubmit)} className="rounded-3xl border border-line bg-surface p-8 shadow-lg">
+    <form onSubmit={(e) => void handleSubmit(onSubmit)(e)} className="rounded-3xl border border-line bg-surface p-8 shadow-lg">
       {topError && (
         <div className="mb-4 flex items-center gap-2 rounded-md bg-error-50 px-3 py-2 text-sm text-error-700">
           <AlertCircle className="size-4 shrink-0" />

@@ -104,7 +104,7 @@ export function ChatMessage({ message, onOpenRefs, onOpenAgent, onRegenerate }: 
               </button>
               <div className="space-y-1.5">
                 {message.references.slice(0, 3).map((r) => (
-                  <ReferenceCard key={r.refNumber} ref={r} />
+                  <ReferenceCard key={r.refNumber} reference={r} />
                 ))}
               </div>
             </div>
@@ -134,7 +134,7 @@ export function ChatMessage({ message, onOpenRefs, onOpenAgent, onRegenerate }: 
           {!streaming && message.status !== 'ERROR' && (
             <div className="mt-1.5 flex items-center gap-2">
               <div className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
-                <Button variant="ghost" size="icon-sm" onClick={() => copy(message.content)} aria-label="复制">
+                <Button variant="ghost" size="icon-sm" onClick={() => void copy(message.content)} aria-label="复制">
                   {copied ? <Check className="size-3.5 text-success-600" /> : <Copy className="size-3.5" />}
                 </Button>
                 {onRegenerate && (

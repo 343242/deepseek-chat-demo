@@ -69,7 +69,7 @@ export default function ChatPage() {
               detail.refs && detail.refs.length > 0 ? (
                 <div className="space-y-2">
                   {detail.refs.map((r) => (
-                    <ReferenceCard key={r.refNumber} ref={r} />
+                    <ReferenceCard key={r.refNumber} reference={r} />
                   ))}
                 </div>
               ) : (

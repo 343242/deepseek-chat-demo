@@ -56,7 +56,7 @@ export function ConfirmDialog({
           <Button variant="secondary" onClick={() => onOpenChange(false)} autoFocus disabled={loading}>
             {cancelText}
           </Button>
-          <Button variant="destructive" onClick={handleConfirm} loading={loading}>
+          <Button variant="destructive" onClick={() => void handleConfirm()} loading={loading}>
             {confirmText}
           </Button>
         </DialogFooter>

@@ -14,6 +14,7 @@ import { CHAT_LIMITS, STORAGE_KEYS } from '@/lib/constants'
 import type { ChatMode } from '@/types/chat'
 import { cn } from '@/lib/utils'
 
+
 const MODES: { value: ChatMode; label: string }[] = [
   { value: 'SIMPLE', label: '单轮' },
   { value: 'MULTI_TURN', label: '记忆' },
@@ -27,25 +28,20 @@ export function ChatInput() {
   const stop = useChatStore((s) => s.stop)
 
   const [text, setText] = useState('')
-  const [model, setModel] = useState<string>(() => localStorage.getItem(STORAGE_KEYS.lastModel) ?? '')
+  const [modelId, setModelId] = useState<string>(() => localStorage.getItem(STORAGE_KEYS.lastModel) ?? '')
   const [mode, setMode] = useState<ChatMode>('SIMPLE')
   const [rag, setRag] = useState(false)
   const [thinking, setThinking] = useState(false)
   const taRef = useRef<HTMLTextAreaElement>(null)
 
-  // 默认模型：首个可用候选
-  useEffect(() => {
-    if (!model && models?.length) {
-      const first = models.find((m) => m.available) ?? models[0]
-      if (first) setModel(first.id)
-    }
-  }, [models, model])
+  // 默认模型渲染期推导（首个可用候选）：未手动选择过时随 models 到位自动生效，
+  // 不用 effect 回写 state（react-hooks/set-state-in-effect 级联渲染）
+  const firstAvailable = models?.find((m) => m.available) ?? models?.[0]
+  const model = modelId || firstAvailable?.id || ''
 
-  // 记忆模式关 → 思考开关自动关且不可用（ChatRequest.isThinkingEnabled 仅 MULTI_TURN）
+  // 记忆模式关 → 思考开关自动关且不可用（ChatRequest.isThinkingEnabled 仅 MULTI_TURN）；
+  // 重置放在模式切换事件里而不是 effect
   const canThink = mode === 'MULTI_TURN'
-  useEffect(() => {
-    if (!canThink) setThinking(false)
-  }, [canThink])
 
   // 自动高度
   useEffect(() => {
@@ -56,7 +52,7 @@ export function ChatInput() {
   }, [text])
 
   function persistModel(id: string) {
-    setModel(id)
+    setModelId(id)
     localStorage.setItem(STORAGE_KEYS.lastModel, id)
   }
 
@@ -84,7 +80,14 @@ export function ChatInput() {
         <div className="mb-2 flex flex-wrap items-center gap-2">
           <ModelSelector value={model} onChange={persistModel} />
 
-          <Select value={mode} onValueChange={(v) => setMode(v as ChatMode)}>
+          <Select
+            value={mode}
+            onValueChange={(v) => {
+              const next = v as ChatMode
+              setMode(next)
+              if (next !== 'MULTI_TURN') setThinking(false)
+            }}
+          >
             <SelectTrigger className="h-9 w-[88px]">
               <SelectValue />
             </SelectTrigger>

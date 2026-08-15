@@ -26,7 +26,7 @@ export function TopBar({ shell }: TopBarProps) {
       {/* 左：Logo + 产品名 */}
       <button
         className="flex items-center gap-2 outline-none focus-visible:shadow-focus rounded-md"
-        onClick={() => navigate(shell === 'admin' ? '/admin' : '/app/chat')}
+        onClick={() => void navigate(shell === 'admin' ? '/admin' : '/app/chat')}
       >
         <Logo size={28} />
         <span className="text-md font-semibold text-fg hidden sm:inline">{APP.name}</span>
@@ -37,11 +37,11 @@ export function TopBar({ shell }: TopBarProps) {
       {/* 中/右：前后台切换（仅 ADMIN 可见） */}
       {showAdminEntry &&
         (shell === 'app' ? (
-          <Button variant="ghost" size="sm" onClick={() => navigate('/admin')}>
+          <Button variant="ghost" size="sm" onClick={() => void navigate('/admin')}>
             <Settings className="size-4" /> 后台管理
           </Button>
         ) : (
-          <Button variant="ghost" size="sm" onClick={() => navigate('/app/chat')}>
+          <Button variant="ghost" size="sm" onClick={() => void navigate('/app/chat')}>
             <ArrowLeft className="size-4" /> 返回前台
           </Button>
         ))}

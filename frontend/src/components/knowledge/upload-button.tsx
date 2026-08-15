@@ -122,7 +122,7 @@ export function UploadButton({
               void chunkUploadComplete(uploadId, fileChecksum).catch(() => {})
             }
           }
-          queryClient.invalidateQueries({ queryKey: docKeys.all })
+          void queryClient.invalidateQueries({ queryKey: docKeys.all })
           onDone?.()
         } catch (e) {
           setTasks((t) => t.map((x) => (x.id === taskId ? { ...x, status: 'error', error: (e as Error).message } : x)))
@@ -130,7 +130,7 @@ export function UploadButton({
         }
       }
     },
-    [teamId, replaceDocumentId, onDone],
+    [teamId, replaceDocumentId, onDone, scheduleDismiss],
   )
 
   function cancel(task: UploadTask) {

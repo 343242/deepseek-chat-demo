@@ -71,12 +71,12 @@ export function ConversationList() {
 
   function openConv(c: ConversationSummary) {
     reset()
-    navigate(`/app/chat/${c.conversationId}`)
+    void navigate(`/app/chat/${c.conversationId}`)
   }
 
   function newChat() {
     reset()
-    navigate('/app/chat')
+    void navigate('/app/chat')
   }
 
   function doRename(c: ConversationSummary) {
@@ -199,7 +199,7 @@ export function ConversationList() {
         onConfirm={async () => {
           if (toDelete) {
             await del.mutateAsync(toDelete.conversationId)
-            if (toDelete.conversationId === conversationId) navigate('/app/chat')
+            if (toDelete.conversationId === conversationId) void navigate('/app/chat')
           }
         }}
       />

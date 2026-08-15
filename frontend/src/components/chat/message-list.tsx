@@ -52,7 +52,7 @@ export function MessageList() {
       setLoadingMore(false)
     }
   }, [conversationId, messages, prepend])
-  const topRef = useInfiniteScroll({ onLoadMore: loadMore, hasMore, loading: loadingMore })
+  const topRef = useInfiniteScroll({ onLoadMore: () => void loadMore(), hasMore, loading: loadingMore })
 
   if (messages.length === 0) {
     return (

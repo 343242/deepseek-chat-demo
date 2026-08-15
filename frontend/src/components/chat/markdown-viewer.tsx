@@ -55,7 +55,7 @@ function CodeBlock({ children }: { children: React.ReactNode }) {
       <div className="flex items-center justify-between border-b border-white/10 px-3 py-1.5">
         <span className="text-xs font-medium text-neutral-400">{lang || 'text'}</span>
         <button
-          onClick={() => copy(text)}
+          onClick={() => void copy(text)}
           className="flex items-center gap-1 text-xs text-neutral-400 transition-colors hover:text-white"
           type="button"
         >

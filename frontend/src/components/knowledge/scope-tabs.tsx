@@ -17,7 +17,7 @@ export function ScopeTabs({ scope, activeTeamId }: { scope: 'personal' | 'team';
     <div className="flex items-center gap-2">
       <Tabs value={scope}>
         <TabsList>
-          <TabsTrigger value="personal" onClick={() => navigate('/app/knowledge/personal')}>
+          <TabsTrigger value="personal" onClick={() => void navigate('/app/knowledge/personal')}>
             个人文档
           </TabsTrigger>
           {scope === 'team' ? (
@@ -40,7 +40,7 @@ export function ScopeTabs({ scope, activeTeamId }: { scope: 'personal' | 'team';
         <DropdownMenuContent align="start">
           {teams?.length === 0 && <DropdownMenuItem disabled>暂无团队</DropdownMenuItem>}
           {teams?.map((t) => (
-            <DropdownMenuItem key={t.id} onClick={() => navigate(`/app/knowledge/team/${t.id}`)}>
+            <DropdownMenuItem key={t.id} onClick={() => void navigate(`/app/knowledge/team/${t.id}`)}>
               {t.name}
             </DropdownMenuItem>
           ))}

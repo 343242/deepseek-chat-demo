@@ -45,7 +45,7 @@ export function AppDataLoader({ children }: { children: React.ReactNode }) {
     const handler = () => {
       useAuthStore.getState().clear()
       const redirect = encodeURIComponent(window.location.pathname + window.location.search)
-      navigate(`/auth/login?redirect=${redirect}`, { replace: true })
+      void navigate(`/auth/login?redirect=${redirect}`, { replace: true })
     }
     window.addEventListener('srag:unauthorized', handler)
     return () => window.removeEventListener('srag:unauthorized', handler)

@@ -43,11 +43,11 @@ export function UserMenu() {
             <span className="text-xs font-normal text-subtle">{user.email || username}</span>
           </DropdownMenuLabel>
           <DropdownMenuSeparator />
-          <DropdownMenuItem onClick={() => navigate('/app/account')}>
+          <DropdownMenuItem onClick={() => void navigate('/app/account')}>
             <UserIcon /> 我的账号
           </DropdownMenuItem>
           {isAdmin() && (
-            <DropdownMenuItem onClick={() => navigate('/admin')}>
+            <DropdownMenuItem onClick={() => void navigate('/admin')}>
               <Settings /> 后台管理
             </DropdownMenuItem>
           )}
@@ -71,7 +71,7 @@ export function UserMenu() {
         confirmText="退出"
         onConfirm={async () => {
           await logout.mutateAsync().catch(() => {})
-          navigate('/auth/login', { replace: true })
+          void navigate('/auth/login', { replace: true })
         }}
       />
     </>

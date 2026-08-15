@@ -16,7 +16,7 @@ export function toRawConversationId(isolatedId: string | null | undefined, userI
   }
   // 兜底：尝试剥离首个 "u_<digits>_" 前缀
   const m = isolatedId.match(/^u_(\d+)_(.+)$/)
-  return m ? m[2] : isolatedId
+  return m?.[2] ?? isolatedId
 }
 
 /** raw → isolated（已知 userId 时拼前缀） */

@@ -32,7 +32,6 @@ export async function sha256Hex(data: Blob | ArrayBuffer | Uint8Array): Promise<
     if (typeof data.stream === 'function') {
       // 现代浏览器/Node：流式分块读取（大文件不整块载入内存）
       const reader = data.stream().getReader()
-      // eslint-disable-next-line no-constant-condition
       while (true) {
         const { done, value } = await reader.read()
         if (done) break

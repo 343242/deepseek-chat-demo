@@ -15,7 +15,7 @@ import { SliderCaptcha, type SliderCaptchaHandle } from '@/components/auth/slide
 import { useLogin, fetchMe, authKeys } from '@/api/auth'
 import { useAuthStore } from '@/stores/auth-store'
 import { ROLE, ERROR_CODE } from '@/lib/constants'
-import { ApiError } from '@/types/api'
+import type { ApiError } from '@/types/api'
 
 const schema = z.object({
   username: z.string().min(1, '用户名不能为空'),
@@ -62,11 +62,11 @@ export default function LoginPage() {
     pendingNavRef.current = false
     const redirect = safeRedirect(params.get('redirect'))
     if (redirect) {
-      navigate(redirect, { replace: true })
+      void navigate(redirect, { replace: true })
       return
     }
     const isAdmin = user.roles?.includes(ROLE.ADMIN)
-    navigate(isAdmin ? '/admin' : '/app/chat', { replace: true })
+    void navigate(isAdmin ? '/admin' : '/app/chat', { replace: true })
   }, [user, navigate, params])
 
   // 表单提交：不直接登录，而是暂存凭据并弹出验证码（修复 #1）
@@ -116,7 +116,7 @@ export default function LoginPage() {
   return (
     <>
       <form
-        onSubmit={handleSubmit(openCaptcha)}
+        onSubmit={(e) => void handleSubmit(openCaptcha)(e)}
         className="rounded-3xl border border-line bg-surface p-8 shadow-lg"
         autoComplete="on"
       >
@@ -202,11 +202,11 @@ export default function LoginPage() {
           )}
 
           <div className="flex flex-col items-center gap-3 py-2">
-            <SliderCaptcha
-              ref={captchaRef}
-              onVerified={onVerified}
-              onReset={() => {}}
-            />
+              <SliderCaptcha
+                ref={captchaRef}
+                onVerified={(id, code) => void onVerified(id, code)}
+                onReset={() => {}}
+              />
             {submitting && <p className="text-sm text-subtle">正在登录…</p>}
           </div>
         </DialogContent>

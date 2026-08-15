@@ -146,7 +146,7 @@ export const useChatStore = create<ChatState>((set, get) => {
               }))
             }
             // 新会话首条消息完成 → 刷新会话列表（wireframe §2.6）
-            queryClient.invalidateQueries({ queryKey: convKeys.list })
+            void queryClient.invalidateQueries({ queryKey: convKeys.list })
           },
         },
       )

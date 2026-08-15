@@ -36,7 +36,7 @@ export function useLogin() {
     onSuccess: () => {
       // FE-010：不在此写 store；login-page 登录后会 setQueryData(authKeys.me) 温暖订阅源，
       // 由 AppDataLoader 订阅链路统一 setUser。
-      qc.invalidateQueries({ queryKey: authKeys.me })
+      void qc.invalidateQueries({ queryKey: authKeys.me })
     },
   })
 }
@@ -45,7 +45,7 @@ export function useRegister() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (req: RegisterRequest) => api.post<LoginResponse>('/auth/register', req),
-    onSuccess: () => qc.invalidateQueries({ queryKey: authKeys.me }),
+    onSuccess: () => void qc.invalidateQueries({ queryKey: authKeys.me }),
   })
 }
 

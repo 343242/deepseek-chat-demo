@@ -27,7 +27,7 @@ export function useInfiniteScroll({
     const el = sentinelRef.current
     if (!el || !hasMore) return
     const ob = new IntersectionObserver((entries) => {
-      if (entries[0].isIntersecting && !loading) onLoadMore()
+      if (entries[0]?.isIntersecting && !loading) onLoadMore()
     })
     ob.observe(el)
     return () => ob.disconnect()

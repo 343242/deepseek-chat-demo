@@ -44,7 +44,7 @@ export function AppSidebar({ conversationList }: { conversationList?: React.Reac
 
       {/* 下区：用户身份（点击进账号设置；完整菜单在 TopBar） */}
       <button
-        onClick={() => navigate('/app/account')}
+        onClick={() => void navigate('/app/account')}
         className="flex items-center gap-2.5 px-3 py-2.5 text-left transition-colors hover:bg-hover focus-visible:shadow-focus"
       >
         <Avatar className="size-7">

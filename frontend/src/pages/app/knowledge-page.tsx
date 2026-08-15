@@ -22,7 +22,7 @@ export default function KnowledgePage() {
   // SSE 订阅：后端文档状态变更（解析/分块/向量化/完成/失败）实时推送，无需手动刷新
   useEffect(() => {
     const es = subscribeDocumentStatus(() =>
-      queryClient.invalidateQueries({ queryKey: docKeys.all }),
+      void queryClient.invalidateQueries({ queryKey: docKeys.all }),
     )
     return () => es.close()
   }, [queryClient])

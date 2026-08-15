@@ -30,8 +30,8 @@ describe('flattenMessages', () => {
   it('剥离 children：扁平元素不再携带嵌套子消息', () => {
     const tree = [user(1, 'q', 't0', [assistant(2, 1, 'a', 't1')])]
     const flat = flattenMessages(tree)
-    expect(flat[0].children).toBeUndefined()
-    expect(flat[1].children).toBeUndefined()
+    expect(flat[0]?.children).toBeUndefined()
+    expect(flat[1]?.children).toBeUndefined()
   })
 
   it('多分支（重新生成）：同 parent 的多条 assistant 按 createdAt 升序', () => {

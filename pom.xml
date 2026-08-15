@@ -22,6 +22,9 @@
         <spring-ai.version>1.1.6</spring-ai.version>
         <redisson.version>3.52.0</redisson.version>
         <mcp.sdk.version>2.0.0</mcp.sdk.version>
+        <okhttp.version>5.4.0</okhttp.version>
+        <!-- okhttp-jvm 5.4.0 编译于 Kotlin 2.1.21；覆盖 Boot BOM 管理的 1.9.25，避免 stdlib 被仲裁降级 -->
+        <kotlin.version>2.1.21</kotlin.version>
         <argLine></argLine>
     </properties>
 
@@ -323,11 +326,11 @@
             <version>3.18.0</version>
         </dependency>
 
-        <!-- OkHttp 4.x (MinIO requires JVM classes; okhttp 5.x ships only KMP metadata jar) -->
+        <!-- OkHttp 5.x：根构件 okhttp 是 KMP 空壳 jar（0 class），Maven 消费者必须使用 JVM 变体构件 -->
         <dependency>
             <groupId>com.squareup.okhttp3</groupId>
-            <artifactId>okhttp</artifactId>
-            <version>4.12.0</version>
+            <artifactId>okhttp-jvm</artifactId>
+            <version>${okhttp.version}</version>
         </dependency>
 
         <!-- Log4j 2（替代 Logback） -->

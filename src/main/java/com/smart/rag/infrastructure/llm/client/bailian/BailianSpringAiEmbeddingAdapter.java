@@ -3,8 +3,10 @@ package com.smart.rag.infrastructure.llm.client.bailian;
 import com.smart.rag.infrastructure.llm.EmbeddingType;
 import org.jspecify.annotations.NonNull;
 import org.springframework.ai.document.Document;
+import org.springframework.ai.embedding.BatchingStrategy;
 import org.springframework.ai.embedding.Embedding;
 import org.springframework.ai.embedding.EmbeddingModel;
+import org.springframework.ai.embedding.EmbeddingOptions;
 import org.springframework.ai.embedding.EmbeddingRequest;
 import org.springframework.ai.embedding.EmbeddingResponse;
 
@@ -31,7 +33,7 @@ import java.util.List;
  * 本适配器在方法签名上对齐 Spring AI，内部委托给 SPI 的 {@code dimension()}。
  * <p>
  * 使用方式：{@code new BailianSpringAiEmbeddingAdapter(bailianEmbeddingClient)}
- * 或通过 {@link com.smart.rag.infrastructure.llm.config.LlmAutoConfiguration#primaryEmbeddingModel} 自动装配。
+ * 或通过 {@link com.smart.rag.infrastructure.llm.config.LlmAutoConfiguration#embeddingModel} 自动装配。
  */
 public class BailianSpringAiEmbeddingAdapter implements EmbeddingModel {
 
@@ -75,9 +77,40 @@ public class BailianSpringAiEmbeddingAdapter implements EmbeddingModel {
     }
 
     /**
+     * 批量嵌入 {@link Document}（按 DOCUMENT 类型编码）。
+     * <p>
+     * <b>chunk 写库主路径</b>：Spring AI {@code PgVectorStore.doAdd} 经
+     * {@code embed(documents, options, batchingStrategy)} 批量向量化入库。
+     * 接口默认实现会把文档文本转成 {@link EmbeddingRequest} 走 {@link #call()}（QUERY 编码），
+     * 而百炼非对称检索要求语料侧使用 {@code text_type=document}（官方文档：查询短语设置 query，
+     * 感兴趣的文档设置 document），因此本适配器覆写为 DOCUMENT 批量编码。
+     * <p>
+     * 保留调用方的 {@link BatchingStrategy} 分批（如 TokenCountBatchingStrategy），
+     * 更细粒度的 API 行数上限由底层客户端按候选 {@code params.batch-size} 再次切分。
+     * {@link EmbeddingOptions} 被忽略——维度始终由候选配置 {@code dimension} 决定，
+     * 保证与向量库 schema 一致。
+     */
+    @Override
+    public @NonNull List<float@NonNull []> embed(@NonNull List<Document> documents,
+                                                  @NonNull EmbeddingOptions options,
+                                                  @NonNull BatchingStrategy batchingStrategy) {
+        List<float[]> embeddings = new ArrayList<>(documents.size());
+        for (List<Document> batch : batchingStrategy.batch(documents)) {
+            List<String> texts = batch.stream().map(this::getEmbeddingContent).toList();
+            embeddings.addAll(delegate.embedBatch(texts, EmbeddingType.DOCUMENT));
+        }
+        if (embeddings.size() != documents.size()) {
+            throw new IllegalStateException(
+                "Embeddings must have the same number as that of the documents: "
+                    + embeddings.size() + " != " + documents.size());
+        }
+        return embeddings;
+    }
+
+    /**
      * 批量嵌入调用入口（{@code EmbeddingRequest} 携带 instructions 列表）。
      * <p>
-     * 走 QUERY 编码路径（与原行为一致，用于 answer-relevance 等场景），
+     * 走 QUERY 编码路径（用于 answer-relevance 等查询侧场景），
      * 每个子批次由底层客户端通过结构化并发并行执行。
      */
     @Override

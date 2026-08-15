@@ -3,7 +3,7 @@
 > 基于 context-mode MCP 架构的上下文节省与会话连续性优化
 > 目标文档：AGENTIC-RAG-DESIGN.md
 > 状态：Draft · Phase 2 补充
-> 前置依赖：PostgreSQL 18 + PGvector 0.8.2 + pg_jieba + Redis 8.2 + Spring AI 1.1.6
+> 前置依赖：PostgreSQL 18 + PGvector 0.8.6 + pg_jieba + Redis 8.2 + Spring AI 1.1.6
 
 ---
 
@@ -33,7 +33,7 @@
 
 | 组件 | 版本 | 对优化的影响 |
 |------|------|-------------|
-| PostgreSQL + PGvector | 18 + 0.8.2 | 摘要提取在 SQL 层完成（`ts_headline` + pg_jieba），无需应用层处理 |
+| PostgreSQL + PGvector | 18 + 0.8.6 | 摘要提取在 SQL 层完成（`ts_headline` + pg_jieba），无需应用层处理 |
 | Redis | 8.2 | V1 不使用 — 会话事件仅存 PostgreSQL，避免双写复杂度 |
 | Spring AI ChatMemory | 1.1.6 | JDBC + Redis 双层，compaction 时截断早期消息，需在截断前保存 Agent 状态 |
 | 多 Provider 路由 | DeepSeek / 智谱 / MiniMax | IntentClassifier 复用 `ModelRouter`，用最便宜的模型分类 |

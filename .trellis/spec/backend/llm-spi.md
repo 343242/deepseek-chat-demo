@@ -118,7 +118,7 @@ ChatClient chatClient = ChatClient.builder(new ChatModelAdapter(chatCapable)).bu
 | `ChatModelAdapter` | ❌ 禁止注入 | 由 `RewriteClientResolver` 内部 new |
 | `ChatClient.Builder`（Spring AI 自动配置） | ❌ **绝对禁止** | 用 `RewriteClientResolver` 或自建模式 |
 | `ChatModel`（Spring AI bean） | ❌ **绝对禁止** | 同上 |
-| `EmbeddingModel`（Spring AI bean） | ✅ 允许（基础设施层已通过 `LlmAutoConfiguration.primaryEmbeddingModel` 提供 `@Primary`） | — |
+| `EmbeddingModel`（Spring AI bean） | ✅ 允许（基础设施层已通过 `LlmAutoConfiguration.embeddingModel` 提供；`@ConditionalOnMissingBean` 保证容器内唯一候选，无需 `@Primary`） | — |
 
 ### 返回类型契约
 

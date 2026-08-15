@@ -80,8 +80,8 @@
 | Spring AI | 1.1.6 | AI 模型集成（百炼 / DeepSeek / 智谱 / MiniMax，统一 LLM SPI 适配） |
 | MyBatis-Plus | 3.5.16 | ORM 框架 |
 | PostgreSQL | 18 | 主数据库 |
-| PGvector | 0.8.2 | 向量数据库（HNSW 索引） |
-| pg_jieba | — | 中文分词（BM25 全文检索） |
+| PGvector | 0.8.6 | 向量数据库（HNSW 索引） |
+| pg_jieba | 1.1.1 + cppjieba 5.6.7 | 中文分词（BM25 全文检索，cppjieba 为 Dockerfile 覆盖钉住的版本） |
 | Redis | 8.2 | 缓存 / Token 存储 / 权限缓存 / 会话记忆 |
 | MinIO | 9.0.0 | 对象存储（文档管理） |
 | Flyway | 随 Boot | 数据库版本化迁移（14 个版本） |
@@ -411,7 +411,7 @@ gunzip -c backup-2026-07-19.sql.gz | docker compose -f docker-compose.prod.yml e
 | [团队模块审查 (Mimo)](docs/reviews/2026-05-17-team-module-review.md) | Mimo 双模型交叉审查 |
 | [Chat 模块审查](docs/reviews/2026-05-18-chat-module-review.md) | 六维深度审查（4B/6H/13M/9L），5 Phase 全部修复 |
 
-**外部参考：** [Spring AI 1.1.6](https://docs.spring.io/spring-ai/docs/1.1.6/api/) · [DeepSeek API](https://api-docs.deepseek.com/) · [智谱 AI API](https://docs.bigmodel.cn/cn/api/introduction) · [MiniMax API](https://platform.minimaxi.com/docs/api-reference/api-overview) · [PGvector 0.8.2](https://github.com/pgvector/pgvector) · [H-RAG (arXiv:2605.00631)](https://arxiv.org/abs/2605.00631)
+**外部参考：** [Spring AI 1.1.6](https://docs.spring.io/spring-ai/docs/1.1.6/api/) · [DeepSeek API](https://api-docs.deepseek.com/) · [智谱 AI API](https://docs.bigmodel.cn/cn/api/introduction) · [MiniMax API](https://platform.minimaxi.com/docs/api-reference/api-overview) · [PGvector 0.8.6](https://github.com/pgvector/pgvector) · [H-RAG (arXiv:2605.00631)](https://arxiv.org/abs/2605.00631)
 
 ---
 

@@ -13,7 +13,6 @@ import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.context.annotation.Primary;
 import org.springframework.lang.Nullable;
 
 /**
@@ -21,7 +20,7 @@ import org.springframework.lang.Nullable;
  * <p>
  * 职责：
  * <ol>
- *   <li>将默认 embedding 客户端注册为 {@code @Primary EmbeddingModel}，
+ *   <li>将默认 embedding 客户端注册为容器内唯一的 {@code EmbeddingModel} bean，
  *       供 PgVectorStore + AnswerRelevanceScorer 直接注入使用。</li>
  * </ol>
  * <p>
@@ -54,7 +53,7 @@ public class LlmAutoConfiguration {
     }
 
     /**
-     * 将默认 embedding 客户端注册为 {@code @Primary EmbeddingModel}。
+     * 将默认 embedding 客户端注册为 {@code EmbeddingModel}。
      * <p>
      * PgVectorStore 和 AnswerRelevanceScorer 需要 EmbeddingModel bean。
      * SPI 客户端只实现 EmbeddingCapable，需通过适配器桥接到 Spring AI。
@@ -62,23 +61,25 @@ public class LlmAutoConfiguration {
      *   <li>{@link BailianEmbeddingClient} → 包装为 {@link BailianSpringAiEmbeddingAdapter}</li>
      *   <li>其他 EmbeddingModel 实现 → 直接返回</li>
      * </ul>
+     * <p>
+     * {@code @ConditionalOnMissingBean} 保证容器内至多一个 EmbeddingModel：
+     * 若外部已注册其他实现则本 bean 退避，否则本 bean 是唯一候选，按类型注入无需 {@code @Primary}。
      */
     @Bean
-    @Primary
     @ConditionalOnMissingBean(EmbeddingModel.class)
-    public EmbeddingModel primaryEmbeddingModel(LlmClientRegistry registry) {
+    public EmbeddingModel embeddingModel(LlmClientRegistry registry) {
         var client = registry.getDefault(LlmCapability.EMBEDDING);
         Object target = client instanceof AbstractResilientClient<?> arc ? arc.getDelegate() : client;
         if (target instanceof BailianSpringAiEmbeddingAdapter adapter) {
-            log.info("Registered BailianSpringAiEmbeddingAdapter as @Primary EmbeddingModel");
+            log.info("Registered BailianSpringAiEmbeddingAdapter as EmbeddingModel");
             return adapter;
         }
         if (target instanceof BailianEmbeddingClient bec) {
-            log.info("Wrapping BailianEmbeddingClient with BailianSpringAiEmbeddingAdapter as @Primary EmbeddingModel");
+            log.info("Wrapping BailianEmbeddingClient with BailianSpringAiEmbeddingAdapter as EmbeddingModel");
             return new BailianSpringAiEmbeddingAdapter(bec);
         }
         if (target instanceof EmbeddingModel em) {
-            log.info("Registered {} as @Primary EmbeddingModel", target.getClass().getSimpleName());
+            log.info("Registered {} as EmbeddingModel", target.getClass().getSimpleName());
             return em;
         }
         throw new IllegalStateException(

@@ -195,11 +195,12 @@ public class HybridSearchService {
             if (log.isInfoEnabled()) {
                 log.info("Path recall: path={}, ok={}, count={}, chunks={}",
                         path.name(), success, docs.size(),
-                        documents.stream().map(d ->
-                            "[" + d.get("rank") + "]" + d.get("chunkId")
-                            + " doc=" + d.getOrDefault("documentId", "?")
-                            + " file=" + d.getOrDefault("fileName", "?"))
-                        .toList());
+                            documents.stream().map(d ->
+                                "[" + d.get("rank") + "]" + d.get("chunkId")
+                                + " score=" + d.getOrDefault("score", "?")
+                                + " doc=" + d.getOrDefault("documentId", "?")
+                                + " file=" + d.getOrDefault("fileName", "?"))
+                            .toList());
             }
 
             if (traceRecorder != null) {

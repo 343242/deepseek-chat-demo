@@ -28,13 +28,14 @@ import java.util.*;
  * 仅实现 {@link EmbeddingCapable}（SPI 层）。需要 Spring AI {@code EmbeddingModel}
  * 视图的调用方（PgVectorStore、AnswerRelevanceScorer 等）应通过
  * {@link BailianSpringAiEmbeddingAdapter} 包装本客户端，由
- * {@link com.smart.rag.infrastructure.llm.config.LlmAutoConfiguration#primaryEmbeddingModel}
+ * {@link com.smart.rag.infrastructure.llm.config.LlmAutoConfiguration#embeddingModel}
  * 自动装配。
  */
 public class BailianEmbeddingClient extends AbstractEmbeddingClient {
 
     private static final Logger log = LoggerFactory.getLogger(BailianEmbeddingClient.class);
-    private static final int MAX_BATCH_SIZE = 10;
+    /** 默认单请求行数上限：百炼同步接口 text-embedding-v3/v4 及 Qwen3-Embedding 系列均为 10 行 */
+    private static final int DEFAULT_BATCH_SIZE = 10;
     private static final int MAX_CONCURRENCY = 4;
     private static final int CONNECT_TIMEOUT_SECONDS = 10;
     private static final int READ_TIMEOUT_SECONDS = 30;
@@ -44,6 +45,8 @@ public class BailianEmbeddingClient extends AbstractEmbeddingClient {
     private final HttpClientFactory.HttpHandles http;
     private final ScopedTasks scopedTasks;
     private final float[] zeroVector;
+    /** 单请求行数上限，来自候选 params.batch-size（如 qwen3.7-text-embedding 官方上限 20） */
+    private final int batchSize;
 
     private final String baseUrl;
     private final String endpoint;
@@ -60,12 +63,36 @@ public class BailianEmbeddingClient extends AbstractEmbeddingClient {
         this.scopedTasks = scopedTasks;
         this.objectMapper = new ObjectMapper();
         this.zeroVector = new float[candidate.dimension()];
+        this.batchSize = resolveBatchSize(candidate.params());
         this.http = HttpClientFactory.buildRestClient(baseUrl, apiKey,
             Duration.ofSeconds(CONNECT_TIMEOUT_SECONDS), Duration.ofSeconds(READ_TIMEOUT_SECONDS));
         this.restClient = http.restClient();
 
-        log.info("BailianEmbeddingClient initialized: model={}, dimension={}, candidate={}, baseUrl={}",
-            candidate.model(), candidate.dimension(), candidate.id(), baseUrl);
+        log.info("BailianEmbeddingClient initialized: model={}, dimension={}, candidate={}, batchSize={}, baseUrl={}",
+            candidate.model(), candidate.dimension(), candidate.id(), batchSize, baseUrl);
+    }
+
+    /**
+     * 从候选 params 解析单请求行数上限。
+     * <p>
+     * 百炼各模型官方上限不同（qwen3.7-text-embedding 为 20，text-embedding-v3/v4 为 10），
+     * 由候选显式声明 {@code params.batch-size}，未声明时取 {@link #DEFAULT_BATCH_SIZE}。
+     * 非法值（非正数、无法解析）同样回退默认值——批量上限只影响吞吐，fail-fast 无收益。
+     */
+    static int resolveBatchSize(Map<String, Object> params) {
+        Object value = params == null ? null : params.get("batch-size");
+        if (value instanceof Number number && number.intValue() > 0) {
+            return number.intValue();
+        }
+        if (value instanceof String s) {
+            try {
+                int parsed = Integer.parseInt(s.trim());
+                if (parsed > 0) return parsed;
+            } catch (NumberFormatException ignored) {
+                // 回退默认值
+            }
+        }
+        return DEFAULT_BATCH_SIZE;
     }
 
     // ======================== EmbeddingCapable (SPI) ========================
@@ -83,7 +110,8 @@ public class BailianEmbeddingClient extends AbstractEmbeddingClient {
     public List<float[]> embedBatch(List<String> texts, EmbeddingType type) {
         if (texts == null || texts.isEmpty()) return List.of();
         String textType = (type == EmbeddingType.DOCUMENT) ? "document" : "query";
-        float[][][] batches = executeBatchesConcurrently(texts, textType);
+        // 批量 QUERY 与单条 embed 保持一致携带 instruct（官方文档：instruct 辅助 query 侧理解，约 +1%~5%）
+        float[][][] batches = executeBatchesConcurrently(texts, textType, type == EmbeddingType.QUERY);
         List<float[]> results = new ArrayList<>(texts.size());
         for (float[][] batch : batches) {
             results.addAll(Arrays.asList(batch));
@@ -98,10 +126,10 @@ public class BailianEmbeddingClient extends AbstractEmbeddingClient {
 
     // ======================== Concurrent Batch Execution ========================
 
-    private float[][][] executeBatchesConcurrently(List<String> texts, String textType) {
-        int batchCount = (texts.size() + MAX_BATCH_SIZE - 1) / MAX_BATCH_SIZE;
+    private float[][][] executeBatchesConcurrently(List<String> texts, String textType, boolean withInstruct) {
+        int batchCount = (texts.size() + batchSize - 1) / batchSize;
         if (batchCount <= 1) {
-            return new float[][][] { callApiBatch(texts, textType) };
+            return new float[][][] { callApiBatch(texts, textType, withInstruct) };
         }
 
         float[][][] batchResults = new float[batchCount][][];
@@ -111,11 +139,11 @@ public class BailianEmbeddingClient extends AbstractEmbeddingClient {
             .build();
 
         try (TaskScope scope = scopedTasks.open("embed-batch", options)) {
-            for (int i = 0; i < texts.size(); i += MAX_BATCH_SIZE) {
-                List<String> batch = texts.subList(i, Math.min(i + MAX_BATCH_SIZE, texts.size()));
-                int idx = i / MAX_BATCH_SIZE;
+            for (int i = 0; i < texts.size(); i += batchSize) {
+                List<String> batch = texts.subList(i, Math.min(i + batchSize, texts.size()));
+                int idx = i / batchSize;
                 scope.fork("batch-" + idx, () -> {
-                    batchResults[idx] = callApiBatch(batch, textType);
+                    batchResults[idx] = callApiBatch(batch, textType, withInstruct);
                     return null;
                 });
             }
@@ -132,8 +160,8 @@ public class BailianEmbeddingClient extends AbstractEmbeddingClient {
         return extractFirst(response);
     }
 
-    private float[][] callApiBatch(List<String> texts, String textType) {
-        JsonNode response = doPost(texts, textType, false);
+    private float[][] callApiBatch(List<String> texts, String textType, boolean withInstruct) {
+        JsonNode response = doPost(texts, textType, withInstruct);
         return extractAll(response);
     }
 
@@ -175,13 +203,27 @@ public class BailianEmbeddingClient extends AbstractEmbeddingClient {
         return toFloatArray(embeddings.get(0).path("embedding"));
     }
 
-    private float[][] extractAll(JsonNode response) {
+    /**
+     * 解析批量响应。
+     * <p>
+     * 官方响应契约：{@code output.embeddings[i].text_index} 为该向量对应输入数组的索引值
+     * （正常情况与数组顺序一致）。按 {@code text_index} 归位并对越界/缺失做防御回退，
+     * 避免乱序返回时向量与文本错配——对向量库是静默数据损坏。
+     */
+    float[][] extractAll(JsonNode response) {
         JsonNode embeddings = response.path("output").path("embeddings");
         if (!embeddings.isArray() || embeddings.isEmpty()) throw emptyResponse();
 
         float[][] result = new float[embeddings.size()][];
         for (int i = 0; i < embeddings.size(); i++) {
-            result[i] = toFloatArray(embeddings.get(i).path("embedding"));
+            JsonNode node = embeddings.get(i);
+            int idx = node.path("text_index").asInt(i);
+            if (idx < 0 || idx >= result.length) idx = i;
+            result[idx] = toFloatArray(node.path("embedding"));
+        }
+        for (float[] vector : result) {
+            if (vector == null) throw new RemoteException(RemoteErrorCode.LLM_RESPONSE_PARSE_ERROR,
+                "DashScope embedding response text_index misaligned with input texts");
         }
         return result;
     }

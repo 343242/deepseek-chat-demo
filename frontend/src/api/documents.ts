@@ -130,3 +130,27 @@ export function chunkUploadDelete(uploadId: string) {
 export function shouldChunk(fileSize: number): boolean {
   return fileSize > UPLOAD_LIMITS.chunkThreshold
 }
+
+/* ============ 原文件预览 / 下载（KB-2 / KB-3，design §1 · §4.3） ============ */
+
+/** 预览端点导航 URL —— 只能作为 sandbox iframe 的 src 或浏览器导航打开，不走 apiFetch：
+ *  iframe 导航无法携带 Authorization 头，鉴权依赖 HttpOnly access_token Cookie（同源自动携带）。
+ *  禁止 fetch 后注入主应用 DOM 或改用 srcdoc / blob URL（会使服务端 CSP 隔离失效）。 */
+export function documentPreviewUrl(id: number): string {
+  return `/api/documents/${id}/preview`
+}
+
+/** 下载端点导航 URL —— attachment + 服务端 UTF-8 ContentDisposition 文件名，全类型 */
+export function documentDownloadUrl(id: number): string {
+  return `/api/documents/${id}/download`
+}
+
+/** 触发原文件下载：同源 <a> 点击导航，Cookie 自动携带；响应为 attachment，页面不跳转 */
+export function downloadDocument(id: number): void {
+  const a = document.createElement('a')
+  a.href = documentDownloadUrl(id)
+  a.rel = 'noopener'
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+}

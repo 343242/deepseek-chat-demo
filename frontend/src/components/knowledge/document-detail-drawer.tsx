@@ -5,18 +5,20 @@ import {
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
+import { Tooltip, TooltipTrigger, TooltipContent } from '@/components/ui/tooltip'
 import { StatusBadge } from '@/components/common/status-badge'
 import { ConfirmDialog } from '@/components/common/confirm-dialog'
 import { UploadButton } from './upload-button'
 import { FileTypeIcon } from './file-icon'
+import { DocumentPreviewDialog } from './document-preview-dialog'
 import {
   useDocumentDetail, useDocumentChunks, useDocumentHistory, useDeleteDocument,
+  downloadDocument,
   docKeys,
 } from '@/api/documents'
 import { queryClient } from '@/lib/query-client'
 import { ETL_STATUS_META } from '@/lib/status-meta'
 import { formatFileSize, time } from '@/lib/format'
-import { toast } from 'sonner'
 import { Download, Eye, Trash2, AlertCircle, FileText } from 'lucide-react'
 
 export function DocumentDetailDrawer({
@@ -34,6 +36,8 @@ export function DocumentDetailDrawer({
   const del = useDeleteDocument()
   const [confirmDel, setConfirmDel] = useState(false)
 
+  const [previewOpen, setPreviewOpen] = useState(false)
+
   if (!doc) {
     return (
       <Sheet open={open} onOpenChange={onOpenChange}>
@@ -43,14 +47,12 @@ export function DocumentDetailDrawer({
   }
   const meta = ETL_STATUS_META[doc.status]
 
-  async function preview() {
-    // 🔶 真阻塞·mock（KB-2）：后端 GET /api/documents/{id}/preview 待落地
-    toast.info('原文件预览待后端就绪（KB-2）')
-  }
-  async function download() {
-    // 🔶 真阻塞·mock（KB-3）：后端 GET /api/documents/{id}/download 待落地
-    toast.info('原文件下载待后端就绪（KB-3）')
-  }
+  // previewable=false 的置灰原因（语义同后端 DocumentPreviewPolicy：OOXML 不可预览；文本类超预览上限）
+  const previewDisabledReason = !doc.previewable
+    ? doc.mimeType.startsWith('application/vnd.openxmlformats-officedocument')
+      ? '该文件类型不支持在线预览，可下载原文件查看'
+      : '文件超出在线预览大小限制，可下载后查看'
+    : null
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -80,10 +82,24 @@ export function DocumentDetailDrawer({
               {doc.documentGroupId && <Row label="文档组" value={doc.documentGroupId} mono />}
               <Row label="创建时间" value={time.full(doc.createTime)} />
 
-              {/* 原文件预览/下载（KB-2/KB-3 待后端） */}
+              {/* 原文件预览/下载（KB-2/KB-3）：预览走 sandbox iframe 弹窗，下载走同源 attachment 导航 */}
               <div className="flex gap-2 pt-1">
-                <Button variant="secondary" size="sm" onClick={preview}><Eye className="size-3.5" /> 预览</Button>
-                <Button variant="secondary" size="sm" onClick={download}><Download className="size-3.5" /> 下载</Button>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="secondary"
+                      size="sm"
+                      onClick={() => setPreviewOpen(true)}
+                      disabled={!doc.previewable}
+                    >
+                      <Eye className="size-3.5" /> 预览
+                    </Button>
+                  </TooltipTrigger>
+                  {previewDisabledReason && <TooltipContent>{previewDisabledReason}</TooltipContent>}
+                </Tooltip>
+                <Button variant="secondary" size="sm" onClick={() => downloadDocument(doc.id)}>
+                  <Download className="size-3.5" /> 下载
+                </Button>
               </div>
 
               {doc.errorMessage && (
@@ -146,13 +162,15 @@ export function DocumentDetailDrawer({
 
         <SheetFooter>
           <div className="mr-auto">
-            <UploadButton teamId={doc.teamId} replaceDocumentId={doc.id} compact onDone={() => queryClient.invalidateQueries({ queryKey: docKeys.all })} />
+            <UploadButton teamId={doc.teamId} replaceDocumentId={doc.id} compact onDone={() => void queryClient.invalidateQueries({ queryKey: docKeys.all })} />
           </div>
           <Button variant="destructive" onClick={() => setConfirmDel(true)}>
             <Trash2 className="size-4" /> 删除
           </Button>
         </SheetFooter>
       </SheetContent>
+
+      <DocumentPreviewDialog doc={doc} open={previewOpen} onOpenChange={setPreviewOpen} />
 
       <ConfirmDialog
         open={confirmDel}

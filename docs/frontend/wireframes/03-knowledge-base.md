@@ -251,7 +251,7 @@
 点击文档行或"查看详情" → 右侧滑入抽屉（400px 宽）。
 
 ✅ **可查看分块内容**：`GET /api/documents/{id}/chunks`（分页）返回 `ChunkDTO { id, content, documentId, fileName, metadata }`，content 为片段全文。
-🔶 **原文件预览/下载 · 真阻塞 · 当前用 mock**：后端暂无端点，DocumentDTO 仅元数据。后端 [`docs/design/document-original-file-preview-download.md`](../../design/document-original-file-preview-download.md)（状态：实现就绪）规划了 `GET /api/documents/{id}/preview`（PDF inline / 文本类渲染；OOXML 不可预览）与 `GET /api/documents/{id}/download`（attachment，全类型）。**前端先实现"预览/下载"入口与调用逻辑**（指向上述端点路径），当前无后端时走 mock 兜底——预览给占位/示例文件（如"原文件预览待后端就绪"），下载按钮置灰或给示例 blob；后端落地后切真实流式端点，UI 不变。
+✅ **原文件预览/下载已接真实端点**：后端 [`docs/design/document-original-file-preview-download.md`](../../design/document-original-file-preview-download.md) 已落地 `GET /api/documents/{id}/preview`（PDF inline 透传 / 文本类渲染；OOXML 与超限文本不可预览）与 `GET /api/documents/{id}/download`（attachment，全类型）。前端契约：`DocumentDTO.previewable` 驱动预览按钮置灰（OOXML / 超预览上限，Tooltip 提示原因）；预览在 `DocumentPreviewDialog` 中以**不带 `allow-same-origin` 的 sandbox iframe `src`** 打开（鉴权走 HttpOnly Cookie，禁止 fetch + innerHTML / srcdoc / blob）；下载走同源 `<a>` 导航触发 attachment 流式下载。
 
 ### 6.1 抽屉结构
 
@@ -422,8 +422,8 @@ Toast error：
 | 编号 | 事项 | 影响 |
 |------|------|------|
 | KB-1 | ~~文档列表搜索是否做？~~ | 🔶 半阻塞·mock：`GET /api/documents`（及 `?teamId=`）仅 page/size，无 keyword/status/mimeType。前端搜索/筛选器照常实现，走客户端过滤已加载列表（标注"仅已加载"）。后端 [`document-list-search-filter.md`](../../design/document-list-search-filter.md)（实现就绪）落地后切服务端 keyword/status[]/mimeType[]，UI 不变 |
-| KB-2 | ~~文档内容预览~~ | ✅ 分块内容可看：`GET /api/documents/{id}/chunks` + `GET /api/chunks/{chunkId}` 返回 `ChunkDTO.content`（片段全文）。🔶 原文件预览为真阻塞·mock：前端先实现预览入口，当前无端点走 mock 占位，后端 [`document-original-file-preview-download.md`](../../design/document-original-file-preview-download.md)（实现就绪，规划 `GET /api/documents/{id}/preview`，PDF inline / 文本类渲染 / OOXML 不可预览）落地后切真实端点 |
-| KB-3 | 文档下载 | 🔶 真阻塞·mock：前端先实现下载按钮（指向 `GET /api/documents/{id}/download`），当前无端点置灰或给示例 blob，后端 [`document-original-file-preview-download.md`](../../design/document-original-file-preview-download.md)（实现就绪，attachment，全类型）落地后切真实流式下载 |
+| KB-2 | ~~文档内容预览~~ | ✅ 分块内容可看：`GET /api/documents/{id}/chunks` + `GET /api/chunks/{chunkId}` 返回 `ChunkDTO.content`（片段全文）。✅ 原文件预览已接真实端点：`GET /api/documents/{id}/preview`（[`document-original-file-preview-download.md`](../../design/document-original-file-preview-download.md)，PDF inline / 文本类渲染 / OOXML 不可预览），前端以无 `allow-same-origin` 的 sandbox iframe 打开，`DocumentDTO.previewable` 驱动按钮置灰 |
+| KB-3 | 文档下载 | ✅ 已接真实端点：`GET /api/documents/{id}/download`（[`document-original-file-preview-download.md`](../../design/document-original-file-preview-download.md)，attachment，全类型），前端同源 `<a>` 导航触发流式下载，文件名由服务端 UTF-8 ContentDisposition 提供 |
 | KB-4 | 批量操作 | 当前方案支持多选（checkbox）。批量删除/批量重试是否需要？后端 `/upload/batch` 支持批量上传，但删除/重试是单个端点，批量需前端循环 |
 | KB-5 | 拖拽上传的 dropzone 范围 | 当前方案是整个内容区支持拖拽。也可限定为顶部 dropzone 区域。需定 |
 

@@ -29,6 +29,8 @@ export interface DocumentDTO {
   supersededBy?: number | null
   documentGroupId?: string | null
   createTime: string
+  /** 是否可在线预览（PDF 恒真；TXT/MD/HTML ≤ 预览上限；OOXML 恒假。后端 DocumentPreviewPolicy 按规范 MIME + 大小计算） */
+  previewable: boolean
 }
 
 /** ChunkDTO（GET /api/documents/{id}/chunks 与 GET /api/chunks/{chunkId}） */

@@ -432,4 +432,4 @@ Toast error：
 **—— 知识库线框 v0.1.0 完 ——**
 
 > 上一页：[02-chat-workspace.md](./02-chat-workspace.md) 聊天工作台
-> 核心三页线框完成。下一阶段：确认 ASCII 方向后，选关键页（推荐聊天工作台）做 HTML 高保真原型。
+> 下一页：[04-teams.md](./04-teams.md) 团队（04–09 为 IA v0.3.0 剩余全部页面的线框）

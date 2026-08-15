@@ -4,7 +4,7 @@
 > **首轮交付范围**：仅设计规范，不含页面线框与信息架构
 > **基准对标**：Dify · RAGFlow（AI / RAG 平台风）
 > **技术栈取向**：Tailwind CSS v4 + shadcn/ui（Radix）+ CSS 变量 token + Inter
-> **当前版本**：v0.3.3（技术栈锁定 + 流式耗时/token 不展示决策，详见 1.1）
+> **当前版本**：v0.4.0（04–09 页线框配套：11.12 预留组件落成正式规范，文案表补齐，详见 1.1）
 
 ---
 
@@ -14,6 +14,7 @@
 
 | 版本 | 日期 | 变更 | 作者 |
 |------|------|------|------|
+| 0.4.0 | 2026-08-16 | 04–09 页线框（团队/用量/模型配置/账号/后台/评估）配套：① 11.12 预留组件索引落成正式规范——新增 11.12 ModelParamEditor、11.13 SystemPromptEditor、11.14 UserStatusToggle、11.15 RolePermissionMatrix、11.16 UsageChart、11.17 EvalRunProgress；② 13.6 空状态表补模型配置/提示词/角色/评估行，13.7 确认文案表补禁用用户/删除用户/删除角色/修改密码/恢复默认两式；③ 13.6"邀请成员"改"添加成员"（对齐后端无邀请机制事实，线框 04 TEAM-4） | 前端设计 |
 | 0.3.3 | 2026-08-12 | 技术栈锁定（§15.4 最终版，去除全部"或"待决项）：React 19 + Vite + React Router v7；Tailwind v4（§15.2 改为 CSS-first `@theme`）；Zustand（UI 态）+ TanStack Query v5（服务端态）；传输用原生 fetch + 自定义 apiFetch 薄封装（不用 axios，因 SSE 必须用 fetch 避免双 transport）；shiki（rehype-pretty-code）；echarts（echarts-for-react）；Markdown 管线加 rehype-sanitize 白名单防 XSS。另：durationMs/tokenUsage 因 SSE 不发，决策流式当下不展示（不自行计时），历史 MessageVO 读取后展示（11.3/11.3.7/15.5 同步） | 前端设计 |
 | 0.3.2 | 2026-08-12 | 前后端契约对齐（按代码事实校正伪阻塞 + 真/半阻塞降级 mock）：(1) G3 解决——SSE 帧结构从 3 类扩为 7 类（补 reasoning/agentMetadata/fallback/canceled），11.3.5 流式 agentMetadata 已可用；(2) D1 解决——时间字段全局统一 OffsetDateTime（`JacksonTimeConfig`），11.10/13.3/行 184 同步；(3) 15.5 表 T6 决策不加 token-in-body、T7/T8 标记已解决；(4) 11.8 score 明确展示策略——归一化前按后端原值展示（已知取舍，待归一化设计落地后零改动获得可比分数） | 前端设计 |
 | 0.3.1 | 2026-06-21 | 修正 Agent 模式设计假设：确认后端 Agent 支持流式（`AgentModeStrategy.java:298` 实现 executeStream），三模式（SIMPLE/MULTI_TURN/AGENT）统一流式 UX。删除"Agent 阻塞式"全部描述（9.4 改为完成后展开动效、11.3.5 改为完成后元数据条、11.4 改为完成后可展开时间线、4.4.7 ChatMode 表去掉"阻塞式"标注） | 前端设计 |
@@ -1791,18 +1792,100 @@ alice 的上传额度
 - 超额（如可）：变 `--error-600`
 - 管理员可点击"调整额度"（打开 `MemberUploadLimitRequest` 表单，1-10240 MB）
 
-### 11.12 其他复合组件索引（后续页面设计时细化）
+### 11.12 ModelParamEditor 模型参数编辑器
 
-以下组件在页面线框阶段再细化规范，本规范先列出契约对应关系：
+**契约**：`ModelParamsDTO { modelId?, temperature?, maxTokens?, topP?, frequencyPenalty?, presencePenalty? }`（全部可空 = 未设置走默认）；upsert `POST /api/models/{modelId}/params`（**非 null 字段合并**语义）；删除 `POST .../params/delete` 恢复默认。参数**全局共享**（无 userId，一人改全员生效）。
 
-| 组件 | 契约来源 | 场景 |
-|------|---------|------|
-| ConversationListItem | `ConversationSummary` | 会话列表侧栏项（标题 + 置顶钉 + messageCount + lastMessageAt） |
-| ModelParamEditor | `ModelParamsDTO` | 模型参数编辑（temperature/maxTokens/topP 滑块） |
-| SystemPromptEditor | `SystemPromptDTO` | 系统提示词编辑（大文本 + 字数 50000） |
-| UserStatusToggle | `UserStatus` (0/1) | 用户启停开关 |
-| RolePermissionMatrix | `SysPermission` × 8 | 角色-权限分配矩阵 |
-| TeamMemberRoleBadge | `TeamMemberRole` | 成员角色徽标（复用 Badge + 4.4.5） |
+📐 用于模型配置页编辑抽屉（线框 06 §3）。每个参数一行：label（中文名 + 英文小字）+ 数值输入（右对齐 mono，宽 88px）+ 滑块（可选）联动。
+
+| 参数 | 范围（校验注解） | 控件 |
+|------|----------------|------|
+| temperature | 0.0 – 2.0 | 滑块（步进 0.05）+ 数值 |
+| maxTokens | 1 – 128000 | 仅数值输入（跨度大不用滑块） |
+| topP | 0.0 – 1.0 | 滑块（步进 0.01）+ 数值 |
+| frequencyPenalty | -2.0 – 2.0 | 滑块（步进 0.1）+ 数值 |
+| presencePenalty | -2.0 – 2.0 | 滑块（步进 0.1）+ 数值 |
+
+**状态**：未设置项预填默认值并标"默认"角标（`--text-tertiary`）；用户改动后角标消失。越界即时红框（`--border-error`）。
+
+**交互（关键语义）**：提交时**只发送被改动的字段**（未动字段不传，保持原值/未设置态）——防止"打开即全量保存"把未设置项固化为默认值。底部警示行"保存后对全部用户的该模型调用生效"（`--warning-600`）。
+
+### 11.13 SystemPromptEditor 系统提示词编辑器
+
+**契约**：`SystemPromptDTO { modelId, promptText, createdAt, updatedAt }`；提交 `POST /api/prompts/{modelId}/update { promptText }`（`@NotBlank` + `@Size(max=50000)`）；删除恢复默认 `POST .../delete`。⚠️ 生效优先级：内置 XML 模板 ＞ Redis ＞ DB ＞ 默认——带内置模板的模型编辑不生效（组件须展示覆盖警示）。
+
+📐 用于后台提示词页抽屉（线框 08 §2.3），宽 520px（大文本）。两态：
+
+- **预览态**：只读 mono 区（`--font-mono`，`--bg-base` 底，max-height 360px 滚动）+ [编辑] 进入编辑态
+- **编辑态**：Textarea（mono，min-height 320px，resize 纵向）+ 右下字数 `当前/50000`（超限变 `--error-600`，DS 10.3）；空内容禁用提交（`@NotBlank`）
+
+**变体**：`overrideWarning` prop 为 true 时（模型命中内置 XML 名单），顶部常驻警示条"该模型使用内置模板，此处编辑不生效"（`--warning-tint` 底 + `AlertTriangle`）。
+
+### 11.14 UserStatusToggle 用户启停开关
+
+**契约**：`POST /api/users/{id}/status?status=0|1`——⚠️ **query param 传值，非 JSON body**（body 会被忽略致 400）。禁用（0）后端**立即吊销该用户全部 token**（强制下线）；启用（1）清状态缓存。`UserVO.status` 是 **Integer**（0/1，非枚举名，4.4.9）。
+
+📐 用于后台用户管理（线框 08 §3.3）。表现：行内/抽屉中的状态 Badge + 操作按钮组，**不是即时生效的 Switch**（后果重大，须确认）：
+
+| 动作 | 确认 | 按钮 |
+|------|------|------|
+| 禁用（status=1→0） | ConfirmDialog："禁用账户? / {nickname} 的所有登录将被立即注销，且无法登录。"（13.7） | [禁用] destructive |
+| 启用（status=0→1） | 轻确认（无破坏性） | [启用] secondary |
+
+**状态**：提交中按钮 loading + 禁用；成功 Toast"已禁用/已启用"并刷新行。对当前登录的管理员自己禁用：正常允许（后端不拦），确认文案额外提示"你正在禁用自己的账户"。
+
+### 11.15 RolePermissionMatrix 角色权限矩阵
+
+**契约**：全量权限 `GET /api/roles/permissions` → `PermissionVO { id, permissionName(码), permissionDesc(中文名), resourceKey }`；当前角色 `GET /api/roles/{id}` → permissions id 集；提交 `POST /api/roles/{id}/permissions/update { permissionIds }`（**全量覆盖**，`@NotEmpty` ≥1 且 ≤50，保存即驱逐相关用户权限缓存，即时全局生效）；清空 `POST .../permissions/clear`。
+
+📐 用于后台角色页抽屉（线框 08 §4.2）。**Checkbox 分组列表**（DS 10.5），按 `permissionName` 前缀（`.` 前的域）分组：聊天 / 会话 / 用量 / 模型 / 提示词 / 用户 / 角色 / 评估 / 团队 / 追踪：
+
+```
+已选 4 / 12 项            [全选] [清空]
+ ▾ 聊天
+   ☑ 发送聊天消息      chat:send        ← 中文名 + 权限码（mono tertiary）
+ ▾ 系统管理
+   ☐ 用户管理          user:manage
+```
+
+- 组标题可折叠（ChevronDown/Right），记忆到 localStorage
+- 头部计数 + 全选/清空快捷操作（清空走轻确认）
+- 帮助文本（必显）："保存将整体替换该角色的全部权限，并对相关用户即时生效"
+- 提交后 Toast"权限已保存"，调用方刷新角色列表
+
+### 11.16 UsageChart 用量图表
+
+**契约**：`List<UsageStats> { groupKey, requestCount, totalPromptTokens, totalCompletionTokens, totalTokens, avgDurationMs }`（按模型或按会话聚合，无时间桶——不画趋势折线，见线框 05 USAGE-1）。
+
+📐 用于用量统计页（线框 05 §4）。**横向条形图**（echarts，经 echarts-for-react，仅用量页懒加载，DS 15.4）：
+
+- 数据：按 totalTokens 降序取 Top 8，y 轴 = groupKey（模型 id mono / 会话去 `u_{userId}_` 前缀），x 轴 = totalTokens（DS 13.8 千分位/万缩写）
+- 配色：**单色阶 brand**（首位 `--brand-600`，其余依次降饱和 `--brand-500/400/300…`）——多色板违反 2.8 颜色锁
+- 暗色：坐标轴/网格线/文字色跟随 token 反转（14.3）；图表容器透明底
+- 尺寸：高 = 8×36px + padding；无动画入场（数据非叙事，克制）
+- 空数据：不渲染，占位 Empty（13.6"暂无用量数据"）
+
+### 11.17 EvalRunProgress 评测运行进度
+
+**契约**：SSE `GET /api/evaluation/runs/{runId}/events`（⚠️ 评估模块裸协议，无 GlobalResponse）三事件：`progress` → `{runId, processed, total, successCount, failCount, itemId, status:"success"|"failed", error, elapsedMs}`；`done` → 运行结束；`error` → 流异常。断线 EventSource 自动重连；迟到订阅后端 replay 最近 20 条。
+
+📐 用于评估工作台（线框 09 §3.3），页内面板或 Modal：
+
+```
+▓▓▓▓▓▓▓▓▓░░░░░░░░░░░░  38 / 100          ← Progress（10.17）+ 计数
+✅ 成功 36   ⛔ 失败 2   ⏱ 已运行 1m 12s   ← 计数行（success/error 语义色）
+┌─ 实时日志 ─────────────────────────┐    ← 最近条目倒序列表（≤50 条内存截断）
+│ #38 ✓ 什么是混合检索？       1.8s   │
+│ #37 ✗ MMR 的作用是？  error: 超时   │
+└─────────────────────────────────────┘
+```
+
+- 进度 = processed/total；elapsedMs → DS 13.8 耗时格式
+- 日志行：seq + status 图标（CheckCircle2/XCircle）+ 问题快照截断 + 单条耗时/错误
+- `done` 后：进度条满格 success 色 → 自动收尾（调用方失效 runs 列表并展开结果）；`error` 后：提示"进度流中断"+ [刷新] 兜底（列表轮询）
+- "后台运行"关闭面板**不中断评测**（SSE 仅观察窗，执行在后端）；关闭后再打开重新订阅（replay 保证不丢最近进度）
+
+> 已并线说明：原 11.12 索引中的 ConversationListItem 已随线框 02 §2 实现定型（标题/元信息/分组/操作菜单以线框为准）；TeamMemberRoleBadge 不设独立组件，直接复用 Badge（10.8）+ 4.4.5 映射。
 
 ---
 
@@ -2000,9 +2083,14 @@ alice 的上传额度
 | 文档列表（个人） | "还没有文档" | "上传文档即可用 RAG 检索" | "上传文档" |
 | 文档列表（团队） | "团队还没有文档" | "成员可上传文档，管理员审批后入库" | "上传文档" |
 | 团队列表 | "还没有团队" | "创建团队，与成员协作管理知识库" | "创建团队" |
-| 成员列表 | "团队暂无其他成员" | "邀请成员加入团队" | "邀请成员" |
+| 成员列表 | "团队暂无其他成员" | "添加成员，共享团队知识库" | "添加成员" |
 | 待审批 | "没有待审批的文档" | "成员上传的文档会在这里等待审批" | — |
 | 用量统计 | "暂无用量数据" | "开始对话后这里会显示 Token 用量" | — |
+| 模型配置 | "没有可用模型" | "点击右上角刷新模型列表，或检查厂商配置" | "刷新模型列表" |
+| 系统提示词 | "还没有自定义提示词" | "从模型列表选择一个模型开始定制" | — |
+| 角色列表 | "还没有角色" | "新建角色以分配权限" | "新建角色" |
+| 评估数据集 | "还没有数据集" | "生成数据集即可开始评估" | "生成数据集" |
+| 评估运行 | "还没有评测运行" | "从数据集启动一次评测" | — |
 | 搜索无结果 | "未找到匹配项" | "试试调整搜索关键词或筛选条件" | "清除筛选" |
 
 ### 13.7 操作确认文案
@@ -2014,8 +2102,14 @@ alice 的上传额度
 | 删除文档 | "删除文档?" | "文档及其向量数据将被永久删除，此操作不可撤销。" | "删除"（destructive） |
 | 删除会话 | "删除会话?" | "会话及全部消息将被删除，此操作不可撤销。" | "删除" |
 | 解散团队 | "解散团队?" | "团队及所有成员、文档数据将被移除，此操作不可撤销。" | "解散"（destructive） |
-| 移除成员 | "移除成员?" | "{nickname} 将被移出团队，可重新邀请加入。" | "移除" |
+| 移除成员 | "移除成员?" | "{nickname} 将被移出团队，可重新添加加入。" | "移除" |
 | 拒绝审批 | "拒绝此文档?" | "上传者将收到拒绝通知。" | "确认拒绝"（destructive） |
+| 禁用账户 | "禁用账户?" | "{nickname} 的所有登录将被立即注销，且无法登录。" | "禁用"（destructive） |
+| 删除用户 | "删除用户?" | "{nickname} 将被删除并立即注销所有登录，此操作不可撤销。" | "删除"（destructive） |
+| 删除角色 | "删除角色?" | "将解除该角色与全部用户、权限的绑定，此操作不可撤销。" | "删除"（destructive） |
+| 修改密码 | "修改密码?" | "修改成功后你将在所有设备退出登录，需要重新登录。" | "继续修改"（primary，非破坏但预告后果） |
+| 恢复默认参数 | "恢复默认参数?" | "将删除该模型的自定义参数，恢复系统默认。" | "恢复" |
+| 恢复默认提示词 | "恢复默认提示词?" | "将删除该模型的自定义提示词。" | "恢复" |
 
 ### 13.8 数字与单位
 
@@ -2350,7 +2444,7 @@ alice 的上传额度
 
 ---
 
-**—— 设计系统规范 v0.1.0 完 ——**
+**—— 设计系统规范 v0.4.0 完 ——**
 
 > 下一阶段：信息架构 + 导航设计 → 核心三页高保真线框（认证 / 聊天工作台 / 知识库）。
 > 本规范是后续所有页面设计的视觉契约，页面线框必须严格引用本规范的 token 与组件，不得脱离规范自由发挥。

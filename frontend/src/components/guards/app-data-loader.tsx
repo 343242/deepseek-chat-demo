@@ -1,12 +1,18 @@
 import { useEffect } from 'react'
 import { useNavigate, useLocation } from 'react-router'
-import { useMe } from '@/api/auth'
+import { fetchMe } from '@/api/auth'
 import { useAuthStore } from '@/stores/auth-store'
 import { useThemeStore, applyTheme } from '@/stores/theme-store'
+import type { UserInfo } from '@/types/auth'
+
+/** 启动 /me 的 in-flight 单例：StrictMode dev 下 effect 双跑共享同一请求 */
+let bootMePromise: Promise<UserInfo> | null = null
 
 /**
  * 应用启动加载器（IA-5 权限兜底）：
- * - 挂载即调 GET /api/auth/me 拉取当前用户 + 权限快照写入 store
+ * - 非 auth 路由启动时拉一次 GET /api/auth/me，建立会话快照写入 store
+ *   （useAuthStore 是会话用户唯一归属，写入只发生在事件边界：
+ *   启动装载、登录/注册成功、登出/401 清除——不经 Query 缓存中转）
  * - 监听 api-fetch 派发的 'srag:unauthorized'（401 refresh 失败）→ 跳登录
  * - 应用持久化的主题
  */
@@ -14,33 +20,38 @@ export function AppDataLoader({ children }: { children: React.ReactNode }) {
   const { pathname } = useLocation()
   // 登录/注册页不预取 /me（避免未认证 401→refresh 级联报错）
   const isAuthRoute = pathname.startsWith('/auth')
-  const me = useMe({ enabled: !isAuthRoute })
-  const setInitialized = useAuthStore((s) => s.setInitialized)
-  const setUser = useAuthStore((s) => s.setUser)
   const navigate = useNavigate()
 
-  // FE-010：me 数据 → store 的唯一写入入口（queryFn 已纯取数，订阅解耦）。
-  // 登录后 login-page 会 setQueryData(authKeys.me) 触发此订阅写入。
+  // 启动装载：拉 /me → setUser（setUser 自带 initialized=true，RequireAuth 即刻放行）。
+  // 失败（未登录/网络异常）也放行 initialized，由守卫按 user=null 分流登录页，避免无限骨架。
   useEffect(() => {
-    if (me.data) setUser(me.data)
-  }, [me.data, setUser])
+    if (isAuthRoute) {
+      useAuthStore.getState().setInitialized(true)
+      return
+    }
+    if (useAuthStore.getState().user) return // 本会话已有快照（登录/注册直写后跳转回来）
+    let alive = true
+    bootMePromise ??= fetchMe().finally(() => {
+      bootMePromise = null
+    })
+    void bootMePromise
+      .then((me) => {
+        if (alive) useAuthStore.getState().setUser(me)
+      })
+      .catch(() => {
+        if (alive) useAuthStore.getState().setInitialized(true)
+      })
+    return () => {
+      alive = false
+    }
+  }, [isAuthRoute])
 
   // 主题：挂载时应用（zustand persist 已在 storage 层 apply，这里兜底）
   useEffect(() => {
     applyTheme(useThemeStore.getState().mode)
   }, [])
 
-  // /me 完成后标记 initialized（成功时 store 已由上面的订阅写入；失败也标记，避免无限 loader）
-  useEffect(() => {
-    if (me.isSuccess || me.isError) setInitialized(true)
-  }, [me.isSuccess, me.isError, setInitialized])
-
-  // auth 路由直接标记 initialized（无需 /me，避免 RequireAuth/loader 误判）
-  useEffect(() => {
-    if (isAuthRoute) setInitialized(true)
-  }, [isAuthRoute, setInitialized])
-
-  // 401 全局跳转
+  // 401 全局跳转（唯一登出通道，见 data-and-state.md 认证时序不变量）
   useEffect(() => {
     const handler = () => {
       useAuthStore.getState().clear()

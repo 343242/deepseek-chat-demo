@@ -324,6 +324,11 @@
   --brand-700: #5c8bff;
   --text-link: var(--brand-400);
 
+  /* 浅阶品牌色（primary-50/100 徽标底、Agent 条）暗色下用半透明蓝替代浅色块，
+     避免暗色界面上出现刺眼的浅蓝底（DS §4.1 各阶均应有暗色对应） */
+  --brand-50: rgba(46, 111, 242, 0.14);
+  --brand-100: rgba(46, 111, 242, 0.24);
+
   /* 阴影弱化（不用纯黑硬边） */
   --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.3);
   --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.4);
@@ -415,6 +420,26 @@
     font-family: var(--font-mono);
     font-size: var(--text-xs);
     color: var(--text-tertiary);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* 流式首 token 前的等待三点：透明度脉冲（位移弹跳过时，且违反 §9.0 动效动机——
+     脉冲传达"系统在运行"，与骨架屏同类；错峰延迟由组件内 animation-delay 控制） */
+  .waiting-dot {
+    animation: srag-dot-pulse 1.2s var(--motion-ease-in-out) infinite;
+  }
+
+  /* 聊天 Markdown 排版收口（markdown-viewer 根类；组件内各元素已有间距，这里补首尾对齐与分隔线） */
+  .prose-chat > :first-child {
+    margin-top: 0;
+  }
+  .prose-chat > :last-child {
+    margin-bottom: 0;
+  }
+  .prose-chat hr {
+    margin: 1rem 0;
+    border: 0;
+    border-top: 1px solid var(--border-subtle);
   }
 }
 
@@ -429,6 +454,17 @@
   50.01%,
   100% {
     opacity: 0;
+  }
+}
+
+/* 等待三点脉冲（.waiting-dot，DS §9.3 前置态） */
+@keyframes srag-dot-pulse {
+  0%,
+  100% {
+    opacity: 0.25;
+  }
+  40% {
+    opacity: 1;
   }
 }
 

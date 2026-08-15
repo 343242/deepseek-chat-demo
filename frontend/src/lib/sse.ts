@@ -23,22 +23,25 @@ export function mapFrame(event: string | null, data: string): SseFrame | null {
   switch (event) {
     case 'reasoning':
       return { type: 'reasoning', chunk: data }
-    case 'references':
-      return { type: 'references', references: safeJson<Reference[]>(data) ?? [] }
+    case 'references': {
+      // 形状校验：后端契约漂移（返回对象而非数组）时兜底为空，而非带着错误类型下传（FE-018）
+      const refs = parseJson<Reference[]>(data)
+      return { type: 'references', references: Array.isArray(refs) ? refs : [] }
+    }
     case 'agentMetadata':
-      return { type: 'agentMetadata', metadata: safeJson<AgentMetadata>(data) ?? {} }
+      return { type: 'agentMetadata', metadata: parseJson<AgentMetadata>(data) ?? {} }
     case 'fallback':
       return {
         type: 'fallback',
-        fallback: safeJson<FallbackMeta>(data) ?? { requestedModel: '', fallback: '' },
+        fallback: parseJson<FallbackMeta>(data) ?? { requestedModel: '', fallback: '' },
       }
     case 'canceled':
-      return { type: 'canceled', reason: (safeJson<{ reason: CancelReason }>(data)?.reason ?? 'USER_ABORT') }
+      return { type: 'canceled', reason: (parseJson<{ reason: CancelReason }>(data)?.reason ?? 'USER_ABORT') }
     case 'error':
       return {
         type: 'error',
-        error: safeJson<{ error: string }>(data)?.error ?? 'UNKNOWN',
-        message: safeJson<{ message: string }>(data)?.message ?? '生成失败',
+        error: parseJson<{ error: string }>(data)?.error ?? 'UNKNOWN',
+        message: parseJson<{ message: string }>(data)?.message ?? '生成失败',
       }
     default:
       // 未知事件名，忽略（前向兼容）
@@ -46,13 +49,28 @@ export function mapFrame(event: string | null, data: string): SseFrame | null {
   }
 }
 
-export function safeJson<T>(text: string): T | null {
+/**
+ * JSON.parse 包装：只保证「能解析」（失败返回 null），**不校验形状是否匹配 T**——
+ * 形状校验由调用处按需补充（如 references 帧的 Array.isArray）。
+ * 原 safeJson 名称会给读者「已校验」的错觉，故更名（FE-018）。
+ */
+export function parseJson<T>(text: string): T | null {
   if (!text) return null
   try {
     return JSON.parse(text) as T
   } catch {
     return null
   }
+}
+
+/** 识别用户主动中止（AbortController 触发的 AbortError） */
+function isAbortError(err: unknown): boolean {
+  return err instanceof Error && err.name === 'AbortError'
+}
+
+/** 提取异常文案；非 Error 抛出物（字符串等）走兜底文案（FE-016：catch 边界用守卫不用断言） */
+function errorMessage(err: unknown): string {
+  return err instanceof Error && err.message ? err.message : '网络异常'
 }
 
 function dispatch(frame: SseFrame, h: SseHandlers) {
@@ -132,22 +150,22 @@ export function streamChat(req: ChatRequest, handlers: SseHandlers): AbortContro
           }
         }
       } catch (err) {
-        if ((err as Error).name === 'AbortError') return
+        if (isAbortError(err)) return
         handlers.onError?.({
           type: 'error',
           error: 'NETWORK',
-          message: (err as Error).message || '网络异常',
+          message: errorMessage(err),
         })
         return
       }
 
       if (normalEnd) handlers.onComplete?.()
     } catch (err) {
-      if ((err as Error).name === 'AbortError') return
+      if (isAbortError(err)) return
       handlers.onError?.({
         type: 'error',
         error: 'NETWORK',
-        message: (err as Error).message || '网络异常',
+        message: errorMessage(err),
       })
     }
   })()

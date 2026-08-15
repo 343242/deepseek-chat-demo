@@ -56,7 +56,7 @@ export function ReferenceCard({ reference, onOpenDoc }: { reference: Reference; 
           {!expanded ? (
             <p className="line-clamp-2 text-muted">{reference.content}</p>
           ) : (
-            <p className="whitespace-pre-wrap break-words text-muted">{preview}</p>
+            <p className="animate-in fade-in duration-200 whitespace-pre-wrap break-words text-muted">{preview}</p>
           )}
         </div>
       )}

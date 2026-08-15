@@ -26,13 +26,21 @@ export function ChatInput() {
   const streaming = useChatStore((s) => s.streaming)
   const send = useChatStore((s) => s.send)
   const stop = useChatStore((s) => s.stop)
+  // 草稿收口 store（空状态开场白 chip 一键填充；跨会话保留未发送内容）
+  const text = useChatStore((s) => s.draft)
+  const setDraft = useChatStore((s) => s.setDraft)
+  const draftSeq = useChatStore((s) => s.draftSeq)
 
-  const [text, setText] = useState('')
   const [modelId, setModelId] = useState<string>(() => localStorage.getItem(STORAGE_KEYS.lastModel) ?? '')
   const [mode, setMode] = useState<ChatMode>('SIMPLE')
   const [rag, setRag] = useState(false)
   const [thinking, setThinking] = useState(false)
   const taRef = useRef<HTMLTextAreaElement>(null)
+
+  // 外部填充草稿（开场白 chip）后聚焦输入框——focus 是副作用而非 setState，无级联渲染
+  useEffect(() => {
+    if (draftSeq > 0) taRef.current?.focus()
+  }, [draftSeq])
 
   // 默认模型渲染期推导（首个可用候选）：未手动选择过时随 models 到位自动生效，
   // 不用 effect 回写 state（react-hooks/set-state-in-effect 级联渲染）
@@ -60,7 +68,7 @@ export function ChatInput() {
     const t = text.trim()
     if (!t || streaming || !model) return
     send(t, { model, mode, ragEnabled: rag, enableThinking: canThink && thinking })
-    setText('')
+    setDraft('')
   }
 
   function onKeyDown(e: React.KeyboardEvent) {
@@ -114,15 +122,20 @@ export function ChatInput() {
           <Textarea
             ref={taRef}
             value={text}
-            onChange={(e) => setText(e.target.value)}
+            onChange={(e) => setDraft(e.target.value)}
             onKeyDown={onKeyDown}
             placeholder="输入消息…（Shift+Enter 换行，Enter 发送）"
-            className="min-h-20 resize-none border-0 bg-transparent shadow-none focus-visible:shadow-none pr-16"
+            className="min-h-20 resize-none border-0 bg-transparent shadow-none focus-visible:shadow-none"
           />
           <div className="flex items-center justify-between px-3 pb-2">
-            <span className={cn('text-xs', overLimit ? 'text-error-600' : 'text-faint')}>
-              {text.length}/{CHAT_LIMITS.maxLength}
-            </span>
+            {/* 计数器仅在已有输入时出现——静息态降噪 */}
+            {text.length > 0 ? (
+              <span className={cn('text-xs tabular-nums', overLimit ? 'text-error-600' : 'text-faint')}>
+                {text.length}/{CHAT_LIMITS.maxLength}
+              </span>
+            ) : (
+              <span />
+            )}
             {streaming ? (
               <Button size="sm" variant="secondary" onClick={stop}>
                 <Square className="size-3.5" /> 停止

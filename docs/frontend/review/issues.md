@@ -2,8 +2,8 @@
 
 > **文档类型**：可追踪问题清单（Issue Tracker）
 > **所属审查**：[前端工程化审查 README](./README.md)
-> **审查日期**：2026-08-12
-> **条目数**：15（`FE-001` ~ `FE-015`）
+> **审查日期**：2026-08-12（第一轮·工程化）｜2026-08-16（第二轮·TypeScript 类型系统专项，见文末）
+> **条目数**：21（`FE-001` ~ `FE-021`）
 > **配套**：原则判定与取舍论证见 [principles.md](./principles.md)
 
 ---
@@ -37,6 +37,12 @@
 | [FE-013](#fe-013) | `chat-page` 内联 `AgentSummary` 应抽离 | 🟢 P2 | SRP | ✅ |
 | [FE-014](#fe-014) | 特性组件绕过 React Query 缓存直接 fetch | 🟢 P2 | DIP | ✅ |
 | [FE-015](#fe-015) | `chat-input` 常量未纳入 `lib/constants.ts` | 🟢 P2 | DRY | ✅ |
+| [FE-016](#fe-016) | catch 边界 `as` 断言应改类型守卫（登录页有行为缺陷） | 🟡 P1 | 类型安全 / 正确性 | ✅ |
+| [FE-017](#fe-017) | `chat-store.detail` 胖联合 → 真·判别联合 | 🟡 P1 | 类型收窄 | ✅ |
+| [FE-018](#fe-018) | 边界 JSON 无形状校验，`safeJson` 命名与语义不符 | 🟡 P1 | 类型安全 / 契约 | ✅ |
+| [FE-019](#fe-019) | 非空断言 `!` 改 const 局部收窄 | 🟢 P2 | 类型安全 | ✅ |
+| [FE-020](#fe-020) | 三处冗余/脆弱类型构造 | 🟢 P2 | KISS | ✅ |
+| [FE-021](#fe-021) | 类型测试缺位 + `readonly` 策略未明示 | 🟢 P2 | 可测性 | ✅ |
 
 > **本轮修复（2026-08-12）**：FE-001~010、FE-013~015 共 13 条已修复（✅），FE-007 由「Worker 复用 MD5」升级为「**直接迁移 SHA-256、删除 MD5、不两者同存**」（前端先行，后端跟进）。FE-011/FE-012 触发条件未满足，按 YAGNI 暂缓。详见各条「修复说明」与提交记录。
 
@@ -305,6 +311,107 @@
 
 ---
 
+## 第二轮：TypeScript 类型系统专项审查（2026-08-16）
+
+> **依据**：TypeScript 类型规范（泛型 / 条件类型 / 映射类型 / 模板字面量类型 / 工具类型十条最佳实践、七类陷阱、类型测试与性能注意）。
+> **基线验证**（提交 `bec3f62`）：`tsc -b --noEmit` 零错误；ESLint `recommendedTypeChecked` 零 error（仅 5 条 TEMP-DEBUG `no-console` warning）；vitest 79/79 通过；**全仓零显式 `any`、零 `@ts-ignore`、`as const` ×21**。证据行号均为本轮审查时位置。
+>
+> **本轮修复（2026-08-16）**：FE-016~021 共 6 条已修复（✅）。修复后验证：typecheck 零错误、lint 零 error、测试 82/82 通过（新增 3 条编译期类型护栏测试）。五条类型护栏约定（请求 DTO readonly、边界守卫、判别联合、禁非空断言、expectTypeOf 穷尽锁定）已记入 `.trellis/spec/frontend/quality-and-testing.md`「TypeScript 约定」。
+
+### 正向记录（先说结论：类型纪律高于平均水平）
+
+- **判别联合是全仓最强项**：`SseFrame` 七变体（`types/chat.ts:125`）在 `mapFrame`/`dispatch`/`applyFrame` 三处穷尽 switch，新增帧类型漏处理即编译失败；`EtlStatus` 11 值联合 × `Record<EtlStatus, StatusMeta>`（`lib/status-meta.ts:41`）用 Record 键穷尽性当编译期护栏。
+- **`interface`（对象形状）/ `type`（联合）分工一致**，`types/*.ts` 无一例外；复杂导出均有 JSDoc。
+- **类型守卫范本**：`markdown-viewer.tsx` `extractText` 用 `typeof`/`Array.isArray`/`in` 三连收窄 `unknown`，是「断言 → 守卫」的正确写法。
+- **`unknown` 用于边界**：`api-fetch` 的 `json?: unknown`、`checksum.worker` 消息、`ChunkDTO.metadata: Record<string, unknown>`。
+- **工具类型用而不过**：`Omit`（api 方法签名收窄可选面）、`Record`、`ReturnType<typeof setTimeout>`；无自建条件/映射/模板字面量类型——当前规模下「无滥用」即是正确答案，不立 issue。
+- **边界情况的防御**：`flattenMessages` 显式处理 null/undefined/空数组；`conversation-id` 有兜底正则；`safeJson` 解析失败返回 null。
+- 附件「性能注意」全项通过：无深嵌条件类型、无递归类型、无循环类型引用（`RenderMessage` 迁至 types 层避免 store 循环依赖，注释可证）。
+
+### FE-016
+
+**catch 边界 `as` 断言应改类型守卫（登录页有行为缺陷）** ✅
+
+- **涉及原则**：类型安全（「避免断言、用类型守卫」）/ 正确性
+- **修复说明（2026-08-16）**：登录页改 `e instanceof ApiError` 三分支判定，网络层异常统一「网络异常，请稍后重试」；`register-page.tsx` 同款 `(e as ApiError)` 一并修复；`sse.ts` 抽 `isAbortError`/`errorMessage` 守卫替换 4 处 `(err as Error)`。`ApiError` 相应改为值导入（instanceof 需要构造函数）。
+- **现象**：`strict` 下 catch 变量为 `unknown`，代码用断言代替守卫。
+- **证据**：
+  - `pages/auth/login-page.tsx:103` — `const err = e as ApiError`。网络故障时抛的是 `TypeError`：`err.code` 为 undefined（不等于 `RATE_LIMIT`，走 else 分支），`err.message` 为英文 `"Failed to fetch"` 直接进弹窗文案。
+  - `lib/sse.ts:135/139/146/150` — `(err as Error)` ×4。行为有 `|| '网络异常'` 兜底，属风格问题。
+- **影响**：登录页在网络异常时向用户展示英文技术文案；非 Error 抛出物（字符串等）路径上类型系统全程失明。
+- **建议**：登录页改 `const err = e instanceof ApiError ? e : null`，非 `ApiError` 走统一「网络异常，请稍后重试」；`sse.ts` 抽 `isAbortError(err)` 守卫（`err instanceof Error && err.name === 'AbortError'`）。
+- **预估**：30 分钟。
+
+### FE-017
+
+**`chat-store.detail` 胖联合 → 真·判别联合** ✅
+
+- **涉及原则**：判别联合收窄（附件陷阱 #4 的标准案例）
+- **修复说明（2026-08-16）**：`ChatDetail` 判别联合定义在 `types/chat.ts`（供 store 与类型测试复用）；`chat-page.tsx` 收窄后删除 `detail.refs &&`/`detail.meta ?` 双守卫；顺带删除不可达的「Agent 推理中…」spinner 分支——`openAgent` 恒传对象、`{}` 是合法 `AgentMetadata`，该分支永不渲染。
+- **现象**：`detail: { type: 'refs' | 'agent'; refs?: Reference[]; meta?: AgentMetadata } | null`——两个变体的载荷字段全部可选，type 与 payload 的对应关系只靠运行时约定。
+- **证据**：`stores/chat-store.ts:32`（定义）；消费方 `pages/app/chat-page.tsx:68-79` 被迫写 `detail.refs && detail.refs.length > 0`、`detail.meta ?` 双重守卫。
+- **影响**：消费端永远拿不到「type === 'refs' 时 refs 必有值」的编译期保证；未来新增详情类型时退化成 if-else 泥潭。
+- **建议**：
+  ```ts
+  type ChatDetail =
+    | { type: 'refs'; refs: Reference[] }
+    | { type: 'agent'; meta: AgentMetadata }
+  ```
+  `openRefs`/`openAgent` 签名不变，`chat-page.tsx` 收窄后删掉两处手动守卫。
+- **预估**：30 分钟。
+
+### FE-018
+
+**边界 JSON 无形状校验，`safeJson` 命名与语义不符** ✅
+
+- **涉及原则**：类型安全（信任边界）/ 契约健壮性
+- **修复说明（2026-08-16）**：`api-fetch` 新增 `isGlobalResponse` 运行时守卫（code/message/data 形状校验，`doRefresh` 同步接入）；删除零调用方的 `raw` 选项及其 `as unknown as T`；references 帧补 `Array.isArray` 形状校验；`safeJson` 更名 `parseJson`（不再暗示已校验形状）。剩余两个信任点已注释标明：text 路径（响应体无 JSON 形状可验）与 `envelope.data as T`（泛型内容信任）。
+- **现象**：两条信任边界都靠 unchecked 断言穿过：
+  - `lib/api-fetch.ts:117` — `(await res.json()) as GlobalResponse<T>`；另 `:114`（text 路径）与 `:120`（raw 模式）两处 `as unknown as T` 双重断言。
+  - `lib/sse.ts:49-56` — `safeJson<T>` 只防 `JSON.parse` 抛错，不防形状错误；`mapFrame` 的 `safeJson<Reference[]>(data) ?? []`（`:27`）对「后端返回对象而非数组」无防护（当前恰好被消费方的 `.length > 0` 判断兜住，非设计使然）。
+- **影响**：后端契约漂移时错误被推迟到渲染层且带着错误类型继续传播；「safe」前缀给读者错误的安全感。
+- **建议**：最小改动——`isGlobalResponse(x): x is GlobalResponse<unknown>` 守卫 + references 帧 `Array.isArray` 检查；或复用已有依赖 **zod**（表单层 `login/register` 已在用）校验 `GlobalResponse` 与 SSE 终端帧。`as unknown as T` 建议拆 overload 或独立 `apiFetchRaw` 消除。
+- **预估**：守卫版 1-2 小时；zod 版半天。
+
+### FE-019
+
+**非空断言 `!` 改 const 局部收窄** ✅
+
+- **涉及原则**：类型安全
+- **修复说明（2026-08-16）**：`chat-message` 用 const 局部收窄（`refs`/`agentMeta`，可穿透闭包）替代两处 `!`；`lib/utils` 新增 `getOrCreate<K, V>`（全仓首个带约束泛型工具），`model-selector`/`conversation-list` 两处 `map.get(k)!.push` 替换。`main.tsx` 启动惯例保留。
+- **证据**：
+  - `components/chat/chat-message.tsx:99` `message.references!`、`:116` `message.agentMetadata!`——守卫是 `const isAgent = !!message.agentMetadata`（`:28`），布尔变量对类型收窄不可见。
+  - `components/chat/model-selector.tsx:29`、`components/chat/conversation-list.tsx:62` — `map.get(k)!.push(...)`。
+- **影响**：`!` 让检查器闭眼；`isAgent` 一旦改为按 mode 判定（AGENT 模式未必有 metadata），`:116` 会静默传 `undefined` 给 `onOpenAgent`。
+- **建议**：`const refs = message.references` 后在 JSX 用 `{refs && ... onClick={() => onOpenRefs?.(refs)}}`（const 局部收窄可穿透闭包）；Map 场景抽 `getOrCreate(map, key)` 小工具。`main.tsx:17` 的 `getElementById('root')!` 属启动惯用，可保留。
+- **预估**：30 分钟。
+
+### FE-020
+
+**三处冗余/脆弱类型构造** ✅
+
+- **涉及原则**：KISS / 可读性
+- **修复说明（2026-08-16）**：冗余联合坍缩为 `readonly string[]`；扩展名校验改 `Set<string>.has`（零断言、O(1)）；register 页 `Field` 的双层 ReturnType 改为 `UseFormRegisterReturn`（实参是 `register('x')` 调用结果而非函数本身——审查建议中的 `UseFormRegister` 经编译验证不匹配，已修正）。
+- **证据**：
+  - `hooks/use-permission.ts:11` — `readonly string[] | string[]`：`string[]` 是 `readonly string[]` 的子类型，联合坍缩为 `readonly string[]`，写法暴露对变方向的不确定。
+  - `components/knowledge/upload-button.tsx:61` — `as readonly string[]` 是 `as const` 元组与 `.includes(ext: string)` 参数变差的补丁；改 `Set<string>` 成员判定（`ALLOWED_EXTENSIONS.has(ext)`）更干净且零断言。
+  - `pages/auth/register-page.tsx:150` — `ReturnType<ReturnType<typeof useForm<FormValues>>['register']>` 双层 ReturnType；react-hook-form 直接导出 `UseFormRegister<FormValues>`。
+- **影响**：均为「能跑但难读」；双层 ReturnType 这类脆弱类型在后端 FE-013 修复时已被点名过同款。
+- **预估**：30 分钟。
+
+### FE-021
+
+**类型测试缺位 + `readonly` 策略未明示** ✅
+
+- **涉及原则**：可测性（附件「Test your types」条目）
+- **修复说明（2026-08-16）**：新增 `src/types/__tests__/type-safety.test.ts`——`expectTypeOf` 锁定三契约（`ETL_STATUS_META` 穷尽绑定、`mapFrame` 返回契约、`ChatDetail` 判别联合），运行时 no-op、由 `tsc -b` 编译期把关（+3 测试）；`ChatRequest`/`ChunkUploadInitRequest` 字段加 `readonly`；五条类型护栏约定记入 `.trellis/spec/frontend/quality-and-testing.md`「TypeScript 约定」。
+- **现象**：无 `expectTypeOf`/`assertType`；类型层仅 `ApiError.code/status`（`types/api.ts:33-34`）与一个参数用了 `readonly`，请求 DTO（`ChatRequest`、`ChunkUploadInitRequest`）全部可变，未见显式决策记录。
+- **影响**：本轮确认的两大穷尽性护栏（`SseFrame` switch、`Record<EtlStatus, StatusMeta>`）是「靠使用点碰巧被检查」而非「被测试锁定」；readonly 缺席允许 `req.field = x` 这类意外变异。
+- **建议**：补 2-3 条编译期断言（如 `ETL_STATUS_META` 键集 === `EtlStatus`、`mapFrame` 返回覆盖全部帧类型）；readonly 做一次显式决策——请求 DTO 加 `readonly` 或在 `.trellis/spec/frontend` 记「有意不加」及理由。
+- **预估**：1 小时。
+
+---
+
 ## 附录：按原则交叉索引
 
 | 原则 | 相关 issue |
@@ -317,5 +424,6 @@
 | DRY | FE-001, FE-003, FE-015 |
 | KISS | FE-006, FE-007 |
 | 可扩展性 | FE-005, FE-011 |
-| 可测性 | FE-006, FE-009, FE-010 |
-| 正确性 | FE-004, FE-008 |
+| 可测性 | FE-006, FE-009, FE-010, FE-021 |
+| 正确性 | FE-004, FE-008, FE-016 |
+| 类型安全（第二轮） | FE-016, FE-017, FE-018, FE-019, FE-021 |

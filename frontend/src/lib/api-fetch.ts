@@ -19,8 +19,6 @@ export interface ApiFetchOptions extends Omit<RequestInit, 'body'> {
   body?: BodyInit | null
   /** query 参数 */
   params?: Record<string, string | number | boolean | undefined | null>
-  /** 是否跳过 GlobalResponse 解包（如直接返回原始 JSON / 文本） */
-  raw?: boolean
   /** 内部用：防止 refresh 重放死循环 */
   _retried?: boolean
 }
@@ -36,6 +34,18 @@ function buildUrl(path: string, params?: ApiFetchOptions['params']): string {
   return qs ? `${url}?${qs}` : url
 }
 
+/** 运行时校验统一响应信封形状（FE-018：边界 JSON 不再裸断言） */
+function isGlobalResponse(body: unknown): body is GlobalResponse<unknown> {
+  if (typeof body !== 'object' || body === null) return false
+  return (
+    'code' in body &&
+    typeof body.code === 'number' &&
+    'message' in body &&
+    typeof body.message === 'string' &&
+    'data' in body
+  )
+}
+
 /** refresh 单例锁（IA-6：并发 401 共享同一 Promise，只发一次 refresh） */
 let refreshPromise: Promise<boolean> | null = null
 
@@ -49,8 +59,8 @@ async function doRefresh(): Promise<boolean> {
         headers: { Accept: 'application/json' },
       })
       if (!res.ok) return false
-      const body = (await res.json()) as GlobalResponse<unknown>
-      return body.code === ERROR_CODE.SUCCESS
+      const body: unknown = await res.json()
+      return isGlobalResponse(body) && body.code === ERROR_CODE.SUCCESS
     } catch {
       return false
     } finally {
@@ -70,7 +80,7 @@ function emitUnauthorized() {
  * @returns 成功时 `data` 字段（raw 模式返回原始响应体）
  */
 export async function apiFetch<T>(path: string, opts: ApiFetchOptions = {}): Promise<T> {
-  const { json, body: rawBody, params, raw, _retried, headers, ...rest } = opts
+  const { json, body: rawBody, params, _retried, headers, ...rest } = opts
 
   const finalHeaders = new Headers(headers)
   let body: BodyInit | null | undefined
@@ -107,17 +117,17 @@ export async function apiFetch<T>(path: string, opts: ApiFetchOptions = {}): Pro
     throw new ApiError('登录已过期，请重新登录', ERROR_CODE.UNAUTHORIZED, 401)
   }
 
-  // 非 JSON 响应（如 blob/文本）直接返回
+  // 非 JSON 响应（如 blob/文本）直接返回。剩余唯一信任点：文本体无法运行时校验 T 的形状（FE-018）
   const contentType = res.headers.get('content-type') ?? ''
   if (!contentType.includes('application/json')) {
     if (!res.ok) throw new ApiError(`请求失败（${res.status}）`, ERROR_CODE.INTERNAL, res.status)
     return (await res.text()) as unknown as T
   }
 
-  const envelope = (await res.json()) as GlobalResponse<T>
-
-  // raw 模式：不解包，整个 envelope 返回
-  if (raw) return envelope as unknown as T
+  const envelope: unknown = await res.json()
+  if (!isGlobalResponse(envelope)) {
+    throw new ApiError('响应格式异常，请稍后重试', ERROR_CODE.INTERNAL, res.status)
+  }
 
   // 业务错误
   if (envelope.code !== ERROR_CODE.SUCCESS) {
@@ -128,7 +138,8 @@ export async function apiFetch<T>(path: string, opts: ApiFetchOptions = {}): Pro
     throw new ApiError(envelope.message || '请求失败', envelope.code, res.status)
   }
 
-  return envelope.data
+  // 信封形状已运行时校验；data 内容由调用方声明的 T 负责（泛型信任点）
+  return envelope.data as T
 }
 
 /** GET 便捷方法 */

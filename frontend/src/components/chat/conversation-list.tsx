@@ -11,7 +11,7 @@ import { ConfirmDialog } from '@/components/common/confirm-dialog'
 import { useInfiniteScroll } from '@/hooks/use-infinite-scroll'
 import { useConversations, useUpdateConversation, useDeleteConversation } from '@/api/conversations'
 import { time } from '@/lib/format'
-import { cn } from '@/lib/utils'
+import { cn, getOrCreate } from '@/lib/utils'
 import { useChatStore } from '@/stores/chat-store'
 import type { ConversationSummary } from '@/types/conversation'
 
@@ -57,9 +57,7 @@ export function ConversationList() {
   const grouped = useMemo(() => {
     const map = new Map<GroupKey, ConversationSummary[]>()
     for (const c of filtered) {
-      const k = groupOf(c)
-      if (!map.has(k)) map.set(k, [])
-      map.get(k)!.push(c)
+      getOrCreate(map, groupOf(c), () => []).push(c)
     }
     const order: GroupKey[] = ['pinned', 'today', 'yesterday', 'week', 'earlier']
     return order.map((k) => ({ key: k, items: (map.get(k) ?? []).sort((a, b) => b.lastMessageAt.localeCompare(a.lastMessageAt)) })).filter((g) => g.items.length)
@@ -127,7 +125,6 @@ export function ConversationList() {
                     )}
                     onClick={() => (renaming === c.conversationId ? undefined : openConv(c))}
                   >
-                    {active && <span className="absolute left-0 top-1/2 h-5 w-[3px] -translate-y-1/2 rounded-full bg-primary-600" />}
                     {renaming === c.conversationId ? (
                       <Input
                         autoFocus

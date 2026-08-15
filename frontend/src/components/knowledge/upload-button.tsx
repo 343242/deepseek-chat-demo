@@ -14,6 +14,9 @@ import { extOf, formatFileSize, formatSpeed } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { FileTypeIcon } from './file-icon'
 
+/** 扩展名白名单（Set 成员判定，消除 as const 元组 × includes 的变差断言，FE-020） */
+const ALLOWED_EXTENSIONS = new Set<string>(UPLOAD_LIMITS.allowedExtensions)
+
 interface UploadTask {
   id: string
   fileName: string
@@ -58,7 +61,7 @@ export function UploadButton({
   }, [])
 
   const validate = (file: File): string | null => {
-    if (!(UPLOAD_LIMITS.allowedExtensions as readonly string[]).includes(extOf(file.name))) {
+    if (!ALLOWED_EXTENSIONS.has(extOf(file.name))) {
       return '不支持的文件格式，仅支持 PDF/DOCX/PPTX/XLSX/TXT/MD/HTML'
     }
     if (file.size > UPLOAD_LIMITS.maxSize) return '文件超过 50MB 限制'
@@ -185,7 +188,7 @@ export function UploadButton({
 function ProgressCard({ task, onCancel }: { task: UploadTask; onCancel: (t: UploadTask) => void }) {
   const eta = task.speed && task.speed > 0 ? Math.ceil((task.fileSize * (1 - task.progress / 100)) / task.speed) : 0
   return (
-    <div className="flex items-center gap-3 rounded-lg border border-line-subtle bg-surface px-3 py-2.5">
+    <div className="animate-in fade-in slide-in-from-top-2 duration-200 flex items-center gap-3 rounded-lg border border-line-subtle bg-surface px-3 py-2.5">
       <FileTypeIcon fileName={task.fileName} className="size-5 shrink-0" />
       <div className="min-w-0 flex-1">
         <div className="flex items-center justify-between gap-2">

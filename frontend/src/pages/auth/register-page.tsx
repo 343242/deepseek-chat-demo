@@ -1,18 +1,17 @@
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router'
-import { useForm } from 'react-hook-form'
+import { useForm, type UseFormRegisterReturn } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { useQueryClient } from '@tanstack/react-query'
 import { User, Mail, Lock, Smile, Eye, EyeOff, AlertCircle } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { SliderCaptcha, type SliderCaptchaHandle } from '@/components/auth/slider-captcha'
-import { useRegister, fetchMe, authKeys } from '@/api/auth'
+import { useRegister, fetchMe } from '@/api/auth'
 import { useAuthStore } from '@/stores/auth-store'
 import { ROLE } from '@/lib/constants'
-import type { ApiError } from '@/types/api'
+import { ApiError } from '@/types/api'
 
 // 校验与后端注解对齐（RegisterRequest：username 2-50 / password 8-72 / email / nickname ≤50）
 const schema = z
@@ -31,29 +30,16 @@ type FormValues = z.infer<typeof schema>
 
 export default function RegisterPage() {
   const navigate = useNavigate()
-  const qc = useQueryClient()
   const captchaRef = useRef<SliderCaptchaHandle>(null)
   const [captcha, setCaptcha] = useState<{ id: string; code: number } | null>(null)
   const [showPwd, setShowPwd] = useState(false)
   const [topError, setTopError] = useState<string | null>(null)
   const registerMut = useRegister()
-  // FE-010：注册即登录后不再手动 setUser；走订阅链路（AppDataLoader）写入 store，
-  // 本组件订阅 user 做响应式导航（与 login-page 一致）。
-  const user = useAuthStore((s) => s.user)
-  const pendingNavRef = useRef(false)
 
   const { register, handleSubmit, formState: { errors } } = useForm<FormValues>({
     resolver: zodResolver(schema),
     defaultValues: { username: '', nickname: '', email: '', password: '', confirmPassword: '' },
   })
-
-  // FE-010：注册成功后置位 pendingNavRef；待 user 入 store 后再导航
-  useEffect(() => {
-    if (!pendingNavRef.current || !user) return
-    pendingNavRef.current = false
-    const isAdmin = user.roles?.includes(ROLE.ADMIN)
-    void navigate(isAdmin ? '/admin' : '/app/chat', { replace: true })
-  }, [user, navigate])
 
   async function onSubmit(values: FormValues) {
     if (!captcha) return
@@ -69,13 +55,14 @@ export default function RegisterPage() {
         // 后端 captchaCode 为 @NotBlank String
         captchaCode: String(captcha.code),
       })
-      // FE-010：拉 /me 兜底并温暖 RQ 缓存，订阅链路统一写 store；导航由上面的 effect 执行
+      // 拉 /me 兜底权限（IA-5），在事件边界同步写 store（唯一写入点）后直接导航
       const me = await fetchMe()
-      qc.setQueryData(authKeys.me, me)
-      pendingNavRef.current = true
+      useAuthStore.getState().setUser(me)
+      const isAdmin = me.roles?.includes(ROLE.ADMIN)
+      void navigate(isAdmin ? '/admin' : '/app/chat', { replace: true })
     } catch (e) {
       captchaRef.current?.fail()
-      setTopError((e as ApiError).message || '注册失败，请重试')
+      setTopError(e instanceof ApiError ? (e.message || '注册失败，请重试') : '网络异常，请稍后再重试')
     }
   }
 
@@ -147,7 +134,7 @@ function Field({
   placeholder?: string
   error?: string
   icon: React.ReactNode
-  register: ReturnType<ReturnType<typeof useForm<FormValues>>['register']>
+  register: UseFormRegisterReturn
 }) {
   return (
     <div className="space-y-1.5">

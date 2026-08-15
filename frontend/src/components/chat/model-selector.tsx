@@ -8,7 +8,7 @@ import { usePermission } from '@/hooks/use-permission'
 import { RefreshCw } from 'lucide-react'
 import { toast } from 'sonner'
 import { PERMISSION } from '@/lib/constants'
-import { cn } from '@/lib/utils'
+import { cn, getOrCreate } from '@/lib/utils'
 import type { ModelVO } from '@/types/chat'
 
 /** ModelSelector（DS §11.2）—— 按 provider 分组，含搜索；仅暴露 candidate id（不含 /） */
@@ -25,8 +25,7 @@ export function ModelSelector({ value, onChange }: { value: string; onChange: (i
     const map = new Map<string, ModelVO[]>()
     for (const m of available) {
       const p = m.provider || '其他'
-      if (!map.has(p)) map.set(p, [])
-      map.get(p)!.push(m)
+      getOrCreate(map, p, () => []).push(m)
     }
     const kwLower = kw.trim().toLowerCase()
     return Array.from(map.entries())

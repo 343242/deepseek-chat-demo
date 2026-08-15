@@ -51,7 +51,7 @@ export default function KnowledgePage() {
         onOpenDoc={(doc) => setOpenDoc(doc)}
         onNewVersion={(doc) => {
           setNewVersionFor(doc)
-          toast.info(`请点击「上传文档」选择 {doc.fileName} 的新版本`.replace('{doc.fileName}', doc.fileName))
+          toast.info(`请点击「上传文档」选择 ${doc.fileName} 的新版本`)
         }}
       />
 

@@ -1,43 +1,33 @@
 import { useEffect } from 'react'
 import { useParams } from 'react-router'
-import { X, Loader2 } from 'lucide-react'
+import { X } from 'lucide-react'
 import { MessageList } from '@/components/chat/message-list'
 import { ChatInput } from '@/components/chat/chat-input'
 import { ReferenceCard } from '@/components/chat/reference-card'
 import { AgentSummary } from '@/components/chat/agent-summary'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useChatStore } from '@/stores/chat-store'
-import { useConversationDetail } from '@/api/conversations'
-import { flattenMessages } from '@/lib/chat/flatten-messages'
 
 export default function ChatPage() {
   const { conversationId = null } = useParams<{ conversationId?: string }>()
-  const setConversationId = useChatStore((s) => s.setConversationId)
-  const setMessages = useChatStore((s) => s.setMessages)
-  const stop = useChatStore((s) => s.stop)
+  const loading = useChatStore((s) => s.loading)
   const detail = useChatStore((s) => s.detail)
   const closeDetail = useChatStore((s) => s.closeDetail)
 
-  // 会话切换：停流 + 清消息 + 同步 id
+  // 会话切换：停流 + 清消息 + 同步 id + 装载历史（store 是消息唯一归属，不经 RQ 中转）
   useEffect(() => {
-    stop()
-    setMessages([])
-    setConversationId(conversationId)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const store = useChatStore.getState()
+    store.stop()
+    store.setMessages([])
+    store.setConversationId(conversationId)
+    if (conversationId) store.loadConversation(conversationId)
   }, [conversationId])
-
-  // 加载会话详情（首批消息）—— 后端返回一层子消息树，此处摊平为线性序列
-  const { data, isLoading } = useConversationDetail(conversationId)
-  useEffect(() => {
-    if (data?.messages) setMessages(flattenMessages(data.messages))
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [data])
 
   return (
     <div className="flex min-h-0 flex-1">
       {/* 中栏：消息流 + 输入 */}
       <div className="flex min-w-0 flex-1 flex-col">
-        {isLoading && conversationId ? (
+        {loading && conversationId ? (
           <div className="flex flex-1 flex-col gap-4 p-6">
             {[0, 1, 2].map((i) => (
               <div key={i} className="space-y-2">
@@ -66,7 +56,7 @@ export default function ChatPage() {
           </div>
           <div className="flex-1 overflow-y-auto p-3">
             {detail.type === 'refs' ? (
-              detail.refs && detail.refs.length > 0 ? (
+              detail.refs.length > 0 ? (
                 <div className="space-y-2">
                   {detail.refs.map((r) => (
                     <ReferenceCard key={r.refNumber} reference={r} />
@@ -75,12 +65,8 @@ export default function ChatPage() {
               ) : (
                 <p className="text-sm text-subtle">暂无引用</p>
               )
-            ) : detail.meta ? (
-              <AgentSummary meta={detail.meta} />
             ) : (
-              <div className="flex items-center gap-2 text-sm text-subtle">
-                <Loader2 className="size-4 animate-spin" /> Agent 推理中…
-              </div>
+              <AgentSummary meta={detail.meta} />
             )}
           </div>
         </aside>

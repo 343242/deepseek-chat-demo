@@ -8,7 +8,7 @@ export function usePermission() {
   const user = useAuthStore((s) => s.user)
 
   const has = (code: string): boolean => permissions.includes(code)
-  const hasAny = (codes: readonly string[] | string[]): boolean => codes.some((c) => permissions.includes(c))
+  const hasAny = (codes: readonly string[]): boolean => codes.some((c) => permissions.includes(c))
 
   return {
     permissions,

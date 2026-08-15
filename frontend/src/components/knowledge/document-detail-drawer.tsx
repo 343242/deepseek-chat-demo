@@ -19,6 +19,7 @@ import {
 import { queryClient } from '@/lib/query-client'
 import { ETL_STATUS_META } from '@/lib/status-meta'
 import { formatFileSize, time } from '@/lib/format'
+import { cn } from '@/lib/utils'
 import { Download, Eye, Trash2, AlertCircle, FileText } from 'lucide-react'
 
 export function DocumentDetailDrawer({
@@ -139,7 +140,10 @@ export function DocumentDetailDrawer({
                     const m = ETL_STATUS_META[h.status]
                     const current = h.id === doc.id
                     return (
-                      <div key={h.id} className={`flex items-center gap-3 rounded-md border p-2.5 text-sm ${current ? 'border-primary-600 bg-selected' : 'border-line-subtle'}`}>
+                      <div key={h.id} className={cn(
+                        'flex items-center gap-3 rounded-md border p-2.5 text-sm',
+                        current ? 'border-primary-600 bg-selected' : 'border-line-subtle',
+                      )}>
                         <FileTypeIcon fileName={h.fileName} className="size-4" />
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-2">
@@ -191,7 +195,7 @@ function Row({ label, value, mono }: { label: string; value: React.ReactNode; mo
   return (
     <div className="flex items-start justify-between gap-3">
       <span className="shrink-0 text-subtle">{label}</span>
-      <span className={`text-right text-fg ${mono ? 'font-mono text-xs' : ''}`}>{value}</span>
+      <span className={cn('text-right text-fg', mono && 'font-mono text-xs tabular-nums')}>{value}</span>
     </div>
   )
 }

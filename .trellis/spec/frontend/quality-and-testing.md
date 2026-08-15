@@ -37,6 +37,11 @@ bun run build       # tsc -b && vite build（提交前完整验证）
 - 路径别名只用 `@/`（`@/lib/api-fetch`）；同目录内允许相对导入，跨目录禁止 `../../`。
 - 禁 `any`；与后端 DTO 对不上的字段先回 [Data & State](./data-and-state.md) 的「类型镜像」改 `types/`，不用 `as` 强转绕过。
 - 枚举值用字符串字面量联合类型 + `as const` 常量对象（`PERMISSION`、`ERROR_CODE`），不用 TS `enum`。
+- 请求 DTO 字段一律 `readonly`（`ChatRequest`、`ChunkUploadInitRequest`…）；响应 DTO 不加（渲染层可变消费，加了无收益）——2026-08-16 类型专项审查决策。
+- 信任边界用类型守卫不用断言：响应信封形状过 `api-fetch.ts` 的 `isGlobalResponse`；`catch (unknown)` 一律 `e instanceof ApiError` / `err instanceof Error` 判定（见 `sse.ts` 的 `isAbortError`/`errorMessage`）。
+- 变体载荷用判别联合（type 即载荷，如 `SseFrame`、`ChatDetail`）；禁止「type + 全可选字段」的胖联合。
+- 禁 `!` 非空断言（唯一例外：`main.tsx` 启动 `getElementById('root')!` 惯例）；优先 const 局部收窄（可穿透闭包）或 `lib/utils.ts` 的 `getOrCreate`。
+- 穷尽性契约用 `expectTypeOf` 锁定在 `src/types/__tests__/type-safety.test.ts`（运行时 no-op，`tsc -b` 编译期把关）。
 - 配置/映射类对象字面量用 `satisfies` 校验形状并保留字面量推断——不用 `as`（不安全），不用宽类型注解（丢推断）；`as const` 用于确需全 readonly 收窄的场景。
 - `noUncheckedIndexedAccess`：下标访问返回 `T | undefined`，越界在编译期显式化——用可选链 / `??` 兜底处理，不拿 `!` 断言绕过。
 - `erasableSyntaxOnly`：仅允许可擦除语法，`enum` / 参数属性直接编译报错（与"禁 enum"约定互为兜底）。

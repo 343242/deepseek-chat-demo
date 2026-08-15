@@ -53,15 +53,15 @@ export interface RenderMessage extends MessageVO {
   pending?: boolean
 }
 
-/** ChatRequest（mode/ChatRequest.java） */
+/** ChatRequest（mode/ChatRequest.java）。请求 DTO 字段 readonly（FE-021 决策：防构造后意外变异） */
 export interface ChatRequest {
-  model: string
-  message: string
-  conversationId?: string | null
-  ragEnabled?: boolean
-  mode?: ChatMode
-  enableThinking?: boolean
-  teamId?: number | null
+  readonly model: string
+  readonly message: string
+  readonly conversationId?: string | null
+  readonly ragEnabled?: boolean
+  readonly mode?: ChatMode
+  readonly enableThinking?: boolean
+  readonly teamId?: number | null
 }
 
 /** Agent 元数据（随 ChatResponse.agentMetadata 或 SSE event:agentMetadata 终端帧） */
@@ -81,6 +81,14 @@ export interface FallbackMeta {
 
 /** SSE 流式取消原因 */
 export type CancelReason = 'USER_ABORT' | 'NAVIGATE_AWAY' | 'SESSION_SWITCH'
+
+/**
+ * 右侧详情面板载荷（FE-017：真·判别联合——type 即载荷，消费方收窄后无需手动判空）。
+ * 定义在 types 层供 store 与类型测试复用（RenderMessage 同理）。
+ */
+export type ChatDetail =
+  | { type: 'refs'; refs: Reference[] }
+  | { type: 'agent'; meta: AgentMetadata }
 
 /* ============ SSE 七类帧（DS §11.3 SSE 帧结构） ============ */
 

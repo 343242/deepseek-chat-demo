@@ -8,10 +8,10 @@
 
 | 状态 | 归属 | 例子 |
 |------|------|------|
-| 服务端数据的缓存/失效/重试 | TanStack Query | 文档列表、会话历史、模型配置 |
-| 会话级客户端状态 | Zustand | 当前会话 id、流式中的消息流、侧栏折叠 |
+| 服务端数据的缓存/失效/重试 | TanStack Query | 文档列表、会话列表、模型配置 |
+| 会话级客户端状态 | Zustand | 当前会话 id、消息流（历史 + 流式）、侧栏折叠 |
 | 持久化偏好 | Zustand + `STORAGE_KEYS`（theme-store 模式） | 主题、上次选中模型 |
-| 当前用户（登录态） | `useAuthStore`（唯一例外，由 AppDataLoader 订阅 Query 写入） | user / permissions / initialized |
+| 当前用户（登录态） | `useAuthStore`（唯一归属，不经 Query 中转；写入点见"认证时序不变量"） | user / permissions / initialized |
 | 组件内部 UI 态 | `useState` | 弹窗开关、密码可见性 |
 
 **禁止**：把接口返回数据复制进 store"缓存"（Query 已做）；用 `useEffect` + `useState` 手拉数据（用 `useQuery`）。
@@ -150,7 +150,11 @@ store 的 `send` 只做**编排**：构造乐观消息 → 调 `lib/sse.ts` 的 
 
 ## 认证时序不变量（改 auth 相关代码前必读）
 
-- 登录成功后**不手动 setUser**（FE-010）：`login.mutateAsync` → `fetchMe()` → `qc.setQueryData(authKeys.me, me)` → `AppDataLoader` 订阅写入 store → 页面 effect 订阅 `user` 再导航。保证 `RequireAuth` 必见 user，零闪烁。
+- 会话用户（user/permissions/initialized）只存 `useAuthStore`，**不经 Query 缓存中转**（没有 `/me` 的 query）。写入只发生在三个事件边界：
+  1. **启动装载**（`AppDataLoader`）：非 auth 路由拉一次 `fetchMe()` → `setUser`；失败也置 `initialized`，守卫按 `user=null` 分流登录页。
+  2. **登录/注册成功**（login-page / register-page）：`mutateAsync → fetchMe() → setUser(me) → navigate`——同步写 store 后立刻导航，`RequireAuth` 必见 user，零闪烁。
+  3. **登出/401**：`clear()`（`useLogout` / `srag:unauthorized` 处理器）。
+- 聊天消息同理只存 `chat-store`（历史装载 `loadConversation` + 流式 `send`，代序号防切换竞态），不要为 `/conversations/{id}` 建 Query 再用 effect 复制进 store。
 - 根路由分流等 `initialized`（`App.tsx` `LandingRedirect`），避免已登录用户闪现登录页。
 - `apiFetch` 的 401 refresh / `srag:unauthorized` 事件链路是唯一登出通道，不要在组件里重复实现"401 跳登录"。
 

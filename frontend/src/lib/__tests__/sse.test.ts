@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { mapFrame, parseEventBlock, safeJson } from '../sse'
+import { mapFrame, parseEventBlock, parseJson } from '../sse'
 
 describe('mapFrame', () => {
   describe('内容帧（无 event 名）', () => {
@@ -91,15 +91,15 @@ describe('mapFrame', () => {
   })
 })
 
-describe('safeJson', () => {
+describe('parseJson', () => {
   it('合法 JSON → 解析', () => {
-    expect(safeJson<{ a: number }>('{"a":1}')).toEqual({ a: 1 })
+    expect(parseJson<{ a: number }>('{"a":1}')).toEqual({ a: 1 })
   })
   it('非法 JSON → null', () => {
-    expect(safeJson('not-json')).toBeNull()
+    expect(parseJson('not-json')).toBeNull()
   })
   it('空串 → null', () => {
-    expect(safeJson('')).toBeNull()
+    expect(parseJson('')).toBeNull()
   })
 })
 

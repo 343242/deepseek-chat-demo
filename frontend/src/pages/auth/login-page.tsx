@@ -1,9 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { useQueryClient } from '@tanstack/react-query'
 import { User, Lock, Eye, EyeOff, AlertCircle, ShieldCheck } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
@@ -12,10 +11,10 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from '@/components/ui/dialog'
 import { SliderCaptcha, type SliderCaptchaHandle } from '@/components/auth/slider-captcha'
-import { useLogin, fetchMe, authKeys } from '@/api/auth'
+import { useLogin, fetchMe } from '@/api/auth'
 import { useAuthStore } from '@/stores/auth-store'
 import { ROLE, ERROR_CODE } from '@/lib/constants'
-import type { ApiError } from '@/types/api'
+import { ApiError } from '@/types/api'
 
 const schema = z.object({
   username: z.string().min(1, '用户名不能为空'),
@@ -33,13 +32,7 @@ function safeRedirect(raw: string | null): string | null {
 export default function LoginPage() {
   const navigate = useNavigate()
   const [params] = useSearchParams()
-  const qc = useQueryClient()
   const login = useLogin()
-  // FE-010：不再手动 setUser；登录后通过订阅链路（AppDataLoader）写入 store，
-  // 本组件订阅 user 做响应式导航（user 入 store 后才跳转 → RequireAuth 必见 user，零闪烁）。
-  const user = useAuthStore((s) => s.user)
-  const pendingNavRef = useRef(false)
-
   const { register, handleSubmit, formState: { errors, isValid } } = useForm<FormValues>({
     resolver: zodResolver(schema),
     mode: 'onChange',
@@ -54,20 +47,6 @@ export default function LoginPage() {
   const [dialogError, setDialogError] = useState<string | null>(null)
   const captchaRef = useRef<SliderCaptchaHandle>(null)
   const credsRef = useRef<FormValues | null>(null)
-
-  // FE-010：登录成功后置位 pendingNavRef；待 user 经订阅链路写入 store 后再导航。
-  // 前置条件：本页仅在未登录时挂载（AuthRedirect 会把已登录用户引走），故 user 由 null→非null 必然触发。
-  useEffect(() => {
-    if (!pendingNavRef.current || !user) return
-    pendingNavRef.current = false
-    const redirect = safeRedirect(params.get('redirect'))
-    if (redirect) {
-      void navigate(redirect, { replace: true })
-      return
-    }
-    const isAdmin = user.roles?.includes(ROLE.ADMIN)
-    void navigate(isAdmin ? '/admin' : '/app/chat', { replace: true })
-  }, [user, navigate, params])
 
   // 表单提交：不直接登录，而是暂存凭据并弹出验证码（修复 #1）
   const openCaptcha = (values: FormValues) => {
@@ -93,20 +72,30 @@ export default function LoginPage() {
         // 后端 captchaCode 为 @NotBlank String：发送滑块位移的字符串形式（对齐后 = answerX）
         captchaCode: String(captchaCode),
       })
-      // FE-010：登录响应 permissions 可能为空，立即拉 /me 兜底（IA-5），并温暖 RQ 缓存。
-      // setQueryData 触发 AppDataLoader 订阅写入 store；导航由上面的 effect 在 user 入 store 后执行。
+      // 登录响应 permissions 可能为空，立即拉 /me 兜底（IA-5），
+      // 在事件边界同步写 store（唯一写入点）后直接导航——RequireAuth 必见 user，零闪烁。
       const me = await fetchMe()
-      qc.setQueryData(authKeys.me, me)
+      useAuthStore.getState().setUser(me)
       setCaptchaOpen(false)
-      pendingNavRef.current = true
+      const redirect = safeRedirect(params.get('redirect'))
+      if (redirect) {
+        void navigate(redirect, { replace: true })
+        return
+      }
+      const isAdmin = me.roles?.includes(ROLE.ADMIN)
+      void navigate(isAdmin ? '/admin' : '/app/chat', { replace: true })
     } catch (e) {
-      const err = e as ApiError
       // 验证码已消费 → 刷新重试（抖动回弹）
       captchaRef.current?.fail()
-      if (err.code === ERROR_CODE.RATE_LIMIT) {
-        setDialogError(err.message || '尝试过于频繁，请稍后再试')
+      if (e instanceof ApiError) {
+        if (e.code === ERROR_CODE.RATE_LIMIT) {
+          setDialogError(e.message || '尝试过于频繁，请稍后再试')
+        } else {
+          setDialogError(e.message || '用户名或密码错误')
+        }
       } else {
-        setDialogError(err.message || '用户名或密码错误')
+        // 网络层异常（如 fetch 的 TypeError）不是 ApiError，统一兜底文案（FE-016）
+        setDialogError('网络异常，请稍后重试')
       }
     } finally {
       setSubmitting(false)

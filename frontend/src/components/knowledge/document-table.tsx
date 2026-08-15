@@ -56,9 +56,9 @@ export function DocumentTable({
         <span className="ml-auto text-sm text-subtle">共 {data?.pages[0]?.total ?? 0} 个文档</span>
       </div>
 
-      {/* 表格 */}
-      <div className="overflow-hidden rounded-lg border border-line bg-surface">
-        <table className="w-full border-collapse text-sm">
+      {/* 表格：容器圆角（DS §7.4），窄屏横向滚动兜底（adapt），单元格内部保持直角 */}
+      <div className="overflow-x-auto rounded-lg border border-line bg-surface">
+        <table className="w-full min-w-[820px] border-collapse text-sm">
           <thead>
             <tr className="border-b border-line-subtle bg-base text-left text-xs font-medium text-muted">
               <th className="w-10 py-2.5 pl-4"><Checkbox aria-label="全选" /></th>
@@ -75,7 +75,14 @@ export function DocumentTable({
             {isLoading ? (
               Array.from({ length: 5 }).map((_, i) => (
                 <tr key={i} className="border-b border-line-subtle">
-                  <td colSpan={8} className="py-3 pl-4"><Skeleton className="h-5 w-full" /></td>
+                  <td className="py-3 pl-4"><Skeleton className="size-4 rounded-sm" /></td>
+                  <td className="py-3 pr-4"><Skeleton className="h-4 w-2/5" /></td>
+                  <td className="py-3"><Skeleton className="ml-auto h-4 w-14" /></td>
+                  <td className="py-3"><Skeleton className="h-5 w-16 rounded-full" /></td>
+                  <td className="py-3"><Skeleton className="ml-auto h-4 w-8" /></td>
+                  <td className="py-3"><Skeleton className="mx-auto h-4 w-8" /></td>
+                  <td className="py-3"><Skeleton className="ml-auto h-4 w-16" /></td>
+                  <td className="py-3 pr-3"><Skeleton className="ml-auto size-7 rounded-md" /></td>
                 </tr>
               ))
             ) : filtered.length === 0 ? (
@@ -103,11 +110,11 @@ export function DocumentTable({
                         <span className="truncate font-medium text-fg">{doc.fileName}</span>
                       </div>
                     </td>
-                    <td className="py-3 text-right text-muted">{formatFileSize(doc.fileSize)}</td>
+                    <td className="py-3 text-right tabular-nums text-muted">{formatFileSize(doc.fileSize)}</td>
                     <td className="py-3"><StatusBadge meta={meta} /></td>
-                    <td className="py-3 text-right text-muted">{doc.chunkCount ?? '-'}</td>
-                    <td className="py-3 text-center text-muted">{doc.version ? `v${doc.version}` : '-'}</td>
-                    <td className="py-3 text-right text-subtle">{time.short(doc.createTime)}</td>
+                    <td className="py-3 text-right tabular-nums text-muted">{doc.chunkCount ?? '-'}</td>
+                    <td className="py-3 text-center tabular-nums text-muted">{doc.version ? `v${doc.version}` : '-'}</td>
+                    <td className="py-3 text-right tabular-nums text-subtle">{time.short(doc.createTime)}</td>
                     <td className="py-3 pr-3 text-right" onClick={(e) => e.stopPropagation()}>
                       <div className="flex items-center justify-end gap-1">
                         {isFailed(doc.status) && (

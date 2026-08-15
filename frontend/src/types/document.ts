@@ -59,16 +59,17 @@ export interface Reference {
 
 /* ============ 分片上传 ChunkUploadController ============ */
 
+/** 分片上传初始化请求。请求 DTO 字段 readonly（FE-021 决策：防构造后意外变异） */
 export interface ChunkUploadInitRequest {
   /** 整文件校验和（SHA-256 小写 hex；前端先行，后端同步迁移，算法见 CHECKSUM_ALGORITHM） */
-  fileChecksum: string
-  fileName: string
-  fileSize: number
-  mimeType: string
-  chunkSize: number
+  readonly fileChecksum: string
+  readonly fileName: string
+  readonly fileSize: number
+  readonly mimeType: string
+  readonly chunkSize: number
   /** 增量更新：替代的旧文档 id */
-  replaceDocumentId?: number | null
-  teamId?: number | null
+  readonly replaceDocumentId?: number | null
+  readonly teamId?: number | null
 }
 
 /** 分片初始化结果 */

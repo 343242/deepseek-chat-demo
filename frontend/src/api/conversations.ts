@@ -1,4 +1,4 @@
-import { useQuery, useMutation, useInfiniteQuery, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useInfiniteQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '@/lib/api-fetch'
 import type { PagedResult } from '@/types/api'
 import type { ConversationSummary, ConversationDetail, ConversationStatus } from '@/types/conversation'
@@ -7,8 +7,6 @@ import type { MessageVO } from '@/types/chat'
 
 export const convKeys = {
   list: ['conversations'] as const,
-  detail: (id: string) => ['conversations', id] as const,
-  messages: (id: string) => ['conversations', id, 'messages'] as const,
 }
 
 interface ListParams {
@@ -30,13 +28,11 @@ export function useConversations(params: ListParams = { status: 'ACTIVE', size: 
   })
 }
 
-/** GET /api/conversations/{id} —— 会话详情（含首批消息） */
-export function useConversationDetail(conversationId: string | null) {
-  return useQuery({
-    queryKey: convKeys.detail(conversationId ?? ''),
-    queryFn: () => api.get<ConversationDetail>(`/conversations/${conversationId}`),
-    enabled: !!conversationId,
-  })
+/** GET /api/conversations/{id} —— 会话详情（含首批消息）。
+ *  消息是会话级客户端状态（FE-006），由 chat-store.loadConversation 装载，
+ *  不经 Query 缓存中转（裸函数，事件/边界调用）。 */
+export function fetchConversationDetail(conversationId: string) {
+  return api.get<ConversationDetail>(`/conversations/${conversationId}`)
 }
 
 /**

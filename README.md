@@ -89,7 +89,7 @@
 | JJWT | 0.13.0 | JWT 生成与解析 |
 | Apache Tika | 随 Spring AI | 多格式文档解析（PDF/DOCX/PPTX/HTML 等） |
 | juniversalchardet | 2.5.0 | 文本编码自动检测（GBK/GB2312/GB18030） |
-| DashScope text-embedding-v4 | — | 阿里千问 Embedding 模型（1024 维，经百炼 Provider） |
+| DashScope text-embedding-v4 | — | 阿里千问 Embedding 模型（1536 维，经百炼 Provider；受 pgvector HNSW 2000 维上限约束） |
 | DashScope qwen3-rerank | — | 阿里千问 Rerank 模型（经百炼 Provider，BailianRerankPostProcessor 调用） |
 | Caffeine | 3.x | 本地缓存（SystemPrompt / ModelParams / 验证码） |
 | sensitive-word | 0.29.5 | DFA 敏感词过滤 |

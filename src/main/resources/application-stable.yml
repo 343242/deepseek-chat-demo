@@ -60,7 +60,8 @@ spring:
       pgvector:
         index-type: HNSW
         distance-type: COSINE_DISTANCE
-        dimensions: 1024
+        # 须与 db/migration V27 后的列定义 vector(1536) 一致；上限受 pgvector HNSW 2000 维约束
+        dimensions: 1536
         initialize-schema: true
         table-name: vector_store
     chat:
@@ -145,7 +146,8 @@ app:
           - id: qwen-emb-8b
             provider: bailian
             model: Qwen/Qwen3-Embedding-8B
-            dimension: 1024
+            # 原生 4096 维（MRL 可变维度），与 vector_store 列 vector(1536)（V27）对齐
+            dimension: 1536
             priority: 1
       reranking:
         default-model: qwen3-rerank

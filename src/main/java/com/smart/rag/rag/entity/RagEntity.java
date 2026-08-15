@@ -22,7 +22,7 @@ public class RagEntity {
     /** 跨 chunk 拼接的实体描述 */
     private String description;
 
-    /** description 的向量 vector(1024) */
+    /** description 的向量 vector(1536) */
     private float[] embedding;
 
     /** 所属用户 */

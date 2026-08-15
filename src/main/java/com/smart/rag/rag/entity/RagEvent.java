@@ -19,7 +19,7 @@ public class RagEvent {
     /** LLM 生成的事件摘要 */
     private String summary;
 
-    /** 事件摘要向量 vector(1024) */
+    /** 事件摘要向量 vector(1536) */
     private float[] embedding;
 
     /** 所属用户 */

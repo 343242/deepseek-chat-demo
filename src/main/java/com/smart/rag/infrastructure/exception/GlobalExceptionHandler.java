@@ -14,6 +14,7 @@ import org.springframework.security.core.AuthenticationException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
+import org.springframework.web.context.request.async.AsyncRequestTimeoutException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 /**
@@ -117,6 +118,17 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(AsyncRequestNotUsableException.class)
     public void handleAsyncClientDisconnect(AsyncRequestNotUsableException e) {
         log.debug("Async client disconnected: {}", e.getMessage());
+    }
+
+    /**
+     * 异步请求超时（SseEmitter 到达设定时长，如文档状态流的 10 分钟上限）——预期的连接生命周期事件，
+     * 前端 EventSource 会自动重连，非服务端错误。若不在此拦截会落入 {@link #handleGeneric} 被记成
+     * ERROR + 完整堆栈，且尝试写 JSON 错误体时因响应 Content-Type 已固化为 text/event-stream 且
+     * 多半已提交（心跳帧），抛 HttpMessageNotWritableException。返回 void 由容器收尾断连。
+     */
+    @ExceptionHandler(AsyncRequestTimeoutException.class)
+    public void handleAsyncTimeout(AsyncRequestTimeoutException e) {
+        log.debug("Async request timed out (SSE emitter expired): {}", e.getMessage());
     }
 
     @ExceptionHandler(Exception.class)

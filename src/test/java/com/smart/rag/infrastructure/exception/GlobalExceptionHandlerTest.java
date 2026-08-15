@@ -12,8 +12,10 @@ import org.mockito.InjectMocks;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.context.request.async.AsyncRequestTimeoutException;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 
 /**
  * Unit tests for {@link GlobalExceptionHandler}.
@@ -124,6 +126,14 @@ class GlobalExceptionHandlerTest {
             assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
             assertThat(response.getBody()).isNotNull();
             assertThat(response.getBody().code()).isEqualTo(200002);
+        }
+
+        @Test
+        @DisplayName("handleAsyncTimeout completes silently without writing a response body")
+        void handleAsyncTimeout() {
+            AsyncRequestTimeoutException ex = new AsyncRequestTimeoutException();
+
+            assertThatCode(() -> handler.handleAsyncTimeout(ex)).doesNotThrowAnyException();
         }
     }
 

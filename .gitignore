@@ -29,6 +29,7 @@ AGENTS.md
 bin/
 
 # Local skill lock file (not source)
+.impeccable
 skills-lock.json
 
 # Platform tooling (not source)

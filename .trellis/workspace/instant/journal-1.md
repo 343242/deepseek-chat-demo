@@ -623,3 +623,36 @@ Completed mcp-db-source-of-truth task: code review P0-P3 fixes (13 issues), dele
 ### Next Steps
 
 - None - task complete
+
+
+## Session 19: 批量上传改造：前端走批量端点 + 后端限 10 个/200MB
+
+**Date**: 2026-08-16
+**Task**: 批量上传改造：前端走批量端点 + 后端限 10 个/200MB
+**Branch**: `agentic-rag-dev`
+
+### Summary
+
+前端 upload-button 重构：≤5MB 小文件合并为一次 POST /documents/upload/batch（响应按索引映射逐项成败），大文件保持分片，replace 场景保持逐文件；顺带修复 uploadDirect 从未发送 replaceDocumentId 的缺陷。后端 uploadBatch 入口级校验（DocumentProperties.maxBatchFiles=10/maxBatchTotalSize=200MB，错误码 104011/104012，个人/团队共享）；容器 max-request-size 55→205MB（max-file-size 不变）；GlobalExceptionHandler 补 MaxUploadSizeExceededException 兜底。后端全量 1638 测试通过，前端四道质量门全过。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `ff22d54` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

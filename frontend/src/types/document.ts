@@ -33,6 +33,13 @@ export interface DocumentDTO {
   previewable: boolean
 }
 
+/** DocumentUploadResponse（rag/dto/DocumentUploadResponse.java，单传 / 批量共用；部分失败时 id=null + FAILED） */
+export interface DocumentUploadResponse {
+  id: number | null
+  fileName: string
+  status: EtlStatus
+}
+
 /** ChunkDTO（GET /api/documents/{id}/chunks 与 GET /api/chunks/{chunkId}） */
 export interface ChunkDTO {
   id: string

@@ -66,7 +66,8 @@ class ChunkViewTest {
                 etlDispatchService, ragDocumentMapper, documentLifecycleService,
                 uploadStrategyRouter, teamAccessGate, vectorStoreMapper,
                 new DocumentDtoMapper(new DocumentPreviewPolicy(new DocumentProperties())),
-                new DocumentAccessGuard(ragDocumentMapper, teamAccessGate));
+                new DocumentAccessGuard(ragDocumentMapper, teamAccessGate),
+                new DocumentProperties());
     }
 
     @AfterEach

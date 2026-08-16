@@ -1,7 +1,7 @@
 import { describe, it, expectTypeOf } from 'vitest'
 import { mapFrame } from '@/lib/sse'
 import { ETL_STATUS_META, type StatusMeta } from '@/lib/status-meta'
-import type { EtlStatus, Reference } from '@/types/document'
+import type { EtlStatus, Reference, DocumentUploadResponse } from '@/types/document'
 import type { SseFrame, ChatDetail, AgentMetadata } from '@/types/chat'
 
 /**
@@ -24,5 +24,13 @@ describe('编译期类型护栏', () => {
     expectTypeOf<ChatDetail>().toEqualTypeOf<
       { type: 'refs'; refs: Reference[] } | { type: 'agent'; meta: AgentMetadata }
     >()
+  })
+
+  it('DocumentUploadResponse 契约：id 可空（批量部分失败项 id=null）+ EtlStatus', () => {
+    expectTypeOf<DocumentUploadResponse>().toEqualTypeOf<{
+      id: number | null
+      fileName: string
+      status: EtlStatus
+    }>()
   })
 })

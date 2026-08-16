@@ -60,6 +60,8 @@ public enum ClientErrorCode implements IErrorCode {
     UPLOAD_INCOMPLETE(104008, "文件未上传完整"),
     DOCUMENT_PREVIEW_UNSUPPORTED(104009, "该文件类型不支持在线预览"),
     DOCUMENT_PREVIEW_TOO_LARGE(104010, "文件超出预览大小限制"),
+    UPLOAD_BATCH_COUNT_EXCEEDED(104011, "批量上传文件数超出限制"),
+    UPLOAD_BATCH_TOTAL_SIZE_EXCEEDED(104012, "批量上传总大小超出限制"),
 
     // ==================== 团队客户端 105001–105999 ====================
     TEAM_NAME_DUPLICATE(105001, "团队名称已存在"),

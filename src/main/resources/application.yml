@@ -1,7 +1,9 @@
 spring:
   servlet:
     multipart:
-      max-request-size: 55MB
+      # 205MB = 批量上传业务上限 200MB（DocumentProperties.maxBatchTotalSize）+ multipart 边界开销。
+      # 单文件容器上限仍由 max-file-size（55MB）独立约束，不受本值影响。
+      max-request-size: 205MB
       max-file-size: 55MB
   profiles:
     active: ${SPRING_PROFILES_ACTIVE:dev}

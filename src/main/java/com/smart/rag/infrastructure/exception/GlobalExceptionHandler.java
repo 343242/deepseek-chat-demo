@@ -16,6 +16,7 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.context.request.async.AsyncRequestNotUsableException;
 import org.springframework.web.context.request.async.AsyncRequestTimeoutException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 
 /**
  * 统一全局异常处理器
@@ -89,6 +90,17 @@ public class GlobalExceptionHandler {
     @ExceptionHandler(AuthenticationException.class)
     public ResponseEntity<GlobalResponse<Void>> handleAuthentication(AuthenticationException e) {
         return ResponseEntity.ok(GlobalResponse.error(ClientErrorCode.UNAUTHORIZED));
+    }
+
+    /**
+     * 上传请求超出 Servlet 容器 multipart 限制（单文件 &gt; max-file-size，或请求总量 &gt; max-request-size）。
+     * 属客户端错误而非服务端故障；不拦截会落入 {@link #handleGeneric} 被记成 ERROR + 完整堆栈。
+     */
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    public ResponseEntity<GlobalResponse<Void>> handleMaxUploadSize(MaxUploadSizeExceededException e) {
+        log.warn("Upload size exceeded: {}", e.getMessage());
+        return ResponseEntity.ok(GlobalResponse.error(ClientErrorCode.UPLOAD_FILE_TOO_LARGE,
+                "上传大小超出服务器限制（单文件 ≤ 55MB，批量请求总量 ≤ 205MB）"));
     }
 
     /**

@@ -9,6 +9,10 @@ public class DocumentProperties {
 
     /** 最大文件大小（Spring 格式，如 50MB） */
     private String maxFileSize = "50MB";
+    /** 批量上传最大文件数 */
+    private int maxBatchFiles = 10;
+    /** 批量上传总大小上限（Spring 格式，如 200MB） */
+    private String maxBatchTotalSize = "200MB";
     /** 允许的 MIME 类型，逗号分隔 */
     private String allowedMimeTypes = "application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,application/vnd.openxmlformats-officedocument.presentationml.presentation,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/plain,text/markdown,text/x-markdown,text/html";
     /** 文本类预览的输入大小上限（只限制需全量消费的渲染路径，不影响下载与 PDF 透传） */
@@ -36,6 +40,10 @@ public class DocumentProperties {
 
     public String getMaxFileSize() { return maxFileSize; }
     public void setMaxFileSize(String maxFileSize) { this.maxFileSize = maxFileSize; }
+    public int getMaxBatchFiles() { return maxBatchFiles; }
+    public void setMaxBatchFiles(int maxBatchFiles) { this.maxBatchFiles = maxBatchFiles; }
+    public String getMaxBatchTotalSize() { return maxBatchTotalSize; }
+    public void setMaxBatchTotalSize(String maxBatchTotalSize) { this.maxBatchTotalSize = maxBatchTotalSize; }
     public String getAllowedMimeTypes() { return allowedMimeTypes; }
     public void setAllowedMimeTypes(String allowedMimeTypes) { this.allowedMimeTypes = allowedMimeTypes; }
     public String getMaxPreviewFileSize() { return maxPreviewFileSize; }

@@ -13,6 +13,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.context.request.async.AsyncRequestTimeoutException;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
@@ -115,6 +116,18 @@ class GlobalExceptionHandlerTest {
             assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
             assertThat(response.getBody()).isNotNull();
             assertThat(response.getBody().code()).isEqualTo(100003);
+        }
+
+        @Test
+        @DisplayName("handleMaxUploadSize returns 200 with UPLOAD_FILE_TOO_LARGE code instead of INTERNAL_ERROR")
+        void handleMaxUploadSize() {
+            MaxUploadSizeExceededException ex = new MaxUploadSizeExceededException(205 * 1024 * 1024);
+            ResponseEntity<GlobalResponse<Void>> response = handler.handleMaxUploadSize(ex);
+
+            assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+            assertThat(response.getBody()).isNotNull();
+            assertThat(response.getBody().code()).isEqualTo(104003);
+            assertThat(response.getBody().message()).contains("超出服务器限制");
         }
 
         @Test

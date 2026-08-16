@@ -15,6 +15,7 @@ import com.smart.rag.rag.etl.EtlStatus;
 import com.smart.rag.rag.entity.RagDocument;
 import com.smart.rag.rag.mapper.RagDocumentMapper;
 import com.smart.rag.rag.mapper.VectorStoreMapper;
+import com.smart.rag.rag.config.DocumentProperties;
 import com.smart.rag.rag.service.AuthorizedDocumentFile;
 import com.smart.rag.rag.service.DocumentApplicationService;
 import com.smart.rag.rag.service.EtlDispatchService;
@@ -25,6 +26,7 @@ import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.util.unit.DataSize;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.util.Arrays;
@@ -55,6 +57,7 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
     private final VectorStoreMapper vectorStoreMapper;
     private final DocumentDtoMapper dtoMapper;
     private final DocumentAccessGuard accessGuard;
+    private final DocumentProperties documentProperties;
 
     public DocumentApplicationServiceImpl(EtlDispatchService etlDispatchService,
                                           RagDocumentMapper ragDocumentMapper,
@@ -63,7 +66,8 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
                                           TeamAccessGate teamAccessGate,
                                           VectorStoreMapper vectorStoreMapper,
                                           DocumentDtoMapper dtoMapper,
-                                          DocumentAccessGuard accessGuard) {
+                                          DocumentAccessGuard accessGuard,
+                                          DocumentProperties documentProperties) {
         this.etlDispatchService = etlDispatchService;
         this.ragDocumentMapper = ragDocumentMapper;
         this.documentLifecycleService = documentLifecycleService;
@@ -72,6 +76,7 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
         this.vectorStoreMapper = vectorStoreMapper;
         this.dtoMapper = dtoMapper;
         this.accessGuard = accessGuard;
+        this.documentProperties = documentProperties;
     }
 
     @Override
@@ -102,7 +107,31 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
     public List<DocumentUploadResponse> uploadBatch(MultipartFile[] files, @Nullable Long teamId) {
         Long currentUserId = SecurityUtils.getCurrentUserId();
         verifyTeamAccess(teamId, currentUserId);
+        verifyBatchLimits(files);
         return uploadStrategyRouter.route(teamId).uploadBatch(Arrays.asList(files), teamId, null, currentUserId);
+    }
+
+    /**
+     * 批量上传入口级约束：文件数与总大小上限在路由到策略前统一校验，
+     * 个人与团队两条路径（同一端点经 UploadStrategyRouter 分流）共享同一份限制。
+     */
+    private void verifyBatchLimits(MultipartFile[] files) {
+        if (files == null || files.length == 0) {
+            throw new ClientException(ClientErrorCode.UPLOAD_LIST_EMPTY);
+        }
+        if (files.length > documentProperties.getMaxBatchFiles()) {
+            throw new ClientException(ClientErrorCode.UPLOAD_BATCH_COUNT_EXCEEDED,
+                    String.format("批量上传最多 %d 个文件，实际 %d 个",
+                            documentProperties.getMaxBatchFiles(), files.length));
+        }
+        long totalBytes = Arrays.stream(files).mapToLong(MultipartFile::getSize).sum();
+        long maxTotalBytes = DataSize.parse(documentProperties.getMaxBatchTotalSize()).toBytes();
+        if (totalBytes > maxTotalBytes) {
+            throw new ClientException(ClientErrorCode.UPLOAD_BATCH_TOTAL_SIZE_EXCEEDED,
+                    String.format("批量上传总大小超出限制: %s > %s",
+                            DataSize.ofBytes(totalBytes).toMegabytes() + "MB",
+                            documentProperties.getMaxBatchTotalSize()));
+        }
     }
 
     @Override

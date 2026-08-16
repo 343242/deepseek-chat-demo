@@ -56,7 +56,8 @@ class DocumentApplicationServiceImplAuthTest {
         return new DocumentApplicationServiceImpl(etlDispatchService, ragDocumentMapper,
                 documentLifecycleService, uploadStrategyRouter, teamAccessGate, vectorStoreMapper,
                 new DocumentDtoMapper(new DocumentPreviewPolicy(new DocumentProperties())),
-                new DocumentAccessGuard(ragDocumentMapper, teamAccessGate));
+                new DocumentAccessGuard(ragDocumentMapper, teamAccessGate),
+                new DocumentProperties());
     }
 
     private static RagDocument doc(Long teamId, Long ownerId, EtlStatus status) {

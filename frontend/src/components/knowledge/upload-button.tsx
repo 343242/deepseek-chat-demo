@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
 import { toast } from 'sonner'
 import {
-  uploadDirect, shouldChunk, chunkUploadInit, uploadChunk, chunkUploadComplete, chunkUploadDelete,
+  uploadDirect, uploadBatch, shouldChunk, chunkUploadInit, uploadChunk, chunkUploadComplete, chunkUploadDelete,
   docKeys,
 } from '@/api/documents'
 import { queryClient } from '@/lib/query-client'
@@ -70,67 +70,122 @@ export function UploadButton({
 
   const handleFiles = useCallback(
     async (files: FileList | File[]) => {
-      const list = Array.from(files).slice(0, UPLOAD_LIMITS.maxBatch)
-      for (const file of list) {
+      const all = Array.from(files)
+      if (all.length > UPLOAD_LIMITS.maxBatch) {
+        toast.warning(`一次最多上传 ${UPLOAD_LIMITS.maxBatch} 个文件，已忽略超出的 ${all.length - UPLOAD_LIMITS.maxBatch} 个`)
+      }
+      const valid: File[] = []
+      for (const file of all.slice(0, UPLOAD_LIMITS.maxBatch)) {
         const err = validate(file)
-        if (err) {
-          toast.error(err)
-          continue
-        }
+        if (err) toast.error(err)
+        else valid.push(file)
+      }
+      if (valid.length === 0) return
+
+      const makeTask = (file: File): string => {
         const taskId = crypto.randomUUID()
-        const base: UploadTask = {
+        setTasks((t) => [{
           id: taskId, fileName: file.name, fileSize: file.size,
           status: 'uploading', progress: 0, startedAt: Date.now(),
           lastBytes: 0, lastTime: Date.now(),
+        }, ...t])
+        return taskId
+      }
+      const markSuccess = (taskId: string) => {
+        setTasks((t) => t.map((x) => (x.id === taskId ? { ...x, progress: 100, status: 'success' } : x)))
+        scheduleDismiss(taskId)
+      }
+      const markError = (taskId: string, message: string, fileName: string) => {
+        setTasks((t) => t.map((x) => (x.id === taskId ? { ...x, status: 'error', error: message } : x)))
+        toast.error(`${fileName} 上传失败`)
+      }
+
+      // 分片上传（断点续传）：秒传 / 逐片上传 / complete 兜底，成功态由内部标记
+      const uploadViaChunks = async (file: File, taskId: string) => {
+        const fileChecksum = await computeChecksum(file)
+        const chunkSize = UPLOAD_LIMITS.chunkSize
+        const totalChunks = Math.ceil(file.size / chunkSize)
+        const init = await chunkUploadInit({
+          fileChecksum, fileName: file.name, fileSize: file.size, mimeType: file.type, chunkSize,
+          teamId: teamId ?? null, replaceDocumentId: replaceDocumentId ?? null,
+        })
+        if (init.uploaded) {
+          // 秒传
+          setTasks((t) => t.map((x) => (x.id === taskId ? { ...x, progress: 100, status: 'instant' } : x)))
+          toast.success(`${file.name} 秒传成功`)
+          scheduleDismiss(taskId)
+          return
         }
-        setTasks((t) => [base, ...t])
+        const uploadId = init.uploadId!
+        const startedAt = Date.now()
+        for (let i = 0; i < totalChunks; i++) {
+          const start = i * chunkSize
+          const blob = file.slice(start, Math.min(start + chunkSize, file.size))
+          const chunkChecksum = await computeChecksum(blob)
+          await uploadChunk(uploadId, i, blob, chunkChecksum)
+          const progress = Math.round(((i + 1) / totalChunks) * 100)
+          const now = Date.now()
+          const uploadedBytes = (i + 1) * chunkSize
+          const speed = uploadedBytes / ((now - startedAt) / 1000)
+          setTasks((t) => t.map((x) => (x.id === taskId ? { ...x, progress, speed, lastBytes: uploadedBytes, lastTime: now, uploadId } : x)))
+        }
+        // 最后一片上传后，后端 Lua 脚本已自动触发异步合并（performMerge → 落库 → ETL dispatch）。
+        // 文档状态变化由 SSE 实时推送（见 knowledge-page.tsx），前端无需等待 complete 结果。
+        // complete 仅作"自动合并未触发"的兜底，fire-and-forget，不影响上传成功状态。
+        setTasks((t) => t.map((x) => (x.id === taskId ? { ...x, progress: 100, status: 'success' } : x)))
+        scheduleDismiss(taskId)
+        void chunkUploadComplete(uploadId, fileChecksum).catch(() => {})
+      }
+
+      // 单文件直传 / 分片（"上传新版本"场景：批量端点不支持 replaceDocumentId，只能逐文件）
+      const uploadOne = async (file: File) => {
+        const taskId = makeTask(file)
         try {
           if (!shouldChunk(file.size)) {
-            // 小文件直传
-            await uploadDirect(file, teamId)
-            setTasks((t) => t.map((x) => (x.id === taskId ? { ...x, progress: 100, status: 'success' } : x)))
-            scheduleDismiss(taskId)
+            await uploadDirect(file, teamId, replaceDocumentId)
+            markSuccess(taskId)
           } else {
-            // 分片上传
-            const fileChecksum = await computeChecksum(file)
-            const chunkSize = UPLOAD_LIMITS.chunkSize
-            const totalChunks = Math.ceil(file.size / chunkSize)
-            const init = await chunkUploadInit({
-              fileChecksum, fileName: file.name, fileSize: file.size, mimeType: file.type, chunkSize,
-              teamId: teamId ?? null, replaceDocumentId: replaceDocumentId ?? null,
-            })
-            if (init.uploaded) {
-              // 秒传
-              setTasks((t) => t.map((x) => (x.id === taskId ? { ...x, progress: 100, status: 'instant' } : x)))
-              toast.success(`${file.name} 秒传成功`)
-              scheduleDismiss(taskId)
-            } else {
-              const uploadId = init.uploadId!
-              for (let i = 0; i < totalChunks; i++) {
-                const start = i * chunkSize
-                const blob = file.slice(start, Math.min(start + chunkSize, file.size))
-                const chunkChecksum = await computeChecksum(blob)
-                await uploadChunk(uploadId, i, blob, chunkChecksum)
-                const progress = Math.round(((i + 1) / totalChunks) * 100)
-                const now = Date.now()
-                const uploadedBytes = (i + 1) * chunkSize
-                const speed = (uploadedBytes - base.lastBytes) / ((now - base.lastTime) / 1000)
-                setTasks((t) => t.map((x) => (x.id === taskId ? { ...x, progress, speed, lastBytes: uploadedBytes, lastTime: now, uploadId } : x)))
-              }
-              // 最后一片上传后，后端 Lua 脚本已自动触发异步合并（performMerge → 落库 → ETL dispatch）。
-              // 文档状态变化由 SSE 实时推送（见 knowledge-page.tsx），前端无需等待 complete 结果。
-              // complete 仅作"自动合并未触发"的兜底，fire-and-forget，不影响上传成功状态。
-              setTasks((t) => t.map((x) => (x.id === taskId ? { ...x, progress: 100, status: 'success' } : x)))
-              scheduleDismiss(taskId)
-              void chunkUploadComplete(uploadId, fileChecksum).catch(() => {})
-            }
+            await uploadViaChunks(file, taskId)
           }
           void queryClient.invalidateQueries({ queryKey: docKeys.all })
           onDone?.()
         } catch (e) {
-          setTasks((t) => t.map((x) => (x.id === taskId ? { ...x, status: 'error', error: (e as Error).message } : x)))
-          toast.error(`${file.name} 上传失败`)
+          markError(taskId, (e as Error).message, file.name)
         }
+      }
+
+      if (replaceDocumentId) {
+        for (const file of valid) await uploadOne(file)
+        return
+      }
+
+      // 小文件（≤ chunkThreshold）合并为一次批量请求；无字节级进度，0→100 跳变与原直传一致
+      const small = valid.filter((f) => !shouldChunk(f.size))
+      if (small.length > 0) {
+        const batchTasks = small.map((file) => ({ file, taskId: makeTask(file) }))
+        try {
+          const results = await uploadBatch(small, teamId)
+          if (results.length === batchTasks.length) {
+            // 响应与输入顺序一一对应（后端策略按输入顺序逐文件产出）；部分失败项 status=FAILED
+            batchTasks.forEach(({ file, taskId }, i) => {
+              if (results[i]?.status === 'FAILED') markError(taskId, '上传失败', file.name)
+              else markSuccess(taskId)
+            })
+          } else {
+            // 长度不符（契约异常）：按整批成功兜底，失败由 SSE 状态流纠正
+            batchTasks.forEach(({ taskId }) => markSuccess(taskId))
+          }
+          void queryClient.invalidateQueries({ queryKey: docKeys.all })
+          onDone?.()
+        } catch (e) {
+          const message = (e as Error).message
+          batchTasks.forEach(({ file, taskId }) => markError(taskId, message, file.name))
+        }
+      }
+
+      // 大文件逐个分片（断点续传天然按文件进行）
+      for (const file of valid.filter((f) => shouldChunk(f.size))) {
+        await uploadOne(file)
       }
     },
     [teamId, replaceDocumentId, onDone, scheduleDismiss],

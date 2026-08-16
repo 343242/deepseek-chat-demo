@@ -3,6 +3,7 @@ import { api, apiFetch } from '@/lib/api-fetch'
 import type { PagedResult } from '@/types/api'
 import type {
   DocumentDTO,
+  DocumentUploadResponse,
   ChunkDTO,
   EtlStatus,
   ChunkUploadInitRequest,
@@ -89,12 +90,21 @@ export function useRetryDocument() {
 
 /* ============ 上传 ============ */
 
-/** 小文件直传（≤ chunkThreshold） */
-export function uploadDirect(file: File, teamId?: number | null) {
+/** 小文件直传（≤ chunkThreshold；replaceDocumentId 为"上传新版本"场景的替代目标文档） */
+export function uploadDirect(file: File, teamId?: number | null, replaceDocumentId?: number) {
   const fd = new FormData()
   fd.append('file', file)
   if (teamId) fd.append('teamId', String(teamId))
-  return apiFetch<DocumentDTO>('/documents/upload', { method: 'POST', body: fd })
+  if (replaceDocumentId) fd.append('replaceDocumentId', String(replaceDocumentId))
+  return apiFetch<DocumentUploadResponse>('/documents/upload', { method: 'POST', body: fd })
+}
+
+/** 批量直传（≤ chunkThreshold 的小文件组一次提交；响应与输入顺序一一对应，部分失败项 status=FAILED） */
+export function uploadBatch(files: File[], teamId?: number | null) {
+  const fd = new FormData()
+  for (const file of files) fd.append('files', file)
+  if (teamId) fd.append('teamId', String(teamId))
+  return apiFetch<DocumentUploadResponse[]>('/documents/upload/batch', { method: 'POST', body: fd })
 }
 
 /** 分片上传 init */

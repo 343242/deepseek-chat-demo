@@ -95,7 +95,8 @@ class W2CorrectnessQuickWinsTest {
                     new com.smart.rag.rag.service.impl.DocumentDtoMapper(
                             new com.smart.rag.rag.service.DocumentPreviewPolicy(
                                     new com.smart.rag.rag.config.DocumentProperties())),
-                    new com.smart.rag.rag.service.impl.DocumentAccessGuard(ragDocumentMapper, teamAccessGate));
+                    new com.smart.rag.rag.service.impl.DocumentAccessGuard(ragDocumentMapper, teamAccessGate),
+                    new com.smart.rag.rag.config.DocumentProperties());
         }
 
         @AfterEach

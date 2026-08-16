@@ -4,9 +4,11 @@
 > **路由**：`/admin/prompts` · `/admin/users` · `/admin/roles`
 > **权限**：`prompt:manage` / `user:manage` / `role:manage`（各自独立守卫；侧栏项无权限即隐藏）
 > **前置文档**：DESIGN-SYSTEM.md v0.4.0 · INFORMATION-ARCHITECTURE.md v0.3.0
-> **状态**：v0.1.0 ASCII 线框（待确认后转 HTML）
+> **状态**：v0.1.1 ASCII 线框（待确认后转 HTML）
 
 > 本篇覆盖后台三页（评估工作台另见 09 篇）。三页共用 AdminShell 模式：面包屑（IA 5.4）+ 顶部工具条（搜索/主操作）+ 表格 + 行菜单 + 右侧抽屉。⚠️ 契约红线：**用户管理没有"创建用户"与"重置密码"端点，不画这两个入口**（ADM-3）。
+>
+> **v0.1.1 打磨**：① 骨架图移除误置于用户管理页的"[+ 新建角色]"主操作（ADM-3：用户管理无新建入口，顶部主操作随页面而异）；② 权限矩阵 `conversation:*` 归"会话"组（原图违反"按前缀分组"自述规则）；③ 删除用户确认文案对齐 13.7 权威表（去"（逻辑删除）"技术细节泄漏）；④ 示例人名弃用 alice/bob 泛型占位。
 
 ---
 
@@ -17,7 +19,7 @@
 │ [≡] [SR] Smart RAG                ← 返回前台              🌓 👤▾        │
 ├─ Sidebar 240px ─────┬─ Content Area ────────────────────────────────────┤
 │  ← 返回前台         │  后台管理 / 用户管理            ← Breadcrumbs(IA 5.4)│
-│  ──────────        │  用户管理                       [+ 新建角色…]       │
+│  ──────────        │  用户管理                                       │
 │  📝 系统提示词      │  🔍 搜索用户名/昵称              共 42 人           │
 │  👤 用户管理   ●    │  ┌─ 用户表 ──────────────────────────────────────┐│
 │  🛡️ 角色权限        │  │ 用户名   昵称   邮箱          状态   创建时间  ⋮││
@@ -28,6 +30,8 @@
 ```
 
 📐 面包屑：`后台管理 / {页面}`，当前页 `--text-primary` 不可点；表格行高 48px（DS 6.4）；操作列 hover 出 `⋮`；破坏操作全部走 ConfirmDialog（DS 2.0c 🔒）。
+
+> 顶部主操作随页面而异：**角色页**为 [+ 新建角色]；**用户管理页无新建入口**（ADM-3 契约红线，仅有搜索 + 计数）；**提示词页**无主操作（页首提示条即引导）。骨架图以用户管理页为例，故右上仅显示"共 42 人"。
 
 ---
 
@@ -95,8 +99,8 @@
 │ 🔍 搜索用户名/昵称                                共 42 人               │
 │  用户名      昵称      邮箱                状态     创建时间        操作 │
 │  admin      管理员    admin@example.com   ✅ 启用   2026-06-20      ⋮  │
-│  alice      爱丽丝    alice@example.com   ✅ 启用   2026-06-21      ⋮  │
-│  bob        鲍勃      bob@example.com     ⛔ 禁用   2026-06-25      ⋮  │
+│  linshuang  林霜      linshuang@…        ✅ 启用   2026-06-21      ⋮  │
+│  chenmo     陈默      chenmo@…           ⛔ 禁用   2026-06-25      ⋮  │
 │                              < 1 2 3 >                 每页 20 ▾        │
 └──────────────────────────────────────────────────────────────────────────┘
 ```
@@ -112,8 +116,8 @@
 
 ```
 ┌─ 用户详情 ─────────────────────────────────┐
-│ [avatar] bob / 鲍勃                         │
-│ 邮箱 bob@example.com · 手机 138…            │
+│ [avatar] 陈默 chenmo                        │
+│ 邮箱 chenmo@example.com · 手机 138…            │
 │ 状态: [⛔ 禁用]     创建于 2026-06-25        │
 │ 角色: [USER]              [分配角色]         │
 │ 权限: chat:send · usage:view …（折叠展示）   │
@@ -129,7 +133,7 @@
 | 编辑资料 | `POST /api/users/{id}/update` | Modal 表单（nickname/email/phone/avatar，校验同 07 篇 §2 同一 DTO）；仅提交 dirty 字段 |
 | 禁用 / 启用 | `POST /api/users/{id}/status?status=0\|1` | **UserStatusToggle**（DS 11.14）。⚠️ **query param 传值，非 JSON body**（ADM-5）。禁用走 ConfirmDialog："禁用账户? / {nickname} 的所有登录将被立即注销，且无法登录。/ [禁用]（destructive）"——后端禁用即吊销其全部 token；启用轻确认即可 |
 | 分配角色 | `POST /api/users/{id}/roles { roleIds }` | Modal：角色 Checkbox 列表（数据 `GET /api/roles`），**全量覆盖语义**（提交 = 以勾选集整体替换），帮助文本明示"保存后替换该用户的全部角色"；清空入口 → `/roles/clear` 轻确认。上限 20 个 |
-| 删除用户 | `POST /api/users/{id}/delete` | ConfirmDialog："删除用户? / {nickname} 将被删除（逻辑删除）并立即注销所有登录，此操作不可撤销。/ [删除]（destructive）" |
+| 删除用户 | `POST /api/users/{id}/delete` | ConfirmDialog："删除用户? / {nickname} 将被删除并立即注销所有登录，此操作不可撤销。/ [删除]（destructive）"（13.7 权威文案，不向用户暴露"逻辑删除"实现细节） |
 
 ---
 
@@ -161,6 +165,7 @@
 │ ▾ 聊天                                     │
 │   ☑ 发送聊天消息        chat:send          │
 │   ☑ 流式聊天            chat:stream        │
+│ ▾ 会话                                     │
 │   ☑ 会话管理            conversation:manage│
 │ ▾ 用量                                    │
 │   ☑ 用量统计查看         usage:view        │
@@ -231,7 +236,7 @@
 
 ---
 
-**—— 后台管理线框 v0.1.0 完 ——**
+**—— 后台管理线框 v0.1.1 完 ——**
 
 > 上一页：[07-account.md](./07-account.md) 我的账号
 > 下一页：[09-evaluation.md](./09-evaluation.md) 评估工作台

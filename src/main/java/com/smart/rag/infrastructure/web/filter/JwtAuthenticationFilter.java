@@ -4,6 +4,7 @@ import com.smart.rag.infrastructure.web.auth.UserPermissionProvider;
 import com.smart.rag.infrastructure.web.service.TokenCacheService;
 import com.smart.rag.infrastructure.web.util.JwtTokenProvider;
 import com.smart.rag.infrastructure.web.util.SecurityUtils;
+import jakarta.servlet.DispatcherType;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -25,6 +26,18 @@ import java.util.stream.Collectors;
 public class JwtAuthenticationFilter extends OncePerRequestFilter {
 
     private static final Logger log = LoggerFactory.getLogger(JwtAuthenticationFilter.class);
+
+    /**
+     * REQUEST 阶段验证通过的认证快照（request attribute 键）。
+     * <p>
+     * SSE 流式请求（SseEmitter/Flux）在 emitter 收尾时会以 ASYNC/ERROR dispatch 重走过滤器链。
+     * 若收尾时刻按 token 当前时效重新鉴权，流存活超过 access-expiration TTL 后
+     * （文档状态流 10 分钟、评测流 1 小时，均可能跨过 15 分钟 token 寿命），
+     * 收尾会变成匿名请求 → 「响应已提交的 Access Denied」。请求开始时已鉴权通过，
+     * 其生命周期内身份不应被重新审判——dispatch 阶段恢复快照而非重验。
+     */
+    private static final String CACHED_AUTH_ATTRIBUTE =
+        JwtAuthenticationFilter.class.getName() + ".cachedAuth";
 
     /**
      * 允许在 ASYNC dispatch 时重新认证。
@@ -54,6 +67,14 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     protected void doFilterInternal(@NonNull HttpServletRequest request,
                                     @NonNull HttpServletResponse response,
                                     @NonNull FilterChain filterChain) throws ServletException, IOException {
+        // ASYNC/ERROR dispatch：恢复 REQUEST 阶段的认证快照，不重验 token（见 CACHED_AUTH_ATTRIBUTE 注释）
+        if (request.getDispatcherType() != DispatcherType.REQUEST
+            && request.getAttribute(CACHED_AUTH_ATTRIBUTE) instanceof UsernamePasswordAuthenticationToken cached) {
+            SecurityContextHolder.getContext().setAuthentication(cached);
+            filterChain.doFilter(request, response);
+            return;
+        }
+
         String token = SecurityUtils.extractToken(request);
 
         // 诊断留痕：各拒绝分支记录 DispatcherType + URI。SSE 流式请求在 emitter 收尾时以 ASYNC/ERROR
@@ -122,6 +143,7 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
             UsernamePasswordAuthenticationToken auth =
                 new UsernamePasswordAuthenticationToken(userId, null, authorities);
             SecurityContextHolder.getContext().setAuthentication(auth);
+            request.setAttribute(CACHED_AUTH_ATTRIBUTE, auth);
         } catch (Exception e) {
             // Log for operational visibility; do NOT set authentication on failure
             if (e instanceof io.jsonwebtoken.ExpiredJwtException) {

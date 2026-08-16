@@ -15,6 +15,7 @@ import java.io.IOException;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -23,7 +24,7 @@ import static org.mockito.Mockito.verify;
 /**
  * DocumentSseRegistry 单元测试。
  * <p>
- * 验证 userId 路由、多 tab 连接、断开自动清理、心跳。
+ * 验证 userId 路由、多 tab 连接、断开自动清理、心跳、在途感知的空闲收尾。
  */
 @ExtendWith(MockitoExtension.class)
 class DocumentSseRegistryTest {
@@ -35,7 +36,7 @@ class DocumentSseRegistryTest {
 
     @BeforeEach
     void setUp() {
-        registry = new DocumentSseRegistry();
+        registry = new DocumentSseRegistry(60_000);
     }
 
     @Test
@@ -110,5 +111,45 @@ class DocumentSseRegistryTest {
 
         verify(emitter).send(any(SseEmitter.SseEventBuilder.class));
         verify(emitter2).send(any(SseEmitter.SseEventBuilder.class));
+    }
+
+    @Test
+    @DisplayName("在途文档存在时 heartbeat 不收尾（ETL 单阶段间隔可超宽限期，在途即豁免）")
+    void heartbeat_keepsAliveWhileInFlight() throws IOException {
+        registry = new DocumentSseRegistry(0);
+        registry.register(1L, emitter);
+        registry.send(new DocumentStatusChangedEvent(10L, 1L, null, EtlStatus.PARSING));
+        clearInvocations(emitter);
+
+        registry.heartbeat();
+
+        verify(emitter, never()).complete();
+        verify(emitter).send(any(SseEmitter.SseEventBuilder.class));
+    }
+
+    @Test
+    @DisplayName("在途转终态且过宽限期后 heartbeat 主动收尾")
+    void heartbeat_completesAfterIdleGrace() throws IOException {
+        registry = new DocumentSseRegistry(0);
+        registry.register(1L, emitter);
+        registry.send(new DocumentStatusChangedEvent(10L, 1L, null, EtlStatus.PARSING));
+        registry.send(new DocumentStatusChangedEvent(10L, 1L, null, EtlStatus.COMPLETED));
+        clearInvocations(emitter);
+
+        registry.heartbeat();
+
+        verify(emitter).complete();
+        verify(emitter, never()).send(any(SseEmitter.SseEventBuilder.class));
+    }
+
+    @Test
+    @DisplayName("无在途但在宽限期内（刚注册）只发心跳不收尾")
+    void heartbeat_withinGraceSendsHeartbeatOnly() throws IOException {
+        registry.register(1L, emitter);
+
+        registry.heartbeat();
+
+        verify(emitter, never()).complete();
+        verify(emitter).send(any(SseEmitter.SseEventBuilder.class));
     }
 }

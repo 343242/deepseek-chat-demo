@@ -109,6 +109,7 @@ public abstract class AbstractModeStrategy implements ChatModeStrategy {
         }
         String cagSegment = contextPromptInjector.cagSegment(ctx.cagContext());
         chain.add(new RagContextAdvisor(cagSegment, refBlock));
+        appendPromptLogging(chain);
 
         ChatResponse springResponse = requestSpecFactory.createSpec(
             ctx.chatClient(), ctx.candidateId(), ctx.request(),
@@ -138,6 +139,17 @@ public abstract class AbstractModeStrategy implements ChatModeStrategy {
         }
     }
 
+    /**
+     * 链尾追加最终提示词日志 Advisor（ORDER 最大，打印所有前置 Advisor 处理后的最终消息）。
+     * 开关关闭时（app.chat.prompt-log-enabled=false）为 no-op。
+     */
+    private void appendPromptLogging(List<Advisor> chain) {
+        Advisor advisor = infra.getPromptLoggingAdvisor();
+        if (advisor != null) {
+            chain.add(advisor);
+        }
+    }
+
     private static void putRagUserId(StrategyExecutionContext ctx) {
         Long userId = ctx.userId();
         if (userId != null) {
@@ -164,6 +176,7 @@ public abstract class AbstractModeStrategy implements ChatModeStrategy {
         }
         String cagSegment = contextPromptInjector.cagSegment(ctx.cagContext());
         chain.add(new RagContextAdvisor(cagSegment, refBlock));
+        appendPromptLogging(chain);
 
         StringBuilder collectedContent = new StringBuilder();
         final int maxContentLength = 1 << 20;

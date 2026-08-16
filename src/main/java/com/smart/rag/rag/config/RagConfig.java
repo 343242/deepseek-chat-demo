@@ -6,6 +6,7 @@ import com.smart.rag.infrastructure.llm.adapter.RewriteClientResolver;
 import com.smart.rag.infrastructure.llm.registry.LlmClientRegistry;
 import com.smart.rag.rag.chunk.ParentDocumentPostProcessor;
 import com.smart.rag.rag.mapper.VectorStoreMapper;
+import com.smart.rag.rag.retrieval.QueryRewritePromptTemplates;
 import com.smart.rag.rag.retrieval.RerankDocumentPostProcessor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -33,17 +34,7 @@ public class RagConfig {
             RagRetrievalProperties properties,
             RewriteClientResolver resolver) {
 
-        String template = """
-                Given the following user query, rewrite it into a clear and specific search query \
-                suitable for querying a {target}. Keep the core intent, remove conversational filler, \
-                and use precise terminology.
-
-                IMPORTANT: If the query is already clear, specific, and standalone, return it EXACTLY as is.
-                Do NOT over-elaborate short factual queries.
-
-                Original query: {query}
-
-                Rewritten search query:""";
+        String template = QueryRewritePromptTemplates.QUERY_REWRITE_TEMPLATE;
 
         ChatClient.Builder builder = resolveRewriteBuilder(properties, resolver);
 

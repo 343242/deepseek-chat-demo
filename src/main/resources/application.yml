@@ -29,6 +29,10 @@ app:
   date-format: yyyy-MM-dd HH:mm:ss
   cors:
     allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000}
+  sse:
+    # 文档状态流空闲收尾宽限期：用户无在途文档且持续无事件超过此时长即 complete 连接
+    # （DocumentSseRegistry）。在途文档豁免，不受此值约束；emitter 10 分钟超时为兜底上限
+    document-idle-grace-ms: ${SSE_DOC_IDLE_GRACE_MS:60000}
   etl:
     consumer:
       # ETL 索引任务消费配置（EtlDocumentConsumer）；topic 与 OutboxRelay 有序主题白名单保持一致

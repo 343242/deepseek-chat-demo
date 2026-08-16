@@ -5,6 +5,7 @@ import com.smart.rag.agent.dto.ToolResult;
 import com.smart.rag.agent.workspace.ToolWorkspace;
 import com.smart.rag.infrastructure.llm.adapter.RewriteClientResolver;
 import com.smart.rag.infrastructure.trace.TracedStep;
+import com.smart.rag.rag.retrieval.QueryRewritePromptTemplates;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
@@ -24,17 +25,6 @@ public class QueryRewriteTool implements RagTool {
 
     private static final Logger log = LoggerFactory.getLogger(QueryRewriteTool.class);
 
-    private static final String REWRITE_PROMPT_TEMPLATE = """
-            Given the following user query, rewrite it into a clear and specific search query \
-            suitable for querying a {target}. Keep the core intent, remove conversational filler, \
-            and use precise terminology.
-
-            IMPORTANT: If the query is already clear, specific, and standalone, return it EXACTLY as is.
-            Do NOT over-elaborate short factual queries.
-
-            Original query: {query}
-
-            Rewritten search query:""";
 
     private final ChatClient chatClient;
     private final ObjectMapper objectMapper;
@@ -61,7 +51,7 @@ public class QueryRewriteTool implements RagTool {
             }
 
             // 使用 PromptTemplate 渲染改写提示
-            PromptTemplate promptTemplate = new PromptTemplate(REWRITE_PROMPT_TEMPLATE);
+            PromptTemplate promptTemplate = new PromptTemplate(QueryRewritePromptTemplates.QUERY_REWRITE_TEMPLATE);
             String renderedPrompt = promptTemplate.render(Map.of(
                 "target", "knowledge base",
                 "query", queryText

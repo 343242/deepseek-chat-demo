@@ -1,7 +1,10 @@
 package com.smart.rag.chat.service;
 
 import com.smart.rag.chat.tool.ToolRegistry;
+import com.smart.rag.infrastructure.advisor.PromptLoggingAdvisor;
 import com.smart.rag.rag.config.RagAdvisorFactory;
+import org.jspecify.annotations.Nullable;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.ai.chat.client.advisor.ToolCallAdvisor;
 import org.springframework.ai.chat.client.advisor.api.Advisor;
 import org.springframework.ai.chat.memory.ChatMemory;
@@ -29,6 +32,7 @@ public class AdvisorInfrastructure {
     private final ObjectProvider<ToolRegistry> toolRegistryProvider;
     private final ObjectProvider<ToolCallAdvisor> toolCallAdvisorProvider;
     private final RagAdvisorFactory ragAdvisorFactory;
+    private final @Nullable PromptLoggingAdvisor promptLoggingAdvisor;
 
     // volatile + DCL 缓存 -- 保留原有延迟初始化语义
     private volatile List<Advisor> cachedGlobalAdvisors;
@@ -40,13 +44,15 @@ public class AdvisorInfrastructure {
                                   ChatMemoryRepository chatMemoryRepository,
                                   ObjectProvider<ToolRegistry> toolRegistryProvider,
                                   ObjectProvider<ToolCallAdvisor> toolCallAdvisorProvider,
-                                  RagAdvisorFactory ragAdvisorFactory) {
+                                  RagAdvisorFactory ragAdvisorFactory,
+                                  @Value("${app.chat.prompt-log-enabled:true}") boolean promptLogEnabled) {
         this.globalAdvisorsProvider = globalAdvisorsProvider;
         this.chatMemoryProvider = chatMemoryProvider;
         this.chatMemoryRepository = chatMemoryRepository;
         this.toolRegistryProvider = toolRegistryProvider;
         this.toolCallAdvisorProvider = toolCallAdvisorProvider;
         this.ragAdvisorFactory = ragAdvisorFactory;
+        this.promptLoggingAdvisor = promptLogEnabled ? new PromptLoggingAdvisor() : null;
     }
 
     public List<Advisor> getGlobalAdvisors() {
@@ -83,4 +89,12 @@ public class AdvisorInfrastructure {
     public ChatMemoryRepository getChatMemoryRepository() { return chatMemoryRepository; }
     public RagAdvisorFactory getRagAdvisorFactory() { return ragAdvisorFactory; }
     public ToolCallAdvisor getToolCallAdvisor() { return toolCallAdvisorProvider.getObject(); }
+
+    /**
+     * Chat 模块专用的最终提示词日志 Advisor（仅 Chat 链追加，不进全局 Advisor 链）。
+     * {@code app.chat.prompt-log-enabled=false} 时返回 null，不打印。
+     */
+    public @Nullable PromptLoggingAdvisor getPromptLoggingAdvisor() {
+        return promptLoggingAdvisor;
+    }
 }

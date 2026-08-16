@@ -67,8 +67,10 @@ public class DocumentController {
 
     /**
      * 文档状态 SSE 订阅。后端 ETL 状态流转（PARSING→CHUNKING→VECTORIZING→COMPLETED/FAILED）实时推送，
-     * 前端无需轮询或手动刷新。连接按 userId 索引；多实例部署下经 Redis Pub/Sub 扇出。
-     * 超时 10 分钟，超时后前端 EventSource 自动重连。
+     * 前端无需轮询或手动刷新。连接按 userId 索引（事件只推给文档所有者）；多实例部署下经 Redis Pub/Sub 扇出。
+     * <p>
+     * 连接不常驻：前端只在有自己在途文档时订阅；服务端在无在途文档且超过宽限期
+     * （{@code app.sse.document-idle-grace-ms}）无事件时主动 complete，10 分钟为兜底超时上限。
      */
     @GetMapping(value = "/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter events() {

@@ -40,6 +40,13 @@ export interface DocumentUploadResponse {
   status: EtlStatus
 }
 
+/** DocumentDeleteResult（rag/dto/DocumentDeleteResult.java，批量删除部分成功语义；失败项 message 携带原因） */
+export interface DocumentDeleteResult {
+  id: number
+  success: boolean
+  message?: string | null
+}
+
 /** ChunkDTO（GET /api/documents/{id}/chunks 与 GET /api/chunks/{chunkId}） */
 export interface ChunkDTO {
   id: string

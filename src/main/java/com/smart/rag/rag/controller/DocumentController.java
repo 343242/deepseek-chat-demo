@@ -3,8 +3,10 @@ package com.smart.rag.rag.controller;
 import com.smart.rag.infrastructure.response.GlobalResponse;
 import com.smart.rag.infrastructure.response.PagedResult;
 import com.smart.rag.infrastructure.web.util.SecurityUtils;
+import com.smart.rag.rag.dto.BatchDeleteRequest;
 import com.smart.rag.rag.dto.ChunkDTO;
 import com.smart.rag.rag.dto.DocumentDTO;
+import com.smart.rag.rag.dto.DocumentDeleteResult;
 import com.smart.rag.rag.dto.DocumentUploadResponse;
 import com.smart.rag.rag.service.DocumentApplicationService;
 import com.smart.rag.rag.service.DocumentFileResult;
@@ -13,6 +15,7 @@ import com.smart.rag.rag.service.Disposition;
 import com.smart.rag.rag.service.RangeCapability;
 import com.smart.rag.rag.sse.DocumentSseRegistry;
 import org.jspecify.annotations.Nullable;
+import jakarta.validation.Valid;
 import org.springframework.core.io.Resource;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.HttpHeaders;
@@ -117,6 +120,15 @@ public class DocumentController {
     public GlobalResponse<Void> delete(@PathVariable Long id) {
         documentService.delete(id);
         return GlobalResponse.ok("文档已删除");
+    }
+
+    /**
+     * 批量删除（部分成功语义）：单项失败不影响其余，逐项结果见 {@link DocumentDeleteResult}。
+     * 空列表 / 超 50 个 / 非正 ID 由 bean validation 拦截（VALIDATION_ERROR）。
+     */
+    @PostMapping("/batch-delete")
+    public GlobalResponse<List<DocumentDeleteResult>> deleteBatch(@Valid @RequestBody BatchDeleteRequest request) {
+        return GlobalResponse.ok(documentService.deleteBatch(request.ids()));
     }
 
     @PostMapping("/{id}/retry")

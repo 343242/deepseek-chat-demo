@@ -3,6 +3,7 @@ package com.smart.rag.rag.service;
 import com.smart.rag.infrastructure.response.PagedResult;
 import com.smart.rag.rag.dto.ChunkDTO;
 import com.smart.rag.rag.dto.DocumentDTO;
+import com.smart.rag.rag.dto.DocumentDeleteResult;
 import com.smart.rag.rag.dto.DocumentUploadResponse;
 import org.jspecify.annotations.Nullable;
 import org.springframework.web.multipart.MultipartFile;
@@ -51,6 +52,14 @@ public interface DocumentApplicationService {
     DocumentDTO getById(Long id);
 
     boolean delete(Long id);
+
+    /**
+     * 批量删除文档（部分成功语义，与批量上传一致）：逐项复用 {@link #delete} 的
+     * 授权（verifyAccess + assertCanMutate）与级联删除，单项不存在 / 无权 / 失败
+     * 不影响其余项，不整体回滚（删除为幂等软删 + 资源清理，重试安全）。
+     * ID 先去重；结果与去重后输入顺序一一对应。
+     */
+    List<DocumentDeleteResult> deleteBatch(List<Long> ids);
 
     DocumentUploadResponse retry(Long id);
 

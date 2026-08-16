@@ -1,7 +1,7 @@
 import { describe, it, expectTypeOf } from 'vitest'
 import { mapFrame } from '@/lib/sse'
 import { ETL_STATUS_META, type StatusMeta } from '@/lib/status-meta'
-import type { EtlStatus, Reference, DocumentUploadResponse } from '@/types/document'
+import type { EtlStatus, Reference, DocumentUploadResponse, DocumentDeleteResult } from '@/types/document'
 import type { SseFrame, ChatDetail, AgentMetadata } from '@/types/chat'
 
 /**
@@ -31,6 +31,14 @@ describe('编译期类型护栏', () => {
       id: number | null
       fileName: string
       status: EtlStatus
+    }>()
+  })
+
+  it('DocumentDeleteResult 契约：success 判别 + 可选 message（批量删除部分失败语义）', () => {
+    expectTypeOf<DocumentDeleteResult>().toEqualTypeOf<{
+      id: number
+      success: boolean
+      message?: string | null
     }>()
   })
 })

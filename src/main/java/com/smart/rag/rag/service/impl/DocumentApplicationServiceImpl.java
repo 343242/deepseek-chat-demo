@@ -10,6 +10,7 @@ import com.smart.rag.infrastructure.request.PageRequest;
 import com.smart.rag.infrastructure.response.PagedResult;
 import com.smart.rag.rag.dto.ChunkDTO;
 import com.smart.rag.rag.dto.DocumentDTO;
+import com.smart.rag.rag.dto.DocumentDeleteResult;
 import com.smart.rag.rag.dto.DocumentUploadResponse;
 import com.smart.rag.rag.etl.EtlStatus;
 import com.smart.rag.rag.entity.RagDocument;
@@ -29,6 +30,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.util.unit.DataSize;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
@@ -195,6 +197,27 @@ public class DocumentApplicationServiceImpl implements DocumentApplicationServic
         RagDocument doc = accessGuard.verifyAccess(id);
         accessGuard.assertCanMutate(doc);
         return documentLifecycleService.cascadeDelete(doc);
+    }
+
+    @Override
+    public List<DocumentDeleteResult> deleteBatch(List<Long> ids) {
+        List<Long> distinctIds = ids.stream().distinct().toList();
+        List<DocumentDeleteResult> results = new ArrayList<>(distinctIds.size());
+        for (Long id : distinctIds) {
+            try {
+                RagDocument doc = accessGuard.verifyAccess(id);
+                accessGuard.assertCanMutate(doc);
+                documentLifecycleService.cascadeDelete(doc);
+                results.add(new DocumentDeleteResult(id, true, null));
+            } catch (ClientException | ServiceException e) {
+                results.add(new DocumentDeleteResult(id, false, e.getUserMessage()));
+            } catch (RuntimeException e) {
+                // 非预期异常不外泄内部细节，仅记录日志；该项失败不影响其余项
+                log.warn("Batch delete failed for document {}: {}", id, e.getMessage());
+                results.add(new DocumentDeleteResult(id, false, "删除失败，请稍后重试"));
+            }
+        }
+        return results;
     }
 
     @Override

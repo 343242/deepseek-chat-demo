@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { Search, MoreHorizontal, Eye, History, Upload, RefreshCw, Trash2, FileStack } from 'lucide-react'
+import { toast } from 'sonner'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -11,7 +12,7 @@ import { StatusBadge } from '@/components/common/status-badge'
 import { ConfirmDialog } from '@/components/common/confirm-dialog'
 import { EmptyState } from '@/components/common/empty-state'
 import { FileTypeIcon } from './file-icon'
-import { useDocuments, useDeleteDocument, useRetryDocument } from '@/api/documents'
+import { useDocuments, useDeleteDocument, useDeleteDocumentsBatch, useRetryDocument } from '@/api/documents'
 import { ETL_STATUS_META } from '@/lib/status-meta'
 import { time, formatFileSize } from '@/lib/format'
 import type { DocumentDTO, EtlStatus } from '@/types/document'
@@ -28,8 +29,11 @@ export function DocumentTable({
 }) {
   const [keyword, setKeyword] = useState('')
   const [toDelete, setToDelete] = useState<DocumentDTO | null>(null)
+  const [selected, setSelected] = useState<Set<number>>(new Set())
+  const [batchConfirmOpen, setBatchConfirmOpen] = useState(false)
   const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } = useDocuments({ teamId, size: 20 })
   const del = useDeleteDocument()
+  const delBatch = useDeleteDocumentsBatch()
   const retry = useRetryDocument()
 
   const all = useMemo(() => data?.pages.flatMap((p) => p.content) ?? [], [data])
@@ -39,6 +43,20 @@ export function DocumentTable({
     const kw = keyword.toLowerCase()
     return all.filter((d) => d.fileName?.toLowerCase().includes(kw))
   }, [all, keyword])
+
+  // 多选：按 id 持久（不随 keyword 过滤裁剪）；全选三态只作用于当前 filtered（无限查询仅含已加载页）
+  const filteredIds = useMemo(() => filtered.map((d) => d.id), [filtered])
+  const allSelected = filteredIds.length > 0 && filteredIds.every((id) => selected.has(id))
+  const someSelected = selected.size > 0 && !allSelected
+
+  function toggleSelected(id: number, on: boolean) {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (on) next.add(id)
+      else next.delete(id)
+      return next
+    })
+  }
 
   function isFailed(s: EtlStatus) {
     return s === 'FAILED' || s === 'VECTOR_FAILED'
@@ -53,6 +71,15 @@ export function DocumentTable({
           <Input value={keyword} onChange={(e) => setKeyword(e.target.value)} placeholder="搜索文档" className="h-9 pl-8" />
         </div>
         {keyword && <span className="text-xs text-faint">仅已加载 {all.length} 条</span>}
+        {selected.size > 0 && (
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-subtle">已选 {selected.size} 项</span>
+            <Button variant="destructive" size="sm" onClick={() => setBatchConfirmOpen(true)}>
+              <Trash2 className="size-3.5" /> 删除
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}>取消选择</Button>
+          </div>
+        )}
         <span className="ml-auto text-sm text-subtle">共 {data?.pages[0]?.total ?? 0} 个文档</span>
       </div>
 
@@ -61,7 +88,20 @@ export function DocumentTable({
         <table className="w-full min-w-[820px] border-collapse text-sm">
           <thead>
             <tr className="border-b border-line-subtle bg-base text-left text-xs font-medium text-muted">
-              <th className="w-10 py-2.5 pl-4"><Checkbox aria-label="全选" /></th>
+              <th className="w-10 py-2.5 pl-4">
+                <Checkbox
+                  aria-label="全选"
+                  checked={allSelected ? true : someSelected ? 'indeterminate' : false}
+                  onCheckedChange={(checked) =>
+                    setSelected((prev) => {
+                      const next = new Set(prev)
+                      if (checked) filteredIds.forEach((id) => next.add(id))
+                      else filteredIds.forEach((id) => next.delete(id))
+                      return next
+                    })
+                  }
+                />
+              </th>
               <th className="py-2.5">文件名</th>
               <th className="py-2.5 text-right">大小</th>
               <th className="py-2.5">状态</th>
@@ -102,7 +142,11 @@ export function DocumentTable({
                     className={`group cursor-pointer border-b border-line-subtle transition-colors hover:bg-hover ${weak ? 'opacity-60' : ''}`}
                   >
                     <td className="py-3 pl-4" onClick={(e) => e.stopPropagation()}>
-                      <Checkbox aria-label={`选择 ${doc.fileName}`} />
+                      <Checkbox
+                        aria-label={`选择 ${doc.fileName}`}
+                        checked={selected.has(doc.id)}
+                        onCheckedChange={(checked) => toggleSelected(doc.id, checked === true)}
+                      />
                     </td>
                     <td className="py-3">
                       <div className="flex items-center gap-2">
@@ -164,7 +208,40 @@ export function DocumentTable({
         description={<>文档「{toDelete?.fileName}」及其向量数据将被永久删除，此操作不可撤销。</>}
         confirmText="删除"
         onConfirm={async () => {
-          if (toDelete) await del.mutateAsync(toDelete.id)
+          if (toDelete) {
+            await del.mutateAsync(toDelete.id)
+            toggleSelected(toDelete.id, false)
+          }
+        }}
+      />
+
+      <ConfirmDialog
+        open={batchConfirmOpen}
+        onOpenChange={(o) => !o && setBatchConfirmOpen(false)}
+        title="批量删除文档"
+        description={<>已选 {selected.size} 个文档及其向量数据将被永久删除，此操作不可撤销。</>}
+        confirmText="删除"
+        onConfirm={async () => {
+          // 不 rethrow：ConfirmDialog 无 catch（既有实现），整批 HTTP 失败在此兜底，选中保留便于重试
+          try {
+            const results = await delBatch.mutateAsync([...selected])
+            const deleted = results.filter((r) => r.success).map((r) => r.id)
+            const failed = results.filter((r) => !r.success)
+            if (deleted.length > 0) {
+              setSelected((prev) => {
+                const next = new Set(prev)
+                deleted.forEach((id) => next.delete(id))
+                return next
+              })
+              toast.success(`已删除 ${deleted.length} 个文档`)
+            }
+            if (failed.length > 0) {
+              const nameOf = (id: number) => all.find((d) => d.id === id)?.fileName ?? `#${id}`
+              failed.forEach((r) => toast.error(`${nameOf(r.id)} 删除失败：${r.message ?? '未知原因'}`))
+            }
+          } catch (e) {
+            toast.error(`批量删除失败：${(e as Error).message}`)
+          }
         }}
       />
     </div>

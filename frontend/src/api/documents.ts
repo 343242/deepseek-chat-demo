@@ -4,6 +4,7 @@ import type { PagedResult } from '@/types/api'
 import type {
   DocumentDTO,
   DocumentUploadResponse,
+  DocumentDeleteResult,
   ChunkDTO,
   EtlStatus,
   ChunkUploadInitRequest,
@@ -76,6 +77,15 @@ export function useDeleteDocument() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (id: number) => api.post<void>(`/documents/${id}/delete`),
+    onSuccess: () => qc.invalidateQueries({ queryKey: docKeys.all }),
+  })
+}
+
+/** 批量删除 —— POST /documents/batch-delete（部分成功：单项失败不影响其余，结果与输入顺序一一对应） */
+export function useDeleteDocumentsBatch() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (ids: number[]) => api.post<DocumentDeleteResult[]>('/documents/batch-delete', { ids }),
     onSuccess: () => qc.invalidateQueries({ queryKey: docKeys.all }),
   })
 }

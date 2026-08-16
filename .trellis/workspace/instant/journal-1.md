@@ -656,3 +656,36 @@ Completed mcp-db-source-of-truth task: code review P0-P3 fixes (13 issues), dele
 ### Next Steps
 
 - None - task complete
+
+
+## Session 20: 批量删除文档：/batch-delete 端点 + 表格多选
+
+**Date**: 2026-08-16
+**Task**: 批量删除文档：/batch-delete 端点 + 表格多选
+**Branch**: `agentic-rag-dev`
+
+### Summary
+
+后端新增 POST /api/documents/batch-delete（BatchDeleteRequest @Size(max=50)，deleteBatch 部分成功语义：逐项 verifyAccess→assertCanMutate→cascadeDelete，ID 去重，非预期异常不外泄细节，无整体事务）。前端 document-table 接线既有 checkbox 占位：Set 选中态、表头三态全选（仅已加载+过滤行）、批量条与 ConfirmDialog，成功/失败分路 toast（失败保留勾选可重试）。detect_changes 报 critical 经核实为同文件归因漂移（5 个后端文件 61 行纯新增 0 删除）。后端全量 1650 测试通过，前端四道门全过。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `2f8cefb` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

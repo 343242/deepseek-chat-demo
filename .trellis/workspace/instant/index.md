@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 19
+- **Total Sessions**: 20
 - **Last Active**: 2026-08-16
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~658 | Active |
+| `journal-1.md` | ~691 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 20 | 2026-08-16 | 批量删除文档：/batch-delete 端点 + 表格多选 | `2f8cefb` | `agentic-rag-dev` |
 | 19 | 2026-08-16 | 批量上传改造：前端走批量端点 + 后端限 10 个/200MB | `ff22d54` | `agentic-rag-dev` |
 | 18 | 2026-08-16 | 前端 spec 最佳实践审查修订 + ESLint/tsconfig 严格化落地 | `16f36da`, `0e2001a`, `462b969` | `agentic-rag-dev` |
 | 17 | 2026-07-13 | MCP DB source-of-truth: review fixes, cleanup, and batch archive | `6a40c11`, `0d6581a`, `8ac3804`, `4ef2f95`, `26644a8` | `agentic-rag-dev` |

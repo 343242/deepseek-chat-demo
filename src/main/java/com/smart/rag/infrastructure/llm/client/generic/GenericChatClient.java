@@ -149,6 +149,9 @@ public class GenericChatClient extends AbstractChatClient {
     static void readSse(ObjectMapper objectMapper, BufferedSource source, Call call, FluxSink<StreamChunk> sink) throws IOException {
         ToolCallAccumulator acc = new ToolCallAccumulator();
         StringBuilder reasoningBuf = new StringBuilder(); // 累积 reasoning 片段（工具调用多轮回传需完整值）
+        // finish_reason 先缓存不立即收口：stream_options.include_usage 开启后，DeepSeek/OpenAI 在
+        // finish_reason 之后的独立块（choices 为空、仅含 usage）下发用量——等它合并成完整轮末汇总包。
+        String pendingFinishReason = null;
         while (!source.exhausted()) {
             if (sink.isCancelled()) {
                 call.cancel();
@@ -160,14 +163,23 @@ public class GenericChatClient extends AbstractChatClient {
 
             String data = line.substring(5).trim();
             if ("[DONE]".equals(data)) {
-                // [DONE] 兜底：finish_reason 未到的极端情况也发轮末汇总包（必须携带累积 reasoning，勿漏）
-                emitRoundEnd(sink, acc, null, null, reasoningBuf.toString());
+                // [DONE] 兜底：finish_reason 未到 / usage 块未到的极端情况也发轮末汇总包（必须携带累积 reasoning，勿漏）
+                emitRoundEnd(sink, acc, pendingFinishReason, null, reasoningBuf.toString());
                 return;
             }
             try {
                 JsonNode root = objectMapper.readTree(data);
                 JsonNode choices = root.path("choices");
-                if (!choices.isArray() || choices.isEmpty()) continue;
+                JsonNode usageNode = root.path("usage");
+                if (!choices.isArray() || choices.isEmpty()) {
+                    // usage-only 终止块（include_usage 形态）：与缓存的 finish_reason 合并后收口
+                    LlmResponse.TokenUsage usage = parseTokenUsageIfPresent(usageNode);
+                    if (usage != null) {
+                        emitRoundEnd(sink, acc, pendingFinishReason, usage, reasoningBuf.toString());
+                        return;
+                    }
+                    continue;
+                }
                 JsonNode choice0 = choices.get(0);
                 JsonNode delta = choice0.path("delta");
 
@@ -197,17 +209,23 @@ public class GenericChatClient extends AbstractChatClient {
                     }
                 }
 
-                // 3) finish_reason → 轮末汇总包（完整 toolCalls + finishReason + usage + 完整累积 reasoning）
+                // 3) finish_reason → 轮末汇总包（完整 toolCalls + finishReason + usage + 完整累积 reasoning）。
+                //    usage 真实挂在 finish_reason 块上的厂商立即收口；否则缓存等 usage-only 块 / [DONE] 兜底。
                 JsonNode frNode = choice0.path("finish_reason");
                 if (frNode.isTextual() && !"null".equals(frNode.asText())) {
-                    LlmResponse.TokenUsage usage = parseTokenUsage(root.path("usage"));
-                    emitRoundEnd(sink, acc, frNode.asText(), usage, reasoningBuf.toString());
-                    return;
+                    LlmResponse.TokenUsage usage = parseTokenUsageIfPresent(usageNode);
+                    if (usage != null) {
+                        emitRoundEnd(sink, acc, frNode.asText(), usage, reasoningBuf.toString());
+                        return;
+                    }
+                    pendingFinishReason = frNode.asText();
                 }
             } catch (IOException e) {
                 log.debug("Failed to parse SSE data chunk: {}", data, e);
             }
         }
+        // 行流自然结束（无 [DONE]）：补发缓存的 finish_reason 轮末包，防轮末汇总包丢失
+        emitRoundEnd(sink, acc, pendingFinishReason, null, reasoningBuf.toString());
     }
 
     /** 轮末汇总包：完整 toolCalls（若累积到）+ finishReason + usage + 完整累积 reasoning（R6 回传）。Poc6 防御式契约，供 ChatModelAdapter 检测工具调用。 */
@@ -276,6 +294,11 @@ public class GenericChatClient extends AbstractChatClient {
         body.put("model", candidate.model());
         body.put("messages", messages);
         body.put("stream", stream);
+        if (stream) {
+            // OpenAI 兼容协议：流式默认不回 usage，显式请求才在末尾下发 usage-only 终止块
+            //（DeepSeek/OpenAI/百炼兼容层均支持；不认识的端点会忽略多余字段）
+            body.put("stream_options", Map.of("include_usage", true));
+        }
         if (request.temperature() != null) body.put("temperature", request.temperature());
         if (request.maxTokens() != null) body.put("max_tokens", request.maxTokens());
         if (request.topP() != null) body.put("top_p", request.topP());
@@ -347,6 +370,16 @@ public class GenericChatClient extends AbstractChatClient {
             ));
         }
         return toolCalls;
+    }
+
+    /** usage 节点真实存在（含任一 token 字段）才解析；MissingNode/空对象返回 null——
+     *  parseTokenUsage 对 MissingNode 会造出全 0 对象（path().asInt(0)），不能用作存在性判断。 */
+    private static LlmResponse.TokenUsage parseTokenUsageIfPresent(JsonNode usageNode) {
+        if (!usageNode.isObject()
+            || (!usageNode.has("prompt_tokens") && !usageNode.has("total_tokens"))) {
+            return null;
+        }
+        return parseTokenUsage(usageNode);
     }
 
     private static LlmResponse.TokenUsage parseTokenUsage(JsonNode usage) {

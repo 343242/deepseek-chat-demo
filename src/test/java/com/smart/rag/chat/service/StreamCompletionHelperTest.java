@@ -34,10 +34,10 @@ class StreamCompletionHelperTest {
         ChatMessagePublisher publisher = mock(ChatMessagePublisher.class);
         ChatConversationHelper helper = mock(ChatConversationHelper.class);
 
-        StreamCompletionHelper.onComplete(ctx, "full reply", SignalType.ON_COMPLETE, publisher, helper);
+        StreamCompletionHelper.onComplete(ctx, "full reply", SignalType.ON_COMPLETE, 150, publisher, helper);
 
         verify(publisher).publishMessageSave(eq("u_1_conv-1"), eq("hello"), eq("full reply"),
-                eq("model-a"), isNull(), eq(100L));
+                eq("model-a"), eq(150), eq(100L));
         verifyNoInteractions(helper);
     }
 
@@ -48,7 +48,7 @@ class StreamCompletionHelperTest {
         ChatMessagePublisher publisher = mock(ChatMessagePublisher.class);
         ChatConversationHelper helper = mock(ChatConversationHelper.class);
 
-        StreamCompletionHelper.onComplete(ctx, "partial reply", SignalType.CANCEL, publisher, helper);
+        StreamCompletionHelper.onComplete(ctx, "partial reply", SignalType.CANCEL, null, publisher, helper);
 
         verifyNoInteractions(publisher);
         verifyNoInteractions(helper);
@@ -61,7 +61,7 @@ class StreamCompletionHelperTest {
         ChatMessagePublisher publisher = mock(ChatMessagePublisher.class);
         ChatConversationHelper helper = mock(ChatConversationHelper.class);
 
-        StreamCompletionHelper.onComplete(ctx, "partial", SignalType.ON_ERROR, publisher, helper);
+        StreamCompletionHelper.onComplete(ctx, "partial", SignalType.ON_ERROR, null, publisher, helper);
 
         verifyNoInteractions(publisher);
         verifyNoInteractions(helper);

@@ -54,11 +54,11 @@ public class ChatMessageSaveConsumer implements SmartLifecycle {
         MessageHandler<ChatMessagePayload> handler = msg -> {
             ChatMessagePayload p = msg.payload();
             try {
-                // consumer 端 aiResponse 等价物已下沉到 payload.totalTokens；durationMs=0
-                // （流式响应耗时已在用量链路记录，落库 duration 仅作文档参考）。
                 conversationHelper.saveMessagesAndNotify(
                         p.conversationId(), p.userMessage(), p.assistantContent(),
-                        p.candidateId(), (int) p.totalTokens(), 0L);
+                        p.candidateId(),
+                        p.totalTokens() != null ? p.totalTokens().intValue() : null,
+                        p.durationMs());
             } catch (RuntimeException e) {
                 // 落库失败：记录可观测日志后重抛，触发 broker 重试。
                 // 总线级 Redis SETNX 会拦截相同 deduplicationKey 的重投递，避免无限循环。

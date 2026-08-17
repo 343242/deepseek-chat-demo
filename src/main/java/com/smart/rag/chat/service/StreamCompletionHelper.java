@@ -1,6 +1,7 @@
 package com.smart.rag.chat.service;
 
 import com.smart.rag.mode.StrategyExecutionContext;
+import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import reactor.core.publisher.SignalType;
@@ -33,20 +34,22 @@ public final class StreamCompletionHelper {
      * <p>
      * ON_COMPLETE 落库；ON_ERROR/CANCEL 作废不落库（design chat-stream-cancel.md §5.2）。
      * 取消即作废——用户须重新生成（重发同一消息）或复述才能继续，会话历史保持干净，
-     * 避免半截回复污染多轮记忆。usage 由策略层独立记录，不受此影响。
+     * 避免半截回复污染多轮记忆。usage_event 统计由 UsageRecordingChatModel 装饰器独立记录，不受此影响。
      *
-     * @param ctx       策略执行上下文（conversationId / request / candidateId / elapsed）
-     * @param content   流式累计的完整文本（已截断保护）
-     * @param signal    终止信号（ON_COMPLETE / ON_ERROR / CANCEL）
-     * @param publisher 消息落库
-     * @param helper    会话辅助（保留参数，ON_ERROR/CANCEL 不再调用其 savePartialResponse）
+     * @param ctx         策略执行上下文（conversationId / request / candidateId / elapsed）
+     * @param content     流式累计的完整文本（已截断保护）
+     * @param signal      终止信号（ON_COMPLETE / ON_ERROR / CANCEL）
+     * @param totalTokens 流式累计总 token（轮末真实 usage 求和），{@code null} 表厂商未返回（不估算）
+     * @param publisher   消息落库
+     * @param helper      会话辅助（保留参数，ON_ERROR/CANCEL 不再调用其 savePartialResponse）
      */
     public static void onComplete(StrategyExecutionContext ctx, String content, SignalType signal,
+                                  @Nullable Integer totalTokens,
                                   ChatMessagePublisher publisher, ChatConversationHelper helper) {
         switch (signal) {
             case ON_COMPLETE -> publisher.publishMessageSave(ctx.conversationId(),
                 ctx.request().message(), content,
-                ctx.candidateId(), null, ctx.elapsed());
+                ctx.candidateId(), totalTokens, ctx.elapsed());
             case ON_ERROR, CANCEL -> {
                 // 取消即作废：不落库（design chat-stream-cancel.md §5.2）。
                 // 含用户主动取消与意外断连——不区分 reason，统一作废，用户重新生成。

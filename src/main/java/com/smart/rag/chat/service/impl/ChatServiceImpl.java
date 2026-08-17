@@ -13,9 +13,9 @@ import com.smart.rag.mode.WorkspaceInfo;
 import com.smart.rag.infrastructure.exception.ProviderNotFoundException;
 import com.smart.rag.infrastructure.fallback.FallbackEligibility;
 import com.smart.rag.infrastructure.llm.CapabilityClient;
-import com.smart.rag.infrastructure.llm.ChatCapable;
-import com.smart.rag.infrastructure.llm.adapter.ChatModelAdapter;
 import com.smart.rag.infrastructure.llm.LlmCapability;
+import com.smart.rag.infrastructure.llm.adapter.ChatModelAssembler;
+import com.smart.rag.infrastructure.llm.usage.UsageScene;
 import com.smart.rag.infrastructure.exception.ClientException;
 import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;
 import com.smart.rag.infrastructure.llm.registry.LlmClientRegistry;
@@ -26,13 +26,13 @@ import com.smart.rag.chat.mode.ModeRouter;
 import com.smart.rag.chat.service.ChatConversationHelper;
 import com.smart.rag.chat.service.ChatMessagePublisher;
 import com.smart.rag.chat.service.ChatService;
-import com.smart.rag.chat.service.ChatUsageTracker;
 import com.smart.rag.chat.service.ActiveStreamRegistry;
 import com.smart.rag.chat.service.SseStreamBridge;
 import com.smart.rag.chat.service.MdcPropagator;
 import com.smart.rag.chat.service.UserContextProvider;
 import com.smart.rag.mode.StreamFrame;
 import com.smart.rag.mode.StreamResult;
+import com.smart.rag.mode.StreamUsageSnapshot;
 import com.smart.rag.mode.StrategyExecuteResult;
 import com.smart.rag.mode.StrategyExecutionContext;
 import com.smart.rag.common.util.UuidGeneratorUtil;
@@ -68,7 +68,7 @@ public class ChatServiceImpl implements ChatService {
     private final LlmClientRegistry llmRegistry;
     private final FallbackExecutor fallbackExecutor;
     private final ModeRouter modeRouter;
-    private final ChatUsageTracker usageTracker;
+    private final ChatModelAssembler chatModelAssembler;
     private final ChatConversationHelper conversationHelper;
     private final ChatMessagePublisher chatMessagePublisher;
     private final SseStreamBridge sseStreamBridge;
@@ -82,7 +82,7 @@ public class ChatServiceImpl implements ChatService {
     public ChatServiceImpl(LlmClientRegistry llmRegistry,
                            FallbackEligibility fallbackEligibility,
                            ModeRouter modeRouter,
-                           ChatUsageTracker usageTracker,
+                           ChatModelAssembler chatModelAssembler,
                            ChatConversationHelper conversationHelper,
                            ChatMessagePublisher chatMessagePublisher,
                            SseStreamBridge sseStreamBridge,
@@ -95,7 +95,7 @@ public class ChatServiceImpl implements ChatService {
         this.llmRegistry = llmRegistry;
         this.fallbackExecutor = new FallbackExecutor(fallbackEligibility);
         this.modeRouter = modeRouter;
-        this.usageTracker = usageTracker;
+        this.chatModelAssembler = chatModelAssembler;
         this.conversationHelper = conversationHelper;
         this.chatMessagePublisher = chatMessagePublisher;
         this.sseStreamBridge = sseStreamBridge;
@@ -117,8 +117,8 @@ public class ChatServiceImpl implements ChatService {
 
         try {
             return fallbackExecutor.execute(chain, client -> {
-                ChatCapable chatCapable = (ChatCapable) client;
-                ChatClient chatClient = ChatClient.builder(new ChatModelAdapter(chatCapable)).build();
+                ChatClient chatClient = chatModelAssembler.chatClient(
+                    pctx.userId, client.candidateId(), UsageScene.CHAT, pctx.conversationId);
                 StrategyExecutionContext execCtx = new StrategyExecutionContext(
                     chatClient, client.candidateId(), request,
                     pctx.conversationId, pctx.rawConversationId, pctx.userId,
@@ -147,12 +147,13 @@ public class ChatServiceImpl implements ChatService {
         AtomicReference<Map<String, Object>> agentMetadataRef = new AtomicReference<>();
         AtomicReference<FallbackMeta> fallbackRef = new AtomicReference<>();
         AtomicReference<WorkspaceInfo> workspaceRef = new AtomicReference<>();
+        AtomicReference<AtomicReference<StreamUsageSnapshot>> usageRef = new AtomicReference<>();
         // 降级链已尝试模型（每次 lambda 执行追加；error 帧在降级链耗尽时携带，供前端提示）
         List<String> attempted = Collections.synchronizedList(new ArrayList<>());
 
         Flux<StreamFrame> stream = fallbackExecutor.executeStream(chain, client -> {
-            ChatCapable chatCapable = (ChatCapable) client;
-            ChatClient chatClient = ChatClient.builder(new ChatModelAdapter(chatCapable)).build();
+            ChatClient chatClient = chatModelAssembler.chatClient(
+                pctx.userId, client.candidateId(), UsageScene.CHAT, pctx.conversationId);
             StrategyExecutionContext execCtx = new StrategyExecutionContext(
                 chatClient, client.candidateId(), request,
                 pctx.conversationId, pctx.rawConversationId, pctx.userId,
@@ -163,6 +164,7 @@ public class ChatServiceImpl implements ChatService {
             refsRef.set(sr.references());                  // 标准模式同步 references
             agentMetadataRef.set(sr.agentMetadata());      // Agent 模式 intent/confidence（retrievalRounds 流后刷新）
             workspaceRef.set(sr.workspace());              // Agent 模式工作区（成功模型覆盖前序失败模型）
+            usageRef.set(sr.usageRef());                   // 每轮用量快照（成功流 doOnComplete 写入 → event:usage 尾帧）
             boolean isFallback = !client.candidateId().equals(pctx.requestedCandidateId);
             fallbackRef.set(isFallback ? new FallbackMeta(pctx.requestedCandidateId, true) : null);
             Flux<StreamFrame> flux = sr.frames();
@@ -187,7 +189,7 @@ public class ChatServiceImpl implements ChatService {
             }
         });
 
-        return bridgeCancellable(stream, pctx, refsRef, agentMetadataRef, fallbackRef, attempted);
+        return bridgeCancellable(stream, pctx, refsRef, agentMetadataRef, fallbackRef, attempted, usageRef.get());
     }
 
     // ==================== 流式取消（design chat-stream-cancel.md §4/§5） ====================
@@ -205,7 +207,8 @@ public class ChatServiceImpl implements ChatService {
                                          AtomicReference<List<Reference>> refsRef,
                                          AtomicReference<Map<String, Object>> agentMetadataRef,
                                          AtomicReference<FallbackMeta> fallbackRef,
-                                         List<String> attempted) {
+                                         List<String> attempted,
+                                         AtomicReference<StreamUsageSnapshot> usageRef) {
         // 软取消状态（design §4.2/§4.3）
         Sinks.Empty<Void> cancelSink = Sinks.empty();
         AtomicBoolean cancelled = new AtomicBoolean(false);
@@ -227,7 +230,7 @@ public class ChatServiceImpl implements ChatService {
 
         // ② 再 bridge —— subscribe 时 cancelSink 的信号可被重放（窗口内的取消能生效）
         return sseStreamBridge.bridge(cancellable,
-                new SseStreamBridge.SseTailFrames(refsRef, agentMetadataRef, fallbackRef, attempted),
+                new SseStreamBridge.SseTailFrames(usageRef, refsRef, agentMetadataRef, fallbackRef, attempted),
                 cancelSink, cancelled, cancelReason, emitterRef,
                 pctx.conversationId, activeStream);
     }
@@ -350,24 +353,20 @@ public class ChatServiceImpl implements ChatService {
                                         String candidateId,
                                         PreparedContext pctx,
                                         FallbackMeta fallback) {
-        if (result.springAiResponse() != null) {
-            usageTracker.recordUsage(pctx.conversationId, candidateId,
-                result.springAiResponse(), elapsed(pctx.startTimeMs));
-        } else {
-            usageTracker.recordUsage(pctx.conversationId, candidateId,
-                elapsed(pctx.startTimeMs));
-        }
-
+        Integer totalTokens = ChatConversationHelper.extractTotalTokens(result.springAiResponse());
+        long durationMs = elapsed(pctx.startTimeMs);
         chatMessagePublisher.publishMessageSave(pctx.conversationId,
             pctx.request().message(), result.content(),
-            candidateId, result.springAiResponse(), elapsed(pctx.startTimeMs));
+            candidateId, totalTokens, durationMs);
 
         if (result.agentMetadata() != null) {
             return new ChatResponse(candidateId, result.content(),
-                pctx.rawConversationId, null, result.agentMetadata(), result.references());
+                pctx.rawConversationId, null, result.agentMetadata(), result.references(),
+                totalTokens, durationMs);
         }
         return new ChatResponse(candidateId, result.content(),
-            pctx.rawConversationId, fallback, null, result.references());
+            pctx.rawConversationId, fallback, null, result.references(),
+            totalTokens, durationMs);
     }
 
     private static long elapsed(long startTimeMs) {

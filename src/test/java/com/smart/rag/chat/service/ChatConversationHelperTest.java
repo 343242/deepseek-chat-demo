@@ -138,7 +138,7 @@ class ChatConversationHelperTest {
 
             ChatConversationHelper helper = createHelper();
             assertThrows(RuntimeException.class,
-                    () -> helper.saveMessagesAndNotify("conv-1", "hello", "hi", "gpt-4", -1, 100L));
+                    () -> helper.saveMessagesAndNotify("conv-1", "hello", "hi", "gpt-4", null, 100L));
         }
     }
 

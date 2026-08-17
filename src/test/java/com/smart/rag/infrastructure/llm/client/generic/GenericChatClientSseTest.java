@@ -138,6 +138,44 @@ class GenericChatClientSseTest {
     }
 
     @Test
+    @DisplayName("include_usage 形态：finish_reason 后的 usage-only 块合并为完整轮末包")
+    void usageOnlyChunkAfterFinishReasonMerged() {
+        List<StreamChunk> chunks = parse(
+            txt("Hel"),
+            txt("lo"),
+            finish("stop", null),
+            "{\"choices\":[],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":20,\"total_tokens\":30}}",
+            "[DONE]");
+        StreamChunk end = roundSummary(chunks);
+        assertThat(end).isNotNull();
+        assertThat(end.finishReason()).isEqualTo(StreamChunk.FinishReason.STOP);
+        assertThat(end.usage()).isNotNull();
+        assertThat(end.usage().totalTokens()).isEqualTo(30);
+    }
+
+    @DisplayName("厂商不回 usage：finish_reason 缓存至 [DONE] 兜底收口（轮末包 usage=null）")
+    void finishReasonWithoutUsageFlushedAtDone() {
+        List<StreamChunk> chunks = parse(
+            txt("hi"),
+            finish("stop", null),
+            "[DONE]");
+        StreamChunk end = roundSummary(chunks);
+        assertThat(end).isNotNull();
+        assertThat(end.finishReason()).isEqualTo(StreamChunk.FinishReason.STOP);
+        assertThat(end.usage()).isNull();
+    }
+
+    @DisplayName("无 [DONE] 断流：行流自然结束补发缓存的 finish_reason 轮末包")
+    void streamEndsWithoutDoneStillEmitsRoundEnd() {
+        List<StreamChunk> chunks = parse(
+            txt("hi"),
+            finish("length", null));
+        StreamChunk end = roundSummary(chunks);
+        assertThat(end).isNotNull();
+        assertThat(end.finishReason()).isEqualTo(StreamChunk.FinishReason.LENGTH);
+        assertThat(end.usage()).isNull();
+    }
+
     @DisplayName("usage 末包：轮末汇总包携带 TokenUsage")
     void usageCarriedInSummary() {
         List<StreamChunk> chunks = parse(

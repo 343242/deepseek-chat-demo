@@ -4,6 +4,7 @@ import com.smart.rag.chat.dto.FallbackMeta;
 import com.smart.rag.chat.dto.CancelReason;
 import com.smart.rag.infrastructure.exception.RemoteException;
 import com.smart.rag.mode.StreamFrame;
+import com.smart.rag.mode.StreamUsageSnapshot;
 import com.smart.rag.mode.Reference;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
@@ -27,12 +28,13 @@ import java.util.concurrent.atomic.AtomicReference;
  * <b>帧协议</b>（与阻塞式 {@code ChatResponse} 字段对齐）：
  * <ol>
  *   <li>content data 帧（默认，逐字 chunk）</li>
+ *   <li>{@code event: usage} — 每轮用量（tokenUsage/durationMs；成功完成时必有，厂商未返回 token 时 tokenUsage 为 null）</li>
  *   <li>{@code event: references} — 检索引用（标准模式同步就绪；agent 模式由 doOnComplete 现场构建）</li>
  *   <li>{@code event: agentMetadata} — Agent 元数据（intent/confidence/retrievalRounds）</li>
  *   <li>{@code event: fallback} — 降级信号（最终服务模型 ≠ 用户请求模型）</li>
  *   <li>{@code event: error} — 结构化错误（PRD §3.8：error code + message + attempted）</li>
  * </ol>
- * 收尾帧（references/agentMetadata/fallback）仅在 content 流正常 complete 后发送；
+ * 收尾帧（usage/references/agentMetadata/fallback）仅在 content 流正常 complete 后发送；
  * error 帧在 onError 时发送（替代收尾帧）。各 holder 为 null 时跳过对应帧，
  * 标准模式（SIMPLE/MULTI_TURN）行为与改动前一致。
  */
@@ -63,7 +65,7 @@ public class SseStreamBridge {
 
     /** 标准 RAG 桥接：帧流 + references 帧（refsRef 同步就绪） */
     public SseEmitter bridge(Flux<StreamFrame> stream, AtomicReference<List<Reference>> refsRef) {
-        return bridge(stream, new SseTailFrames(refsRef, null, null, null));
+        return bridge(stream, new SseTailFrames(null, refsRef, null, null, null));
     }
 
     /**
@@ -277,11 +279,30 @@ public class SseStreamBridge {
             return;
         }
         if (tail != null) {
+            sendUsage(emitter, tail.usageRef());
             sendReferences(emitter, tail.referencesRef());
             sendAgentMetadata(emitter, tail.agentMetadataRef());
             sendFallback(emitter, tail.fallbackRef());
         }
         emitter.complete();
+    }
+
+    /** 每轮用量尾帧（tokenUsage/durationMs）；usageRef 为 null 或快照未写（错误/取消流）时跳过 */
+    private void sendUsage(SseEmitter emitter, @Nullable AtomicReference<StreamUsageSnapshot> usageRef) {
+        if (usageRef == null) {
+            return;
+        }
+        StreamUsageSnapshot usage = usageRef.get();
+        if (usage == null) {
+            return;
+        }
+        try {
+            synchronized (emitter) {
+                emitter.send(SseEmitter.event().name("usage").data(usage));
+            }
+        } catch (IOException | IllegalStateException e) {
+            log.warn("Failed to send usage frame: {}", e.getMessage());
+        }
     }
 
     /** 内容流末尾追加 references 帧；refsRef 为 null 或 references 为空时跳过 */
@@ -344,6 +365,7 @@ public class SseStreamBridge {
      * <p>
      * 各 holder 为 null 时跳过对应帧：
      * <ul>
+     *   <li>{@code usageRef}：策略层 doOnComplete 写入的每轮用量快照（成功流必有）</li>
      *   <li>{@code referencesRef}：标准模式同步就绪；agent 模式由 doOnComplete 刷新</li>
      *   <li>{@code agentMetadataRef}：Agent 模式 intent/confidence 订阅前就绪，retrievalRounds 流后刷新</li>
      *   <li>{@code fallbackRef}：跨模型降级时由 chatStream 捕获</li>
@@ -351,6 +373,7 @@ public class SseStreamBridge {
      * </ul>
      */
     public record SseTailFrames(
+            @Nullable AtomicReference<StreamUsageSnapshot> usageRef,
             @Nullable AtomicReference<List<Reference>> referencesRef,
             @Nullable AtomicReference<Map<String, Object>> agentMetadataRef,
             @Nullable AtomicReference<FallbackMeta> fallbackRef,

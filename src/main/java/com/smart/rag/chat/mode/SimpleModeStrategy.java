@@ -9,7 +9,6 @@ import com.smart.rag.chat.service.ChatMessagePublisher;
 import com.smart.rag.chat.service.ChatReferenceCollector;
 import com.smart.rag.chat.service.ChatRequestSpecFactory;
 import com.smart.rag.chat.service.ChatRetrievalService;
-import com.smart.rag.chat.service.ChatUsageTracker;
 import com.smart.rag.mode.ModeChainResult;
 import org.springframework.ai.chat.client.advisor.api.Advisor;
 import org.springframework.stereotype.Component;
@@ -26,13 +25,12 @@ public class SimpleModeStrategy extends AbstractModeStrategy {
 
     public SimpleModeStrategy(AdvisorInfrastructure infra,
                               ChatRequestSpecFactory requestSpecFactory,
-                              ChatUsageTracker usageTracker,
                               ChatRetrievalService chatRetrievalService,
                               ChatReferenceCollector chatReferenceCollector,
                               ContextPromptInjector contextPromptInjector,
                               ChatMessagePublisher chatMessagePublisher,
                               ChatConversationHelper conversationHelper) {
-        super(infra, requestSpecFactory, usageTracker,
+        super(infra, requestSpecFactory,
             chatRetrievalService, chatReferenceCollector, contextPromptInjector,
             chatMessagePublisher, conversationHelper);
     }

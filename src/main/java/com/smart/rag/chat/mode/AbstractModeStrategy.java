@@ -11,14 +11,15 @@ import com.smart.rag.chat.service.ChatMessagePublisher;
 import com.smart.rag.chat.service.ChatReferenceCollector;
 import com.smart.rag.chat.service.ChatRequestSpecFactory;
 import com.smart.rag.chat.service.ChatRetrievalService;
-import com.smart.rag.chat.service.ChatUsageTracker;
 import com.smart.rag.mode.ModeChainResult;
 import com.smart.rag.chat.service.StreamCompletionHelper;
+import com.smart.rag.mode.StreamUsageAccumulator;
 import com.smart.rag.mode.StrategyExecuteResult;
 import com.smart.rag.mode.StrategyExecutionContext;
 import com.smart.rag.mode.StreamFrame;
 import com.smart.rag.mode.StreamResult;
 import com.smart.rag.infrastructure.advisor.RagContextAdvisor;
+import org.jspecify.annotations.Nullable;
 import org.slf4j.MDC;
 import org.springframework.ai.chat.client.advisor.api.Advisor;
 import org.springframework.ai.chat.model.ChatResponse;
@@ -28,7 +29,6 @@ import reactor.core.publisher.SignalType;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * 模式策略抽象基类 — 封装阻塞式/流式执行的通用骨架。
@@ -48,7 +48,6 @@ public abstract class AbstractModeStrategy implements ChatModeStrategy {
 
     protected final AdvisorInfrastructure infra;
     protected final ChatRequestSpecFactory requestSpecFactory;
-    protected final ChatUsageTracker usageTracker;
     protected final ChatRetrievalService chatRetrievalService;
     protected final ChatReferenceCollector chatReferenceCollector;
     protected final ContextPromptInjector contextPromptInjector;
@@ -57,7 +56,6 @@ public abstract class AbstractModeStrategy implements ChatModeStrategy {
 
     protected AbstractModeStrategy(AdvisorInfrastructure infra,
                                    ChatRequestSpecFactory requestSpecFactory,
-                                   ChatUsageTracker usageTracker,
                                    ChatRetrievalService chatRetrievalService,
                                    ChatReferenceCollector chatReferenceCollector,
                                    ContextPromptInjector contextPromptInjector,
@@ -65,7 +63,6 @@ public abstract class AbstractModeStrategy implements ChatModeStrategy {
                                    ChatConversationHelper conversationHelper) {
         this.infra = infra;
         this.requestSpecFactory = requestSpecFactory;
-        this.usageTracker = usageTracker;
         this.chatRetrievalService = chatRetrievalService;
         this.chatReferenceCollector = chatReferenceCollector;
         this.contextPromptInjector = contextPromptInjector;
@@ -180,16 +177,21 @@ public abstract class AbstractModeStrategy implements ChatModeStrategy {
 
         StringBuilder collectedContent = new StringBuilder();
         final int maxContentLength = 1 << 20;
-        AtomicBoolean usageRecorded = new AtomicBoolean(false);
+        StreamUsageAccumulator usageAccumulator = new StreamUsageAccumulator();
+        java.util.concurrent.atomic.AtomicReference<com.smart.rag.mode.StreamUsageSnapshot> usageRef =
+            new java.util.concurrent.atomic.AtomicReference<>();
 
         // 用 .chatResponse() 替代 .content()：后者只取文本且 filter(hasLength) 丢弃 reasoning-only chunk，
         // 导致思考过程（reasoning_content）在标准模式流式下完全丢失。这里手动拆出 text + reasoning，
         // 包装为 StreamFrame 下发（REASONING 帧供 SseStreamBridge 发 event:reasoning）。
+        // usage 采集（usage_event 统计）由 UsageRecordingChatModel 装饰器在模型边界统一完成；
+        // 此处额外累计轮末 usage 用于每轮对话显示（message 落库 + event:usage 尾帧），两者同口径。
         Flux<StreamFrame> frames = requestSpecFactory.createSpec(
                 ctx.chatClient(), ctx.candidateId(), ctx.request(),
                 ctx.conversationId(), chain, ctx.cagContext())
             .stream()
             .chatResponse()
+            .doOnNext(usageAccumulator::accumulate)
             .flatMapIterable(AbstractModeStrategy::splitIntoFrames)
             .doOnNext(frame -> {
                 if (frame.isContent() && collectedContent.length() < maxContentLength) {
@@ -197,14 +199,12 @@ public abstract class AbstractModeStrategy implements ChatModeStrategy {
                     collectedContent.append(frame.payload(), 0, Math.min(frame.payload().length(), remaining));
                 }
             })
-            .doFinally(signal -> {
-                onStreamComplete(ctx, collectedContent.toString(), signal);
-                if (usageRecorded.compareAndSet(false, true)) {
-                    recordUsage(usageTracker, ctx, null);
-                }
-            });
+            .doOnComplete(() -> usageRef.set(new com.smart.rag.mode.StreamUsageSnapshot(
+                usageAccumulator.totalTokensOrNull(), ctx.elapsed())))
+            .doFinally(signal -> onStreamComplete(ctx, collectedContent.toString(), signal,
+                usageAccumulator.totalTokensOrNull()));
 
-        return new StreamResult(frames, references);
+        return new StreamResult(frames, references, null, null, usageRef);
     }
 
     /**
@@ -212,20 +212,11 @@ public abstract class AbstractModeStrategy implements ChatModeStrategy {
      * 上提到抽象层让 SIMPLE 流式也落库（R8）；落库用 {@code ctx.request().message()} 干净原文，
      * 不含 <<REF>>（RagContextAdvisor 的动态 SystemMessage 不进 DB 落库路径）。
      */
-    protected void onStreamComplete(StrategyExecutionContext ctx, String content, SignalType signal) {
+    protected void onStreamComplete(StrategyExecutionContext ctx, String content, SignalType signal,
+                                    @Nullable Integer totalTokens) {
         // P4-1：落库逻辑提取到 StreamCompletionHelper，AGENT 流式（不继承本类）复用同一语义
-        StreamCompletionHelper.onComplete(ctx, content, signal, chatMessagePublisher, conversationHelper);
-    }
-
-    public static void recordUsage(ChatUsageTracker tracker,
-                                   StrategyExecutionContext ctx,
-                                   ChatResponse last) {
-        String candidateId = ctx.candidateId();
-        if (last != null && last.getMetadata() != null && last.getMetadata().getUsage() != null) {
-            tracker.recordUsage(ctx.conversationId(), candidateId, last, ctx.elapsed());
-        } else {
-            tracker.recordUsage(ctx.conversationId(), candidateId, ctx.elapsed());
-        }
+        StreamCompletionHelper.onComplete(ctx, content, signal, totalTokens,
+            chatMessagePublisher, conversationHelper);
     }
 
     /**

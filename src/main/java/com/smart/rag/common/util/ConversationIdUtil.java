@@ -4,9 +4,11 @@ package com.smart.rag.common.util;
  * 对话 ID 工具类
  * <p>
  * 统一管理用户隔离 conversationId 的构建和解析，
- * 避免在 ChatService、ConversationService、UsageController 中重复拼接逻辑。
+ * 避免在 ChatService、ConversationService 中重复拼接逻辑。
  * <p>
  * 格式: u_{userId}_{rawConversationId}
+ * <p>
+ * 用量统计自 V28 起按显式 user_id 列隔离（usage_event），不再依赖此前缀做 LIKE 过滤。
  */
 public final class ConversationIdUtil {
 
@@ -24,40 +26,6 @@ public final class ConversationIdUtil {
      */
     public static String buildIsolatedId(Long userId, String rawConversationId) {
         return PREFIX + userId + SEPARATOR + rawConversationId;
-    }
-
-    /**
-     * 构建用户隔离的 LIKE 前缀
-     * <p>
-     * 安全性说明：此前缀用于 MyBatis LIKE 查询（TokenUsageMapper.xml）中的用户隔离。
-     * 因为 userId 是 Long 类型，拼接后的前缀不可能包含 LIKE 通配符 '%'，
-     * 所以前缀本身不会被 SQL 注入利用。此断言作为额外防御层：
-     * 如果未来 conversationId 格式变更导致前缀意外包含 '%'，会立即失败。
-     *
-     * @param userId 用户 ID
-     * @return LIKE 前缀，格式: u_{userId}_%
-     */
-    public static String buildLikePrefix(Long userId) {
-        String prefixPart = PREFIX + userId + SEPARATOR;
-        assertNoLikeWildcards(prefixPart);
-        return prefixPart + "%";
-    }
-
-    /**
-     * 验证字符串中不包含 SQL LIKE 通配符 '%'（仅供测试调用）。
-     * <p>
-     * 用于 buildLikePrefix 的防御性断言。仅检查 '%' 通配符，不检查 '_'，
-     * 因为 '_' 是 conversationId 格式 "u_{userId}_{rawId}" 的合法分隔符，
-     * 出现在固定位置不会构成安全风险。
-     *
-     * @param value 待验证的字符串
-     * @throws IllegalStateException 如果包含 %
-     */
-    public static void assertNoLikeWildcards(String value) {
-        if (value.contains("%")) {
-            throw new IllegalStateException(
-                "ConversationId LIKE prefix must not contain '%' wildcard, got: " + value);
-        }
     }
 
     /**

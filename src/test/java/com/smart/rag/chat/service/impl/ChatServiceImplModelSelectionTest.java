@@ -18,7 +18,7 @@ import com.smart.rag.mode.ChatModeStrategy;
 import com.smart.rag.chat.mode.ModeRouter;
 import com.smart.rag.chat.service.ChatConversationHelper;
 import com.smart.rag.chat.service.ChatMessagePublisher;
-import com.smart.rag.chat.service.ChatUsageTracker;
+import com.smart.rag.infrastructure.llm.adapter.ChatModelAssembler;
 import com.smart.rag.mode.StrategyExecuteResult;
 import com.smart.rag.mode.StrategyExecutionContext;
 import com.smart.rag.common.util.ConversationIdUtil;
@@ -48,7 +48,7 @@ class ChatServiceImplModelSelectionTest {
     @Mock private LlmClientRegistry llmRegistry;
     @Mock private FallbackEligibility fallbackEligibility;
     @Mock private ModeRouter modeRouter;
-    @Mock private ChatUsageTracker usageTracker;
+    @Mock private ChatModelAssembler chatModelAssembler;
     @Mock private ChatConversationHelper conversationHelper;
     @Mock private ChatMessagePublisher chatMessagePublisher;
     @Mock private SseStreamBridge sseStreamBridge;
@@ -77,7 +77,7 @@ class ChatServiceImplModelSelectionTest {
     }
 
     private ChatServiceImpl createService() {
-        return new ChatServiceImpl(llmRegistry, fallbackEligibility, modeRouter, usageTracker,
+        return new ChatServiceImpl(llmRegistry, fallbackEligibility, modeRouter, chatModelAssembler,
         conversationHelper, chatMessagePublisher, sseStreamBridge, cagContextManager,
         cagProperties, userContextProvider, teamMembershipVerifier, org.mockito.Mockito.mock(com.smart.rag.chat.service.ActiveStreamRegistry.class), org.mockito.Mockito.mock(com.smart.rag.infrastructure.llm.metrics.LlmMetrics.class));
     }

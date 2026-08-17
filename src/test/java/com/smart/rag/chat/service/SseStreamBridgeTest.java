@@ -3,6 +3,7 @@ package com.smart.rag.chat.service;
 import com.smart.rag.chat.dto.FallbackMeta;
 import com.smart.rag.mode.Reference;
 import com.smart.rag.mode.StreamFrame;
+import com.smart.rag.mode.StreamUsageSnapshot;
 import com.smart.rag.mode.WorkspaceInfo;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -105,7 +106,7 @@ class SseStreamBridgeTest {
         CapturingSseEmitter emitter = capturing();
         bridge.subscribe(emitter,
             Flux.just(StreamFrame.content("chunk1"), StreamFrame.content("chunk2")),
-            new SseStreamBridge.SseTailFrames(refsRef, metaRef, fbRef, List.of("model-b")));
+            new SseStreamBridge.SseTailFrames(null, refsRef, metaRef, fbRef, List.of("model-b")));
 
         String all = captureSse(emitter);
         assertThat(all).contains("chunk1", "chunk2");
@@ -124,11 +125,39 @@ class SseStreamBridgeTest {
 
         CapturingSseEmitter emitter = capturing();
         bridge.subscribe(emitter, Flux.just(StreamFrame.content("hi")),
-            new SseStreamBridge.SseTailFrames(refsRef, null, null, null));
+            new SseStreamBridge.SseTailFrames(null, refsRef, null, null, null));
 
         String all = captureSse(emitter);
         assertThat(all).contains("event:references");
         assertThat(all).doesNotContain("event:agentMetadata", "event:fallback");
+    }
+
+    @Test
+    @DisplayName("成功流发 event:usage 尾帧（先于 references）；快照未写（错误/取消）不发")
+    void completeStreamEmitsUsageFrameBeforeReferences() {
+        AtomicReference<StreamUsageSnapshot> usageRef =
+            new AtomicReference<>(new StreamUsageSnapshot(150, 2000L));
+        AtomicReference<List<Reference>> refsRef = new AtomicReference<>(List.of(
+            new Reference(1, "c1", "d1", "f.pdf", null, 0.5, null, null)));
+
+        CapturingSseEmitter emitter = capturing();
+        bridge.subscribe(emitter, Flux.just(StreamFrame.content("hi")),
+            new SseStreamBridge.SseTailFrames(usageRef, refsRef, null, null, null));
+
+        String all = captureSse(emitter);
+        assertThat(all).contains("event:usage");
+        assertThat(all).contains("tokenUsage");
+        assertThat(all.indexOf("event:usage")).isLessThan(all.indexOf("event:references"));
+    }
+
+    @Test
+    @DisplayName("快照未写（usageRef 为空引用）不发 usage 帧")
+    void emptyUsageRefEmitsNoUsageFrame() {
+        CapturingSseEmitter emitter = capturing();
+        bridge.subscribe(emitter, Flux.just(StreamFrame.content("hi")),
+            new SseStreamBridge.SseTailFrames(new AtomicReference<>(), null, null, null, null));
+
+        assertThat(captureSse(emitter)).doesNotContain("event:usage");
     }
 
     @Test
@@ -138,7 +167,7 @@ class SseStreamBridgeTest {
 
         CapturingSseEmitter emitter = capturing();
         bridge.subscribe(emitter, Flux.just(StreamFrame.content("ok")),
-            new SseStreamBridge.SseTailFrames(null, null, fbRef, null));
+            new SseStreamBridge.SseTailFrames(null, null, null, fbRef, null));
 
         assertThat(captureSse(emitter)).doesNotContain("event:fallback");
     }
@@ -151,7 +180,7 @@ class SseStreamBridgeTest {
 
         CapturingSseEmitter emitter = capturing();
         bridge.subscribe(emitter, Flux.error(new RuntimeException("boom")),
-            new SseStreamBridge.SseTailFrames(refsRef, null, null, List.of("model-x")));
+            new SseStreamBridge.SseTailFrames(null, refsRef, null, null, List.of("model-x")));
 
         String all = captureSse(emitter);
         assertThat(all).contains("event:error");

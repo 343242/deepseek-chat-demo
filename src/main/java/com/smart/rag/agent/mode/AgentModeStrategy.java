@@ -8,9 +8,9 @@ import com.smart.rag.chat.context.ContextPromptInjector;
 import com.smart.rag.mode.ChatMode;
 import com.smart.rag.mode.ChatModeStrategy;
 import com.smart.rag.chat.mode.MultiTurnModeStrategy;
-import com.smart.rag.infrastructure.llm.ChatCapable;
-import com.smart.rag.infrastructure.llm.adapter.ChatModelAdapter;
-import com.smart.rag.infrastructure.llm.registry.LlmClientRegistry;
+import com.smart.rag.infrastructure.llm.adapter.ChatModelAssembler;
+import com.smart.rag.infrastructure.llm.adapter.UsageRecordingChatModel;
+import com.smart.rag.infrastructure.llm.usage.UsageScene;
 import com.smart.rag.mode.AdvisorChainContext;
 import com.smart.rag.chat.service.AdvisorInfrastructure;
 import com.smart.rag.chat.service.ChatConversationHelper;
@@ -20,6 +20,8 @@ import com.smart.rag.chat.service.StreamCompletionHelper;
 import com.smart.rag.chat.service.PromptLoaderService;
 import com.smart.rag.mode.StreamFrame;
 import com.smart.rag.mode.StreamResult;
+import com.smart.rag.mode.StreamUsageAccumulator;
+import com.smart.rag.mode.StreamUsageSnapshot;
 import com.smart.rag.mode.StrategyExecuteResult;
 import com.smart.rag.mode.StrategyExecutionContext;
 import com.smart.rag.agent.advisor.AgentSystemPromptAdvisor;
@@ -31,7 +33,6 @@ import com.smart.rag.agent.guardrail.AgentDegradationStrategy;
 import com.smart.rag.agent.guardrail.AgentGuardrails;
 import com.smart.rag.agent.guardrail.GuardrailEnforcingToolCallAdvisor;
 import com.smart.rag.agent.guardrail.GuardrailHardStopException;
-import com.smart.rag.agent.guardrail.TokenCountingChatModel;
 import com.smart.rag.mode.AgentIntent;
 import com.smart.rag.mode.ModeSupport;
 import com.smart.rag.agent.intent.IntentClassifier;
@@ -106,7 +107,7 @@ public class AgentModeStrategy implements ChatModeStrategy {
     private final ContextPromptInjector contextPromptInjector;
     private final PromptLoaderService promptLoaderService;
     private final AgentPromptLoader agentPromptLoader;
-    private final LlmClientRegistry llmRegistry;
+    private final ChatModelAssembler chatModelAssembler;
     private final AgentDegradationStrategy degradationStrategy;
     private final ObjectProvider<MultiTurnModeStrategy> multiTurnProvider;
     private final ChatMessagePublisher chatMessagePublisher;
@@ -122,7 +123,7 @@ public class AgentModeStrategy implements ChatModeStrategy {
                               ContextPromptInjector contextPromptInjector,
                               PromptLoaderService promptLoaderService,
                               AgentPromptLoader agentPromptLoader,
-                              LlmClientRegistry llmRegistry,
+                              ChatModelAssembler chatModelAssembler,
                               AgentDegradationStrategy degradationStrategy,
                               ObjectProvider<MultiTurnModeStrategy> multiTurnProvider,
                               ChatMessagePublisher chatMessagePublisher,
@@ -137,7 +138,7 @@ public class AgentModeStrategy implements ChatModeStrategy {
         this.contextPromptInjector = contextPromptInjector;
         this.promptLoaderService = promptLoaderService;
         this.agentPromptLoader = agentPromptLoader;
-        this.llmRegistry = llmRegistry;
+        this.chatModelAssembler = chatModelAssembler;
         this.degradationStrategy = degradationStrategy;
         this.multiTurnProvider = multiTurnProvider;
         this.chatMessagePublisher = chatMessagePublisher;
@@ -163,8 +164,9 @@ public class AgentModeStrategy implements ChatModeStrategy {
             }
         }
 
-        // Step 3: 意图分类（阻塞式 LLM 调用）
-        IntentResult intentResult = intentClassifier.classify(ctx.request().message());
+        // Step 3: 意图分类（阻塞式 LLM 调用，经装配点带 INTENT 场景用量采集）
+        IntentResult intentResult = intentClassifier.classify(
+            ctx.userId(), ctx.conversationId(), ctx.request().message());
         log.info("Agent intent classified: intent={}, confidence={}, queryLength={}",
             intentResult.intent(), intentResult.confidence(), ctx.request().message().length());
         // 记录意图分类事件（供 AgentEventLookupTool 查询历史 + 会话恢复快照）
@@ -180,7 +182,7 @@ public class AgentModeStrategy implements ChatModeStrategy {
             intentResult.intent(), workspace);
 
         // 提前创建 guardrails（Step 6 GuardrailEnforcingToolCallAdvisor 每轮 check 需要；Step 7 SystemPrompt 也用）
-        AgentGuardrails guardrails = createGuardrails(ctx.candidateId());
+        AgentGuardrails guardrails = createGuardrails(ctx);
 
         // Step 6: 自建护栏强制的 ToolCallAdvisor（每轮 doBeforeStream/doBeforeCall 调 guardrails.check，
         // 到 STOP 抛 GuardrailHardStopException；不复用全局单例）。P4b 修复阻塞+流式 check no-op。
@@ -211,27 +213,23 @@ public class AgentModeStrategy implements ChatModeStrategy {
         // 过滤 Redis 历史中残留的 tool 消息，避免 DeepSeek "role 'tool' without preceding tool_calls" 报错
         chain.add(MessageChatMemoryAdvisor.builder(createFilteredMemory()).build());
 
-        // tokenCountingModel 必须来自 guardrails -- 同一个实例用于护栏检查和 ChatClient 包装
+        // chatModel 必须来自 guardrails -- 同一个装饰器实例用于护栏检查、usage 采集和 ChatClient 包装
         return ModeChainResult.agent(chain, intentResult, workspace,
-            guardrails.getTokenCountingModel(), toolCallbacks);
+            guardrails.chatModel(), toolCallbacks);
     }
 
     /**
-     * 基于 candidateId 指向的模型构建 guardrails。
+     * 经装配点构建带用量采集的 ChatModel + 护栏。
+     * <p>
+     * 候选不存在时由 {@code ChatModelAssembler} fail-fast 抛 {@code RemoteException}。
      */
-    private AgentGuardrails createGuardrails(String candidateId) {
-        ChatModel chatModel = null;
-        ChatCapable chatCapable = llmRegistry.get(candidateId, ChatCapable.class);
-        if (chatCapable != null) {
-            chatModel = new ChatModelAdapter(chatCapable);
-        }
-
-        TokenCountingChatModel tokenCountingModel;
-        tokenCountingModel = new TokenCountingChatModel(Objects.requireNonNullElseGet(chatModel, NoOpChatModel::new));
+    private AgentGuardrails createGuardrails(AdvisorChainContext ctx) {
+        UsageRecordingChatModel chatModel = chatModelAssembler.chatModel(
+            ctx.userId(), ctx.candidateId(), UsageScene.AGENT, ctx.conversationId());
 
         long tokenLimit = (long) (128_000 * agentProperties.contextWindowRatio());
 
-        return new AgentGuardrails(agentProperties, tokenCountingModel, tokenLimit);
+        return new AgentGuardrails(agentProperties, chatModel, tokenLimit);
     }
 
     /**
@@ -258,26 +256,6 @@ public class AgentModeStrategy implements ChatModeStrategy {
         return template;
     }
 
-    /**
-     * 兜底 ChatModel 实现 -- 仅用于 TokenCountingChatModel 字符估算场景
-     */
-    private static class NoOpChatModel implements ChatModel {
-        @Override
-        public @Nullable ChatResponse call(Prompt prompt) {
-            return null;
-        }
-
-        @Override
-        public @NonNull Flux<org.springframework.ai.chat.model.ChatResponse> stream(Prompt prompt) {
-            return Flux.empty();
-        }
-
-        @Override
-        public ChatOptions getDefaultOptions() {
-            return null;
-        }
-    }
-
     @Override
     public StrategyExecuteResult execute(StrategyExecutionContext ctx) {
         try {
@@ -286,8 +264,8 @@ public class AgentModeStrategy implements ChatModeStrategy {
                 ctx.cagContext(), ctx.candidateId());
             ModeChainResult result = buildAdvisorChain(chainCtx);
 
-            ChatClient countingClient = ChatClient.builder(result.tokenCountingModel()).build();
-            ChatClient.ChatClientRequestSpec spec = countingClient.prompt()
+            ChatClient chatClient = chatModelAssembler.chatClient(result.chatModel());
+            ChatClient.ChatClientRequestSpec spec = chatClient.prompt()
                 .user(ctx.request().message())
                 .advisors(a -> a.advisors(result.chain())
                     .param(CONVERSATION_ID,
@@ -340,9 +318,9 @@ public class AgentModeStrategy implements ChatModeStrategy {
             ctx.cagContext(), ctx.candidateId());
         ModeChainResult result = buildAdvisorChain(chainCtx);
 
-        // 同 execute：tokenCountingModel（design §0 #1），不用 ctx.chatClient()
-        ChatClient countingClient = ChatClient.builder(result.tokenCountingModel()).build();
-        ChatClient.ChatClientRequestSpec spec = countingClient.prompt()
+        // 同 execute：护栏与 ChatClient 共享同一装饰器实例（design §0 #1），不用 ctx.chatClient()
+        ChatClient chatClient = chatModelAssembler.chatClient(result.chatModel());
+        ChatClient.ChatClientRequestSpec spec = chatClient.prompt()
             .user(ctx.request().message())
             .advisors(a -> a.advisors(result.chain())
                 .param(CONVERSATION_ID, ctx.conversationId()));
@@ -355,11 +333,15 @@ public class AgentModeStrategy implements ChatModeStrategy {
 
         StringBuilder collectedContent = new StringBuilder();
         final int maxContentLength = 1 << 20;
+        StreamUsageAccumulator usageAccumulator = new StreamUsageAccumulator();
+        java.util.concurrent.atomic.AtomicReference<StreamUsageSnapshot> usageRef = new java.util.concurrent.atomic.AtomicReference<>();
         // .call()→.stream()：ToolCallAdvisor.adviseStream 驱动流式 ReAct（Poc6 验证 streamCount=2）。
         // 用 .chatResponse() 替代 .content()：保留 reasoning_content（思考过程），手动拆为 StreamFrame。
         // 截断保护 + doFinally 落库（StreamCompletionHelper，与 SIMPLE/MULTI_TURN 逐字同语义）。
+        // 轮末 usage 累计用于每轮对话显示（message 落库 + event:usage 尾帧），与 usage_event 同口径。
         Flux<StreamFrame> frames = spec.stream()
             .chatResponse()
+            .doOnNext(usageAccumulator::accumulate)
             .flatMapIterable(com.smart.rag.chat.mode.AbstractModeStrategy::splitIntoFrames)
             .doOnNext(frame -> {
                 if (frame.isContent() && collectedContent.length() < maxContentLength) {
@@ -367,6 +349,8 @@ public class AgentModeStrategy implements ChatModeStrategy {
                     collectedContent.append(frame.payload(), 0, Math.min(frame.payload().length(), remaining));
                 }
             })
+            .doOnComplete(() -> usageRef.set(new StreamUsageSnapshot(
+                usageAccumulator.totalTokensOrNull(), ctx.elapsed())))
             .doOnError(e -> {
                 // 流式护栏硬中断：记录事件（与 execute 的 catch 对称）
                 if (e instanceof GuardrailHardStopException gre) {
@@ -375,14 +359,15 @@ public class AgentModeStrategy implements ChatModeStrategy {
                 }
             })
             .doFinally(signal -> StreamCompletionHelper.onComplete(
-                ctx, collectedContent.toString(), signal, chatMessagePublisher, conversationHelper));
+                ctx, collectedContent.toString(), signal, usageAccumulator.totalTokensOrNull(),
+                chatMessagePublisher, conversationHelper));
 
         // agentMetadata：intent/confidence 在 buildAdvisorChain 同步阶段已就绪；retrievalRounds 此处为初始值
         //（订阅前未触发 ReAct 检索），由 ChatServiceImpl.chatStream 外层 doOnComplete 刷新为终值。
         // references 不在此固化（订阅前 workspace.retrievedDocs 为空，固化为空 list 是已知 bug）→ 传 null，
         // 改由 doOnComplete 现场从 workspace 构建（修复 agent 流式 references 时序缺口）。
         Map<String, Object> agentMetadata = buildAgentMetadata(result);
-        return new StreamResult(frames, null, agentMetadata, result.workspace());
+        return new StreamResult(frames, null, agentMetadata, result.workspace(), usageRef);
     }
 
     /** 从 workspace 检索文档构造引用映射；空时返回 null。委托 {@link Reference#fromAll} 消除重复。 */

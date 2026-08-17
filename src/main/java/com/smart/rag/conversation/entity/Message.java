@@ -74,10 +74,12 @@ public class Message {
 
     /**
      * 创建 ASSISTANT 消息的便捷构造器
+     *
+     * @param tokenUsage 总 token 数，{@code null} 表示未知（厂商未返回 usage）
      */
     public static Message assistantMessage(String conversationId, Long parentId,
                                            String content, String modelId,
-                                           int tokenUsage, long durationMs) {
+                                           Integer tokenUsage, long durationMs) {
         Message msg = new Message();
         msg.conversationId = conversationId;
         msg.parentId = parentId;

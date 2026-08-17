@@ -94,12 +94,12 @@ public class ChatConversationHelper {
      * @param userContent     用户消息内容
      * @param assistantContent AI 回复内容
      * @param modelId         模型 ID（registry candidate ID 字符串）
-     * @param totalTokens     总 token 数（{@code -1} 表示未知）
+     * @param totalTokens     总 token 数，{@code null} 表示未知（厂商未返回 usage）
      * @param durationMs      调用耗时（毫秒）
      */
     public void saveMessagesAndNotify(String conversationId, String userContent, String assistantContent,
                                       String modelId,
-                                      int totalTokens,
+                                      Integer totalTokens,
                                       long durationMs) {
         // Phase D D-4：落库失败时异常向上传播（不再 catch + enqueue legacy DLQ + 吞咽）。
         //  - bus consumer 路径：RedisStreamConsumerRunner 捕获 → XACK + ZSET 退避重试 → 耗尽进 DLQ
@@ -124,18 +124,17 @@ public class ChatConversationHelper {
 
     /**
      * 从 AI 响应安全提取 totalTokens；{@code aiResponse} / {@code metadata} / {@code usage}
-     * 任一为空或值为 {@code null} 时返回 {@code -1}。
+     * 任一为空或值为 {@code null} 时返回 {@code null}（未知，区别于 0）。
      * <p>
-     * Publisher 构建消息 payload、以及 publisher 端 {@code MessageBus} 故障时的同步降级路径
-     * 均通过此方法提取 token 数，避免逻辑重复。
+     * 阻塞式落库调用方（ChatServiceImpl.processResult）通过此方法提取 token 数。
      */
-    public static int extractTotalTokens(org.springframework.ai.chat.model.ChatResponse aiResponse) {
+    public static Integer extractTotalTokens(org.springframework.ai.chat.model.ChatResponse aiResponse) {
         if (aiResponse == null || aiResponse.getMetadata() == null) {
-            return -1;
+            return null;
         }
         Usage usage = aiResponse.getMetadata().getUsage();
         if (usage == null || usage.getTotalTokens() == null) {
-            return -1;
+            return null;
         }
         return usage.getTotalTokens().intValue();
     }

@@ -112,7 +112,7 @@ class ChatMessageSaveConsumerTest {
     class Handler {
 
         @Test
-        @DisplayName("收到 ChatMessagePayload 后转发到 saveMessagesAndNotify（durationMs=0）")
+        @DisplayName("收到 ChatMessagePayload 后转发到 saveMessagesAndNotify（含 durationMs 与未知 token=null）")
         void handlerForwardsToHelper() {
             consumer.start();
 
@@ -122,14 +122,14 @@ class ChatMessageSaveConsumerTest {
             verify(messageBus).subscribe(any(), any(), any(), eq(ChatMessagePayload.class), handlerCaptor.capture());
 
             ChatMessagePayload payload = new ChatMessagePayload(
-                    "conv-1", "hello", "Hi there!", "candidate-a", 150L);
+                    "conv-1", "hello", "Hi there!", "candidate-a", 150L, 200L);
             MessageEnvelope<ChatMessagePayload> msg = new MessageEnvelope<>(
                     null, "chat_message_save", null, payload,
                     null, "dedup-key", Map.of(), System.currentTimeMillis());
             handlerCaptor.getValue().onMessage(msg);
 
             verify(conversationHelper).saveMessagesAndNotify(
-                    "conv-1", "hello", "Hi there!", "candidate-a", 150, 0L);
+                    "conv-1", "hello", "Hi there!", "candidate-a", 150, 200L);
         }
 
         @Test
@@ -143,14 +143,14 @@ class ChatMessageSaveConsumerTest {
             verify(messageBus).subscribe(any(), any(), any(), eq(ChatMessagePayload.class), handlerCaptor.capture());
 
             ChatMessagePayload payload = new ChatMessagePayload(
-                    "conv-1", "hello", "Hi there!", "candidate-a", 150L);
+                    "conv-1", "hello", "Hi there!", "candidate-a", null, 200L);
             MessageEnvelope<ChatMessagePayload> msg = new MessageEnvelope<>(
                     null, "chat_message_save", null, payload,
                     null, "dedup-key", Map.of(), System.currentTimeMillis());
 
             RuntimeException ex = new RuntimeException("boom");
             doThrow(ex).when(conversationHelper).saveMessagesAndNotify(
-                    "conv-1", "hello", "Hi there!", "candidate-a", 150, 0L);
+                    "conv-1", "hello", "Hi there!", "candidate-a", null, 200L);
 
             assertThatThrownBy(() -> handlerCaptor.getValue().onMessage(msg))
                     .isSameAs(ex);

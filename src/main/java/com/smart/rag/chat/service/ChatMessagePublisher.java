@@ -8,7 +8,6 @@ import com.smart.rag.infrastructure.exception.MessagingException;
 import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Component;
@@ -63,14 +62,14 @@ public class ChatMessagePublisher {
      * @param userMessage      用户消息内容
      * @param assistantContent AI 回复内容
      * @param candidateId      候选模型 ID（registry candidate ID）
-     * @param aiResponse       AI 响应（含 usage 元数据，可为 {@code null}；仅用于提取 totalTokens）
-     * @param elapsedMs        调用耗时（毫秒）
+     * @param totalTokens      总 token 数，{@code null} 表示未知（厂商未返回 usage；每轮对话显示只落真实值，不估算）
+     * @param durationMs       调用耗时（毫秒）
      */
     public void publishMessageSave(String conversationId, String userMessage, String assistantContent,
-                                   String candidateId, ChatResponse aiResponse, long elapsedMs) {
-        int totalTokens = ChatConversationHelper.extractTotalTokens(aiResponse);
+                                   String candidateId, @Nullable Integer totalTokens, long durationMs) {
         ChatMessagePayload payload = new ChatMessagePayload(
-                conversationId, userMessage, assistantContent, candidateId, totalTokens);
+                conversationId, userMessage, assistantContent, candidateId,
+                totalTokens != null ? totalTokens.longValue() : null, durationMs);
         // deduplicationKey = conversationId + ":" + sha256Hex(userMessage)。
         String deduplicationKey = conversationId + ":" + ChecksumUtils.sha256Hex(userMessage);
         MessageEnvelope<ChatMessagePayload> message =
@@ -78,8 +77,8 @@ public class ChatMessagePublisher {
 
         try {
             messageBus.send(message);
-            log.debug("Chat message save published: conversationId={}, candidate={}, totalTokens={}",
-                    ConversationIdUtil.mask(conversationId), candidateId, totalTokens);
+            log.debug("Chat message save published: conversationId={}, candidate={}, totalTokens={}, durationMs={}",
+                    ConversationIdUtil.mask(conversationId), candidateId, totalTokens, durationMs);
         } catch (MessagingException e) {
             // 仅防御 outbox INSERT 失败（DB 硬故障）：行没进去就没有 relay 兜底。
             // 数据已 SSE 投递给用户，丢的是会话历史持久化（用户可重发）——记 ERROR + 告警计数。

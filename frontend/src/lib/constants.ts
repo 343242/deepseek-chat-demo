@@ -4,6 +4,7 @@ export const PERMISSION = {
   CHAT_STREAM: 'chat:stream',
   CONVERSATION_MANAGE: 'conversation:manage',
   USAGE_VIEW: 'usage:view',
+  USAGE_VIEW_ALL: 'usage:view:all',
   MODEL_CONFIG: 'model:config',
   PROMPT_MANAGE: 'prompt:manage',
   USER_MANAGE: 'user:manage',

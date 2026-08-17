@@ -23,6 +23,10 @@ export function mapFrame(event: string | null, data: string): SseFrame | null {
   switch (event) {
     case 'reasoning':
       return { type: 'reasoning', chunk: data }
+    case 'usage': {
+      const usage = parseJson<{ tokenUsage?: number | null; durationMs?: number | null }>(data)
+      return { type: 'usage', tokenUsage: usage?.tokenUsage ?? null, durationMs: usage?.durationMs ?? null }
+    }
     case 'references': {
       // 形状校验：后端契约漂移（返回对象而非数组）时兜底为空，而非带着错误类型下传（FE-018）
       const refs = parseJson<Reference[]>(data)
@@ -80,6 +84,9 @@ function dispatch(frame: SseFrame, h: SseHandlers) {
       break
     case 'reasoning':
       h.onReasoning?.(frame.chunk)
+      break
+    case 'usage':
+      h.onUsage?.(frame)
       break
     case 'references':
       h.onReferences?.(frame.references)

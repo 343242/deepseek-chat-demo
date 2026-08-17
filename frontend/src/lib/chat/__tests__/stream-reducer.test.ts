@@ -47,6 +47,24 @@ describe('applyFrame', () => {
     expect(out[1]?.references).toEqual([REF])
   })
 
+  it('usage：写入 tokenUsage/durationMs（token 未知时为 null，仅显示耗时）', () => {
+    const out = applyFrame(
+      makeMessages(),
+      { type: 'usage', tokenUsage: 150, durationMs: 2000 },
+      ASSISTANT_ID,
+    )
+    expect(out[1]?.tokenUsage).toBe(150)
+    expect(out[1]?.durationMs).toBe(2000)
+
+    const out2 = applyFrame(
+      makeMessages(),
+      { type: 'usage', tokenUsage: null, durationMs: 800 },
+      ASSISTANT_ID,
+    )
+    expect(out2[1]?.tokenUsage).toBeNull()
+    expect(out2[1]?.durationMs).toBe(800)
+  })
+
   it('agentMetadata：写入元数据', () => {
     const meta = { intent: 'SEARCH', confidence: 0.8 }
     const out = applyFrame(makeMessages(), { type: 'agentMetadata', metadata: meta }, ASSISTANT_ID)
@@ -96,12 +114,14 @@ describe('finalizeInProgress', () => {
   it('IN_PROGRESS → FINISHED', () => {
     const out = finalizeInProgress(makeMessages(), ASSISTANT_ID)
     expect(out[1]?.status).toBe('FINISHED')
+    expect(out[1]?.pending).toBe(false)
   })
 
   it('已 FINISHED 的不变（幂等）', () => {
     const msgs = makeMessages({ status: 'FINISHED' })
     const out = finalizeInProgress(msgs, ASSISTANT_ID)
     expect(out[1]?.status).toBe('FINISHED')
+    expect(out[1]?.pending).toBe(false)
   })
 
   it('ERROR 不被改成 FINISHED', () => {

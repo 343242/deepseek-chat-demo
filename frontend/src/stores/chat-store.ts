@@ -146,6 +146,14 @@ export const useChatStore = create<ChatState>((set, get) => {
             set((s) => ({
               messages: applyFrame(s.messages, { type: 'reasoning', chunk }, assistantId),
             })),
+          onUsage: (usage) =>
+            set((s) => ({
+              messages: applyFrame(
+                s.messages,
+                { type: 'usage', tokenUsage: usage.tokenUsage, durationMs: usage.durationMs },
+                assistantId,
+              ),
+            })),
           onReferences: (refs) =>
             set((s) => ({
               messages: applyFrame(s.messages, { type: 'references', references: refs }, assistantId),

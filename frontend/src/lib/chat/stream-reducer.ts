@@ -42,6 +42,12 @@ export function applyFrame(
       }))
     case 'references':
       return patch(messages, assistantId, (m) => ({ ...m, references: frame.references }))
+    case 'usage':
+      return patch(messages, assistantId, (m) => ({
+        ...m,
+        tokenUsage: frame.tokenUsage ?? null,
+        durationMs: frame.durationMs ?? null,
+      }))
     case 'agentMetadata':
       return patch(messages, assistantId, (m) => ({ ...m, agentMetadata: frame.metadata }))
     case 'fallback':
@@ -56,9 +62,13 @@ export function applyFrame(
 /**
  * 收尾：流结束时把仍在 IN_PROGRESS 的 assistant 消息置为 FINISHED。
  * （正常完成 / 软取消后服务端关闭流都会走到此）
+ * 同时无条件清除 pending——消息已定型，tokenUsage/durationMs 等 meta 不再受"临时消息"条件遮挡
+ * （含 canceled 分支转入的 FINISHED 消息）。
  */
 export function finalizeInProgress(messages: RenderMessage[], assistantId: number): RenderMessage[] {
-  return patch(messages, assistantId, (m) =>
-    m.status === 'IN_PROGRESS' ? { ...m, status: 'FINISHED' } : m,
-  )
+  return patch(messages, assistantId, (m) => ({
+    ...m,
+    status: m.status === 'IN_PROGRESS' ? 'FINISHED' : m.status,
+    pending: false,
+  }))
 }

@@ -92,7 +92,7 @@ export function App() {
         <Route path="knowledge/team/:teamId" element={lazyEl(KnowledgePage)} />
         <Route path="teams" element={lazyEl(TeamsPage)} />
         <Route path="teams/:teamId" element={lazyEl(TeamDetailPage)} />
-        <Route path="usage" element={lazyEl(UsagePage)} />
+        <Route path="usage" element={<PermissionGuard require="usage:view">{lazyEl(UsagePage)}</PermissionGuard>} />
         {/* 模型配置：预留接口，仅 ADMIN（IA §2.3 v0.3.0 收回 USER） */}
         <Route
           path="models"

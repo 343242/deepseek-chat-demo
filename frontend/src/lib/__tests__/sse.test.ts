@@ -136,3 +136,13 @@ describe('parseEventBlock', () => {
     expect(parseEventBlock('data:no-space')).toEqual({ type: 'content', chunk: 'no-space' })
   })
 })
+
+describe('mapFrame usage 帧', () => {
+  it('event:usage → SseUsageFrame（token 缺省为 null）', () => {
+    const frame = mapFrame('usage', '{"tokenUsage":150,"durationMs":2000}')
+    expect(frame).toEqual({ type: 'usage', tokenUsage: 150, durationMs: 2000 })
+
+    const frame2 = mapFrame('usage', '{"durationMs":800}')
+    expect(frame2).toEqual({ type: 'usage', tokenUsage: null, durationMs: 800 })
+  })
+})

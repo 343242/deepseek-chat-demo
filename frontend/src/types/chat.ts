@@ -107,6 +107,12 @@ export interface SseReferencesFrame {
   type: 'references'
   references: Reference[]
 }
+/** 每轮用量终端帧 event:usage —— tokenUsage 可空（厂商未返回 usage 时仅有 durationMs） */
+export interface SseUsageFrame {
+  type: 'usage'
+  tokenUsage?: number | null
+  durationMs?: number | null
+}
 /** Agent 元数据终端帧 event:agentMetadata */
 export interface SseAgentMetadataFrame {
   type: 'agentMetadata'
@@ -133,6 +139,7 @@ export interface SseErrorFrame {
 export type SseFrame =
   | SseContentFrame
   | SseReasoningFrame
+  | SseUsageFrame
   | SseReferencesFrame
   | SseAgentMetadataFrame
   | SseFallbackFrame
@@ -143,6 +150,7 @@ export type SseFrame =
 export interface SseHandlers {
   onContent?: (chunk: string) => void
   onReasoning?: (chunk: string) => void
+  onUsage?: (usage: SseUsageFrame) => void
   onReferences?: (refs: Reference[]) => void
   onAgentMetadata?: (meta: AgentMetadata) => void
   onFallback?: (fb: FallbackMeta) => void

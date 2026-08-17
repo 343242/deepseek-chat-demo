@@ -1,6 +1,6 @@
 # 后端时间类型与时区统一
 
-> 状态：实现就绪（v2 — 修正首轮审查 P0/P1/P2 共 9 项）
+> 状态：已实现（2026-08-18 验收通过：§12 全部达成，测试矩阵 25 用例全绿）
 >
 > 范围：后端全模块（DB DDL、Java 实体/DTO/Mapper/Service/Controller、全局序列化与参数绑定、容器时区）
 
@@ -253,7 +253,7 @@ public class TimeFormattersConfig implements WebMvcConfigurer {
 - 所有 `@ResponseBody` JSON 响应；
 - SSE 对象帧——`SseStreamBridge` 经 `SseEmitter.event().data(payload)` 发送对象（`canceled`/`error`/tail 帧），Spring 用同一主 `ObjectMapper` 序列化。
 
-代码库另有约 16 处 `new ObjectMapper()`（`GenericChatClient`、`TokenCacheService`、`OutboxRelay`、`OutboxMessageBus`、`EntitySeedExtractor`、`DbByokConfigSource`、`ToolResult`、`McpToolUtils`、各 LLM client 等）及 Redisson `JsonJacksonCodec`。这些是**内部序列化**（LLM 请求体、工具结果、配置 JSON、消息 headers、缓存对象），当前均不向 API 出口发射裸 java.time 对象（如 `TokenCacheService` 用 `Instant.now().toString()` 手动预转字符串）。
+代码库另有17 处 `new ObjectMapper()`（含实现后新增的 `DocumentStatusCodec`，2026-08-14）（`GenericChatClient`、`TokenCacheService`、`OutboxRelay`、`OutboxMessageBus`、`EntitySeedExtractor`、`DbByokConfigSource`、`ToolResult`、`McpToolUtils`、各 LLM client 等）及 Redisson `JsonJacksonCodec`。这些是**内部序列化**（LLM 请求体、工具结果、配置 JSON、消息 headers、缓存对象），当前均不向 API 出口发射裸 java.time 对象（如 `TokenCacheService` 用 `Instant.now().toString()` 手动预转字符串）。
 
 这些离群 mapper **不在本次 customizer 作用域内**。本次不承诺"覆盖所有 java.time 输出"——只承诺覆盖对外 API 出口。实现阶段须逐处审计确认无离群 mapper 把 java.time 对象写入 API 边界；若发现某处会，则将该处改注入 Spring 主 `ObjectMapper` 而非 `new`（修根因），不为离群 mapper 单独复制格式配置（不修症状）。
 
@@ -306,7 +306,7 @@ ALTER TABLE token_usage
 - **全局序列化测试**：对 `OffsetDateTime`、`Instant` 两类字段断言输出均为 `yyyy-MM-dd HH:mm:ss` 无偏移，且按配置时区取值。改 `APP_TIME_ZONE` 后断言输出随之变化（验证未写死）。**不含 `LocalDateTime` 用例**（该类型已消失，§6.2 不注册其序列化器）。
 - **反序列化器双口径测试（修 P2-13）**：`@RequestBody` 入参同时接受带偏移串（`2026-06-20T14:30:00+08:00`）与无偏移串（`2026-06-20 14:30:00`），两者解析到同一绝对时刻。
 - **`@RequestParam` 查询参数解析（修 P2-13）**：`UsageController` 的 `startTime=2026-06-20 14:30:00` 经全局 `Formatter<OffsetDateTime>` 正确绑定，验证 `@DateTimeFormat` 已移除、pattern 单点定义。
-- **离群 mapper 不回归（修 P2-13）**：审计确认 16 处 `new ObjectMapper()` 与 Redisson codec 均不向 API 边界发射裸 java.time；对确实发射的个别处，断言改注入主 mapper 后格式正确。
+- **离群 mapper 不回归（修 P2-13）**：审计确认 17 处 `new ObjectMapper()` 与 Redisson codec 均不向 API 边界发射裸 java.time；对确实发射的个别处，断言改注入主 mapper 后格式正确。
 - **`UsageController`/`UsageService` 测试**：入参 `LocalDateTime` 改 `OffsetDateTime`，时间窗聚合查询在 PostgreSQL 上回归通过。
 - **`AdminAuditLog` 持久化测试**：经 `AdminAuditAspect` 插入与读取不再触发类型不匹配异常（验证隐藏 bug 已修）。
 - **现有时间契约测试复用（修 P2-13）**：复用既有 MCP 实体时间契约测试（TIMESTAMPTZ + OffsetDateTime round-trip），扩展覆盖本次新增的全局格式化。
@@ -341,7 +341,7 @@ ALTER TABLE token_usage
 | `chat/controller/UsageController.java` | 入参 `OffsetDateTime`，移除 `@DateTimeFormat` |
 | `mcp/admin/dto/ServerConfigResponse.java` | 时间字段 `String` → `OffsetDateTime`，删手动转换 |
 | `config/MyBatisPlusMetaHandler.java` | 更新注释，逻辑不变 |
-| 16 处 `new ObjectMapper()` | 逐处审计；向 API 边界发射 java.time 者改注入主 mapper |
+| 17 处 `new ObjectMapper()` | 逐处审计；向 API 边界发射 java.time 者改注入主 mapper |
 | 相关 `*Test.java` | 类型、序列化、参数绑定、SSE 帧、离群 mapper 断言同步 |
 
 ## 12. 完成标准
@@ -351,4 +351,4 @@ ALTER TABLE token_usage
 - 不存在手动 `toString` 时间转换胶水层。
 - 数据层通过单一新增迁移 `V25` 统一本项目自有的 V1 残留 `TIMESTAMP` 列（`system_prompt`/`model_params`/`token_usage`）为 `TIMESTAMPTZ`；`rag_document` 已由 V10 收口，框架表 `SPRING_AI_CHAT_MEMORY."timestamp"` 豁免。不回溯改写或删除已发布迁移（`V1`/`V9`/`V10` 原样保留），遵守 Flyway 不可变契约。
 - 改 `APP_TIME_ZONE` 单一环境变量，JVM 时区与 API 输出展示时区同步变化，代码零改动（PostgreSQL 会话时区不受其控制，但对 `TIMESTAMPTZ` 不构成正确性问题）。
-- 16 处离群 `new ObjectMapper()` 经审计确认不向 API 边界发射裸 java.time；对发射者已改注入主 mapper。
+- 17 处离群 `new ObjectMapper()`（`DocumentStatusCodec` 为实现后新增，2026-08-18 复核：仅序列化 SSE 状态码载荷，不含 java.time 对象） 经审计确认不向 API 边界发射裸 java.time；对发射者已改注入主 mapper。

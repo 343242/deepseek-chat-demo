@@ -689,3 +689,39 @@ Completed mcp-db-source-of-truth task: code review P0-P3 fixes (13 issues), dele
 ### Next Steps
 
 - None - task complete
+
+
+## Session 21: 用量统计重写 + 每轮 Token/耗时显示 + 前端用量页
+
+**Date**: 2026-08-18
+**Task**: 用量统计重写 + 每轮 Token/耗时显示 + 前端用量页
+**Branch**: `agentic-rag-dev`
+
+### Summary
+
+后端：ChatModelAssembler 单一装配点 + UsageRecordingChatModel 统一采集（阻塞/流式/CHAT/AGENT/INTENT），V28 重建 usage_event（显式 user/scene 维度、UUID 幂等、NULL 表未知），四查询端点（summary/timeline 补零/stats 可排序/records 分页）+ 管理员 usage:view:all；删除 token_usage 旧链路与 -1 哨兵。每轮显示：流式轮末 usage 捕获（DeepSeek include_usage 兼容两种厂商形态）、SSE event:usage 尾帧、duration 落库。前端：用量统计页（echarts 懒加载时间桶图/聚合表/明细分页）+ 气泡 usage 帧接线。修复三连坑：Maven 增量不清理已删资源（需 clean）、PG uuid 列需显式 UuidTypeHandler、#{} 不支持枚举（scene 转 String）；死信队列回放恢复 4 条事件并真机验证全链路。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b9450b6` | (see git log) |
+| `d8a8535` | (see git log) |
+| `d117129` | (see git log) |
+| `56a80fa` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

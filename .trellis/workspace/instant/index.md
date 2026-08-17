@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 20
-- **Last Active**: 2026-08-16
+- **Total Sessions**: 21
+- **Last Active**: 2026-08-18
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~691 | Active |
+| `journal-1.md` | ~727 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 21 | 2026-08-18 | 用量统计重写 + 每轮 Token/耗时显示 + 前端用量页 | `b9450b6`, `d8a8535`, `d117129`, `56a80fa` | `agentic-rag-dev` |
 | 20 | 2026-08-16 | 批量删除文档：/batch-delete 端点 + 表格多选 | `2f8cefb` | `agentic-rag-dev` |
 | 19 | 2026-08-16 | 批量上传改造：前端走批量端点 + 后端限 10 个/200MB | `ff22d54` | `agentic-rag-dev` |
 | 18 | 2026-08-16 | 前端 spec 最佳实践审查修订 + ESLint/tsconfig 严格化落地 | `16f36da`, `0e2001a`, `462b969` | `agentic-rag-dev` |

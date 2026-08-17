@@ -41,15 +41,15 @@ Publisher → OutboxMessageBus(装饰器) → RedisStreamMessageBus(新, 取代 
 
 ## Parent 验收条件
 
-- [ ] `RedisStreamMessageBus` 是唯一 `MessageBus` 实现（child 1，已删 RocketMQ 代码/依赖/脚本）。
-- [ ] `OutboxMessageBus`（`@Primary`）装饰 `RedisStreamMessageBus`，publisher 业务逻辑零改动（child 2）。
-- [ ] 三个 topic（`chat_message_save` / `chat_usage_record` / `rag_index_document`）全链路跑通：
+- [x] `RedisStreamMessageBus` 是唯一 `MessageBus` 实现（child 1，已删 RocketMQ 代码/依赖/脚本）。
+- [x] `OutboxMessageBus`（`@Primary`）装饰 `RedisStreamMessageBus`，publisher 业务逻辑零改动（child 2）。
+- [x] 三个 topic（`chat_message_save` / `chat_usage_record` / `rag_index_document`）全链路跑通：
       send → outbox → RedisStream → consumer → 落库/索引。
-- [ ] RocketMQ 代码/依赖/脚本移除（child 1）：`grep -rn 'rocketmq\|RocketMQ' src/main pom.xml scripts/` = 0。
-- [ ] RocketMQ 容器移除（parent 收尾）：`docker-compose` 删 rmqnamesrv/rmqbroker/rmqdashboard，
+- [x] RocketMQ 代码/依赖/脚本移除（child 1）：`grep -rn 'rocketmq\|RocketMQ' src/main pom.xml scripts/` = 0。
+- [x] RocketMQ 容器移除（parent 收尾）：`docker-compose` 删 rmqnamesrv/rmqbroker/rmqdashboard，
       `grep -rn 'rocketmq\|RocketMQ\|rmqbroker\|rmqnamesrv' docker-compose*.yml` = 0。
-- [ ] Redis 持久化策略生效：`maxmemory-policy noeviction`（或 stream key 豁免），AOF everysec。
-- [ ] 2c4g 服务器（仅 Redis，无 RocketMQ 容器）冷启 + 三条链路冒烟通过。
+- [x] Redis 持久化策略生效：`maxmemory-policy noeviction`（或 stream key 豁免），AOF everysec。
+- [x] 2c4g 服务器（仅 Redis，无 RocketMQ 容器）冷启 + 三条链路冒烟通过。
 
 ## Out of Scope
 

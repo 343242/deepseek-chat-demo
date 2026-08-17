@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "后端总规范入口"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Flyway/MyBatis-Plus/表结构约定"}
+{"file": ".trellis/spec/backend/llm-spi.md", "reason": "LLM SPI 契约：ChatModelAdapter/Registry/禁止注入 ChatClient.Builder"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "异常体系与错误码"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "DTO/事务/并发禁止模式"}

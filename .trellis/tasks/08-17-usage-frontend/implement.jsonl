@@ -1,0 +1,2 @@
+{"file": ".trellis/spec/backend/llm-spi.md", "reason": "装配点/usage 采集契约"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "异常约定"}

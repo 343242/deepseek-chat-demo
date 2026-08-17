@@ -50,5 +50,5 @@ Spring Boot 3.5 + MyBatis-Plus + PostgreSQL + Redis 的 DeepSeek 聊天助手后
 - **DTO**: record + @Valid
 - **Token**: HttpOnly Cookie（禁 JSON body 返回）
 - **状态字段**: 枚举校验（禁裸 Integer）
-- **Schema**: Flyway（`db/migration/`）+ `sql/schema.sql` 参考
+- **Schema**: Flyway（`db/migration/`）唯一事实源（sql/schema.sql 已删除）
 - **Docker**: 仅 bookworm 变体，需授权后拉取

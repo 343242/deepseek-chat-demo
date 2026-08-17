@@ -49,7 +49,29 @@ public ChatOptions getDefaultOptions() {
 - 返回类型：`org.springframework.ai.chat.prompt.ChatOptions`（**不是** `chat.model.ChatOptions`）
 - 实现：`org.springframework.ai.model.tool.ToolCallingChatOptions`
 
-### 上层允许的入口
+### 统一装配点模式（08-17-usage-rework 起，取代"自建 ChatClient 模式"）
+
+chat / agent 主调用链不再各自 `new ChatModelAdapter(...)`，统一经 `ChatModelAssembler` 装配：
+
+```java
+// infrastructure/llm/adapter/ChatModelAssembler（@Component，唯一组装点）
+ChatClient client = assembler.chatClient(userId, candidateId, UsageScene.CHAT, conversationId);
+// Agent 链路：护栏与 ChatClient 必须共享同一装饰器实例
+UsageRecordingChatModel model = assembler.chatModel(userId, candidateId, UsageScene.AGENT, conversationId);
+ChatClient client = assembler.chatClient(model);
+```
+
+装饰栈层序只在装配点定义一次：`UsageRecordingChatModel(ChatModelAdapter(capable))`。
+`UsageRecordingChatModel` 是全部 LLM 调用的用量采集咽喉（阻塞/流式/CHAT/AGENT/INTENT 同一份逻辑），
+同时暴露跨轮 token 累计供 `AgentGuardrails` 轮间检查；per-call 状态（计时/累计/归因上下文）放在
+每请求实例的字段里，禁止做成单例 Bean。
+
+- **当前装配点消费方**：`ChatServiceImpl.chat/chatStream`（CHAT）、`AgentModeStrategy`（AGENT）、`IntentClassifier`（INTENT，per-request，勿缓存）
+- **未接入**：查询改写（REWRITE）——ChatClient 深藏在 Spring AI RAG 单例结构（`RewriteClientResolver` 消费方构造期缓存），per-request 用户归因需重构 RAG 组装链后接入
+- **禁止**：上层直接 `new ChatModelAdapter(...)` / `new UsageRecordingChatModel(...)`（历史允许的自建点 ChatServiceImpl:121/155、AgentModeStrategy、IntentClassifier 已全部收敛到装配点）
+- **禁止注入**：`ChatModel` / `ChatClient.Builder` Spring AI bean（原有约束不变）
+
+### 上层允许的入口（保留）
 
 ```java
 // 通过 Resolver 拿到 ChatClient（推荐用于 query rewrite / 工具内部 LLM 调用）
@@ -71,16 +93,9 @@ public List<CapabilityClient> getChain(LlmCapability capability);
 public CapabilityClient find(String candidateId);  // 返回 null，不抛异常
 ```
 
-### 自建 ChatClient 模式（仅限 chat/agent 主调用链）
+### ~~自建 ChatClient 模式~~（已废除，见上方统一装配点模式）
 
-需要 advisor 链 + 多候选 fallback 的场景，由调用方在 `fallbackExecutor.execute(chain, client -> {...})` 内部自行构建：
-
-```java
-ChatCapable chatCapable = (ChatCapable) client;
-ChatClient chatClient = ChatClient.builder(new ChatModelAdapter(chatCapable)).build();
-```
-
-**目前允许的自建点**（PRD §3.2 列举）：`ChatServiceImpl:92,119` / `AgentModeStrategy:183,240` / `IntentClassifier:180`。新增自建点必须经设计评审，原则上应改用 `RewriteClientResolver`。
+历史做法（调用方在 `fallbackExecutor.execute` 内自行 `new ChatModelAdapter(...)`）已于 08-17-usage-rework 全部收敛到 `ChatModelAssembler`；上层不得再自建。
 
 ---
 
@@ -130,7 +145,7 @@ ChatClient chatClient = ChatClient.builder(new ChatModelAdapter(chatCapable)).bu
 下列 Spring AI 类型允许使用，因为它们是框架扩展点，不是 LLM 客户端调用：
 - `@Tool` 注解（chat/tool/*、agent/tool/*）
 - `BaseAdvisor` 实现（`AgentSystemPromptAdvisor`）
-- `ChatModel` 实现（`TokenCountingChatModel`、`NoOpChatModel`）
+- `ChatModel` 实现（`UsageRecordingChatModel`）
 - `RetrievalAugmentationAdvisor` / `DocumentPostProcessor` / `QueryTransformer`（RAG 检索链）
 - `ChatClient.ChatClientRequestSpec` / `Advisor` API（Advisor 调用链）
 

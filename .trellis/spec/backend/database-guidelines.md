@@ -20,7 +20,7 @@
 - 命名规范：`V{序号}__{描述}.sql`，如 `V1__init_schema.sql`、`V4__pg_jieba_chinese_fts.sql`
 - 迁移脚本必须幂等：使用 `IF NOT EXISTS`、`CREATE OR REPLACE`、`NOT EXISTS` 等保证可重复执行
 - 回填大数据量时使用分页 `UPDATE ... LIMIT N` 避免锁表
-- `sql/schema.sql` 保留为完整 Schema 参考文档，但不作为主要迁移手段
+- `sql/schema.sql` 已删除（08-17-usage-rework）：Flyway `db/migration/` 是唯一事实源，废弃快照只会持续腐烂
 - 新增表/列/索引一律通过 Flyway 迁移脚本，不直接编辑 `schema.sql`
 - Flyway 在 Spring AI PgVectorStore 初始化之前执行，迁移脚本需自行确保基础表存在
 

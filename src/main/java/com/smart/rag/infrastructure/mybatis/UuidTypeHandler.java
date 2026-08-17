@@ -1,4 +1,4 @@
-package com.smart.rag.rag.mapper;
+package com.smart.rag.infrastructure.mybatis;
 
 import org.apache.ibatis.type.BaseTypeHandler;
 import org.apache.ibatis.type.JdbcType;
@@ -13,10 +13,10 @@ import java.util.UUID;
  * MyBatis TypeHandler —— {@code java.util.UUID} ⇄ PostgreSQL {@code uuid} 列。
  * <p>
  * 背景：MyBatis 官方不内置 UUID handler（issue #1609 wontfix——UUID 存储格式因库而异），
- * registry 默认注册表亦不含 {@code UUID.class}。Path C 的 {@code votedChunk}/{@code expandedChunk}
- * resultMap 以 {@code javaType="java.util.UUID"} 映射 {@code rag_chunk_entity.chunk_id}（PG uuid 列），
- * 必须显式引用本 handler，否则启动时解析 resultMap 抛
- * {@code No typehandler found for property null}。
+ * registry 默认注册表亦不含 {@code UUID.class}。引用方：rag EntityMapper 的
+ * {@code votedChunk}/{@code expandedChunk} resultMap（javaType=UUID 映射 PG uuid 列）、
+ * usage {@code UsageEvent.eventId}（@TableField typeHandler）。必须显式引用本 handler，
+ * 否则运行时抛 {@code Type handler was null on parameter mapping}。
  * <p>
  * 写法：PG JDBC 对原生 uuid 列原生支持 {@code getObject(column, UUID.class)} /
  * {@code setObject(idx, UUID)}，无需字符串中转。

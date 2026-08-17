@@ -1,9 +1,11 @@
 package com.smart.rag.agent.poc;
 
-import com.smart.rag.agent.guardrail.TokenCountingChatModel;
 import com.smart.rag.infrastructure.llm.ChatCapable;
 import com.smart.rag.infrastructure.llm.LlmResponse;
 import com.smart.rag.infrastructure.llm.adapter.ChatModelAdapter;
+import com.smart.rag.infrastructure.llm.adapter.UsageRecordingChatModel;
+import com.smart.rag.infrastructure.llm.usage.UsageContext;
+import com.smart.rag.infrastructure.llm.usage.UsageScene;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -45,10 +47,11 @@ class Poc5_FullChainAgentToolInvocationTest {
             return new LlmResponse("final answer after tool", false, null, List.of(), Map.of());
         });
 
-        TokenCountingChatModel tcm = new TokenCountingChatModel(new ChatModelAdapter(delegate));
+        UsageRecordingChatModel model = new UsageRecordingChatModel(new ChatModelAdapter(delegate),
+            new UsageContext(1L, "poc-agent", UsageScene.AGENT, "conv"), sample -> { });
         DefaultToolCallingManager mgr = DefaultToolCallingManager.builder().toolCallbackResolver(new StaticToolCallbackResolver(List.of(callbacks))).build();
         ToolCallAdvisor advisor = ToolCallAdvisor.builder().toolCallingManager(mgr).advisorOrder(2).build();
-        ChatResponse resp = ChatClient.builder(tcm).build().prompt().user("find X").advisors(advisor).options(ToolCallingChatOptions.builder().toolCallbacks(callbacks).build()).call().chatResponse();
+        ChatResponse resp = ChatClient.builder(model).build().prompt().user("find X").advisors(advisor).options(ToolCallingChatOptions.builder().toolCallbacks(callbacks).build()).call().chatResponse();
 
         String content = resp == null ? "null" : resp.getResult().getOutput().getText();
         System.out.println("POC_RESULT fullchain toolFired=" + fired[0] + " modelCalls=" + count.get() + " content=" + content);

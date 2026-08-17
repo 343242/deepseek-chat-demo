@@ -1,10 +1,11 @@
-package com.smart.rag.chat.service;
+package com.smart.rag.usage;
 
 import com.smart.rag.infrastructure.messaging.ConsumerConfig;
 import com.smart.rag.infrastructure.messaging.MessageBus;
 import com.smart.rag.infrastructure.messaging.MessageEnvelope;
 import com.smart.rag.infrastructure.messaging.MessageHandler;
 import com.smart.rag.infrastructure.messaging.Subscription;
+import com.smart.rag.usage.service.UsageEventService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -26,22 +27,22 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 /**
- * UsageRecordConsumer 测试 — 验证订阅 {@code chat_usage_record} 并转发到 UsageService（Phase C Step 1）。
+ * UsageEventConsumer 测试 — 验证订阅 {@code usage_event_record} 并转发到 UsageEventService。
  */
 @ExtendWith(MockitoExtension.class)
-class UsageRecordConsumerTest {
+class UsageEventConsumerTest {
 
     @Mock
     private MessageBus messageBus;
 
     @Mock
-    private UsageService usageService;
+    private UsageEventService usageEventService;
 
-    private UsageRecordConsumer consumer;
+    private UsageEventConsumer consumer;
 
     @BeforeEach
     void setUp() {
-        consumer = new UsageRecordConsumer(messageBus, usageService);
+        consumer = new UsageEventConsumer(messageBus, usageEventService);
     }
 
     @Nested
@@ -49,7 +50,7 @@ class UsageRecordConsumerTest {
     class Lifecycle {
 
         @Test
-        @DisplayName("start 订阅 chat_usage_record，消费组 usage-group，payload 类型 UsagePayload")
+        @DisplayName("start 订阅 usage_event_record，消费组 usage-group，payload 类型 UsageEventPayload")
         void startSubscribes() {
             when(messageBus.subscribe(any(), any(), any(), any(), any()))
                     .thenReturn(mock(Subscription.class));
@@ -57,10 +58,10 @@ class UsageRecordConsumerTest {
             consumer.start();
 
             verify(messageBus).subscribe(
-                    eq("chat_usage_record"),
+                    eq("usage_event_record"),
                     eq("usage-group"),
                     any(),
-                    eq(UsagePayload.class),
+                    eq(UsageEventPayload.class),
                     any());
             assertThat(consumer.isRunning()).isTrue();
         }
@@ -111,44 +112,45 @@ class UsageRecordConsumerTest {
     class Handler {
 
         @Test
-        @DisplayName("收到 UsagePayload 后转发到 UsageService.recordUsage")
-        void handlerForwardsToUsageService() {
+        @DisplayName("收到 UsageEventPayload 后转发到 UsageEventService.record")
+        void handlerForwardsToService() {
             consumer.start();
 
             @SuppressWarnings("unchecked")
-            ArgumentCaptor<MessageHandler<UsagePayload>> handlerCaptor =
+            ArgumentCaptor<MessageHandler<UsageEventPayload>> handlerCaptor =
                     ArgumentCaptor.forClass(MessageHandler.class);
-            verify(messageBus).subscribe(any(), any(), any(), eq(UsagePayload.class), handlerCaptor.capture());
+            verify(messageBus).subscribe(any(), any(), any(), eq(UsageEventPayload.class), handlerCaptor.capture());
 
-            UsagePayload payload = new UsagePayload(
-                    "conv-1", "candidate-a", 100L, 50L, 150L, 200L);
-            MessageEnvelope<UsagePayload> msg = new MessageEnvelope<>(
-                    null, "chat_usage_record", null, payload,
-                    null, "dedup-key", Map.of(), System.currentTimeMillis());
+            UsageEventPayload payload = new UsageEventPayload(
+                    "event-1", 7L, "CHAT", "conv-1", "candidate-a",
+                    100L, 50L, 150L, false, true, 200L);
+            MessageEnvelope<UsageEventPayload> msg = new MessageEnvelope<>(
+                    null, "usage_event_record", null, payload,
+                    null, "event-1", Map.of(), System.currentTimeMillis());
             handlerCaptor.getValue().onMessage(msg);
 
-            verify(usageService).recordUsage("conv-1", "candidate-a", 100L, 50L, 150L, 200L);
+            verify(usageEventService).record(payload);
         }
 
         @Test
-        @DisplayName("UsageService 抛异常时从 handler 传播出去（触发 broker 重试，不静默吞咽）")
+        @DisplayName("record 抛异常时从 handler 传播出去（触发 broker 重试，不静默吞咽）")
         void handlerPropagatesPersistenceException() {
             consumer.start();
 
             @SuppressWarnings("unchecked")
-            ArgumentCaptor<MessageHandler<UsagePayload>> handlerCaptor =
+            ArgumentCaptor<MessageHandler<UsageEventPayload>> handlerCaptor =
                     ArgumentCaptor.forClass(MessageHandler.class);
-            verify(messageBus).subscribe(any(), any(), any(), eq(UsagePayload.class), handlerCaptor.capture());
+            verify(messageBus).subscribe(any(), any(), any(), eq(UsageEventPayload.class), handlerCaptor.capture());
 
-            UsagePayload payload = new UsagePayload(
-                    "conv-1", "candidate-a", 100L, 50L, 150L, 200L);
-            MessageEnvelope<UsagePayload> msg = new MessageEnvelope<>(
-                    null, "chat_usage_record", null, payload,
-                    null, "dedup-key", Map.of(), System.currentTimeMillis());
+            UsageEventPayload payload = new UsageEventPayload(
+                    "event-1", 7L, "CHAT", "conv-1", "candidate-a",
+                    100L, 50L, 150L, false, true, 200L);
+            MessageEnvelope<UsageEventPayload> msg = new MessageEnvelope<>(
+                    null, "usage_event_record", null, payload,
+                    null, "event-1", Map.of(), System.currentTimeMillis());
 
             RuntimeException ex = new RuntimeException("boom");
-            doThrow(ex).when(usageService)
-                    .recordUsage("conv-1", "candidate-a", 100L, 50L, 150L, 200L);
+            doThrow(ex).when(usageEventService).record(payload);
 
             assertThatThrownBy(() -> handlerCaptor.getValue().onMessage(msg))
                     .isSameAs(ex);

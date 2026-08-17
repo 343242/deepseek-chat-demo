@@ -25,6 +25,7 @@ import org.springframework.scheduling.annotation.EnableAsync;
         basePackages = {
         "com.smart.rag.user.mapper",
         "com.smart.rag.chat.mapper",
+        "com.smart.rag.usage.mapper",
         "com.smart.rag.conversation.mapper",
         "com.smart.rag.rag.mapper",
         "com.smart.rag.agent.event",

@@ -161,7 +161,7 @@ public class ChatModelAdapter implements ChatModel {
         }).build();
     }
 
-    /** P3：轮末 usage → ChatResponseMetadata（供 TokenCountingChatModel.stream 累计，P4b）。 */
+    /** P3：轮末 usage → ChatResponseMetadata（供 UsageRecordingChatModel 轮末累计/采集）。 */
     private static ChatResponseMetadata buildResponseMetadata(StreamChunk chunk) {
         ChatResponseMetadata.Builder b = ChatResponseMetadata.builder();
         if (chunk.usage() != null) {

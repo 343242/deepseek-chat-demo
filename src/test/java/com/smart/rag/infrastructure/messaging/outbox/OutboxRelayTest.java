@@ -233,10 +233,11 @@ class OutboxRelayTest extends AbstractOutboxTest {
         insertPending("chat_message_save", 0);
         // 直接插一行 usage payload 类验证 payload_type 驱动
         OutboxEntry usageRow = new OutboxEntry();
-        usageRow.setTopic("chat_usage_record");
-        usageRow.setPayload("{\"conversationId\":\"conv-9\",\"candidateId\":\"c-1\","
-            + "\"promptTokens\":1,\"completionTokens\":2,\"totalTokens\":3,\"durationMs\":4}");
-        usageRow.setPayloadType(com.smart.rag.chat.service.UsagePayload.class.getName());
+        usageRow.setTopic("usage_event_record");
+        usageRow.setPayload("{\"eventId\":\"ev-9\",\"userId\":7,\"scene\":\"CHAT\","
+            + "\"conversationId\":\"conv-9\",\"candidateId\":\"c-1\",\"promptTokens\":1,"
+            + "\"completionTokens\":2,\"totalTokens\":3,\"estimated\":false,\"success\":true,\"durationMs\":4}");
+        usageRow.setPayloadType(com.smart.rag.usage.UsageEventPayload.class.getName());
         usageRow.setTag("tag-u");
         usageRow.setHashKey("hk-u");
         usageRow.setDedupKey("dk-u");
@@ -253,9 +254,9 @@ class OutboxRelayTest extends AbstractOutboxTest {
         ArgumentCaptor<MessageEnvelope<?>> captor = ArgumentCaptor.forClass(MessageEnvelope.class);
         verify(delegate, times(2)).send(captor.capture());
         MessageEnvelope<?> usageEnv = captor.getAllValues().stream()
-            .filter(e -> "chat_usage_record".equals(e.topic()))
+            .filter(e -> "usage_event_record".equals(e.topic()))
             .findFirst().orElseThrow();
-        assertThat(usageEnv.payload()).isInstanceOf(com.smart.rag.chat.service.UsagePayload.class);
+        assertThat(usageEnv.payload()).isInstanceOf(com.smart.rag.usage.UsageEventPayload.class);
         assertThat(usageEnv.tag()).isEqualTo("tag-u");
         assertThat(usageEnv.hashKey()).isEqualTo("hk-u");
         assertThat(usageEnv.deduplicationKey()).isEqualTo("dk-u");

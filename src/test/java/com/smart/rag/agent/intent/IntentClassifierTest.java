@@ -8,7 +8,9 @@ import com.smart.rag.infrastructure.llm.ChatCapable;
 import com.smart.rag.infrastructure.llm.ChatRequest;
 import com.smart.rag.infrastructure.llm.LlmResponse;
 import com.smart.rag.infrastructure.llm.StreamChunk;
+import com.smart.rag.infrastructure.llm.adapter.ChatModelAssembler;
 import com.smart.rag.infrastructure.llm.registry.LlmClientRegistry;
+import com.smart.rag.infrastructure.llm.usage.UsageSample;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -17,6 +19,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import reactor.core.publisher.Flux;
 
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -32,11 +35,14 @@ import static org.mockito.Mockito.when;
  * <p>
  * 流式测试通过 mock {@link ChatCapable#chatStream(ChatRequest)} 返回分片 JSON，验证
  * {@code ChatModelAdapter.stream -> ChatClient.stream().content()} 聚合完整 JSON 后正确解析意图。
+ * 经真实 {@link ChatModelAssembler} 装配（scene=INTENT 用量采样）。
  */
 @ExtendWith(MockitoExtension.class)
 class IntentClassifierTest {
 
     private static final String INTENT_MODEL = "intent-model";
+    private static final Long USER_ID = 7L;
+    private static final String CONVERSATION_ID = "conv-1";
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -44,12 +50,15 @@ class IntentClassifierTest {
     @Mock private AgentRagProperties properties;
     @Mock private ChatCapable capable;
 
+    private final List<UsageSample> samples = new ArrayList<>();
+
     private IntentClassifier classifier;
 
     @BeforeEach
     void setUp() {
         when(properties.intentModel()).thenReturn(INTENT_MODEL);
-        classifier = new IntentClassifier(llmRegistry, properties, objectMapper);
+        ChatModelAssembler assembler = new ChatModelAssembler(llmRegistry, samples::add);
+        classifier = new IntentClassifier(assembler, properties, objectMapper);
     }
 
     // ==================== classifyStream ====================
@@ -62,7 +71,7 @@ class IntentClassifierTest {
             Flux.<String>just("{\"intent\":", " \"RETRIEVAL\", \"confidence\": 0.9}")
                 .map(s -> new StreamChunk(s, null, null, null)));
 
-        IntentResult result = classifier.classifyStream("Spring Boot 自动装配原理").block();
+        IntentResult result = classifier.classifyStream(USER_ID, CONVERSATION_ID, "Spring Boot 自动装配原理").block();
 
         assertThat(result).isNotNull();
         assertThat(result.intent()).isEqualTo(AgentIntent.RETRIEVAL);
@@ -77,7 +86,7 @@ class IntentClassifierTest {
             Flux.<String>just("```json\n", "{\"intent\":\"GENERAL_TOOL\",\"confidence\":0.8}", "\n```")
                 .map(s -> new StreamChunk(s, null, null, null)));
 
-        IntentResult result = classifier.classifyStream("123 * 456 等于多少").block();
+        IntentResult result = classifier.classifyStream(USER_ID, CONVERSATION_ID, "123 * 456 等于多少").block();
 
         assertThat(result).isNotNull();
         assertThat(result.intent()).isEqualTo(AgentIntent.GENERAL_TOOL);
@@ -87,7 +96,7 @@ class IntentClassifierTest {
     @Test
     @DisplayName("classifyStream: 空 query 立即返回 SAFE_FALLBACK，不触发 LLM 调用")
     void classifyStream_blankQueryReturnsSafeFallbackWithoutLlmCall() {
-        IntentResult result = classifier.classifyStream("   ").block();
+        IntentResult result = classifier.classifyStream(USER_ID, CONVERSATION_ID, "   ").block();
 
         assertThat(result).isNotNull();
         assertThat(result.intent()).isEqualTo(AgentIntent.DEEP_RETRIEVAL);
@@ -101,7 +110,7 @@ class IntentClassifierTest {
         when(capable.chatStream(any(ChatRequest.class)))
             .thenReturn(Flux.error(new RuntimeException("boom")));
 
-        IntentResult result = classifier.classifyStream("q").block();
+        IntentResult result = classifier.classifyStream(USER_ID, CONVERSATION_ID, "q").block();
 
         assertThat(result).isNotNull();
         assertThat(result.intent()).isEqualTo(AgentIntent.DEEP_RETRIEVAL);
@@ -119,10 +128,16 @@ class IntentClassifierTest {
             new LlmResponse("{\"intent\":\"DIRECT_ANSWER\",\"confidence\":0.95}",
                 false, null, List.of(), Map.of()));
 
-        IntentResult result = classifier.classify("你好");
+        IntentResult result = classifier.classify(USER_ID, CONVERSATION_ID, "你好");
 
         assertThat(result).isNotNull();
         assertThat(result.intent()).isEqualTo(AgentIntent.DIRECT_ANSWER);
         assertThat(result.confidence()).isEqualTo(0.95);
+        // 意图分类经装配点带 INTENT 场景用量采集
+        assertThat(samples).hasSize(1);
+        assertThat(samples.get(0).context().scene().name()).isEqualTo("INTENT");
+        assertThat(samples.get(0).context().userId()).isEqualTo(USER_ID);
+        assertThat(samples.get(0).context().candidateId()).isEqualTo(INTENT_MODEL);
     }
 }
+

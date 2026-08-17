@@ -15,20 +15,21 @@ import static org.assertj.core.api.Assertions.assertThat;
 class OutboxPayloadTypeTest extends AbstractRelayRoundTripTest {
 
     @Test
-    @DisplayName("usage payload：JSON 按 payload_type 还原为 UsagePayload 实例")
+    @DisplayName("usage payload：JSON 按 payload_type 还原为 UsageEventPayload 实例")
     void usagePayloadRoundTrips() {
-        insertFullRow(com.smart.rag.chat.service.UsagePayload.class.getName(),
-            "{\"conversationId\":\"c1\",\"candidateId\":\"m1\",\"promptTokens\":5,"
-                + "\"completionTokens\":6,\"totalTokens\":11,\"durationMs\":7}",
+        insertFullRow(com.smart.rag.usage.UsageEventPayload.class.getName(),
+            "{\"eventId\":\"e1\",\"userId\":7,\"scene\":\"CHAT\",\"conversationId\":\"c1\","
+                + "\"candidateId\":\"m1\",\"promptTokens\":5,\"completionTokens\":6,"
+                + "\"totalTokens\":11,\"estimated\":false,\"success\":true,\"durationMs\":7}",
             null, null, null, Map.of());
 
         drainAndCapture();
 
         assertThat(captured.get().payload())
-            .isInstanceOf(com.smart.rag.chat.service.UsagePayload.class);
-        com.smart.rag.chat.service.UsagePayload p =
-            (com.smart.rag.chat.service.UsagePayload) captured.get().payload();
-        assertThat(p.conversationId()).isEqualTo("c1");
+            .isInstanceOf(com.smart.rag.usage.UsageEventPayload.class);
+        com.smart.rag.usage.UsageEventPayload p =
+            (com.smart.rag.usage.UsageEventPayload) captured.get().payload();
+        assertThat(p.eventId()).isEqualTo("e1");
         assertThat(p.totalTokens()).isEqualTo(11L);
     }
 

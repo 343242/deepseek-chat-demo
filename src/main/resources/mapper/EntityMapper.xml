@@ -150,7 +150,7 @@
 
 <resultMap id="votedChunk" type="com.smart.rag.rag.retrieval.entity.VotedChunk">
     <constructor>
-        <arg column="chunk_id" javaType="java.util.UUID" typeHandler="com.smart.rag.rag.mapper.UuidTypeHandler"/>
+        <arg column="chunk_id" javaType="java.util.UUID" typeHandler="com.smart.rag.infrastructure.mybatis.UuidTypeHandler"/>
         <arg column="content" javaType="java.lang.String"/>
         <arg column="metadata" javaType="java.lang.String"/>
         <arg column="chunk_score" javaType="_double"/>
@@ -160,7 +160,7 @@
 
 <resultMap id="expandedChunk" type="com.smart.rag.rag.retrieval.entity.ExpandedChunk">
     <constructor>
-        <arg column="chunk_id" javaType="java.util.UUID" typeHandler="com.smart.rag.rag.mapper.UuidTypeHandler"/>
+        <arg column="chunk_id" javaType="java.util.UUID" typeHandler="com.smart.rag.infrastructure.mybatis.UuidTypeHandler"/>
         <arg column="content" javaType="java.lang.String"/>
         <arg column="metadata" javaType="java.lang.String"/>
         <arg column="chunk_score" javaType="_double"/>

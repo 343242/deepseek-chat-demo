@@ -2,8 +2,8 @@ package com.smart.rag.config.time;
 
 import com.smart.rag.chat.entity.ModelParams;
 import com.smart.rag.chat.entity.SystemPrompt;
-import com.smart.rag.chat.entity.TokenUsage;
 import com.smart.rag.infrastructure.audit.entity.AdminAuditLog;
+import com.smart.rag.usage.entity.UsageEvent;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -41,9 +41,9 @@ class EntityTimeContractTest {
     }
 
     @Test
-    @DisplayName("TokenUsage 时间字段为 OffsetDateTime")
-    void tokenUsageUsesOffsetDateTime() throws Exception {
-        assertThat(TokenUsage.class.getDeclaredField("createdAt").getType())
+    @DisplayName("UsageEvent 时间字段为 OffsetDateTime")
+    void usageEventUsesOffsetDateTime() throws Exception {
+        assertThat(UsageEvent.class.getDeclaredField("createdAt").getType())
                 .isEqualTo(OffsetDateTime.class);
     }
 

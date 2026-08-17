@@ -4,12 +4,12 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smart.rag.mode.AgentIntent;
 import com.smart.rag.mode.IntentResult;
-import com.smart.rag.infrastructure.llm.ChatCapable;
-import com.smart.rag.infrastructure.llm.adapter.ChatModelAdapter;
-import com.smart.rag.infrastructure.llm.registry.LlmClientRegistry;
+import com.smart.rag.infrastructure.llm.adapter.ChatModelAssembler;
+import com.smart.rag.infrastructure.llm.usage.UsageScene;
 import com.smart.rag.infrastructure.exception.ServiceException;
 import com.smart.rag.infrastructure.exception.errorcode.ServiceErrorCode;
 import com.smart.rag.agent.config.AgentRagProperties;
+import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
@@ -24,6 +24,7 @@ import java.util.List;
  * 意图分类器 -- 独立 LLM 调用，对用户查询做意图分类
  * <p>
  * 容错策略：失败时降级为 DEEP_RETRIEVAL，重试 2 次。
+ * 每次分类经 {@link ChatModelAssembler} 取 per-request ChatClient（scene=INTENT，带用户归因的用量采集）。
  */
 @Component
 public class IntentClassifier {
@@ -36,28 +37,26 @@ public class IntentClassifier {
         AgentIntent.DEEP_RETRIEVAL, 0.0, Collections.emptyList()
     );
 
-    private final LlmClientRegistry llmRegistry;
+    private final ChatModelAssembler chatModelAssembler;
     private final String intentCandidateId;
     private final ObjectMapper objectMapper;
 
-    private volatile ChatClient intentChatClient;
-
-    public IntentClassifier(LlmClientRegistry llmRegistry,
+    public IntentClassifier(ChatModelAssembler chatModelAssembler,
                             AgentRagProperties properties,
                             ObjectMapper objectMapper) {
-        this.llmRegistry = llmRegistry;
+        this.chatModelAssembler = chatModelAssembler;
         this.intentCandidateId = properties.intentModel();
         this.objectMapper = objectMapper;
     }
 
-    public IntentResult classify(String query) {
+    public IntentResult classify(Long userId, @Nullable String conversationId, String query) {
         if (query == null || query.isBlank()) {
             return SAFE_FALLBACK;
         }
 
         for (int attempt = 0; attempt <= MAX_RETRIES; attempt++) {
             try {
-                IntentResult result = doClassify(query);
+                IntentResult result = doClassify(userId, conversationId, query);
                 return validate(result);
             } catch (Exception e) {
                 log.warn("Intent classification failed (attempt {}): {}", attempt, e.getMessage());
@@ -80,14 +79,16 @@ public class IntentClassifier {
      * 容错策略与 {@link #classify} 一致：重试 {@value #MAX_RETRIES} 次，失败降级 {@link #SAFE_FALLBACK}。
      * 需意图模型声明 supports-streaming；不支持时 chatStream 抛异常 -> 重试耗尽 -> 降级 SAFE_FALLBACK。
      *
-     * @param query 用户查询
+     * @param userId         发起用户（用量归因）
+     * @param conversationId 会话 ID（用量归因，可 null）
+     * @param query          用户查询
      * @return Mono，发出分类结果；query 为空时立即发出 SAFE_FALLBACK
      */
-    public Mono<IntentResult> classifyStream(String query) {
+    public Mono<IntentResult> classifyStream(Long userId, @Nullable String conversationId, String query) {
         if (query == null || query.isBlank()) {
             return Mono.just(SAFE_FALLBACK);
         }
-        return doClassifyStream(query)
+        return doClassifyStream(userId, conversationId, query)
             .map(this::validate)
             .retryWhen(Retry.max(MAX_RETRIES)
                 .doAfterRetry(sig -> log.warn("Intent classification stream retry (attempt {}): {}",
@@ -99,12 +100,12 @@ public class IntentClassifier {
             });
     }
 
-    private Mono<IntentResult> doClassifyStream(String query) {
+    private Mono<IntentResult> doClassifyStream(Long userId, @Nullable String conversationId, String query) {
         String prompt = buildPrompt(query);
         // Mono.defer 包裹：每次订阅（含 retryWhen 重试）都重新发起 LLM 调用，
         // 与阻塞版 doClassify 的 for-loop 重试语义一致 -- 否则 retry 只重订阅已组装的
         // Flux，不会真正重新调用 chatStream，部分成功后失败的请求无法真正重试。
-        return Mono.defer(() -> resolveChatClient().prompt()
+        return Mono.defer(() -> resolveChatClient(userId, conversationId).prompt()
             .user(prompt)
             .stream()
             .content()
@@ -119,11 +120,11 @@ public class IntentClassifier {
             }));
     }
 
-    private IntentResult doClassify(String query) {
+    private IntentResult doClassify(Long userId, @Nullable String conversationId, String query) {
         String prompt = buildPrompt(query);
 
         try {
-            String response = resolveChatClient().prompt()
+            String response = resolveChatClient(userId, conversationId).prompt()
                 .user(prompt)
                 .call()
                 .content();
@@ -136,6 +137,11 @@ public class IntentClassifier {
         } catch (Exception e) {
             throw new ServiceException(ServiceErrorCode.INTERNAL_ERROR, "Intent classification LLM call failed", e);
         }
+    }
+
+    /** per-request 解析（scene=INTENT，带用户/会话归因的用量采集；重试各次调用独立采样） */
+    private ChatClient resolveChatClient(Long userId, @Nullable String conversationId) {
+        return chatModelAssembler.chatClient(userId, intentCandidateId, UsageScene.INTENT, conversationId);
     }
 
     private IntentResult parseResponse(String response) {
@@ -220,21 +226,5 @@ public class IntentClassifier {
             用户查询：%s
 
             请直接输出 JSON，不要包含其他内容。""".formatted(query);
-    }
-
-    private ChatClient resolveChatClient() {
-        ChatClient client = intentChatClient;
-        if (client == null) {
-            synchronized (this) {
-                client = intentChatClient;
-                if (client == null) {
-                    ChatCapable chatCapable = llmRegistry.get(
-                        intentCandidateId, ChatCapable.class);
-                    client = ChatClient.builder(new ChatModelAdapter(chatCapable)).build();
-                    intentChatClient = client;
-                }
-            }
-        }
-        return client;
     }
 }

@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.smart.rag.usage.mapper.UsageEventMapper">
+
+    <!-- 公共过滤条件：明细/总计/聚合/时间桶共用（时间桶侧用于 LEFT JOIN ON，别名 e 一致） -->
+    <sql id="filterConditions">
+        <if test="filter.userId != null">AND e.user_id = #{filter.userId}</if>
+        <!-- scene 为 String（Controller 枚举绑定做白名单后转换）——#{} 绑定表达式按 getter 反射解析，
+             不支持枚举（.name 属性访问触发 java.base 强封装，.name() 被当属性名），一律用字符串 -->
+        <if test="filter.scene != null">AND e.scene = #{filter.scene}</if>
+        <if test="filter.model != null">AND e.model_id = #{filter.model}</if>
+        <if test="filter.conversation != null">AND e.conversation_id = #{filter.conversation}</if>
+        <if test="filter.start != null">AND e.created_at &gt;= #{filter.start}</if>
+        <if test="filter.end != null">AND e.created_at &lt;= #{filter.end}</if>
+    </sql>
+
+    <!-- 总计聚合 -->
+    <select id="selectSummary" resultType="com.smart.rag.usage.dto.UsageSummaryDTO">
+        SELECT COUNT(*) AS requestCount,
+               COUNT(*) FILTER (WHERE e.success) AS successCount,
+               COALESCE(COUNT(*) FILTER (WHERE e.success) * 1.0 / NULLIF(COUNT(*), 0), 0) AS successRate,
+               COALESCE(SUM(e.prompt_tokens), 0) AS totalPromptTokens,
+               COALESCE(SUM(e.completion_tokens), 0) AS totalCompletionTokens,
+               COALESCE(SUM(e.total_tokens), 0) AS totalTokens,
+               COALESCE(AVG(e.duration_ms), 0) AS avgDurationMs,
+               COALESCE(MAX(e.duration_ms), 0) AS maxDurationMs
+        FROM usage_event e
+        <where>
+            <include refid="filterConditions"/>
+        </where>
+    </select>
+
+    <!-- 分组聚合：dim/sort/order 均为枚举绑定（非法值在参数转换期被拒），choose 白名单映射列名 -->
+    <select id="selectStats" resultType="com.smart.rag.usage.dto.UsageStatsDTO">
+        SELECT
+        <choose>
+            <when test="dim.name() == 'MODEL'">e.model_id</when>
+            <when test="dim.name() == 'SCENE'">e.scene</when>
+            <otherwise>CAST(e.user_id AS VARCHAR)</otherwise>
+        </choose>
+        AS groupKey,
+        COUNT(*) AS requestCount,
+        COALESCE(COUNT(*) FILTER (WHERE e.success) * 1.0 / NULLIF(COUNT(*), 0), 0) AS successRate,
+        COALESCE(SUM(e.prompt_tokens), 0) AS totalPromptTokens,
+        COALESCE(SUM(e.completion_tokens), 0) AS totalCompletionTokens,
+        COALESCE(SUM(e.total_tokens), 0) AS totalTokens,
+        COALESCE(AVG(e.duration_ms), 0) AS avgDurationMs
+        FROM usage_event e
+        <where>
+            <include refid="filterConditions"/>
+        </where>
+        GROUP BY
+        <choose>
+            <when test="dim.name() == 'MODEL'">e.model_id</when>
+            <when test="dim.name() == 'SCENE'">e.scene</when>
+            <otherwise>e.user_id</otherwise>
+        </choose>
+        ORDER BY
+        <choose>
+            <when test="sort.name() == 'REQUEST_COUNT'">requestCount</when>
+            <when test="sort.name() == 'AVG_DURATION_MS'">avgDurationMs</when>
+            <otherwise>totalTokens</otherwise>
+        </choose>
+        <choose>
+            <when test="order.name() == 'ASC'">ASC</when>
+            <otherwise>DESC</otherwise>
+        </choose>
+    </select>
+
+    <!-- 时间桶聚合：generate_series 补零桶（空桶也有数据点，图表直连）。
+         unit/step 为 TimelineGranularity 枚举产出的绑定参数，date_trunc(text, timestamptz) 参数化，无注入面。 -->
+    <select id="selectTimeline" resultType="com.smart.rag.usage.dto.UsageTimelinePointDTO">
+        WITH buckets AS (
+            SELECT generate_series(
+                date_trunc(#{unit}, #{filter.start}::timestamptz),
+                date_trunc(#{unit}, #{filter.end}::timestamptz),
+                #{step}::interval
+            ) AS bucket
+        )
+        SELECT b.bucket AS bucket,
+               COUNT(e.id) AS requestCount,
+               COALESCE(SUM(e.prompt_tokens), 0) AS totalPromptTokens,
+               COALESCE(SUM(e.completion_tokens), 0) AS totalCompletionTokens,
+               COALESCE(SUM(e.total_tokens), 0) AS totalTokens
+        FROM buckets b
+        LEFT JOIN usage_event e
+            ON date_trunc(#{unit}, e.created_at) = b.bucket
+            <include refid="filterConditions"/>
+        GROUP BY b.bucket
+        ORDER BY b.bucket
+    </select>
+
+</mapper>

@@ -1,6 +1,7 @@
 package com.smart.rag.agent.guardrail;
 
 import com.smart.rag.agent.config.AgentRagProperties;
+import com.smart.rag.infrastructure.llm.adapter.UsageRecordingChatModel;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -25,7 +26,7 @@ public class AgentGuardrails {
     private static final Logger log = LoggerFactory.getLogger(AgentGuardrails.class);
 
     private final AgentRagProperties properties;
-    private final TokenCountingChatModel tokenCountingModel;
+    private final UsageRecordingChatModel chatModel;
 
     /** Token 上限（模型上下文窗口 x contextWindowRatio） */
     private final long tokenLimit;
@@ -38,10 +39,10 @@ public class AgentGuardrails {
     private int totalIterations = 0;
 
     public AgentGuardrails(AgentRagProperties properties,
-                           TokenCountingChatModel tokenCountingModel,
+                           UsageRecordingChatModel chatModel,
                            long tokenLimit) {
         this.properties = properties;
-        this.tokenCountingModel = tokenCountingModel;
+        this.chatModel = chatModel;
         this.tokenLimit = tokenLimit;
     }
 
@@ -59,14 +60,14 @@ public class AgentGuardrails {
         // === 指标 1：循环迭代总次数 ===
         if (totalIterations > properties.maxToolIterations()) {
             log.warn("Agent guardrail STOP: ITERATION_LIMIT, iteration={}/{}, tokens={}",
-                totalIterations, properties.maxToolIterations(), tokenCountingModel.getTotalTokens());
+                totalIterations, properties.maxToolIterations(), chatModel.getTotalTokens());
             return GuardrailCheck.stop("ITERATION_LIMIT",
                 "已达到最大调用轮次 (%d/%d)，停止检索。"
                     .formatted(totalIterations, properties.maxToolIterations()));
         }
 
         // === 指标 2：累计 Token 消耗 ===
-        long tokensUsed = tokenCountingModel.getTotalTokens();
+        long tokensUsed = chatModel.getTotalTokens();
         if (tokensUsed >= tokenLimit) {
             log.warn("Agent guardrail STOP: TOKEN_LIMIT, tokens={}/{}", tokensUsed, tokenLimit);
             return GuardrailCheck.stop("TOKEN_LIMIT",
@@ -110,12 +111,12 @@ public class AgentGuardrails {
     }
 
     public long getTokensUsed() {
-        return tokenCountingModel.getTotalTokens();
+        return chatModel.getTotalTokens();
     }
 
-    /** 获取 TokenCountingChatModel 实例（供外部接入 ChatClient） */
-    public TokenCountingChatModel getTokenCountingModel() {
-        return tokenCountingModel;
+    /** 获取护栏持有的用量采集装饰器（供外部包装 ChatClient，必须复用同一实例） */
+    public UsageRecordingChatModel chatModel() {
+        return chatModel;
     }
 
     // === 内部类型 ===

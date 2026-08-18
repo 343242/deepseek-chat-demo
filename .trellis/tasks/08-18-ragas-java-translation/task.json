@@ -1,0 +1,29 @@
+{
+  "id": "ragas-java-translation",
+  "name": "ragas-java-translation",
+  "title": "Ragas 0.4.3 Java 翻译整合到 evaluation 模块",
+  "description": "以 eval/ragas 为冻结参考实现，翻译测试集生成与指标对齐到 Java evaluation 模块",
+  "status": "planning",
+  "dev_type": null,
+  "scope": null,
+  "package": null,
+  "priority": "P1",
+  "creator": "instant",
+  "assignee": "instant",
+  "createdAt": "2026-08-18",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "agentic-rag-dev",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [
+    "08-18-ragas-testset-generation",
+    "08-18-ragas-metrics-alignment"
+  ],
+  "parent": null,
+  "relatedFiles": [],
+  "notes": "",
+  "meta": {}
+}

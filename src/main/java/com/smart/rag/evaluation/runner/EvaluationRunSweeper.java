@@ -43,13 +43,19 @@ public class EvaluationRunSweeper {
 
     private final EvaluationResultRepository resultRepo;
     private final EvaluationProgressSink progressSink;
+    private final com.smart.rag.evaluation.testset.GenerationJobRepository genJobRepo;
+    private final com.smart.rag.evaluation.testset.GenerationProgressSink genProgressSink;
     private final EvaluationProperties evalProps;
 
     public EvaluationRunSweeper(EvaluationResultRepository resultRepo,
                                 EvaluationProgressSink progressSink,
+                                com.smart.rag.evaluation.testset.GenerationJobRepository genJobRepo,
+                                com.smart.rag.evaluation.testset.GenerationProgressSink genProgressSink,
                                 EvaluationProperties evalProps) {
         this.resultRepo = resultRepo;
         this.progressSink = progressSink;
+        this.genJobRepo = genJobRepo;
+        this.genProgressSink = genProgressSink;
         this.evalProps = evalProps;
     }
 
@@ -84,6 +90,30 @@ public class EvaluationRunSweeper {
         } catch (Exception e) {
             // 吞掉异常，避免毒化调度器（下次调度继续尝试）
             log.error("Sweeper failed: {}", e.getMessage(), e);
+        }
+    }
+
+    /**
+     * 测试集生成任务的 stale 清理（同阈值同模式，作用于 evaluation_dataset_gen_run）。
+     */
+    @Scheduled(fixedRate = 5 * 60 * 1000L, initialDelay = 90 * 1000L)
+    public void reapStaleGenerationJobs() {
+        try {
+            int staleMinutes = evalProps.getRunner().getStaleRunMinutes();
+            Instant cutoff = Instant.now().minusSeconds(staleMinutes * 60L);
+            for (var job : genJobRepo.listByStatus("running")) {
+                OffsetDateTime startedAt = job.startedAt();
+                if (startedAt == null || !startedAt.toInstant().isBefore(cutoff)) {
+                    continue;
+                }
+                genJobRepo.markFailed(job.id(),
+                        "marked stale by sweeper (running over " + staleMinutes + " minutes)");
+                genProgressSink.complete(job.id());
+                log.warn("Reaped stale generation job {}: startedAt={} exceeded {}min threshold",
+                        job.id(), startedAt, staleMinutes);
+            }
+        } catch (Exception e) {
+            log.error("Generation job sweeper failed: {}", e.getMessage(), e);
         }
     }
 }

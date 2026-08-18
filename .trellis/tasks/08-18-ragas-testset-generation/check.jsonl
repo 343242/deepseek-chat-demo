@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/code-review-checklist.md", "reason": "审查清单"}
+{"file": ".trellis/spec/backend/llm-spi.md", "reason": "校验无 ChatModel/ChatClient.Builder 注入、无静默 fallback"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "校验 ScopedTasks 用法、禁用模式、DTO/record 规范"}
+{"file": ".trellis/tasks/08-18-ragas-testset-generation/prd.md", "reason": "验收标准对照（Acceptance Criteria 逐项核对）"}

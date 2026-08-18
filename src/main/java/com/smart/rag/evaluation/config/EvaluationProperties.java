@@ -4,6 +4,8 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
 import org.springframework.context.annotation.Profile;
 
+import java.util.List;
+
 /**
  * RAG 评估系统配置
  * <p>
@@ -121,26 +123,100 @@ public class EvaluationProperties {
     }
 
     public static class Dataset {
-        /** LLM 自动生成时的采样 chunk 数 */
-        private int sampleSize = 50;
+        /** 目标测试集条数（ragas 式生成；对应 Python 参照实现 eval/generate_testset.py 的 --size） */
+        private int size = 50;
 
-        /** 每个 chunk 生成的问题数 */
-        private int questionsPerChunk = 2;
+        /** 参与知识图谱构建的最大 chunk 数（vector_store 随机采样，超出裁剪） */
+        private int maxChunks = 200;
 
-        public int getSampleSize() {
-            return sampleSize;
+        /**
+         * 出题主模型候选 ID（问题与参考答案生成，建议用强模型）。
+         * 为 null/blank 时使用默认 chat 候选。
+         */
+        private String synthesisModel;
+
+        /** 向量余弦相似边阈值（chunk 现成向量 vs ragas 摘要向量分布不同，必要时校准） */
+        private double cosineThreshold = 0.7;
+
+        /** 固定中文 persona 列表（不 LLM 生成，对应 Python 参照实现的内置 persona） */
+        private List<PersonaConfig> personas = defaultPersonas();
+
+        public int getSize() {
+            return size;
         }
 
-        public void setSampleSize(int sampleSize) {
-            this.sampleSize = sampleSize;
+        public void setSize(int size) {
+            this.size = size;
         }
 
-        public int getQuestionsPerChunk() {
-            return questionsPerChunk;
+        public int getMaxChunks() {
+            return maxChunks;
         }
 
-        public void setQuestionsPerChunk(int questionsPerChunk) {
-            this.questionsPerChunk = questionsPerChunk;
+        public void setMaxChunks(int maxChunks) {
+            this.maxChunks = maxChunks;
+        }
+
+        public String getSynthesisModel() {
+            return synthesisModel;
+        }
+
+        public void setSynthesisModel(String synthesisModel) {
+            this.synthesisModel = synthesisModel;
+        }
+
+        public double getCosineThreshold() {
+            return cosineThreshold;
+        }
+
+        public void setCosineThreshold(double cosineThreshold) {
+            this.cosineThreshold = cosineThreshold;
+        }
+
+        public List<PersonaConfig> getPersonas() {
+            return personas;
+        }
+
+        public void setPersonas(List<PersonaConfig> personas) {
+            this.personas = personas;
+        }
+
+        private static List<PersonaConfig> defaultPersonas() {
+            return List.of(
+                    new PersonaConfig("企业新员工", "刚入职的员工，对公司制度、流程、术语不熟悉，会提出基础、直接的问题"),
+                    new PersonaConfig("一线业务人员", "日常借助知识库解决具体业务问题的员工，提问具体、面向实操"),
+                    new PersonaConfig("技术工程师", "关注系统设计、集成方式和技术细节，提问专业且深入"),
+                    new PersonaConfig("部门管理员", "负责知识库内容维护与权限管理，关注规范口径和管理流程"));
+        }
+    }
+
+    /** persona 配置项（name + 职责描述） */
+    public static class PersonaConfig {
+        private String name;
+        private String roleDescription;
+
+        public PersonaConfig() {
+        }
+
+        public PersonaConfig(String name, String roleDescription) {
+            this.name = name;
+            this.roleDescription = roleDescription;
+        }
+
+        public String getName() {
+            return name;
+        }
+
+        public void setName(String name) {
+            this.name = name;
+        }
+
+        public String getRoleDescription() {
+            return roleDescription;
+        }
+
+        public void setRoleDescription(String roleDescription) {
+            this.roleDescription = roleDescription;
         }
     }
 

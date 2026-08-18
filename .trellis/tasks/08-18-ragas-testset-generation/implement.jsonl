@@ -1,0 +1,9 @@
+{"file": ".trellis/spec/backend/llm-spi.md", "reason": "LLM 调用强制走 RewriteClientResolver，禁止注入 ChatModel/ChatClient.Builder；新增消费方测试要求"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Java 21 record/var、ScopedTasks 契约（COLLECT_ALL 必须 throwIfFailed 或检查异常）、禁用模式清单"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Flyway V29 迁移命名/幂等要求；评估模块 JdbcTemplate 例外已在 DatasetRepository javadoc 记录"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "ServiceException/错误码约定，编排器与 JobService 异常路径"}
+{"file": ".trellis/tasks/08-18-ragas-testset-generation/design.md", "reason": "本任务技术设计：包结构、ragas→Java 映射表、数据流、V29 表结构"}
+{"file": "eval/ragas/src/ragas/testset/graph.py", "reason": "冻结参考实现：find_two_nodes_single_rel/find_indirect_clusters 原算法（翻译对照）"}
+{"file": "eval/ragas/src/ragas/testset/synthesizers/single_hop/specific.py", "reason": "单跳合成器场景生成与 QA 生成流程（翻译对照）"}
+{"file": "eval/ragas/src/ragas/testset/synthesizers/multi_hop/base.py", "reason": "多跳 prepare_combinations/多样性采样/make_contexts（翻译对照）"}
+{"file": "eval/generate_testset.py", "reason": "Python 参照实现：中文 persona、中文输出后缀、两阶段编排已在此验证"}

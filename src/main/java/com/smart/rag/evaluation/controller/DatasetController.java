@@ -1,16 +1,20 @@
 package com.smart.rag.evaluation.controller;
 
 import com.smart.rag.evaluation.dataset.DatasetExporter;
-import com.smart.rag.evaluation.dataset.DatasetGenerator;
 import com.smart.rag.evaluation.dataset.DatasetRepository;
 import com.smart.rag.evaluation.dataset.EvaluationDataset;
 import com.smart.rag.evaluation.dataset.EvaluationDatasetItem;
+import com.smart.rag.evaluation.testset.GenerationJobRecord;
+import com.smart.rag.evaluation.testset.GenerationJobService;
+import com.smart.rag.evaluation.testset.GenerationProgressSink;
+import com.smart.rag.evaluation.testset.GenerationSseBridge;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.context.annotation.Profile;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.List;
 import java.util.Map;
@@ -21,6 +25,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
  * 评估数据集管理 REST API
  * <p>
  * 仅在 evaluation profile 激活时可用。
+ * generate 为 KG 式多跳生成（ragas 翻译），202 异步 + SSE 进度。
  * </p>
  */
 @RestController
@@ -32,40 +37,56 @@ public class DatasetController {
     private static final Logger log = LoggerFactory.getLogger(DatasetController.class);
 
     private final DatasetRepository datasetRepo;
-    private final DatasetGenerator datasetGenerator;
+    private final GenerationJobService generationJobService;
+    private final GenerationProgressSink generationProgressSink;
+    private final GenerationSseBridge generationSseBridge;
     private final DatasetExporter datasetExporter;
 
     public DatasetController(DatasetRepository datasetRepo,
-                             DatasetGenerator datasetGenerator,
+                             GenerationJobService generationJobService,
+                             GenerationProgressSink generationProgressSink,
+                             GenerationSseBridge generationSseBridge,
                              DatasetExporter datasetExporter) {
         this.datasetRepo = datasetRepo;
-        this.datasetGenerator = datasetGenerator;
+        this.generationJobService = generationJobService;
+        this.generationProgressSink = generationProgressSink;
+        this.generationSseBridge = generationSseBridge;
         this.datasetExporter = datasetExporter;
     }
 
     /**
-     * LLM 自动生成数据集
+     * 提交 KG 式测试集生成任务（异步，返回 202 + jobId）
      */
     @PostMapping("/generate")
     public ResponseEntity<Map<String, Object>> generateDataset(
             @RequestBody Map<String, Object> request) {
         String name = (String) request.getOrDefault("name", "dataset-" + System.currentTimeMillis());
-        Long userId = request.get("userId") != null
-                ? ((Number) request.get("userId")).longValue()
-                : null;
-
-        if (userId == null) {
+        if (request.get("userId") == null) {
             return ResponseEntity.badRequest()
                     .body(Map.of("error", "userId is required"));
         }
+        long userId = ((Number) request.get("userId")).longValue();
 
-        EvaluationDataset dataset = datasetGenerator.generate(name, userId);
-        return ResponseEntity.ok(Map.of(
-                "id", dataset.id(),
-                "name", dataset.name(),
-                "itemCount", dataset.itemCount(),
-                "status", "generated"
-        ));
+        long jobId = generationJobService.submit(name, userId);
+        return ResponseEntity.accepted().body(Map.of("jobId", jobId, "status", "pending"));
+    }
+
+    /**
+     * 生成任务状态查询
+     */
+    @GetMapping("/generate/{jobId}")
+    public ResponseEntity<GenerationJobRecord> getGenerationJob(@PathVariable long jobId) {
+        return ResponseEntity.ok(generationJobService.getJob(jobId));
+    }
+
+    /**
+     * 生成任务 SSE 进度流
+     */
+    @GetMapping(value = "/generate/{jobId}/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public SseEmitter generationEvents(@PathVariable long jobId) {
+        generationJobService.getJob(jobId); // 404 语义：任务不存在直接报错
+        generationProgressSink.getOrCreate(jobId);
+        return generationSseBridge.bridge(jobId, generationProgressSink);
     }
 
     /**

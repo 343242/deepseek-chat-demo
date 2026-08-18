@@ -9,25 +9,20 @@ import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.context.annotation.Profile;
 
 /**
  * 评估模块配置
  * <p>
- * 仅在 Spring Profile 包含 "evaluation" 时激活，生产环境默认关闭，确保零侵入。
+ * 评估模块全局恒装载（原 evaluation profile 隔离已移除），接口权限由
+ * {@code evaluation:manage} 控制访问。
  * </p>
  * <p>
  * Judge 与生成模型均复用 {@code LlmClientRegistry} 的候选路由体系，
  * 通过 {@link RewriteClientResolver} 解析为 Spring AI {@link ChatClient}，
  * 不再绑定任何具体厂商 SDK。
  * </p>
- * <p>
- * 激活守卫说明：全模块（含本类及所有 Scorer/Calculator/Runner/Controller）统一只用
- * {@code @Profile("evaluation")} 装配隔离，不设 {@code app.evaluation.enabled} 属性开关。
- * </p>
  */
 @Configuration
-@Profile("evaluation")
 public class EvaluationConfig {
 
     private static final Logger log = LoggerFactory.getLogger(EvaluationConfig.class);

@@ -2,7 +2,6 @@ package com.smart.rag.evaluation.runner;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import reactor.core.Disposable;
@@ -40,7 +39,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * 评测可能跑数十分钟，全局 5 分钟会过早断开。超时后客户端可重连——sink 还在，replay 历史继续。
  */
 @Component
-@Profile("evaluation")
 public class EvaluationSseBridge {
 
     private static final Logger log = LoggerFactory.getLogger(EvaluationSseBridge.class);

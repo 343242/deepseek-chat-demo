@@ -5,7 +5,6 @@ import com.smart.rag.infrastructure.exception.errorcode.ServiceErrorCode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import org.springframework.stereotype.Component;
-import org.springframework.context.annotation.Profile;
 
 import java.util.Map;
 
@@ -16,7 +15,6 @@ import java.util.Map;
  * </p>
  */
 @Component
-@Profile("evaluation")
 public class DatasetExporter {
 
     private final DatasetRepository datasetRepo;

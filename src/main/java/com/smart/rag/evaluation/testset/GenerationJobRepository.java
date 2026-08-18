@@ -1,6 +1,5 @@
 package com.smart.rag.evaluation.testset;
 
-import org.springframework.context.annotation.Profile;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
@@ -14,7 +13,6 @@ import java.util.Optional;
  * 沿用 evaluation 模块的仓储惯例）。
  */
 @Component
-@Profile("evaluation")
 public class GenerationJobRepository {
 
     private final JdbcTemplate jdbc;

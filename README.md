@@ -58,7 +58,7 @@
 独立的 RAG 评估框架（`@Profile("evaluation")`，dev 环境零侵入）：
 - **检索侧**：召回率 (Recall@K)、准确率 (Precision@K)、MRR、NDCG
 - **生成侧**：忠实度 (Faithfulness)、答案相关性、上下文相关性、上下文召回率
-- **Judge 模型**：独立于 Provider 路由，通过 `application-evaluation.yml` 直连厂商 API
+- **Judge 模型**：通过 `app.evaluation.judge.candidate-id` 指向候选路由（application.yml），留空回退默认 chat 候选
 
 ### 团队协作
 

@@ -6,7 +6,6 @@ import org.springframework.beans.factory.DisposableBean;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Lazy;
-import org.springframework.context.annotation.Profile;
 
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -16,7 +15,7 @@ import java.util.concurrent.TimeUnit;
 /**
  * 评测执行器配置
  * <p>
- * 仅在 {@code evaluation} profile 激活时装载，注册两个独立 bean：
+ * 注册两个独立 bean（评估模块全局恒装载）：
  * <ul>
  *   <li>{@code evalExecutor} —— 评测 run 执行的虚拟线程 executor</li>
  *   <li>{@code evalRunSemaphore} —— 限制同时执行的 run 数（背压）</li>
@@ -39,7 +38,6 @@ import java.util.concurrent.TimeUnit;
  * 优雅关闭（shutdown + awaitTermination）。
  */
 @Configuration
-@Profile("evaluation")
 public class EvaluationExecutorConfig implements DisposableBean {
 
     private static final Logger log = LoggerFactory.getLogger(EvaluationExecutorConfig.class);

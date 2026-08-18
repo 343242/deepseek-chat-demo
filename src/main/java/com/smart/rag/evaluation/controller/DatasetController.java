@@ -12,7 +12,6 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
-import org.springframework.context.annotation.Profile;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -22,14 +21,12 @@ import java.util.Map;
 import org.springframework.security.access.prepost.PreAuthorize;
 
 /**
- * 评估数据集管理 REST API
+ * 评估数据集管理 REST API（评估模块全局恒装载，权限由 evaluation:manage 控制）。
  * <p>
- * 仅在 evaluation profile 激活时可用。
  * generate 为 KG 式多跳生成（ragas 翻译），202 异步 + SSE 进度。
  * </p>
  */
 @RestController
-@Profile("evaluation")
 @RequestMapping("/api/evaluation/datasets")
 @PreAuthorize("hasAuthority('evaluation:manage')")
 public class DatasetController {

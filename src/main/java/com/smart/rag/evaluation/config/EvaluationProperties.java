@@ -2,22 +2,19 @@ package com.smart.rag.evaluation.config;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
-import org.springframework.context.annotation.Profile;
 
 import java.util.List;
 
 /**
  * RAG 评估系统配置
  * <p>
- * 对应 application-evaluation.yml 中 app.evaluation.* 配置项。
- * 仅在 evaluation profile 激活时生效。
+ * 对应 application.yml 中 app.evaluation.* 配置项（评估模块全局恒装载）。
  * <p>
  * Judge 与生成模型均复用 {@code LlmClientRegistry} 的候选路由体系，
  * 通过 app.llm.capabilities.chat.candidates 中声明的 candidate id 寻址，
  * 留空时回退到默认 chat 候选。
  */
 @Component
-@Profile("evaluation")
 @ConfigurationProperties(prefix = "app.evaluation")
 public class EvaluationProperties {
 

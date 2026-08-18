@@ -32,7 +32,6 @@ import org.springframework.ai.rag.Query;
 import org.springframework.ai.vectorstore.VectorStore;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
-import org.springframework.context.annotation.Profile;
 
 import java.util.List;
 import java.util.Set;
@@ -45,7 +44,6 @@ import java.util.Set;
  * </p>
  */
 @Component
-@Profile("evaluation")
 public class EvaluationRunner {
 
     private static final Logger log = LoggerFactory.getLogger(EvaluationRunner.class);

@@ -35,7 +35,7 @@
 
 - 左栏数据集列表（选中态 `--bg-selected` + 左侧 3px 指示条）+ 右侧工作区三 Tabs：**数据集详情 / 评测运行 / 结果对比**
 - 选中数据集 id 存 URL query（`?dataset=3&tab=runs`），刷新可恢复
-- ⚠️ 评估 profile 未开启时后端 404：页面捕获后显示"评估模块未启用 / 需要服务端开启 evaluation profile"占位（IA-1 的 flag 无数据源，只能请求探测）
+- 评估模块全局恒装载（原 evaluation profile 隔离已移除）；无权限（evaluation:manage）时后端 403，页面显示"无评估权限"占位
 
 ---
 
@@ -50,7 +50,7 @@
 | name | 否 | 缺省后端生成 `dataset-时间戳` |
 | userId | ✅ | 采样该用户的知识库文档（LLM 从中出题；默认建议填测试账号 id） |
 
-- 提交 `POST /api/evaluation/datasets/generate` → 生成"50 个分块 × 每块 2 问"共约 100 条（`application-evaluation.yml` 配置）；生成耗时较长，按钮 loading + 完成后刷新列表
+- 提交 `POST /api/evaluation/datasets/generate` → 生成"50 个分块 × 每块 2 问"（`application.yml` 的 `app.evaluation.*` 配置）；生成耗时较长，按钮 loading + 完成后刷新列表
 - 列表 `GET /api/evaluation/datasets?page=0&size=20`（**page 从 0**），项显示：name、itemCount、version、createdAt
 
 ### 2.2 数据集详情 Tab
@@ -188,7 +188,7 @@
 
 | 状态 | 表现 |
 |------|------|
-| 模块未启用 | 请求 404 → 占位"评估模块未启用 / 需要服务端开启 evaluation profile"（IA-1 无 flag 数据源） |
+| 无权限 | 请求 403 → 占位"无评估权限（evaluation:manage）" |
 | 加载 | 数据集列表/表格骨架 |
 | 生成中 | 按钮内联 loading（生成数十秒级，完成后 Toast） |
 | 运行中 | run 行 info Badge 旋转点 + "查看进度" |

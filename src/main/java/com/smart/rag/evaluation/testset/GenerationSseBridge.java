@@ -2,7 +2,6 @@ package com.smart.rag.evaluation.testset;
 
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
-import org.springframework.context.annotation.Profile;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.io.IOException;
@@ -13,7 +12,6 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * synchronized(emitter) + 单次终止标记 + 1 小时超时）。
  */
 @Component
-@Profile("evaluation")
 public class GenerationSseBridge {
 
     private static final long SSE_TIMEOUT_MILLIS = 60 * 60 * 1000L;

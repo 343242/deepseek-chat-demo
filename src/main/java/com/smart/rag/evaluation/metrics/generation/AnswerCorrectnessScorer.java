@@ -7,7 +7,6 @@ import com.smart.rag.evaluation.util.JsonExtractorUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.embedding.EmbeddingModel;
-import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -24,7 +23,6 @@ import java.util.Optional;
  * </p>
  */
 @Component
-@Profile("evaluation")
 public class AnswerCorrectnessScorer {
 
     private static final Logger log = LoggerFactory.getLogger(AnswerCorrectnessScorer.class);

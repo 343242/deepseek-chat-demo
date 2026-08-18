@@ -2,7 +2,6 @@ package com.smart.rag.evaluation.runner;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Sinks;
@@ -33,7 +32,6 @@ import java.util.concurrent.ConcurrentMap;
  * JVM 崩溃时 entry 可能残留（无 finally 机会），可接受——崩溃是更大问题。
  */
 @Component
-@Profile("evaluation")
 public class EvaluationProgressSink {
 
     private static final Logger log = LoggerFactory.getLogger(EvaluationProgressSink.class);

@@ -28,7 +28,7 @@
 - [ ] `TestsetGeneratorService`（两段 ScopedTasks：extract → synthesize；去重/过滤；入库）
 - [ ] 删除 `DatasetGenerator` 旧实现（单 chunk 路径不保留）
 - [ ] `EvaluationProperties` 调整（synthesis-model、personas、cosine-threshold、max-chunks、size；删 questions-per-chunk）
-- [ ] `application-evaluation.yml`：~~`app.rag.entity.enabled: true`~~（2026-08-19 开关已删除，实体层无条件装配）+ 新配置项
+- [x] ~~`application-evaluation.yml`~~（2026-08-19：profile 隔离与该文件一并移除，配置整合进 `application.yml` 的 `app.evaluation.*`）
 - [ ] `application.yml` 注释同步（如有交叉引用）
 
 ## Step 5 — 异步 API

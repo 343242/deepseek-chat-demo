@@ -4,7 +4,6 @@ import com.smart.rag.evaluation.config.EvaluationProperties;
 import com.smart.rag.evaluation.result.EvaluationResultRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.context.annotation.Profile;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -26,7 +25,7 @@ import java.util.List;
  * <h3>对齐项目惯例</h3>
  * 复刻 {@code OrphanChunkCleaner} / {@code AgentEventCleanupTask} 的模式：
  * <ul>
- *   <li>{@code @Component} + {@code @Profile("evaluation")}（只在评测 profile 装载）</li>
+ *   <li>{@code @Component}（评估模块全局恒装载，原 profile 隔离已移除）</li>
  *   <li>{@code @Scheduled(fixedRate, initialDelay)}（{@code @EnableScheduling} 已在
  *       {@code AdvisorAutoConfiguration} 全局开启）</li>
  *   <li>无 {@code @Transactional}（单条 UPDATE 自动提交，符合项目惯例）</li>
@@ -36,7 +35,6 @@ import java.util.List;
  * <p>顺带清理 {@link EvaluationProgressSink} 中残留的 sink entry（JVM 崩溃后 sink 无人 complete）。
  */
 @Component
-@Profile("evaluation")
 public class EvaluationRunSweeper {
 
     private static final Logger log = LoggerFactory.getLogger(EvaluationRunSweeper.class);

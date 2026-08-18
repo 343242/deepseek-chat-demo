@@ -1,6 +1,5 @@
 package com.smart.rag.evaluation.testset;
 
-import org.springframework.context.annotation.Profile;
 import org.springframework.stereotype.Component;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Sinks;
@@ -13,7 +12,6 @@ import java.util.concurrent.ConcurrentMap;
  * replay().limit(20) 缓存近期事件，订阅晚到可回放；complete 时释放引用。
  */
 @Component
-@Profile("evaluation")
 public class GenerationProgressSink {
 
     private static final int REPLAY_LIMIT = 20;

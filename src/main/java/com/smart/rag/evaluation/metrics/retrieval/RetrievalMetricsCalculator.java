@@ -1,7 +1,6 @@
 package com.smart.rag.evaluation.metrics.retrieval;
 
 import org.springframework.stereotype.Component;
-import org.springframework.context.annotation.Profile;
 
 import java.util.HashSet;
 import java.util.List;
@@ -15,7 +14,6 @@ import java.util.Set;
  * </p>
  */
 @Component
-@Profile("evaluation")
 public class RetrievalMetricsCalculator {
 
     /**

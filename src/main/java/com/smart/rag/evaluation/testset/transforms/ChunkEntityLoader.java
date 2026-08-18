@@ -1,6 +1,5 @@
 package com.smart.rag.evaluation.testset.transforms;
 
-import org.springframework.context.annotation.Profile;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
@@ -21,7 +20,6 @@ import java.util.UUID;
  * </p>
  */
 @Component
-@Profile("evaluation")
 public class ChunkEntityLoader {
 
     private final JdbcTemplate jdbc;

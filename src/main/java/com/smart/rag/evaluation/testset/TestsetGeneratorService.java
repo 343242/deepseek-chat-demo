@@ -28,7 +28,6 @@ import com.smart.rag.infrastructure.llm.adapter.RewriteClientResolver;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
-import org.springframework.context.annotation.Profile;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
@@ -55,7 +54,6 @@ import java.util.concurrent.atomic.AtomicInteger;
  * </p>
  */
 @Service
-@Profile("evaluation")
 public class TestsetGeneratorService {
 
     private static final Logger log = LoggerFactory.getLogger(TestsetGeneratorService.class);

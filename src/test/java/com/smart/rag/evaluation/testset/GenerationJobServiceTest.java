@@ -153,6 +153,38 @@ class GenerationJobServiceTest {
     }
 
     @Test
+    @DisplayName("execute 等待信号量时被中断：恢复中断位（不吞信号）并 markFailed")
+    void executeInterruptedRestoresFlag() {
+        runInline();
+        Thread.currentThread().interrupt(); // 进入 tryAcquire 即抛 InterruptedException
+
+        service.submit("ds", 1L);
+
+        // Thread.interrupted() 读取并清除标志：为 true 说明 execute 恢复了中断位而非吞掉
+        assertThat(Thread.interrupted()).isTrue();
+        var message = ArgumentCaptor.forClass(String.class);
+        verify(jobRepo).markFailed(eq(42L), message.capture());
+        assertThat(message.getValue()).contains("InterruptedException");
+        verify(jobRepo, never()).markRunning(anyLong());
+        verify(generator, never()).generate(anyString(), anyLong(), any());
+    }
+
+    @Test
+    @DisplayName("execute 异常 message 为 null（如 NPE）：error 回退 e.toString() 保证可诊断")
+    void executeFailureWithNullMessageFallsBack() {
+        runInline();
+        when(generator.generate(anyString(), anyLong(), any()))
+                .thenThrow(new NullPointerException());
+
+        service.submit("ds", 1L);
+
+        var message = ArgumentCaptor.forClass(String.class);
+        verify(jobRepo).markFailed(eq(42L), message.capture());
+        assertThat(message.getValue()).contains("NullPointerException");
+        assertThat(semaphore.availablePermits()).isEqualTo(1); // finally 仍释放
+    }
+
+    @Test
     @DisplayName("getJob：不存在抛 ServiceException（404 语义）")
     void getJobNotFound() {
         when(jobRepo.find(anyLong())).thenReturn(java.util.Optional.empty());

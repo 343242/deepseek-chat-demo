@@ -82,6 +82,8 @@ public class DatasetController {
     /**
      * 生成任务 SSE 进度流。已结束的任务（completed/failed）不订阅 sink——
      * sink 已 complete 并移除，订阅会挂到超时；改为直接回放终态收尾。
+     * 活任务的 sink 由 submit 预创建，此处只订阅不创建：sink 缺失（刚结束/重启后残留
+     * running 态）时流为空立即收尾，客户端转 GET /generate/{jobId} 查终态。
      */
     @GetMapping(value = "/generate/{jobId}/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter generationEvents(@PathVariable long jobId) {
@@ -89,7 +91,6 @@ public class DatasetController {
         if ("completed".equals(job.status()) || "failed".equals(job.status())) {
             return generationSseBridge.bridgeTerminated(job);
         }
-        generationProgressSink.getOrCreate(jobId);
         return generationSseBridge.bridge(jobId, generationProgressSink);
     }
 

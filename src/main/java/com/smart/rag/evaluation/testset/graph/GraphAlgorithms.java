@@ -97,6 +97,9 @@ public final class GraphAlgorithms {
         Map<String, Set<String>> adjacency = new LinkedHashMap<>();
         Set<Set<String>> uniqueEdges = new HashSet<>();
         for (var rel : filtered) {
+            if (rel.source().equals(rel.target())) {
+                continue; // 自环：Python frozenset([a,a]) 塌缩为单点不构成簇边，Set.of 则抛重复键
+            }
             adjacency.computeIfAbsent(rel.source(), k -> new LinkedHashSet<>())
                     .add(rel.target());
             uniqueEdges.add(Set.of(rel.source(), rel.target()));

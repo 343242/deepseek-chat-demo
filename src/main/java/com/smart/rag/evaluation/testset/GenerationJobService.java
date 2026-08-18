@@ -65,7 +65,7 @@ public class GenerationJobService {
         try {
             evalExecutor.execute(() -> execute(jobId, name, userId));
         } catch (java.util.concurrent.RejectedExecutionException e) {
-            jobRepo.markFailed(jobId, "生成任务提交失败：executor 拒绝执行（" + e.getMessage() + "）");
+            jobRepo.markFailed(jobId, "生成任务提交失败：executor 拒绝执行（" + e + "）");
             progressSink.complete(jobId);
             throw new ServiceException(ServiceErrorCode.INTERNAL_ERROR,
                     "生成任务提交失败：评估执行器不可用", e);
@@ -91,9 +91,14 @@ public class GenerationJobService {
                         jobRepo.updateProgress(jobId, toJson(event));
                     });
             jobRepo.markCompleted(jobId, dataset.id());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt(); // 恢复中断位，不吞信号（协作式停机依赖它）
+            log.warn("生成任务 {} 等待信号量时被中断", jobId);
+            jobRepo.markFailed(jobId, e.toString());
         } catch (Exception e) {
             log.error("生成任务 {} 失败: {}", jobId, e.getMessage(), e);
-            jobRepo.markFailed(jobId, e.getMessage());
+            // NPE/中断等 getMessage() 为 null，回退 e.toString() 保证 error 列可诊断
+            jobRepo.markFailed(jobId, e.getMessage() != null ? e.getMessage() : e.toString());
         } finally {
             if (acquired) {
                 evalRunSemaphore.release();

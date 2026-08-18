@@ -57,12 +57,15 @@ public final class SingleHopSpecificSynthesizer extends QuerySynthesizer {
             if (valid.isEmpty()) {
                 continue;
             }
-            scenarios.addAll(sampleCombinations(node, themes, valid, samplesPerNode));
+            // 上一节点的批次可能已逼近 n，按剩余预算封顶避免超出请求的规模（多出的场景就是多出的 LLM 调用）
+            int remaining = n - scenarios.size();
+            scenarios.addAll(sampleCombinations(node, themes, valid,
+                    Math.min(samplesPerNode, remaining)));
         }
         return scenarios;
     }
 
-    /** 翻译 sample_combinations：全部 (term×persona×style×length) 洗牌后按 (node,term) 新鲜度采样。 */
+    /** 翻译 sample_combinations：全部 (term×persona×style×length) 洗牌后，新鲜 term 优先、重复 term 补位。 */
     private List<Scenario> sampleCombinations(Node node, List<String> themes,
                                               List<Persona> personas, int numSamples) {
         var all = new ArrayList<Map<String, Object>>();
@@ -78,22 +81,27 @@ public final class SingleHopSpecificSynthesizer extends QuerySynthesizer {
         }
         Collections.shuffle(all, random);
 
-        var seenTermPairs = new LinkedHashSet<String>();
-        var selected = new ArrayList<Scenario>();
+        // 分区而非边选边记：新鲜 term 全部排前、重复 term 依洗牌序补位，凑满 numSamples
+        var fresh = new ArrayList<Map<String, Object>>();
+        var duplicates = new ArrayList<Map<String, Object>>();
+        var seenTerms = new LinkedHashSet<String>();
         for (var sample : all) {
+            if (seenTerms.add((String) sample.get("term"))) {
+                fresh.add(sample);
+            } else {
+                duplicates.add(sample);
+            }
+        }
+        fresh.addAll(duplicates);
+
+        var selected = new ArrayList<Scenario>();
+        for (var sample : fresh) {
             if (selected.size() >= numSamples) {
                 break;
             }
-            var term = (String) sample.get("term");
-            if (seenTermPairs.add(node.id() + "|" + term)) {
-                selected.add(new SingleHopScenario(term, node,
-                        (Persona) sample.get("persona"), (QueryStyle) sample.get("style"),
-                        (QueryLength) sample.get("length")));
-            } else if (selected.size() < numSamples) {
-                selected.add(new SingleHopScenario(term, node,
-                        (Persona) sample.get("persona"), (QueryStyle) sample.get("style"),
-                        (QueryLength) sample.get("length")));
-            }
+            selected.add(new SingleHopScenario((String) sample.get("term"), node,
+                    (Persona) sample.get("persona"), (QueryStyle) sample.get("style"),
+                    (QueryLength) sample.get("length")));
         }
         return selected;
     }

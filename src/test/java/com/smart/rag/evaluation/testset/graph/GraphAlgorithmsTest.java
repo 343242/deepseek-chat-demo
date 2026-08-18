@@ -141,6 +141,23 @@ class GraphAlgorithmsTest {
         }
 
         @Test
+        @DisplayName("自环边不崩溃：Set.of 拒绝重复键，守卫跳过后簇结果不受影响")
+        void selfLoopRelationshipDoesNotCrash() {
+            var kg = new KnowledgeGraph();
+            kg.addNode(node("a"));
+            kg.addNode(node("b"));
+            kg.addRelationship(new Relationship("a", "a", RelationshipType.SIMILARITY,
+                    0.9, false, Map.of()));
+            kg.addRelationship(Relationship.of("a", "b", RelationshipType.SIMILARITY, 0.9));
+
+            var clusters = GraphAlgorithms.findNIndirectClusters(kg, rel -> true, 3, 3);
+
+            assertThat(clusters).isNotEmpty();
+            assertThat(clusters).allSatisfy(set ->
+                    assertThat(set.stream().map(Node::id)).isSubsetOf("a", "b"));
+        }
+
+        @Test
         @DisplayName("同图可复现：种子由节点 id 派生，两次调用结果一致")
         void deterministicForSameGraph() {
             var kg = new KnowledgeGraph();

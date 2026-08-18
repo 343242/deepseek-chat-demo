@@ -102,7 +102,7 @@ class DatasetControllerTest {
         }
 
         @Test
-        @DisplayName("运行中任务订阅实时进度")
+        @DisplayName("运行中任务订阅实时进度（不创建 sink，由 submit 预创建）")
         void runningJobBridgesLive() {
             when(jobService.getJob(42L)).thenReturn(job("running", null, null));
             var live = mock(SseEmitter.class);
@@ -111,7 +111,7 @@ class DatasetControllerTest {
             var emitter = controller.generationEvents(42L);
 
             assertThat(emitter).isSameAs(live);
-            verify(progressSink).getOrCreate(42L);
+            verify(progressSink, never()).getOrCreate(anyLong());
         }
 
         @Test

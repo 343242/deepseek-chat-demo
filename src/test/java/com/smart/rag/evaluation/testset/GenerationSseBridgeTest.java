@@ -83,6 +83,7 @@ class GenerationSseBridgeTest {
         var bridge = new GenerationSseBridge();
         var jobId = 1L;
 
+        sink.getOrCreate(jobId); // 生产路径由 submit 预创建，subscribe 不再补建
         var emitter = bridge.bridge(jobId, sink);
         var capture = capture(emitter);
         assertThat(capture.payloads).isEmpty();
@@ -98,6 +99,23 @@ class GenerationSseBridgeTest {
                 .contains("progress"));
         assertThat(capture.completed).isTrue();
         assertThat(capture.error).isNull();
+    }
+
+    @Test
+    @DisplayName("bridge：sink 缺失（任务已结束/重启后无现场）不挂流，立即 complete")
+    void absentSinkCompletesImmediately() {
+        var sink = new GenerationProgressSink();
+        var bridge = new GenerationSseBridge();
+        var jobId = 2L;
+
+        var capture = capture(bridge.bridge(jobId, sink));
+
+        // 无进度帧，只有 terminate 发出的 done 终止帧（序列化为多片段），随即 complete——不挂流等超时
+        assertThat(capture.payloads).isNotEmpty();
+        assertThat(String.valueOf(capture.payloads.getFirst())).contains("done");
+        assertThat(capture.completed).isTrue();
+        assertThat(capture.error).isNull();
+        assertThat(sink.subscribe(jobId).blockFirst()).isNull(); // 空流，非创建
     }
 
     @Test

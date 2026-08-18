@@ -39,7 +39,13 @@ public class GenerationProgressSink {
         }
     }
 
+    /**
+     * 订阅进度流（不创建）：sink 缺失 = 任务已结束（complete 时移除）或进程重启后无现场，
+     * 返回空 Flux 让桥接立即收尾——避免孤儿 sink 挂住 SSE 到超时。
+     * 活任务的 sink 由 {@code GenerationJobService.submit} 预创建，此处无需补建。
+     */
     public Flux<GenerationProgressEvent> subscribe(long jobId) {
-        return getOrCreate(jobId).asFlux();
+        var sink = sinks.get(jobId);
+        return sink != null ? sink.asFlux() : Flux.empty();
     }
 }

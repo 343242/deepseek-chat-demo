@@ -135,6 +135,40 @@ class SynthesizersTest {
             assertThatThrownBy(() -> synthesizer.generateSample(scenarios.getFirst()))
                     .isInstanceOf(Exception.class);
         }
+
+        @Test
+        @DisplayName("场景数不超请求规模：末节点按剩余预算封顶（n=5 两节点恰好 5 而非 6）")
+        void scenarioCountNeverExceedsN() {
+            var kg = new KnowledgeGraph();
+            kg.addNode(entityNode("chunk-1", "多屏协同", "华为账号", "超级终端"));
+            kg.addNode(entityNode("chunk-2", "畅连通话", "隔空投送", "一碰传"));
+            var synthesizer = new SingleHopSpecificSynthesizer(
+                    cheapClient, mainClient, objectMapper, 42);
+            cheapReturns("{\"mapping\": {\"一线业务人员\": [\"多屏协同\", \"华为账号\", \"超级终端\", "
+                    + "\"畅连通话\", \"隔空投送\", \"一碰传\"]}}");
+
+            var scenarios = synthesizer.generateScenarios(5, kg, PERSONAS);
+
+            // ceil(5/2)=3/节点，旧实现末节点不封顶可到 6；现按剩余预算恰好 5
+            assertThat(scenarios).hasSize(5);
+        }
+
+        @Test
+        @DisplayName("新鲜度采样：主题数足够时场景 term 全不重复（先取新鲜再由重复补位）")
+        void freshTermsFirstWhenAvailable() {
+            var kg = new KnowledgeGraph();
+            kg.addNode(entityNode("chunk-1", "多屏协同", "华为账号"));
+            var synthesizer = new SingleHopSpecificSynthesizer(
+                    cheapClient, mainClient, objectMapper, 42);
+            cheapReturns("{\"mapping\": {\"一线业务人员\": [\"多屏协同\", \"华为账号\"]}}");
+
+            var scenarios = synthesizer.generateScenarios(2, kg, PERSONAS);
+
+            assertThat(scenarios).hasSize(2);
+            var terms = scenarios.stream()
+                    .map(s -> ((SingleHopScenario) s).term()).toList();
+            assertThat(terms).doesNotHaveDuplicates();
+        }
     }
 
     @Nested

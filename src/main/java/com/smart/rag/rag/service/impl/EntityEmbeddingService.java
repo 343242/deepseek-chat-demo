@@ -12,7 +12,6 @@ import com.smart.rag.rag.entity.RagEntity;
 import com.smart.rag.rag.mapper.EntityMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
@@ -24,7 +23,6 @@ import java.util.List;
  * 职责：聚合后 description 的批量 embed → 更新 rag_entity.embedding
  */
 @Service
-@ConditionalOnProperty(prefix = "app.rag.entity", name = "enabled", havingValue = "true")
 public class EntityEmbeddingService {
 
     private static final Logger log = LoggerFactory.getLogger(EntityEmbeddingService.class);

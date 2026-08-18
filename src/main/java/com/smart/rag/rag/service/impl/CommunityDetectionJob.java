@@ -8,7 +8,6 @@ import it.unimi.dsi.fastutil.longs.Long2IntMap;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -30,7 +29,6 @@ import java.util.Set;
  * 因 {@code load()} 从 rag_entity_cooccurrence 读取。§8.1 Step 6 保证此顺序。
  */
 @Component
-@ConditionalOnProperty(prefix = "app.rag.entity", name = "enabled", havingValue = "true")
 public class CommunityDetectionJob {
 
     private static final Logger log = LoggerFactory.getLogger(CommunityDetectionJob.class);

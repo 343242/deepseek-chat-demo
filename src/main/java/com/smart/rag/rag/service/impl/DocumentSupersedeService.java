@@ -16,7 +16,6 @@ import com.smart.rag.infrastructure.exception.ServiceException;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.dao.DuplicateKeyException;
@@ -47,8 +46,7 @@ public class DocumentSupersedeService {
     private final FileStorageService fileStorageService;
     private final TransactionTemplate transactionTemplate;
     private final TeamAccessGate teamAccessGate;
-    /** 实体索引清理为可选依赖（app.rag.entity.enabled=false 时 Bean 不存在） */
-    private final ObjectProvider<EntityIndexCleanupService> entityIndexCleanupProvider;
+    private final EntityIndexCleanupService entityIndexCleanupService;
 
     /** 待替换关系：newDocId → oldDocId（ETL 完成后执行替换）— 内存加速层 */
     private final ConcurrentHashMap<Long, Long> pendingSupersede = new ConcurrentHashMap<>();
@@ -59,14 +57,14 @@ public class DocumentSupersedeService {
                                     FileStorageService fileStorageService,
                                     TransactionTemplate transactionTemplate,
                                     TeamAccessGate teamAccessGate,
-                                    ObjectProvider<EntityIndexCleanupService> entityIndexCleanupProvider) {
+                                    EntityIndexCleanupService entityIndexCleanupService) {
         this.ragDocumentMapper = ragDocumentMapper;
         this.vectorStoreMapper = vectorStoreMapper;
         this.vectorStoreLoader = vectorStoreLoader;
         this.fileStorageService = fileStorageService;
         this.transactionTemplate = transactionTemplate;
         this.teamAccessGate = teamAccessGate;
-        this.entityIndexCleanupProvider = entityIndexCleanupProvider;
+        this.entityIndexCleanupService = entityIndexCleanupService;
     }
 
     /**
@@ -324,10 +322,6 @@ public class DocumentSupersedeService {
 
     /** 步骤 1.5: 清理实体索引（在删向量之前，捕获受影响 entity_id） */
     private void cleanupEntityIndex(Long oldDocId) {
-        EntityIndexCleanupService entityIndexCleanupService = entityIndexCleanupProvider.getIfAvailable();
-        if (entityIndexCleanupService == null) {
-            return;
-        }
         try {
             entityIndexCleanupService.cleanupByDocumentId(oldDocId);
         } catch (Exception e) {

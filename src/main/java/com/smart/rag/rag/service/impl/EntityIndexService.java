@@ -2,7 +2,6 @@ package com.smart.rag.rag.service.impl;
 
 import com.smart.rag.rag.mapper.EntityCooccurrenceMapper;
 import org.jspecify.annotations.Nullable;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 /**
@@ -15,7 +14,6 @@ import org.springframework.stereotype.Component;
  * 设计文档 §10.2 定义此类为"weak_tie_score 计算（纯 SQL 驱动）"的薄 Service。
  */
 @Component
-@ConditionalOnProperty(prefix = "app.rag.entity", name = "enabled", havingValue = "true")
 public class EntityIndexService {
 
     private final EntityCooccurrenceMapper cooccurrenceMapper;

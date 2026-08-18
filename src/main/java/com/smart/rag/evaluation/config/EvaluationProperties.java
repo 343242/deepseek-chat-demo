@@ -21,9 +21,6 @@ import java.util.List;
 @ConfigurationProperties(prefix = "app.evaluation")
 public class EvaluationProperties {
 
-    /** 是否启用评估模块（需同时激活 evaluation profile） */
-    private boolean enabled = false;
-
     /** 生成模型候选 ID（对应 app.llm.capabilities.chat.candidates[].id，用于 Pipeline 答案生成） */
     private String generationModel = "deepseek-v4-flash";
 
@@ -49,14 +46,6 @@ public class EvaluationProperties {
     }
 
     // ======================== Getters & Setters ========================
-
-    public boolean isEnabled() {
-        return enabled;
-    }
-
-    public void setEnabled(boolean enabled) {
-        this.enabled = enabled;
-    }
 
     public String getGenerationModel() {
         return generationModel;

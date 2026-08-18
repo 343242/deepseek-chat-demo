@@ -23,9 +23,7 @@ import org.springframework.context.annotation.Profile;
  * </p>
  * <p>
  * 激活守卫说明：全模块（含本类及所有 Scorer/Calculator/Runner/Controller）统一只用
- * {@code @Profile("evaluation")}，不加 {@code @ConditionalOnProperty}。
- * 否则当 profile 开启但 {@code app.evaluation.enabled=false} 时，本类不装载 →
- * 无 {@code LlmJudge} bean → Scorer 构造失败导致启动崩溃。
+ * {@code @Profile("evaluation")} 装配隔离，不设 {@code app.evaluation.enabled} 属性开关。
  * </p>
  */
 @Configuration

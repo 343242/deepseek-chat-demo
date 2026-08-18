@@ -5,20 +5,17 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 /**
  * 实体中心检索配置（{@code app.rag.entity.*}）。
  * <p>
- * Wave 1（extraction-pipeline）建立 {@code enabled / embeddingBatchSize / descriptionMaxLength} 三字段；
- * Wave 3（path-c-retrieval）追加 12 个在线检索字段。两类配置共用 {@code enabled} 总开关（灰度门控），
- * 绑定同一前缀 {@code app.rag.entity}，避免两个 {@code @ConfigurationProperties} 类绑定同一前缀的冲突。
+ * 实体层无条件装配（无总开关）：抽取侧与在线检索侧共用此前缀。
  * <p>
  * ISP：检索配置字段（matchThreshold … communityDetectionEnabled）与抽取配置字段内聚于此类，
  * 消费方通过 record 访问器获取。
  */
 @ConfigurationProperties(prefix = "app.rag.entity")
 public record RagEntityProperties(
-        // === 抽取（Wave 1）===
-        boolean enabled,
+        // === 抽取 ===
         int embeddingBatchSize,
         int descriptionMaxLength,
-        // === 在线检索（Wave 3，§7.1）===
+        // === 在线检索（§7.1）===
         double matchThreshold,
         int frontierBudget,
         int chunkTopK,

@@ -4,7 +4,6 @@ import com.smart.rag.rag.config.RagEntityProperties;
 import com.smart.rag.rag.mapper.EntityMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -16,7 +15,6 @@ import java.util.List;
  * chunk_score = max(frontier.composite_score)（默认 max 策略），votedByEntities 用于 trace。
  */
 @Component
-@ConditionalOnProperty(prefix = "app.rag.entity", name = "enabled", havingValue = "true")
 public class EntityVoteRetriever {
 
     private static final Logger log = LoggerFactory.getLogger(EntityVoteRetriever.class);

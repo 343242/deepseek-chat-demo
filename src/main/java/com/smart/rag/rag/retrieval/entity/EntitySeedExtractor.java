@@ -10,7 +10,6 @@ import com.smart.rag.infrastructure.llm.registry.LlmClientRegistry;
 import com.smart.rag.rag.config.RagEntityProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -25,7 +24,6 @@ import java.util.List;
  * 失败隔离（§8.3）：LLM 调用失败或解析失败返回空列表，不阻塞 query（Path A/B 仍可召回）。
  */
 @Component
-@ConditionalOnProperty(prefix = "app.rag.entity", name = "enabled", havingValue = "true")
 public class EntitySeedExtractor {
 
     private static final Logger log = LoggerFactory.getLogger(EntitySeedExtractor.class);

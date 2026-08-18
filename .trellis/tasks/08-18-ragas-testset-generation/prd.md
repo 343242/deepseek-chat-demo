@@ -17,7 +17,8 @@
 1. **新包 `com.smart.rag.evaluation.testset`**，含 `graph/`、`transforms/`、`synthesizers/` 三个子包与编排器；
 2. **实体单一来源**：KG 实体只从 `rag_chunk_entity` JOIN `rag_entity`（name_norm/type）读取；
    **不移植 LLM NER**（ragas NERPrompt 不翻译）；chunk 无实体行 → 不参与实体边（数据驱动自然降级，非新增分支）；
-3. **定义变更**：`application-evaluation.yml` 增加 `app.rag.entity.enabled: true`（评估 profile 前置条件）；
+3. **定义变更**：~~`application-evaluation.yml` 增加 `app.rag.entity.enabled: true`（评估 profile 前置条件）~~
+   （2026-08-19 更新：该开关随后被整体删除，实体层无条件装配，见开关清理提交）；
    开发阶段语料无实体数据靠重新导入解决，不写 backfill、不写兜底；
 4. **主题相似边**：复用 `vector_store` 现成 embedding 列（pgvector 文本格式解析），零 embedding 调用；
 5. **Leiden 复用**：`findIndirectClusters` 用项目 `infrastructure/algorithm/graph/LeidenCommunityDetector`

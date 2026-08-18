@@ -5,7 +5,6 @@ import com.smart.rag.rag.mapper.EntityMapper;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -20,7 +19,6 @@ import java.util.List;
  * 禁用路径：{@code expansionHops <= 0} 时返回空列表，不执行 SQL（AC7）。
  */
 @Component
-@ConditionalOnProperty(prefix = "app.rag.entity", name = "enabled", havingValue = "true")
 public class EntityExpansionRetriever {
 
     private static final Logger log = LoggerFactory.getLogger(EntityExpansionRetriever.class);

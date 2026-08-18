@@ -23,7 +23,7 @@ class RagEntityPropertiesTest {
         @DisplayName("embeddingBatchSize/descriptionMaxLength 未配置回退默认")
         void extractionDefaults() {
             var p = new RagEntityProperties(
-                    false, 0, 0,
+                    0, 0,
                     0.85, 50, 20, 10, 1, 0.7,
                     0.5, 0.3, 0.2,
                     true, null, true
@@ -41,7 +41,7 @@ class RagEntityPropertiesTest {
         @DisplayName("阈值/预算/topK/hops/decay 未配置（<=0）回退默认")
         void retrievalDefaults() {
             var p = new RagEntityProperties(
-                    false, 0, 0,
+                    0, 0,
                     0, 0, 0, -1, -1, 0,
                     0.5, 0.3, 0.2,
                     true, null, true
@@ -57,10 +57,10 @@ class RagEntityPropertiesTest {
         @Test
         @DisplayName("expansionDecay <=0 或 >1 回退 0.7")
         void decayOutOfRange_fallsBackToDefault() {
-            var tooLow = new RagEntityProperties(false, 0, 0, 0.85, 50, 20, 10, 1, 0.0, 0.5, 0.3, 0.2, true, null, true);
+            var tooLow = new RagEntityProperties(0, 0, 0.85, 50, 20, 10, 1, 0.0, 0.5, 0.3, 0.2, true, null, true);
             assertThat(tooLow.expansionDecay()).isEqualTo(0.7);
 
-            var tooHigh = new RagEntityProperties(false, 0, 0, 0.85, 50, 20, 10, 1, 1.5, 0.5, 0.3, 0.2, true, null, true);
+            var tooHigh = new RagEntityProperties(0, 0, 0.85, 50, 20, 10, 1, 1.5, 0.5, 0.3, 0.2, true, null, true);
             assertThat(tooHigh.expansionDecay()).isEqualTo(0.7);
         }
     }
@@ -73,7 +73,7 @@ class RagEntityPropertiesTest {
         @DisplayName("α < 0 抛 IllegalArgumentException")
         void negativeAlpha_throws() {
             assertThatThrownBy(() -> new RagEntityProperties(
-                    false, 10, 500, 0.85, 50, 20, 10, 1, 0.7,
+                    10, 500, 0.85, 50, 20, 10, 1, 0.7,
                     -0.1, 0.3, 0.2, true, null, true))
                     .isInstanceOf(IllegalArgumentException.class)
                     .hasMessageContaining("α/β/γ");
@@ -83,7 +83,7 @@ class RagEntityPropertiesTest {
         @DisplayName("β < 0 抛 IllegalArgumentException")
         void negativeBeta_throws() {
             assertThatThrownBy(() -> new RagEntityProperties(
-                    false, 10, 500, 0.85, 50, 20, 10, 1, 0.7,
+                    10, 500, 0.85, 50, 20, 10, 1, 0.7,
                     0.5, -0.3, 0.2, true, null, true))
                     .isInstanceOf(IllegalArgumentException.class);
         }
@@ -92,7 +92,7 @@ class RagEntityPropertiesTest {
         @DisplayName("α+β+γ == 0 抛 IllegalArgumentException（全为 0）")
         void allZero_throws() {
             assertThatThrownBy(() -> new RagEntityProperties(
-                    false, 10, 500, 0.85, 50, 20, 10, 1, 0.7,
+                    10, 500, 0.85, 50, 20, 10, 1, 0.7,
                     0, 0, 0, true, null, true))
                     .isInstanceOf(IllegalArgumentException.class)
                     .hasMessageContaining("不能同时为 0");

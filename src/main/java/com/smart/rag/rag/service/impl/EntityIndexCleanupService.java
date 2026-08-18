@@ -6,7 +6,6 @@ import com.smart.rag.rag.mapper.EventMapper;
 import com.smart.rag.rag.mapper.VectorStoreMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -29,7 +28,6 @@ import java.util.List;
  * </ol>
  */
 @Service
-@ConditionalOnProperty(prefix = "app.rag.entity", name = "enabled", havingValue = "true")
 public class EntityIndexCleanupService {
 
     private static final Logger log = LoggerFactory.getLogger(EntityIndexCleanupService.class);

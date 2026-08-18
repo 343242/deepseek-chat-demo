@@ -7,7 +7,6 @@ import com.smart.rag.rag.mapper.EntityMapper;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -31,7 +30,6 @@ import java.util.Map;
  * </ul>
  */
 @Service
-@ConditionalOnProperty(prefix = "app.rag.entity", name = "enabled", havingValue = "true")
 public class EntityCanonicalizationService {
 
     private static final Logger log = LoggerFactory.getLogger(EntityCanonicalizationService.class);

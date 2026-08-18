@@ -37,22 +37,15 @@ class DocumentLifecycleServiceTest {
     @Mock
     private ApplicationEventPublisher eventPublisher;
 
-    /** ObjectProvider 桩：getIfAvailable 返回 null（模拟 EntityIndexCleanupService Bean 缺失） */
-    private static org.springframework.beans.factory.ObjectProvider<EntityIndexCleanupService> noCleanupProvider() {
-        return new org.springframework.beans.factory.ObjectProvider<>() {
-            @Override public EntityIndexCleanupService getObject() { throw new java.util.NoSuchElementException("no bean"); }
-            @Override public EntityIndexCleanupService getObject(Object... args) { return getObject(); }
-            @Override public EntityIndexCleanupService getIfAvailable() { return null; }
-            @Override public EntityIndexCleanupService getIfUnique() { return null; }
-        };
-    }
+    @Mock
+    private EntityIndexCleanupService entityIndexCleanupService;
 
     private DocumentLifecycleService service;
 
     @org.junit.jupiter.api.BeforeEach
     void setUp() {
         service = new DocumentLifecycleService(vectorStoreLoader, fileStorageService,
-                ragDocumentMapper, eventPublisher, noCleanupProvider());
+                ragDocumentMapper, eventPublisher, entityIndexCleanupService);
     }
 
     @Test

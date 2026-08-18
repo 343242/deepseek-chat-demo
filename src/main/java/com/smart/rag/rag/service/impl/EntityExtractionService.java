@@ -24,7 +24,6 @@ import com.smart.rag.rag.mapper.VectorStoreMapper;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
@@ -51,7 +50,6 @@ import java.util.concurrent.ExecutorService;
  * 避免 FastTrack 路径上对未分块 BM25 行的重复抽取。
  */
 @Service
-@ConditionalOnProperty(prefix = "app.rag.entity", name = "enabled", havingValue = "true")
 public class EntityExtractionService {
 
     private static final Logger log = LoggerFactory.getLogger(EntityExtractionService.class);

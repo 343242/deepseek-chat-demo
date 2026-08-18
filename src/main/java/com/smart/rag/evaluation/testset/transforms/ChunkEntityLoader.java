@@ -15,8 +15,8 @@ import java.util.UUID;
 /**
  * chunk 实体装载器：KG 实体的唯一来源（{@code rag_chunk_entity} JOIN {@code rag_entity}）。
  * <p>
- * 实体由实体中心索引层在 ETL 时抽取入库；本类只读不抽。
- * 评估 profile 前置条件 {@code app.rag.entity.enabled=true}——语料需在实体层开启后导入。
+ * 实体由实体中心索引层在 ETL 时抽取入库（实体层无条件装配）；本类只读不抽，
+ * 语料需在实体层上线后导入才有实体数据。
  * 无实体行的 chunk 不参与实体边（多跳按数据自然降级），无兜底路径。
  * </p>
  */

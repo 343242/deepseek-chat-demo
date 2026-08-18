@@ -9,7 +9,6 @@ import com.smart.rag.rag.mapper.EntityMapper;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 import java.util.List;
@@ -23,7 +22,6 @@ import java.util.List;
  * 消融开关（§12.1）：{@code weakTieEnabled=false} 时 γ=0；{@code communityDetectionEnabled=false} 时 β=0。
  */
 @Component
-@ConditionalOnProperty(prefix = "app.rag.entity", name = "enabled", havingValue = "true")
 public class EntityFrontierRanker {
 
     private static final Logger log = LoggerFactory.getLogger(EntityFrontierRanker.class);

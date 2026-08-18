@@ -9,6 +9,8 @@
 > **范围**：离线索引 + 在线检索路径。**不含 Agent 工具暴露**（本阶段不新增 `entityJoinSearch` 等 Agent 可调用工具，仅作为 hybridSearch 的并行召回路径）。
 >
 > **状态**：已实现并归档（2026-08-01）。全部 AC（AC1-AC6）验证通过，10 项启动/运行缺陷已修复，`entity.enabled=false` 零回归（1357 测试）。此前：设计阶段，未实现。已通过代码库可行性核验（2026-07）：修正 §8.2 ETL 时序、§8.4 版本化清理（第 1 轮）；七大原则复核修正 §4.4/§5.2/§6.1/§6.5/§7.1 架构拆分（第 2 轮，见 §10.3 审计表）。
+>
+> **变更（2026-08-19）**：`app.rag.entity.enabled` 总开关已删除，实体层无条件装配（12 个 Bean 恒装载，`ObjectProvider` 可选依赖改直接依赖）。§12.1 矩阵与 §12.3 灰度中的 `entity.enabled` 字样自此失效；Baseline（纯 Path A/B）不再可经配置表达，`weakTieEnabled`/`communityDetectionEnabled`/`expansionHops` 消融参数保留。
 
 ---
 

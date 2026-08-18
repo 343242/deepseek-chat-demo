@@ -1,14 +1,9 @@
 # RAG 评估系统专用配置
 # 仅在激活 evaluation profile 时加载: spring.profiles.active=dev,evaluation
+# KG 测试集生成的实体单一来源是实体中心索引层（rag_chunk_entity），实体层已无条件装配
 
 app:
-  # 评估模块前置条件：KG 测试集生成的实体单一来源是实体中心索引层（rag_chunk_entity），
-  # 语料需在实体层开启后（重新）导入，不写兜底与回填
-  rag:
-    entity:
-      enabled: true
   evaluation:
-    enabled: true
     # 抽取模型候选 ID（主题抽取、persona 匹配、概念组合；便宜模型）
     generation-model: deepseek-v4-flash
     test-user-id: 1

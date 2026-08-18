@@ -7,7 +7,6 @@ import com.smart.rag.rag.mapper.RagDocumentMapper;
 import com.smart.rag.rag.service.FileStorageService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 
@@ -32,19 +31,18 @@ public class DocumentLifecycleService {
     private final FileStorageService fileStorageService;
     private final RagDocumentMapper ragDocumentMapper;
     private final ApplicationEventPublisher eventPublisher;
-    /** 实体索引清理为可选依赖（app.rag.entity.enabled=false 时 Bean 不存在） */
-    private final ObjectProvider<EntityIndexCleanupService> entityIndexCleanupProvider;
+    private final EntityIndexCleanupService entityIndexCleanupService;
 
     public DocumentLifecycleService(Loader vectorStoreLoader,
                                     FileStorageService fileStorageService,
                                     RagDocumentMapper ragDocumentMapper,
                                     ApplicationEventPublisher eventPublisher,
-                                    ObjectProvider<EntityIndexCleanupService> entityIndexCleanupProvider) {
+                                    EntityIndexCleanupService entityIndexCleanupService) {
         this.vectorStoreLoader = vectorStoreLoader;
         this.fileStorageService = fileStorageService;
         this.ragDocumentMapper = ragDocumentMapper;
         this.eventPublisher = eventPublisher;
-        this.entityIndexCleanupProvider = entityIndexCleanupProvider;
+        this.entityIndexCleanupService = entityIndexCleanupService;
     }
 
     /**
@@ -59,13 +57,10 @@ public class DocumentLifecycleService {
         Long id = doc.getId();
 
         // 0. 清理实体索引（在删向量之前）
-        EntityIndexCleanupService entityIndexCleanupService = entityIndexCleanupProvider.getIfAvailable();
-        if (entityIndexCleanupService != null) {
-            try {
-                entityIndexCleanupService.cleanupByDocumentId(id);
-            } catch (Exception e) {
-                log.error("Failed to cleanup entity index for deleted docId={}", id, e);
-            }
+        try {
+            entityIndexCleanupService.cleanupByDocumentId(id);
+        } catch (Exception e) {
+            log.error("Failed to cleanup entity index for deleted docId={}", id, e);
         }
 
         boolean vectorDeleted = false;

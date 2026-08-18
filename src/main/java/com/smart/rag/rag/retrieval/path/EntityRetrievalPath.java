@@ -18,7 +18,6 @@ import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.document.Document;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 import java.time.Duration;
@@ -32,14 +31,13 @@ import java.util.UUID;
 /**
  * Path C 编排入口（§6.1 / §6.5）。
  * <p>
- * 实现 {@link RetrievalPath}，当 {@code app.rag.entity.enabled=true} 时由 Spring 自动注册到
+ * 实现 {@link RetrievalPath}，由 Spring 自动注册到
  * {@code HybridSearchService.paths}（构造注入 {@code List<RetrievalPath>}），HybridSearchService 零改动。
  * <p>
  * CARP：合成 4 个组件（seed extractor / frontier ranker / vote retriever / expansion retriever），
  * 自身仅编排 PC1→PC2-3→PC4a∥PC4b→PC5 + trace。
  */
 @Component
-@ConditionalOnProperty(prefix = "app.rag.entity", name = "enabled", havingValue = "true")
 public class EntityRetrievalPath implements RetrievalPath {
 
     private static final Logger log = LoggerFactory.getLogger(EntityRetrievalPath.class);

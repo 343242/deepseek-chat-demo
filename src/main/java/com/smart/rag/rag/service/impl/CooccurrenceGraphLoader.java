@@ -5,7 +5,6 @@ import com.smart.rag.infrastructure.algorithm.graph.WeightedGraph;
 import com.smart.rag.rag.mapper.EntityCooccurrenceMapper;
 import com.smart.rag.rag.mapper.EntityCooccurrenceMapper.CooccurrenceRow;
 import org.jspecify.annotations.Nullable;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 /**
@@ -19,7 +18,6 @@ import org.springframework.stereotype.Component;
  * {@code addEdge} 自动写双向。
  */
 @Component
-@ConditionalOnProperty(prefix = "app.rag.entity", name = "enabled", havingValue = "true")
 public class CooccurrenceGraphLoader {
 
     private final EntityCooccurrenceMapper cooccurrenceMapper;

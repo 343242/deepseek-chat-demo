@@ -53,23 +53,15 @@ class DocumentSupersedeServiceTest {
     private TransactionTemplate transactionTemplate;
     @Mock
     private TeamAccessGate teamAccessGate;
+    @Mock
+    private EntityIndexCleanupService entityIndexCleanupService;
 
     private DocumentSupersedeService service;
-
-    /** ObjectProvider 桩：getIfAvailable 返回 null（模拟 EntityIndexCleanupService Bean 缺失） */
-    private static org.springframework.beans.factory.ObjectProvider<EntityIndexCleanupService> noCleanupProvider() {
-        return new org.springframework.beans.factory.ObjectProvider<>() {
-            @Override public EntityIndexCleanupService getObject() { throw new java.util.NoSuchElementException("no bean"); }
-            @Override public EntityIndexCleanupService getObject(Object... args) { return getObject(); }
-            @Override public EntityIndexCleanupService getIfAvailable() { return null; }
-            @Override public EntityIndexCleanupService getIfUnique() { return null; }
-        };
-    }
 
     @BeforeEach
     void setUp() {
         service = new DocumentSupersedeService(ragDocumentMapper, vectorStoreMapper, vectorStoreLoader,
-                fileStorageService, transactionTemplate, teamAccessGate, noCleanupProvider());
+                fileStorageService, transactionTemplate, teamAccessGate, entityIndexCleanupService);
         // 模拟 TransactionTemplate：立即执行 Consumer 回调
         lenient().doAnswer(invocation -> {
             @SuppressWarnings("unchecked")

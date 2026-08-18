@@ -63,7 +63,6 @@ app:
   rag:
     fts-config: ${RAG_FTS_CONFIG:jiebacfg}
     entity:
-      enabled: ${RAG_ENTITY_ENABLED:false}
       embedding-batch-size: ${RAG_ENTITY_EMBEDDING_BATCH_SIZE:10}
       description-max-length: ${RAG_ENTITY_DESCRIPTION_MAX_LENGTH:500}
       # === Path C 在线检索（§7.2）===

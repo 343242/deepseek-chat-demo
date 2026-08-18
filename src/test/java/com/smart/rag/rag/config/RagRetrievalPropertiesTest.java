@@ -18,10 +18,9 @@ class RagRetrievalPropertiesTest {
         @DisplayName("默认 queryRewriteModel 为 null")
         void defaultModelIsNull() {
             var props = new RagRetrievalProperties(
-                    true, true, "jiebacfg",
+                    true, "jiebacfg",
                     30, 30, 60,
                     60,
-                    false,
                     20,
                     true, 0.5, 10, 0.5,
                     null, null
@@ -34,10 +33,9 @@ class RagRetrievalPropertiesTest {
         @DisplayName("自定义 model 和 temperature")
         void customModelAndTemperature() {
             var props = new RagRetrievalProperties(
-                    true, true, "jiebacfg",
+                    true, "jiebacfg",
                     30, 30, 60,
                     60,
-                    false,
                     20,
                     true, 0.5, 10, 0.5,
                     "deepseek/deepseek-chat", 0.2
@@ -55,10 +53,9 @@ class RagRetrievalPropertiesTest {
         @DisplayName("rerankTopN <= mmrTopK 时构造抛异常（避免调换顺序后 MMR 退化为 no-op）")
         void rerankTopNMustBeGreaterThanMmrTopK() {
             assertThatThrownBy(() -> new RagRetrievalProperties(
-                    true, true, "jiebacfg",
+                    true, "jiebacfg",
                     30, 30, 60,
                     60,
-                    true,
                     5,
                     true, 0.7, 10, 0.5,
                     null, null
@@ -70,10 +67,9 @@ class RagRetrievalPropertiesTest {
         @DisplayName("rerankTopN 未配置（<=0）回退默认 20")
         void rerankTopNDefaultsTo20WhenUnset() {
             var props = new RagRetrievalProperties(
-                    true, true, "jiebacfg",
+                    true, "jiebacfg",
                     30, 30, 60,
                     60,
-                    false,
                     0,
                     false, 0.7, 5, 0.5,
                     null, null
@@ -90,10 +86,9 @@ class RagRetrievalPropertiesTest {
         @DisplayName("fusionTopK < rerankTopN 时构造抛异常（Rerank 候选不足）")
         void fusionTopKMustBeAtLeastRerankTopN() {
             assertThatThrownBy(() -> new RagRetrievalProperties(
-                    true, true, "jiebacfg",
+                    true, "jiebacfg",
                     30, 30, 60,
                     15,
-                    true,
                     20,
                     true, 0.7, 10, 0.5,
                     null, null
@@ -105,10 +100,9 @@ class RagRetrievalPropertiesTest {
         @DisplayName("fusionTopK 未配置（<=0）回退默认 60")
         void fusionTopKDefaultsTo60WhenUnset() {
             var props = new RagRetrievalProperties(
-                    true, true, "jiebacfg",
+                    true, "jiebacfg",
                     30, 30, 60,
                     0,
-                    false,
                     20,
                     false, 0.7, 5, 0.5,
                     null, null

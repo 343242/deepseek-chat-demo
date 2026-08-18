@@ -195,13 +195,10 @@ public class EvaluationRunner {
         Long userId = config.getTestUserId() != null
                 ? config.getTestUserId() : this.evalProps.getTestUserId();
         // 用 Spring 管理的 ScopedTasks 构造，复用其虚拟线程作用域执行器。
-        // 显式构建 RetrievalPath 列表（与旧 buildPaths 工厂等价）：恒含向量路径，
-        // hybridRetrievalEnabled=true 时追加 BM25 路径。
+        // 路径组配与生产装配一致（恒含向量 + BM25）；评测侧可覆盖的只是 topK/rrfK 参数。
         List<RetrievalPath> paths = new java.util.ArrayList<>();
         paths.add(new VectorRetrievalPath(vectorStore, evalProps));
-        if (evalProps.hybridRetrievalEnabled()) {
-            paths.add(new Bm25RetrievalPath(vectorStoreMapper, queryNormalizer, evalProps));
-        }
+        paths.add(new Bm25RetrievalPath(vectorStoreMapper, queryNormalizer, evalProps));
         HybridSearchService evalSearchService = new HybridSearchService(
                 paths, evalProps, queryNormalizer, scopedTasks, null);
         return new HybridDocumentRetriever(evalSearchService, userId, null);

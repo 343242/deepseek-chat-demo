@@ -6,7 +6,6 @@ import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.document.Document;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -14,11 +13,8 @@ import java.util.List;
 
 /**
  * BM25 (PostgreSQL tsvector full-text) retrieval path.
- * <p>
- * Only registered when {@code app.rag.hybridRetrievalEnabled=true}.
  */
 @Component
-@ConditionalOnProperty(prefix = "app.rag", name = "hybridRetrievalEnabled", havingValue = "true")
 public class Bm25RetrievalPath implements RetrievalPath {
 
     private static final Logger log = LoggerFactory.getLogger(Bm25RetrievalPath.class);

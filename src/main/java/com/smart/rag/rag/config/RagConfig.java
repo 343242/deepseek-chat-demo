@@ -13,7 +13,6 @@ import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.prompt.PromptTemplate;
 import org.springframework.ai.rag.preretrieval.query.transformation.RewriteQueryTransformer;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -67,7 +66,6 @@ public class RagConfig {
     }
 
     @Bean
-    @ConditionalOnProperty(name = "app.rag.rerank-enabled", havingValue = "true")
     public RerankDocumentPostProcessor rerankDocumentPostProcessor(
             LlmClientRegistry llmClientRegistry,
             RagRetrievalProperties properties) {

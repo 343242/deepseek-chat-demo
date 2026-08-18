@@ -45,40 +45,24 @@ class HybridDocumentRetrieverTest {
     private QueryNormalizer queryNormalizer;
 
     // Record 字段顺序（与源码一致）:
-    // queryRewriteEnabled, hybridRetrievalEnabled, ftsConfig, vectorTopK, bm25TopK,
-    // rrfK, fusionTopK, rerankEnabled, rerankTopN, mmrEnabled, mmrLambda, mmrTopK, similarityThreshold,
+    // queryRewriteEnabled, ftsConfig, vectorTopK, bm25TopK,
+    // rrfK, fusionTopK, rerankTopN, mmrEnabled, mmrLambda, mmrTopK, similarityThreshold,
     // queryRewriteModel, queryRewriteTemperature
 
     private static RagRetrievalProperties defaultProperties() {
         return new RagRetrievalProperties(
                 false,  // queryRewriteEnabled
-                true,   // hybridRetrievalEnabled
                 "jiebacfg",
                 10,     // vectorTopK
                 10,     // bm25TopK
                 60,     // rrfK
                 60,     // fusionTopK
-                false,  // rerankEnabled
-                20,     // rerankTopN（rerank 关闭，占位满足 > mmrTopK 校验）
+                20,     // rerankTopN
                 false,  // mmrEnabled
                 0.7,    // mmrLambda
                 5,      // mmrTopK
                 0.0,    // similarityThreshold
                 null, null    // queryRewriteModel, queryRewriteTemperature
-        );
-    }
-
-    private static RagRetrievalProperties vectorOnlyProperties() {
-        return new RagRetrievalProperties(
-                false,  // queryRewriteEnabled
-                false,  // hybridRetrievalEnabled
-                "jiebacfg",
-                10, 10, 60,
-                60,     // fusionTopK
-                false,  // rerankEnabled
-                20,     // rerankTopN
-                false, 0.7, 5, 0.0,
-                null, null
         );
     }
 
@@ -88,11 +72,16 @@ class HybridDocumentRetrieverTest {
     }
 
     private HybridDocumentRetriever createRetriever(RagRetrievalProperties props, Long userId, Long teamId) {
-        // 显式构建 RetrievalPath 列表（与旧 buildPaths 工厂等价）：
-        // 恒含向量路径；hybridRetrievalEnabled=true 时追加 BM25 路径。
+        // 生产装配由 Spring 注入全量 RetrievalPath（恒含向量 + BM25 + 实体路径）
+        return createRetriever(props, userId, teamId, true);
+    }
+
+    private HybridDocumentRetriever createRetriever(RagRetrievalProperties props, Long userId, Long teamId,
+                                                    boolean withBm25) {
+        // 测试侧手工组路径：withBm25=false 模拟 BM25 路径缺席的降级场景（AC6）
         List<RetrievalPath> paths = new ArrayList<>();
         paths.add(new VectorRetrievalPath(vectorStore, props));
-        if (props.hybridRetrievalEnabled()) {
+        if (withBm25) {
             paths.add(new Bm25RetrievalPath(vectorStoreMapper, new QueryNormalizer(), props));
         }
         HybridSearchService service = new HybridSearchService(paths, props, queryNormalizer,
@@ -113,14 +102,13 @@ class HybridDocumentRetrieverTest {
     // ====================================================================
 
     @Nested
-    @DisplayName("纯向量检索模式 (hybridRetrievalEnabled=false)")
+    @DisplayName("纯向量检索模式（BM25 路径缺席的降级，AC6）")
     class VectorOnlyMode {
 
         @Test
         @DisplayName("只调用向量检索，不调用 BM25")
         void vector_only_should_not_call_bm25() {
-            var props = vectorOnlyProperties();
-            var retriever = createRetriever(props, 1L, null);
+            var retriever = createRetriever(defaultProperties(), 1L, null, false);
             var docs = List.of(doc("d1", "hello"), doc("d2", "world"));
 
             when(vectorStore.similaritySearch(any(SearchRequest.class))).thenReturn(docs);
@@ -135,8 +123,7 @@ class HybridDocumentRetrieverTest {
         @Test
         @DisplayName("向量检索返回空列表时不报错")
         void vector_only_empty_results() {
-            var props = vectorOnlyProperties();
-            var retriever = createRetriever(props, 1L, null);
+            var retriever = createRetriever(defaultProperties(), 1L, null, false);
 
             when(vectorStore.similaritySearch(any(SearchRequest.class))).thenReturn(List.of());
 

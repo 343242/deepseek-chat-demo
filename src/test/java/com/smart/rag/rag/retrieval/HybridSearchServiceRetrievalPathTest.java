@@ -28,13 +28,11 @@ class HybridSearchServiceRetrievalPathTest {
     private static RagRetrievalProperties defaultProperties() {
         return new RagRetrievalProperties(
                 false,  // queryRewriteEnabled
-                true,   // hybridRetrievalEnabled
                 "jiebacfg",
                 10,     // vectorTopK
                 10,     // bm25TopK
                 60,     // rrfK
                 60,     // fusionTopK
-                false,  // rerankEnabled
                 20,     // rerankTopN
                 false,  // mmrEnabled
                 0.7,    // mmrLambda

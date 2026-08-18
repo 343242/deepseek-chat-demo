@@ -11,7 +11,6 @@ spring:
     mcp:
       client:
         # SDK 自动初始化保持关闭；连接由 DB 驱动的 MCP bootstrap 逐 Server 隔离初始化。
-        enabled: ${MCP_ENABLED:true}
         initialized: ${MCP_INITIALIZED:false}
         type: SYNC
         request-timeout: ${MCP_REQUEST_TIMEOUT:30s}

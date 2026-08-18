@@ -1,6 +1,5 @@
 package com.smart.rag.mcp.config;
 
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -10,7 +9,6 @@ import java.util.Map;
 
 /** Configures MCP bootstrap properties. */
 @Configuration
-@ConditionalOnProperty(prefix = "spring.ai.mcp.client", name = "enabled", havingValue = "true", matchIfMissing = true)
 public class McpClientTransportConfiguration {
 
     /** Shared transport timeout properties. */
@@ -25,14 +23,11 @@ public class McpClientTransportConfiguration {
      */
     public static class McpClientTransportProperties {
 
-        private boolean enabled = true;
         private boolean initialized = false;
         private String type = "SYNC";
         private String requestTimeout = "30s";
         private StreamableHttp streamableHttp = new StreamableHttp();
 
-        public boolean isEnabled() { return enabled; }
-        public void setEnabled(boolean v) { this.enabled = v; }
         public boolean isInitialized() { return initialized; }
         public void setInitialized(boolean v) { this.initialized = v; }
         public String getType() { return type; }

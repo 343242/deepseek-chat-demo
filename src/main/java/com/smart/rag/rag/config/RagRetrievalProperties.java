@@ -12,14 +12,12 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 @ConfigurationProperties(prefix = "app.rag")
 public record RagRetrievalProperties(
         boolean queryRewriteEnabled,
-        boolean hybridRetrievalEnabled,
         String ftsConfig,
         int vectorTopK,
         int bm25TopK,
         int rrfK,
         /** RRF 融合后最终召回量（独立于 vector-top-k，解耦自 HybridSearchService.rrfFusion），必须 >= rerankTopN */
         int fusionTopK,
-        boolean rerankEnabled,
         /** Rerank 精排保留的文档数（候选池），必须 > mmrTopK，否则调换顺序后 MMR 命中早退退化为 no-op */
         int rerankTopN,
         boolean mmrEnabled,
@@ -66,13 +64,11 @@ public record RagRetrievalProperties(
     public RagRetrievalProperties withOverrides(Integer vectorTopKOverride, Integer bm25TopKOverride, Integer rrfKOverride) {
         return new RagRetrievalProperties(
                 queryRewriteEnabled,
-                hybridRetrievalEnabled,
                 ftsConfig,
                 vectorTopKOverride != null ? vectorTopKOverride : vectorTopK,
                 bm25TopKOverride != null ? bm25TopKOverride : bm25TopK,
                 rrfKOverride != null ? rrfKOverride : rrfK,
                 fusionTopK,
-                rerankEnabled,
                 rerankTopN,
                 mmrEnabled,
                 mmrLambda,

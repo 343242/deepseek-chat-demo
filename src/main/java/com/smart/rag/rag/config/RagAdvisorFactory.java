@@ -15,9 +15,6 @@ import org.springframework.ai.rag.Query;
 import org.springframework.ai.rag.advisor.RetrievalAugmentationAdvisor;
 import org.springframework.ai.rag.preretrieval.query.transformation.QueryTransformer;
 import org.springframework.ai.rag.retrieval.search.DocumentRetriever;
-import org.springframework.ai.rag.retrieval.search.VectorStoreDocumentRetriever;
-import org.springframework.ai.vectorstore.VectorStore;
-import org.springframework.ai.vectorstore.filter.FilterExpressionBuilder;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 
@@ -41,14 +38,13 @@ public class RagAdvisorFactory {
 
     private static final Logger log = LoggerFactory.getLogger(RagAdvisorFactory.class);
 
-    private final VectorStore vectorStore;
     private final VectorStoreMapper vectorStoreMapper;
     private final RagRetrievalProperties properties;
     private final HybridSearchService hybridSearchService;
     private final ParentDocumentPostProcessor parentDocumentPostProcessor;
     private final QueryTransformer rewriteQueryTransformer;
 
-    /** Rerank 单例 Bean（null when rerank-enabled=false），生命周期由 Spring 容器管理 */
+    /** Rerank 单例 Bean，生命周期由 Spring 容器管理 */
     private final RerankDocumentPostProcessor rerankPostProcessor;
 
     /** 后处理并行 executor（Rerank⊥distance），独立于 ragSearchExecutor */
@@ -57,15 +53,13 @@ public class RagAdvisorFactory {
     /** 缓存的 PostProcessor 列表，避免每次请求重建 */
     private volatile List<org.springframework.ai.rag.postretrieval.document.DocumentPostProcessor> cachedPostProcessors;
 
-    public RagAdvisorFactory(VectorStore vectorStore,
-                             VectorStoreMapper vectorStoreMapper,
+    public RagAdvisorFactory(VectorStoreMapper vectorStoreMapper,
                              RagRetrievalProperties properties,
                              HybridSearchService hybridSearchService,
                              ParentDocumentPostProcessor parentDocumentPostProcessor,
                              QueryTransformer rewriteQueryTransformer,
-                             @Nullable RerankDocumentPostProcessor rerankPostProcessor,
+                             RerankDocumentPostProcessor rerankPostProcessor,
                              @Qualifier("ragPostProcessExecutor") ExecutorService ragPostProcessExecutor) {
-        this.vectorStore = vectorStore;
         this.vectorStoreMapper = vectorStoreMapper;
         this.properties = properties;
         this.hybridSearchService = hybridSearchService;
@@ -136,31 +130,10 @@ public class RagAdvisorFactory {
     private DocumentRetriever createIsolatedRetriever(Long userId, @Nullable Long teamId) {
         if (teamId != null) {
             // 团队检索：按 teamId 隔离
-            if (properties.hybridRetrievalEnabled()) {
-                return new HybridDocumentRetriever(hybridSearchService, userId, teamId);
-            }
-            FilterExpressionBuilder filterBuilder = new FilterExpressionBuilder();
-            var teamIdFilter = filterBuilder.eq("teamId", String.valueOf(teamId)).build();
-            return VectorStoreDocumentRetriever.builder()
-                    .vectorStore(vectorStore)
-                    .similarityThreshold(properties.similarityThreshold())
-                    .topK(properties.vectorTopK())
-                    .filterExpression(teamIdFilter)
-                    .build();
+            return new HybridDocumentRetriever(hybridSearchService, userId, teamId);
         }
-
         // 个人检索：按 userId 隔离
-        if (properties.hybridRetrievalEnabled()) {
-            return new HybridDocumentRetriever(hybridSearchService, userId, null);
-        }
-        FilterExpressionBuilder filterBuilder = new FilterExpressionBuilder();
-        var userIdFilter = filterBuilder.eq("userId", String.valueOf(userId)).build();
-        return VectorStoreDocumentRetriever.builder()
-                .vectorStore(vectorStore)
-                .similarityThreshold(properties.similarityThreshold())
-                .topK(properties.vectorTopK())
-                .filterExpression(userIdFilter)
-                .build();
+        return new HybridDocumentRetriever(hybridSearchService, userId, null);
     }
 
     private List<org.springframework.ai.rag.postretrieval.document.DocumentPostProcessor> getPostProcessors() {
@@ -179,22 +152,17 @@ public class RagAdvisorFactory {
     private List<org.springframework.ai.rag.postretrieval.document.DocumentPostProcessor> buildPostProcessors() {
         List<org.springframework.ai.rag.postretrieval.document.DocumentPostProcessor> postProcessors = new ArrayList<>();
 
-        boolean rerankOn = rerankPostProcessor != null;
         boolean mmrOn = properties.mmrEnabled();
 
-        if (rerankOn && mmrOn) {
+        if (mmrOn) {
             // 1. 复合处理器：Rerank(LLM 精排) ⊥ MMR distance 预取(DB) 并行 → MMR 贪心。
             //    封装进单个 process() 是 Spring AI Advisor(final) postProcessor 链硬编码顺序下的唯一并行形态（design §2）。
             MmrDocumentPostProcessor mmr = new MmrDocumentPostProcessor(
                     properties.mmrLambda(), properties.mmrTopK(), properties.fusionTopK(), vectorStoreMapper);
             postProcessors.add(new RerankThenMmrPostProcessor(rerankPostProcessor, mmr, ragPostProcessExecutor));
-        } else if (rerankOn) {
+        } else {
             // 仅 Rerank（MMR 关闭）
             postProcessors.add(rerankPostProcessor);
-        } else if (mmrOn) {
-            // 仅 MMR（Rerank 关闭，MMR 用 rrfScore 作相关性 fallback）
-            postProcessors.add(new MmrDocumentPostProcessor(
-                    properties.mmrLambda(), properties.mmrTopK(), properties.fusionTopK(), vectorStoreMapper));
         }
 
         // 末步：Parent-Child 子块→父文档替换（串行，输入依赖精排+去冗余存活文档，无下游可重叠）

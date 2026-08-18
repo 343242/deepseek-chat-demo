@@ -227,6 +227,18 @@ public class EvaluationResultRepository {
                            THEN (generation_metrics::jsonb ->> 'answerRelevance')::double precision END)  AS avg_answer_relevance,
                   AVG(CASE WHEN (generation_metrics::jsonb ->> 'contextRelevance')::double precision >= 0
                            THEN (generation_metrics::jsonb ->> 'contextRelevance')::double precision END) AS avg_context_relevance,
+                  AVG(CASE WHEN (generation_metrics::jsonb ->> 'answerCorrectness')::double precision >= 0
+                           THEN (generation_metrics::jsonb ->> 'answerCorrectness')::double precision END) AS avg_answer_correctness,
+                  AVG(CASE WHEN (generation_metrics::jsonb ->> 'noiseSensitivity')::double precision >= 0
+                           THEN (generation_metrics::jsonb ->> 'noiseSensitivity')::double precision END) AS avg_noise_sensitivity,
+                  AVG(CASE WHEN (generation_metrics::jsonb ->> 'contextPrecisionLlm')::double precision >= 0
+                           THEN (generation_metrics::jsonb ->> 'contextPrecisionLlm')::double precision END) AS avg_context_precision_llm,
+                  AVG(CASE WHEN (generation_metrics::jsonb ->> 'factualCorrectness')::double precision >= 0
+                           THEN (generation_metrics::jsonb ->> 'factualCorrectness')::double precision END) AS avg_factual_correctness,
+                  AVG(CASE WHEN (generation_metrics::jsonb ->> 'rougeL')::double precision >= 0
+                           THEN (generation_metrics::jsonb ->> 'rougeL')::double precision END) AS avg_rouge_l,
+                  AVG(CASE WHEN (generation_metrics::jsonb ->> 'bleu')::double precision >= 0
+                           THEN (generation_metrics::jsonb ->> 'bleu')::double precision END) AS avg_bleu,
                   COUNT(*) AS total_items,
                   COUNT(*) FILTER (WHERE error IS NOT NULL) AS error_items
                 FROM evaluation_result

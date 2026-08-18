@@ -51,6 +51,8 @@ public class GenerationJobService {
 
     /**
      * 提交生成任务（202 语义）：插入 pending 记录并异步执行，立即返回 jobId。
+     * 预创建 sink（镜像 EvaluationExecutionService.submitRun），保证先于执行线程的订阅可回放。
+     * executor 拒绝（已关闭/饱和）时同步标记 FAILED 并抛出，不留 pending 孤儿。
      */
     public long submit(String name, long userId) {
         var configJson = toJson(Map.of(
@@ -59,7 +61,15 @@ public class GenerationJobService {
                 "size", props.getDataset().getSize(),
                 "maxChunks", props.getDataset().getMaxChunks()));
         long jobId = jobRepo.insert(userId, name, configJson);
-        evalExecutor.execute(() -> execute(jobId, name, userId));
+        progressSink.getOrCreate(jobId);
+        try {
+            evalExecutor.execute(() -> execute(jobId, name, userId));
+        } catch (java.util.concurrent.RejectedExecutionException e) {
+            jobRepo.markFailed(jobId, "生成任务提交失败：executor 拒绝执行（" + e.getMessage() + "）");
+            progressSink.complete(jobId);
+            throw new ServiceException(ServiceErrorCode.INTERNAL_ERROR,
+                    "生成任务提交失败：评估执行器不可用", e);
+        }
         return jobId;
     }
 

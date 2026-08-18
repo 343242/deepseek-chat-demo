@@ -80,11 +80,15 @@ public class DatasetController {
     }
 
     /**
-     * 生成任务 SSE 进度流
+     * 生成任务 SSE 进度流。已结束的任务（completed/failed）不订阅 sink——
+     * sink 已 complete 并移除，订阅会挂到超时；改为直接回放终态收尾。
      */
     @GetMapping(value = "/generate/{jobId}/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter generationEvents(@PathVariable long jobId) {
-        generationJobService.getJob(jobId); // 404 语义：任务不存在直接报错
+        GenerationJobRecord job = generationJobService.getJob(jobId); // 404 语义：任务不存在直接报错
+        if ("completed".equals(job.status()) || "failed".equals(job.status())) {
+            return generationSseBridge.bridgeTerminated(job);
+        }
         generationProgressSink.getOrCreate(jobId);
         return generationSseBridge.bridge(jobId, generationProgressSink);
     }

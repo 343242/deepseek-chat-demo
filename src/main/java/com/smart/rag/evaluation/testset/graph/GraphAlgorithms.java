@@ -56,7 +56,7 @@ public final class GraphAlgorithms {
             } else {
                 first = rel.target();
                 second = rel.source();
-                normalized = new Relationship(second, first, rel.type(), rel.weight(),
+                normalized = new Relationship(first, second, rel.type(), rel.weight(),
                         rel.bidirectional(), rel.properties());
             }
             if (seen.add(first + "|" + second + "|" + normalized.type())) {

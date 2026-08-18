@@ -60,6 +60,11 @@ public class AnswerCorrectnessScorer {
         }
         var answerStatements = answerStatementsOpt.get();
         var gtStatements = gtStatementsOpt.get();
+        if (answerStatements.isEmpty() && gtStatements.isEmpty()) {
+            // 双方均无陈述：事实性记 1.0（无声明即无错误），仅保留语义分量
+            return FACTUALITY_WEIGHT * 1.0
+                    + SIMILARITY_WEIGHT * semanticSimilarity(answer, groundTruthAnswer);
+        }
 
         var classification = classifyStatements(question, answerStatements, gtStatements);
         if (classification.isEmpty()) {

@@ -79,6 +79,21 @@ class RagasAlignedScorersTest {
         }
 
         @Test
+        @DisplayName("双方均无陈述：事实性记 1.0（NaN 守卫），仅保留语义分量")
+        void bothEmptyStatementsGuardsNaN() {
+            var scorer = new AnswerCorrectnessScorer(judge, objectMapper, embeddingModel);
+            when(judge.evaluate(anyString())).thenReturn(
+                    JudgeVerdict.ok("[]"),
+                    JudgeVerdict.ok("[]"));
+
+            double score = scorer.score("q", ANSWER, GROUND_TRUTH);
+
+            // 事实性 1.0 × 0.75 + cosine(相同桩向量)=1.0 × 0.25
+            assertThat(score).isEqualTo(1.0);
+            assertThat(Double.isNaN(score)).isFalse();
+        }
+
+        @Test
         @DisplayName("Judge 失败返回 -1 哨兵")
         void returnsSentinelOnJudgeFailure() {
             var scorer = new AnswerCorrectnessScorer(judge, objectMapper, embeddingModel);

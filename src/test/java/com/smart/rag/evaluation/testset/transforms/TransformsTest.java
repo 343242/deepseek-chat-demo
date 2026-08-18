@@ -147,9 +147,12 @@ class TransformsTest {
             var rels = new VectorCosineBuilder(0.7).build(List.of(a, b, c, d));
 
             assertThat(rels).hasSize(1);
-            assertThat(rels.getFirst().type()).isEqualTo(
+            var rel = rels.getFirst();
+            assertThat(rel.type()).isEqualTo(
                     com.smart.rag.evaluation.testset.graph.RelationshipType.SIMILARITY);
-            assertThat(rels.getFirst().weight()).isCloseTo(0.994, org.assertj.core.data.Offset.offset(0.01));
+            // ragas CosineSimilarityBuilder 的边是双向的（间接簇路径枚举依赖反向通行）
+            assertThat(rel.bidirectional()).isTrue();
+            assertThat(rel.weight()).isCloseTo(0.994, org.assertj.core.data.Offset.offset(0.01));
 
             assertThatThrownBy(() -> new VectorCosineBuilder(0.7).cosine(
                     new double[]{1.0}, new double[]{1.0, 2.0}))

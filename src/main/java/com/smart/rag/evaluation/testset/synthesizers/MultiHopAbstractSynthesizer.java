@@ -68,14 +68,15 @@ public final class MultiHopAbstractSynthesizer extends QuerySynthesizer {
             }
             var flattened = combinations.stream()
                     .flatMap(List::stream).distinct().toList();
+            // 匹配调用一次（ragas 同款），persona 过滤按组合进行（prepare_combinations 语义）
             var personaConcepts = matchPersonas(flattened, personas);
-            var valid = validPersonas(personaConcepts, flattened, personas);
-            if (valid.isEmpty()) {
-                continue;
-            }
             for (var combination : combinations) {
                 if (scenarios.size() >= n) {
                     break;
+                }
+                var valid = validPersonas(personaConcepts, combination, personas);
+                if (valid.isEmpty()) {
+                    continue;
                 }
                 // 翻译 prepare_combinations 的 valid_nodes：组合概念命中节点主题的节点参与
                 var validNodes = nodes.stream()

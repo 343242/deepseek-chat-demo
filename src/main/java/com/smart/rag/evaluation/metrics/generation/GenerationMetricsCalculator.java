@@ -64,20 +64,21 @@ public class GenerationMetricsCalculator {
                                        List<Document> contextDocs) {
         String contextText = buildContextText(contextDocs);
         boolean hasGroundTruth = groundTruthAnswer != null && !groundTruthAnswer.isBlank();
+        // null 与空列表统一为空列表；空上下文时两个 LLM 指标由各自 Scorer 返回 0（无片段即无噪声/无排序）
+        var docs = contextDocs == null ? List.<Document>of() : contextDocs;
 
         double faithfulness = faithfulnessScorer.score(answer, contextText);
         double contextRecall = hasGroundTruth
                 ? contextRecallScorer.score(groundTruthAnswer, contextText) : -1;
         double answerRelevance = answerRelevanceScorer.score(question, answer);
-        double contextRelevance = contextRelevanceScorer.score(question, contextDocs);
+        double contextRelevance = contextRelevanceScorer.score(question, docs);
 
         double answerCorrectness = hasGroundTruth
                 ? answerCorrectnessScorer.score(question, answer, groundTruthAnswer) : -1;
-        double noiseSensitivity = hasGroundTruth && !contextDocs.isEmpty()
-                ? noiseSensitivityScorer.score(question, answer, groundTruthAnswer, contextDocs)
-                : (contextDocs.isEmpty() ? 0 : -1);
-        double contextPrecisionLlm = hasGroundTruth && !contextDocs.isEmpty()
-                ? contextPrecisionLlmScorer.score(question, groundTruthAnswer, contextDocs) : -1;
+        double noiseSensitivity = hasGroundTruth
+                ? noiseSensitivityScorer.score(question, answer, groundTruthAnswer, docs) : -1;
+        double contextPrecisionLlm = hasGroundTruth
+                ? contextPrecisionLlmScorer.score(question, groundTruthAnswer, docs) : -1;
         double factualCorrectness = hasGroundTruth
                 ? factualCorrectnessScorer.score(groundTruthAnswer, answer) : -1;
         double rougeL = hasGroundTruth ? RougeLScorer.score(answer, groundTruthAnswer) : -1;

@@ -36,7 +36,7 @@ public final class VectorCosineBuilder {
                 double similarity = cosine(a.embedding(), b.embedding());
                 if (similarity >= threshold) {
                     relationships.add(new Relationship(a.id(), b.id(),
-                            RelationshipType.SIMILARITY, similarity, false,
+                            RelationshipType.SIMILARITY, similarity, true,
                             Map.of("cosineSimilarity", similarity)));
                 }
             }

@@ -37,7 +37,7 @@ class GraphAlgorithmsTest {
     class FindTwoNodesSingleRel {
 
         @Test
-        @DisplayName("三元组按小 id 在前归一化，关系方向随节点翻转")
+        @DisplayName("三元组按小 id 在前归一化，关系方向随节点翻转为 小id→大id")
         void normalizesTripletOrder() {
             var kg = graph(Relationship.of("chunk-b", "chunk-a",
                     RelationshipType.ENTITY_OVERLAP, 0.95));
@@ -49,8 +49,9 @@ class GraphAlgorithmsTest {
             var triplet = triplets.getFirst();
             assertThat(triplet.a().id()).isEqualTo("chunk-a");
             assertThat(triplet.b().id()).isEqualTo("chunk-b");
-            assertThat(triplet.relationship().source()).isEqualTo("chunk-b");
-            assertThat(triplet.relationship().target()).isEqualTo("chunk-a");
+            // 归一化后关系方向与节点顺序一致：小 id → 大 id
+            assertThat(triplet.relationship().source()).isEqualTo("chunk-a");
+            assertThat(triplet.relationship().target()).isEqualTo("chunk-b");
         }
 
         @Test

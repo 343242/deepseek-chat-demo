@@ -32,6 +32,28 @@ public class GenerationSseBridge {
         return emitter;
     }
 
+    /**
+     * 已结束任务的终态直连：不订阅（sink 已 complete 并移除，订阅会挂到超时），
+     * 直接回放最后一条进度并以 done/error 收尾——晚到的订阅者立即拿到闭环。
+     */
+    public SseEmitter bridgeTerminated(GenerationJobRecord job) {
+        var emitter = new SseEmitter(0L); // 立即完成，无需超时
+        var terminated = new AtomicBoolean(false);
+        var finalEvent = new GenerationProgressEvent(
+                "done", 1, 1,
+                "completed".equals(job.status())
+                        ? "生成已完成（datasetId=" + job.datasetId() + "）"
+                        : "生成失败：" + job.error());
+        send(emitter, terminated, finalEvent);
+        if ("completed".equals(job.status())) {
+            terminate(emitter, terminated, null);
+        } else {
+            terminate(emitter, terminated,
+                    new IllegalStateException(job.error() == null ? "生成失败" : job.error()));
+        }
+        return emitter;
+    }
+
     private void send(SseEmitter emitter, AtomicBoolean terminated,
                       GenerationProgressEvent event) {
         if (terminated.get()) {

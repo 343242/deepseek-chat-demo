@@ -94,7 +94,9 @@ public class EvaluationRunSweeper {
     }
 
     /**
-     * 测试集生成任务的 stale 清理（同阈值同模式，作用于 evaluation_dataset_gen_run）。
+     * 测试集生成任务的 stale 清理（同阈值同模式，作用于 evaluation_dataset_gen_run）：
+     * running 按 started_at 判定；pending 按 created_at 判定（覆盖"insert 后、execute 前"的崩溃窗口，
+     * 以及 executor 拒绝路径之外的所有孤儿）。
      */
     @Scheduled(fixedRate = 5 * 60 * 1000L, initialDelay = 90 * 1000L)
     public void reapStaleGenerationJobs() {
@@ -106,14 +108,25 @@ public class EvaluationRunSweeper {
                 if (startedAt == null || !startedAt.toInstant().isBefore(cutoff)) {
                     continue;
                 }
-                genJobRepo.markFailed(job.id(),
-                        "marked stale by sweeper (running over " + staleMinutes + " minutes)");
-                genProgressSink.complete(job.id());
-                log.warn("Reaped stale generation job {}: startedAt={} exceeded {}min threshold",
-                        job.id(), startedAt, staleMinutes);
+                reap(job.id(), startedAt, staleMinutes);
+            }
+            for (var job : genJobRepo.listByStatus("pending")) {
+                OffsetDateTime createdAt = job.createdAt();
+                if (createdAt == null || !createdAt.toInstant().isBefore(cutoff)) {
+                    continue;
+                }
+                reap(job.id(), createdAt, staleMinutes);
             }
         } catch (Exception e) {
             log.error("Generation job sweeper failed: {}", e.getMessage(), e);
         }
+    }
+
+    private void reap(long jobId, OffsetDateTime since, int staleMinutes) {
+        genJobRepo.markFailed(jobId,
+                "marked stale by sweeper (over " + staleMinutes + " minutes since " + since + ")");
+        genProgressSink.complete(jobId);
+        log.warn("Reaped stale generation job {}: since={} exceeded {}min threshold",
+                jobId, since, staleMinutes);
     }
 }

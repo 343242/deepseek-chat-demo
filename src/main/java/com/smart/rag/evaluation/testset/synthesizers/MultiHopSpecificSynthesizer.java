@@ -58,15 +58,16 @@ public final class MultiHopSpecificSynthesizer extends QuerySynthesizer {
             }
             var themes = overlapped.stream()
                     .flatMap(pair -> pair.stream()).distinct().toList();
+            // 匹配调用一次（ragas 同款），persona 过滤按组合进行（prepare_combinations 语义）
             var personaConcepts = matchPersonas(themes, personas);
-            var valid = validPersonas(personaConcepts, themes, personas);
-            if (valid.isEmpty()) {
-                continue;
-            }
             var nodes = List.of(triplet.a(), triplet.b());
             for (var group : overlapped) {
                 if (scenarios.size() >= n) {
                     break;
+                }
+                var valid = validPersonas(personaConcepts, group, personas);
+                if (valid.isEmpty()) {
+                    continue;
                 }
                 scenarios.addAll(sampleDiverseCombinations(group, valid, nodes,
                         samplesPerCluster));

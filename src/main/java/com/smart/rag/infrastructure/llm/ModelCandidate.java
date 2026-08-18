@@ -9,7 +9,7 @@ import java.util.Map;
  * 三种子类型：{@link ChatCandidate}、{@link EmbeddingCandidate}、{@link RerankCandidate}。
  * <p>
  * <b>公共方法</b>：所有子类型都实现 {@code id()}、{@code provider()}、{@code model()}、
- * {@code priority()}、{@code capability()}、{@code enabled()}、{@code params()}。
+ * {@code priority()}、{@code capability()}、{@code params()}。
  * <p>
  * <b>能力特定方法</b>：
  * <ul>
@@ -35,9 +35,6 @@ public sealed interface ModelCandidate
 
     /** 该候选声明的能力 */
     LlmCapability capability();
-
-    /** 是否启用（默认 true） */
-    boolean enabled();
 
     /** 默认调用参数 */
     Map<String, Object> params();

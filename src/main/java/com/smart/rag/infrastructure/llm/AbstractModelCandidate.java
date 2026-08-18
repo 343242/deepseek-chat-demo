@@ -12,9 +12,8 @@ import java.util.Map;
  * 子类（{@code ChatCandidate}、{@code EmbeddingCandidate}、{@code RerankCandidate}）
  * 添加能力特定字段并覆写对应的 default 方法。
  * <p>
- * <b>为什么用 POJO 而非 record</b>：{@code enabled} 字段需要默认值 {@code true}——
- * YAML 不配置时 Spring Boot 会将 {@code boolean} 初始化为 {@code false}，
- * 与"默认启用"语义矛盾。POJO 可在字段声明处直接赋默认值。
+ * <b>为什么用 POJO 而非 record</b>：保留 getter/setter 供手工装配与可变性
+ * （params 空值兜底等默认值语义在字段声明处直接给出）。
  */
 public abstract sealed class AbstractModelCandidate implements ModelCandidate
     permits ChatCandidate, EmbeddingCandidate, RerankCandidate {
@@ -25,14 +24,12 @@ public abstract sealed class AbstractModelCandidate implements ModelCandidate
     private int priority;
     private LlmCapability capability;
     private Map<String, Object> params = Map.of();
-    private boolean enabled = true;
 
     @Override public String id() { return id; }
     @Override public String provider() { return provider; }
     @Override public String model() { return model; }
     @Override public int priority() { return priority; }
     @Override public LlmCapability capability() { return capability; }
-    @Override public boolean enabled() { return enabled; }
     @Override public Map<String, Object> params() { return params != null ? params : Map.of(); }
 
     public String getId() { return id; }
@@ -47,8 +44,6 @@ public abstract sealed class AbstractModelCandidate implements ModelCandidate
     public void setCapability(LlmCapability capability) { this.capability = capability; }
     public Map<String, Object> getParams() { return params != null ? params : Map.of(); }
     public void setParams(Map<String, Object> params) { this.params = params != null ? params : Map.of(); }
-    public boolean isEnabled() { return enabled; }
-    public void setEnabled(boolean enabled) { this.enabled = enabled; }
 
     /**
      * 校验必填字段是否已设置

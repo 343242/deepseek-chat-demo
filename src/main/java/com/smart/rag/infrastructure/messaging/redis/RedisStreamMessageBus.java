@@ -223,10 +223,8 @@ public class RedisStreamMessageBus implements MessageBus, MessageBusManagement {
             }
         }
 
-        MessageHandler<T> wrappedHandler = properties.idempotent().enabled()
-            ? IdempotentHandler.wrap(handler, topic, businessTemplate,
-                properties.idempotent().ttlSeconds(), metrics)
-            : handler;
+        MessageHandler<T> wrappedHandler = IdempotentHandler.wrap(handler, topic, businessTemplate,
+            properties.idempotent().ttlSeconds(), metrics);
 
         RedisStreamConsumerRunner<T> runner = new RedisStreamConsumerRunner<>(
             topic, group, consumerName, config, payloadType, wrappedHandler,

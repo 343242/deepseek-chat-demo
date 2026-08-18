@@ -33,7 +33,6 @@ public class McpConnectionRecoveryScheduler {
 
     private final McpServerConfigMapper serverMapper;
     private final McpConnectionReconciler reconciler;
-    private final McpResilienceProperties resilienceProperties;
 
     private final ThreadPoolExecutor executor = new ThreadPoolExecutor(
             WORKERS, WORKERS, 60L, TimeUnit.SECONDS,
@@ -46,11 +45,9 @@ public class McpConnectionRecoveryScheduler {
     private volatile long saturatedUntilNanos = 0;
 
     public McpConnectionRecoveryScheduler(McpServerConfigMapper serverMapper,
-                                          McpConnectionReconciler reconciler,
-                                          McpResilienceProperties resilienceProperties) {
+                                          McpConnectionReconciler reconciler) {
         this.serverMapper = serverMapper;
         this.reconciler = reconciler;
-        this.resilienceProperties = resilienceProperties;
     }
 
     /**
@@ -66,9 +63,6 @@ public class McpConnectionRecoveryScheduler {
      * Scan for due rows and submit reconciliation work.
      */
     public void scan() {
-        if (!resilienceProperties.isRecoveryEnabled()) {
-            return;
-        }
         if (System.nanoTime() < saturatedUntilNanos) {
             return;
         }

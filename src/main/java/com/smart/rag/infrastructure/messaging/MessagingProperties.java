@@ -44,7 +44,7 @@ public record MessagingProperties(
             orderedTopics = Collections.emptySet();
         }
         if (idempotent == null) {
-            idempotent = new IdempotentConfig(true, 900);
+            idempotent = new IdempotentConfig(900);
         }
         if (circuitBreaker == null) {
             circuitBreaker = new CircuitBreakerConfig(5, 30000);
@@ -60,9 +60,8 @@ public record MessagingProperties(
         }
     }
 
-    /** Idempotent check configuration */
+    /** Idempotent check configuration（消费幂等恒启用） */
     public record IdempotentConfig(
-        boolean enabled,
         /** Redis key TTL in seconds — covers broker retry window (default 15 min) */
         long ttlSeconds
     ) {
@@ -243,7 +242,6 @@ public record MessagingProperties(
      * </ul>
      */
     public record OutboxConfig(
-        boolean enabled,
         Duration pollInterval,
         int batchSize,
         int maxBatchesPerPoll,
@@ -263,7 +261,7 @@ public record MessagingProperties(
     ) {
         /** 全默认构造（compact 构造器补齐默认值）。 */
         public OutboxConfig() {
-            this(true, null, 0, 0, 0, 0, 0, 0, 0, 0, 0, null, null, null, 0, 0, null);
+            this(null, 0, 0, 0, 0, 0, 0, 0, 0, 0, null, null, null, 0, 0, null);
         }
 
         public OutboxConfig {

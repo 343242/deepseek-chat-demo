@@ -15,18 +15,7 @@ import org.springframework.stereotype.Component;
 @ConfigurationProperties(prefix = "mcp.resilience")
 public class McpResilienceProperties {
 
-    /** Recovery scheduler enabled flag (hotfix: mcp.recovery.enabled=false disables scheduler). */
-    private boolean recoveryEnabled = true;
-
     private CircuitBreakerProperties circuitBreaker = new CircuitBreakerProperties(null, null, null);
-
-    public boolean isRecoveryEnabled() {
-        return recoveryEnabled;
-    }
-
-    public void setRecoveryEnabled(boolean recoveryEnabled) {
-        this.recoveryEnabled = recoveryEnabled;
-    }
 
     /** 三态熔断器参数（默认值由 {@link CircuitBreakerProperties} compact constructor 兜底：5/30s/2）。 */
     public CircuitBreakerProperties getCircuitBreaker() {

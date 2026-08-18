@@ -205,7 +205,7 @@ mybatis-plus:
 
 # === 可观测性 (Observability) ===
 # 端点暴露：仅 health/info/prometheus。metrics 端点不暴露（业务敏感指标只走 prometheus 抓取）
-# K8s 探针：probes.enabled 自动暴露 /health/liveness + /health/readiness
+# K8s 探针：/health/liveness + /health/readiness 的恒暴露已上提到 application.yml（management.endpoint.health.probes）
 # Tracing：保留 micrometer-tracing-bridge-otel 仅做本地日志 traceId 串联（不外发 span）
 #          链路明细走独立 trace_event 表 + AOP 切面（见 infrastructure/trace/）
 management:
@@ -215,8 +215,6 @@ management:
         include: health,info,prometheus
   endpoint:
     health:
-      probes:
-        enabled: true
       show-details: always
   tracing:
     sampling:

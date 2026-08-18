@@ -96,9 +96,6 @@ public class OutboxMessageBus implements MessageBus {
 
     @Override
     public String send(MessageEnvelope<?> message) {
-        if (!config.enabled()) {
-            return delegate.send(message);
-        }
         OutboxEntry entry = insert(message);
         tryImmediate(entry.getId(), message);
         return String.valueOf(entry.getId());
@@ -106,9 +103,6 @@ public class OutboxMessageBus implements MessageBus {
 
     @Override
     public CompletableFuture<String> sendAsync(MessageEnvelope<?> message) {
-        if (!config.enabled()) {
-            return delegate.sendAsync(message);
-        }
         OutboxEntry entry = insert(message);
         if (cbGate.isOpen(message.topic())) {
             // OPEN：行留 relay，future 立即完成（设计 §6.1）

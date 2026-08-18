@@ -28,7 +28,7 @@ public record ResilienceConfig(
     /** Cached default instances — avoids creating new objects on every resolve call */
     private static final RetryConfig DEFAULT_RETRY = new RetryConfig(null, null, null, null);
     private static final CircuitBreakerProperties DEFAULT_CB = new CircuitBreakerProperties(null, null, null);
-    private static final ProbeProperties DEFAULT_PROBE = new ProbeProperties(null, null);
+    private static final ProbeProperties DEFAULT_PROBE = new ProbeProperties(null);
 
     /** 获取重试配置（带按能力覆盖合并） */
     public RetryConfig resolveRetryConfig(LlmCapability capability) {

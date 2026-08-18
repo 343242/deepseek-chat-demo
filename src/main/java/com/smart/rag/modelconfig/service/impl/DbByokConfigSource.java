@@ -83,7 +83,6 @@ public class DbByokConfigSource implements ByokConfigSource {
         candidate.setModel(r.getModelName());
         candidate.setPriority(r.getPriority() != null ? r.getPriority() : 100);
         candidate.setCapability(cap);
-        candidate.setEnabled(true);
         candidate.setSupportsStreaming(Boolean.TRUE.equals(r.getSupportsStreaming()));
         candidate.setSupportsThinking(Boolean.TRUE.equals(r.getSupportsThinking()));
 

@@ -17,7 +17,6 @@ public class CandidateProperties {
     private boolean supportsThinking;
     private boolean supportsStreaming;
     private int dimension;
-    private boolean enabled = true;
     private Map<String, Object> params = Map.of();
 
     public String getId() { return id; }
@@ -41,16 +40,12 @@ public class CandidateProperties {
     public int getDimension() { return dimension; }
     public void setDimension(int dimension) { this.dimension = dimension; }
 
-    public boolean isEnabled() { return enabled; }
-    public void setEnabled(boolean enabled) { this.enabled = enabled; }
-
     public Map<String, Object> getParams() { return params; }
     public void setParams(Map<String, Object> params) { this.params = params; }
 
     @Override
     public String toString() {
         return "CandidateProperties{id='" + id + "', provider='" + provider
-            + "', model='" + model + "', priority=" + priority
-            + ", enabled=" + enabled + '}';
+            + "', model='" + model + "', priority=" + priority + '}';
     }
 }

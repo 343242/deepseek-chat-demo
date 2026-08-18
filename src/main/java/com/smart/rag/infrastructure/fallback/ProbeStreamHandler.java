@@ -34,10 +34,6 @@ public class ProbeStreamHandler {
      * 为流添加首包探测超时
      */
     public <T> Flux<T> wrapWithProbe(String modelId, Flux<T> source) {
-        if (!probeProps.effectiveEnabled()) {
-            return source;
-        }
-
         Duration timeout = Duration.ofMillis(probeProps.effectiveProbeTimeoutMs());
         AtomicBoolean gotFirst = new AtomicBoolean(false);
 

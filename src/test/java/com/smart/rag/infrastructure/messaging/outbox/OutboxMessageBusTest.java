@@ -60,7 +60,7 @@ class OutboxMessageBusTest {
     /** 小队列测试拒绝路径。 */
     private static final MessagingProperties SMALL_QUEUE_PROPS = new MessagingProperties(
         "T_", Duration.ofSeconds(30), null, null, null, null, null,
-        new MessagingProperties.OutboxConfig(true, null, 0, 0, 0, 0, 0,
+        new MessagingProperties.OutboxConfig(null, 0, 0, 0, 0, 0,
             1, 1, 1, 0, null, null, null, 0, 0, null));
 
     @BeforeEach
@@ -187,22 +187,6 @@ class OutboxMessageBusTest {
             return;
         }
         throw new AssertionError("expected OUTBOX_INSERT_FAILED");
-    }
-
-    @Test
-    @DisplayName("enabled=false：透传 delegate（灰度回退）")
-    void disabledPassesThrough() {
-        MessagingProperties disabled = new MessagingProperties("T_", Duration.ofSeconds(30), null, null,
-            null, null, null, new MessagingProperties.OutboxConfig(false, null, 0, 0, 0, 0, 0,
-                0, 0, 0, 0, null, null, null, 0, 0, null));
-        OutboxMessageBus passthrough = new OutboxMessageBus(delegate, outboxMapper, codec, cbGate,
-            disabled, new OutboxMetrics(null));
-        when(delegate.send(any())).thenReturn("delegate-id");
-
-        assertThat(passthrough.send(envelope())).isEqualTo("delegate-id");
-        verify(delegate).send(any());
-        verify(outboxMapper, never()).insert(any(OutboxEntry.class));
-        passthrough.close();
     }
 
     @Test

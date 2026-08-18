@@ -121,7 +121,6 @@ public class LlmClientFactory {
             ModelGroup group = llmConfig.getCapabilityGroup(cap);
             if (group == null) continue;
             for (ModelCandidate candidate : group.toModelCandidates(cap)) {
-                if (!candidate.enabled()) continue;
                 LlmProvider provider = providers.get(candidate.provider());
                 if (provider == null) {
                     log.warn("No provider '{}' registered for candidate '{}', skipping",
@@ -293,11 +292,10 @@ public class LlmClientFactory {
         }
     }
 
-    /** Check whether probe is enabled (null-safe) */
+    /** Check whether probe wrapping is applicable（首包探测恒启用，仅需 handler 与配置就位） */
     private boolean isProbeEnabled(@Nullable ProbeProperties probeProps) {
         return probeStreamHandler != null
-            && probeProps != null
-            && Boolean.TRUE.equals(probeProps.enabled());
+            && probeProps != null;
     }
 
     /** Resolve probe timeout, falling back to default */

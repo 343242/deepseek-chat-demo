@@ -33,10 +33,9 @@ public class ModelGroup {
     public List<CandidateProperties> getCandidates() { return candidates; }
     public void setCandidates(List<CandidateProperties> candidates) { this.candidates = candidates != null ? candidates : List.of(); }
 
-    /** 按优先级排序的候选列表（enabled=true 且 priority 升序） */
+    /** 按优先级排序的候选列表（priority 升序） */
     public List<CandidateProperties> orderedCandidates() {
         return candidates.stream()
-            .filter(CandidateProperties::isEnabled)
             .sorted((a, b) -> Integer.compare(a.getPriority(), b.getPriority()))
             .toList();
     }
@@ -75,7 +74,6 @@ public class ModelGroup {
             c.setModel(raw.getModel());
             c.setPriority(raw.getPriority());
             c.setCapability(capability);
-            c.setEnabled(raw.isEnabled());
             if (raw.getParams() != null) {
                 c.setParams(raw.getParams());
             }

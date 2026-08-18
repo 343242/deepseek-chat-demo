@@ -20,13 +20,18 @@ public class GenerationSseBridge {
         var emitter = new SseEmitter(SSE_TIMEOUT_MILLIS);
         var terminated = new AtomicBoolean(false);
 
-        sink.subscribe(jobId).subscribe(
+        var subscription = sink.subscribe(jobId).subscribe(
                 event -> send(emitter, terminated, event),
                 error -> terminate(emitter, terminated, error),
                 () -> terminate(emitter, terminated, null));
 
-        emitter.onTimeout(() -> terminate(emitter, terminated, null));
-        emitter.onError(e -> terminated.set(true));
+        // 客户端断开 / 超时时释放 Reactor 订阅，防止死 emitter 挂在 replay sink 上直到任务结束
+        emitter.onCompletion(subscription::dispose);
+        emitter.onTimeout(subscription::dispose);
+        emitter.onError(e -> {
+            terminated.set(true);
+            subscription.dispose();
+        });
         return emitter;
     }
 
@@ -79,7 +84,12 @@ public class GenerationSseBridge {
                         emitter.completeWithError(error);
                     }
                 } catch (IOException ignored) {
-                    emitter.completeWithError(error);
+                    // error 为 null 时 completeWithError(null) 本身会抛 IAE，回退普通 complete
+                    if (error != null) {
+                        emitter.completeWithError(error);
+                    } else {
+                        emitter.complete();
+                    }
                 }
             }
         }

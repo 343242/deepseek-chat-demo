@@ -109,7 +109,8 @@ public final class SingleHopSpecificSynthesizer extends QuerySynthesizer {
     @Override
     public GeneratedSample generateSample(Scenario scenario) {
         if (!(scenario instanceof SingleHopScenario single)) {
-            throw new IllegalArgumentException("scenario 类型应为 SingleHopScenario");
+            // sealed 体系外的类型不匹配是编程错误，用 IllegalStateException
+            throw new IllegalStateException("scenario 类型应为 SingleHopScenario");
         }
         var context = single.node().pageContent();
         var prompt = TestsetPrompts.SINGLE_HOP_QA.formatted(

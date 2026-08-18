@@ -46,20 +46,26 @@ public class AnswerRelevanceScorer {
             return -1;
         }
 
-        // Step 2: 计算 embedding 相似度
+        // Step 2: 计算 embedding 相似度（批量 embed：一次请求替代 N 次往返）
         float[] originalEmbedding = embeddingModel.embed(question);
         if (originalEmbedding == null || originalEmbedding.length == 0) {
             log.warn("Failed to embed original question");
             return -1;
         }
 
+        List<float[]> embeddings;
+        try {
+            embeddings = embeddingModel.embed(generatedQuestions);
+        } catch (Exception e) {
+            log.warn("Failed to embed generated questions", e);
+            return -1;
+        }
+
         double totalSimilarity = 0;
         int count = 0;
-
-        for (String genQ : generatedQuestions) {
-            float[] genEmbedding = embeddingModel.embed(genQ);
+        for (float[] genEmbedding : embeddings) {
             if (genEmbedding != null && genEmbedding.length > 0) {
-                totalSimilarity += cosineSimilarity(originalEmbedding, genEmbedding);
+                totalSimilarity += VectorMathUtil.cosine(originalEmbedding, genEmbedding);
                 count++;
             }
         }
@@ -70,19 +76,5 @@ public class AnswerRelevanceScorer {
             return -1;
         }
         return totalSimilarity / count;
-    }
-
-    /**
-     * 余弦相似度
-     */
-    private double cosineSimilarity(float[] a, float[] b) {
-        double dot = 0, normA = 0, normB = 0;
-        for (int i = 0; i < a.length; i++) {
-            dot += a[i] * b[i];
-            normA += a[i] * a[i];
-            normB += b[i] * b[i];
-        }
-        double denominator = Math.sqrt(normA) * Math.sqrt(normB);
-        return denominator == 0 ? 0 : dot / denominator;
     }
 }

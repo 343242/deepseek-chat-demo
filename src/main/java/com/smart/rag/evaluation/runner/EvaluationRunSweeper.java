@@ -73,6 +73,12 @@ public class EvaluationRunSweeper {
                 if (startedAt == null || !startedAt.toInstant().isBefore(cutoff)) {
                     continue;
                 }
+                // 活跃 sink = 任务仍在本进程内执行（可能是 item 超时 × 数据集规模导致的合法长任务），
+                // 超过 staleRunMinutes 也不强杀；只有无现场（JVM 崩溃后重启）的孤儿才回收
+                if (progressSink.isActive(run.id())) {
+                    log.debug("Run {} still active in-process, skip stale reap", run.id());
+                    continue;
+                }
                 // updateRunStatus 在 status=failed 时会自动设置 completed_at = NOW()
                 resultRepo.updateRunStatus(run.id(), EvaluationRunStatus.FAILED,
                         "{\"error\":\"marked stale by sweeper (running over " + staleMinutes + " minutes)\"}");
@@ -104,6 +110,10 @@ public class EvaluationRunSweeper {
             for (var job : genJobRepo.listByStatus("running")) {
                 OffsetDateTime startedAt = job.startedAt();
                 if (startedAt == null || !startedAt.toInstant().isBefore(cutoff)) {
+                    continue;
+                }
+                if (genProgressSink.isActive(job.id())) {
+                    log.debug("Generation job {} still active in-process, skip stale reap", job.id());
                     continue;
                 }
                 reap(job.id(), startedAt, staleMinutes);

@@ -77,19 +77,19 @@ public final class GraphAlgorithms {
      *
      * @param n          目标簇数（≥ 1）
      * @param depthLimit 路径最大深度（≥ 2）
-     * @throws IllegalArgumentException 参数非法或无匹配关系
+     * @throws IllegalStateException 参数非法或无匹配关系（内部前置条件错误，非客户端输入）
      */
     public static List<Set<Node>> findNIndirectClusters(
             KnowledgeGraph kg, Predicate<Relationship> condition, int n, int depthLimit) {
         if (depthLimit < 2) {
-            throw new IllegalArgumentException("depth_limit must be at least 2");
+            throw new IllegalStateException("depth_limit must be at least 2");
         }
         if (n < 1) {
-            throw new IllegalArgumentException("n must be at least 1");
+            throw new IllegalStateException("n must be at least 1");
         }
         var filtered = kg.relationships(condition);
         if (filtered.isEmpty()) {
-            throw new IllegalArgumentException(
+            throw new IllegalStateException(
                     "No relationships match the provided condition. Cannot form clusters.");
         }
 

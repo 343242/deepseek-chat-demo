@@ -38,6 +38,13 @@ public class GenerationProgressSink {
     }
 
     /**
+     * 该 job 是否仍有活跃 sink（任务在本进程内执行中），供 sweeper 排除仍在执行的长任务。
+     */
+    public boolean isActive(long jobId) {
+        return sinks.containsKey(jobId);
+    }
+
+    /**
      * 订阅进度流（不创建）：sink 缺失 = 任务已结束（complete 时移除）或进程重启后无现场，
      * 返回空 Flux 让桥接立即收尾——避免孤儿 sink 挂住 SSE 到超时。
      * 活任务的 sink 由 {@code GenerationJobService.submit} 预创建，此处无需补建。

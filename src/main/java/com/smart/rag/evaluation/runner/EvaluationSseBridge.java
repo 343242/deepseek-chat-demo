@@ -70,6 +70,35 @@ public class EvaluationSseBridge {
         return emitter;
     }
 
+    /**
+     * 已结束 run 的终态直连（镜像 testset 的 GenerationSseBridge.bridgeTerminated）：
+     * run 终态时 sink 已 complete 并移除，subscribe 会兜底创建永不 complete 的 sink
+     * （entry 泄漏 + 连接挂到超时），因此不订阅、直接回放终态事件并立即收尾。
+     */
+    public SseEmitter bridgeTerminated(EvaluationRun run) {
+        SseEmitter emitter = new SseEmitter(0L); // 立即完成，无需超时
+        AtomicBoolean terminated = new AtomicBoolean(false);
+        boolean failed = run.status() == EvaluationRunStatus.FAILED;
+        try {
+            synchronized (emitter) {
+                emitter.send(SseEmitter.event()
+                        .name(failed ? "error" : "done")
+                        .data(Map.of(
+                                "runId", run.id(),
+                                "status", run.status().getValue(),
+                                "message", failed ? "评测运行已结束（失败）" : "评测运行已结束")));
+            }
+            if (failed) {
+                emitter.completeWithError(new IllegalStateException("评测运行已结束（失败）"));
+            } else {
+                emitter.complete();
+            }
+        } catch (IOException | IllegalStateException e) {
+            emitter.completeWithError(e);
+        }
+        return emitter;
+    }
+
     private void sendProgress(SseEmitter emitter, EvaluationProgressEvent event, AtomicBoolean terminated) {
         try {
             synchronized (emitter) {

@@ -1,6 +1,5 @@
 package com.smart.rag.evaluation.testset.synthesizers;
 
-import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smart.rag.evaluation.util.JsonExtractorUtil;
 import com.smart.rag.evaluation.testset.graph.KnowledgeGraph;

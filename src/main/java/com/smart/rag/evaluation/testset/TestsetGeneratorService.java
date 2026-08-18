@@ -7,6 +7,7 @@ import com.smart.rag.evaluation.dataset.EvaluationDataset;
 import com.smart.rag.evaluation.dataset.EvaluationDatasetItem;
 import com.smart.rag.evaluation.testset.graph.KnowledgeGraph;
 import com.smart.rag.evaluation.testset.graph.Node;
+import com.smart.rag.evaluation.testset.graph.RelationshipType;
 import com.smart.rag.evaluation.testset.synthesizers.GeneratedSample;
 import com.smart.rag.evaluation.testset.synthesizers.MultiHopAbstractSynthesizer;
 import com.smart.rag.evaluation.testset.synthesizers.MultiHopSpecificSynthesizer;
@@ -27,7 +28,6 @@ import com.smart.rag.infrastructure.concurrent.TaskScope;
 import com.smart.rag.infrastructure.llm.adapter.RewriteClientResolver;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
@@ -57,6 +57,15 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class TestsetGeneratorService {
 
     private static final Logger log = LoggerFactory.getLogger(TestsetGeneratorService.class);
+
+    /**
+     * 合成器随机种子：固定值保证同输入可复现（对齐 ragas 默认 42 的实验可复现语义）。
+     * 三个合成器共用同一 seed。
+     */
+    private static final long RANDOM_SEED = 42L;
+
+    /** 主题抽取进度的事件频率（每 N 个 chunk 报一次，避免事件风暴） */
+    private static final int THEME_PROGRESS_EVERY = 20;
 
     /** 生成阶段进度回调（供异步任务 SSE 转发）。 */
     public interface ProgressListener {
@@ -122,35 +131,13 @@ public class TestsetGeneratorService {
         var kg = buildKnowledgeGraph(chunks, userId, progress);
 
         // 4. 本地建边：实体重叠 + 向量余弦
-        progress.onProgress("edges", 0, 2, "构建关系边");
-        kg.addRelationships(new EntityOverlapBuilder().build(kg.nodes()));
-        kg.addRelationships(new VectorCosineBuilder(datasetProps.getCosineThreshold())
-                .build(kg.nodes()));
-        progress.onProgress("edges", 2, 2, "实体边 " + kg.relationshipCount(
-                com.smart.rag.evaluation.testset.graph.RelationshipType.ENTITY_OVERLAP)
-                + "，相似边 " + kg.relationshipCount(
-                com.smart.rag.evaluation.testset.graph.RelationshipType.SIMILARITY));
+        addRelationships(kg, progress);
 
-        // 5. 合成器（按数据可用性降级）+ ceil 分配（翻译 calculate_split_values）
+        // 5. 合成器（按数据可用性降级）
         var personas = datasetProps.getPersonas().stream()
                 .map(p -> new Persona(p.getName(), p.getRoleDescription()))
                 .toList();
-        var cheapClient = clientResolver.resolve(props.getGenerationModel());
-        var mainClient = clientResolver.resolve(datasetProps.getSynthesisModel());
-
-        var synthesizers = new ArrayList<QuerySynthesizer>();
-        var single = new SingleHopSpecificSynthesizer(cheapClient, mainClient, objectMapper, 42);
-        var multiSpecific = new MultiHopSpecificSynthesizer(cheapClient, mainClient, objectMapper, 42);
-        var multiAbstract = new MultiHopAbstractSynthesizer(cheapClient, mainClient, objectMapper, 42);
-        if (multiAbstract.isAvailable(kg)) {
-            synthesizers.add(multiAbstract);
-        }
-        if (multiSpecific.isAvailable(kg)) {
-            synthesizers.add(multiSpecific);
-        }
-        if (single.isAvailable(kg)) {
-            synthesizers.add(single);
-        }
+        var synthesizers = buildSynthesizers(kg);
         if (synthesizers.isEmpty()) {
             log.warn("No synthesizer available: kg has neither entities nor relationships");
             datasetRepo.updateDatasetItemCount(datasetId, 0);
@@ -160,12 +147,63 @@ public class TestsetGeneratorService {
         log.info("Synthesizers available: {}", availableNames);
         progress.onProgress("scenarios", 0, 1, "合成器: " + String.join(", ", availableNames));
 
-        int target = datasetProps.getSize();
+        // 6-7. 场景生成 + 样本合成（失败贡献空）
+        var pending = generateScenarios(synthesizers, kg, personas, progress);
+        var samples = synthesizeSamples(pending, progress);
+
+        // 8. 后处理与落库
+        var items = postProcess(samples, datasetId, name, progress);
+        if (!items.isEmpty()) {
+            items = new ArrayList<>(datasetRepo.insertItems(items));
+            datasetRepo.updateDatasetItemCount(datasetId, items.size());
+        }
+        return withItems(dataset, items);
+    }
+
+    private void addRelationships(KnowledgeGraph kg, ProgressListener progress) {
+        var datasetProps = props.getDataset();
+        progress.onProgress("edges", 0, 2, "构建关系边");
+        kg.addRelationships(new EntityOverlapBuilder().build(kg.nodes()));
+        kg.addRelationships(new VectorCosineBuilder(datasetProps.getCosineThreshold())
+                .build(kg.nodes()));
+        progress.onProgress("edges", 2, 2, "实体边 " + kg.relationshipCount(
+                RelationshipType.ENTITY_OVERLAP)
+                + "，相似边 " + kg.relationshipCount(RelationshipType.SIMILARITY));
+    }
+
+    private List<QuerySynthesizer> buildSynthesizers(KnowledgeGraph kg) {
+        var cheapClient = clientResolver.resolve(props.getGenerationModel());
+        var mainClient = clientResolver.resolve(props.getDataset().getSynthesisModel());
+
+        var synthesizers = new ArrayList<QuerySynthesizer>();
+        var multiAbstract = new MultiHopAbstractSynthesizer(cheapClient, mainClient, objectMapper, RANDOM_SEED);
+        var multiSpecific = new MultiHopSpecificSynthesizer(cheapClient, mainClient, objectMapper, RANDOM_SEED);
+        var single = new SingleHopSpecificSynthesizer(cheapClient, mainClient, objectMapper, RANDOM_SEED);
+        if (multiAbstract.isAvailable(kg)) {
+            synthesizers.add(multiAbstract);
+        }
+        if (multiSpecific.isAvailable(kg)) {
+            synthesizers.add(multiSpecific);
+        }
+        if (single.isAvailable(kg)) {
+            synthesizers.add(single);
+        }
+        return synthesizers;
+    }
+
+    /** 场景 + 其所属合成器（fork 返回值自带配对，不依赖 join 结果的下标与提交顺序一致） */
+    private record PendingScenario(QuerySynthesizer synthesizer, Scenario scenario) {
+    }
+
+    private List<PendingScenario> generateScenarios(List<QuerySynthesizer> synthesizers,
+                                                    KnowledgeGraph kg,
+                                                    List<Persona> personas,
+                                                    ProgressListener progress) {
+        record ScenariosOf(QuerySynthesizer synthesizer, List<Scenario> scenarios) {
+        }
+        int target = props.getDataset().getSize();
         var splits = splitValues(target, synthesizers.size());
 
-        // 6. 场景生成（逐合成器 fork，失败贡献空）
-        record PendingScenario(QuerySynthesizer synthesizer, Scenario scenario) {
-        }
         List<PendingScenario> pending = new ArrayList<>();
         try (TaskScope scope = openScope("testset-scenarios")) {
             for (int i = 0; i < synthesizers.size(); i++) {
@@ -173,35 +211,37 @@ public class TestsetGeneratorService {
                 int n = splits[i];
                 scope.fork("scenarios-" + synthesizer.name(), () -> {
                     try {
-                        return synthesizer.generateScenarios(n, kg, personas);
+                        return new ScenariosOf(synthesizer, synthesizer.generateScenarios(n, kg, personas));
                     } catch (Exception e) {
-                        log.warn("场景生成失败，跳过 {}: {}", synthesizer.name(), e.getMessage());
-                        return List.<Scenario>of();
+                        log.warn("场景生成失败，跳过 {}", synthesizer.name(), e);
+                        return new ScenariosOf(synthesizer, List.of());
                     }
                 });
             }
             @SuppressWarnings("unchecked")
-            var results = (List<List<Scenario>>) (List<?>)
-                    scope.join(ScopeJoiner.successfulResults(List.class));
-            for (int i = 0; i < results.size(); i++) {
-                for (var scenario : results.get(i)) {
-                    pending.add(new PendingScenario(synthesizers.get(i), scenario));
+            var results = (List<ScenariosOf>) (List<?>)
+                    scope.join(ScopeJoiner.successfulResults(Object.class));
+            for (var r : results) {
+                for (var scenario : r.scenarios()) {
+                    pending.add(new PendingScenario(r.synthesizer(), scenario));
                 }
             }
         }
         progress.onProgress("scenarios", pending.size(), pending.size(),
                 "场景 " + pending.size() + " 个");
+        return pending;
+    }
 
-        // 7. 样本合成（逐场景 fork，失败贡献空）
+    private List<GeneratedSample> synthesizeSamples(List<PendingScenario> pending,
+                                                    ProgressListener progress) {
         List<GeneratedSample> samples = new ArrayList<>();
         try (TaskScope scope = openScope("testset-synthesize")) {
-            int total = pending.size();
             for (var p : pending) {
-                scope.fork("sample-" + p.scenario().toString(), () -> {
+                scope.fork("sample-" + p.synthesizer().name(), () -> {
                     try {
                         return p.synthesizer().generateSample(p.scenario());
                     } catch (Exception e) {
-                        log.warn("样本合成失败，跳过: {}", e.getMessage());
+                        log.warn("样本合成失败，跳过: {}", e);
                         return null;
                     }
                 });
@@ -209,11 +249,16 @@ public class TestsetGeneratorService {
             @SuppressWarnings("unchecked")
             var results = (List<GeneratedSample>) (List<?>)
                     scope.join(ScopeJoiner.successfulResults(Object.class));
-            progress.onProgress("synthesis", total, total, "样本合成完成");
+            progress.onProgress("synthesis", pending.size(), pending.size(), "样本合成完成");
             results.stream().filter(Objects::nonNull).forEach(samples::add);
         }
+        return samples;
+    }
 
-        // 8. 后处理：空条目过滤 + 问题去重（对应 Python 参照实现）
+    /** 空条目过滤 + 问题去重（对应 Python 参照实现）。返回带 seq 的待落库条目。 */
+    private List<EvaluationDatasetItem> postProcess(List<GeneratedSample> samples,
+                                                    long datasetId, String name,
+                                                    ProgressListener progress) {
         var seen = new LinkedHashSet<String>();
         var items = new ArrayList<EvaluationDatasetItem>();
         int dropped = 0;
@@ -236,12 +281,7 @@ public class TestsetGeneratorService {
         log.info("Generated dataset '{}': {} items ({} dropped)", name, items.size(), dropped);
         progress.onProgress("done", items.size(), items.size(),
                 "有效 " + items.size() + " 条，丢弃 " + dropped + " 条");
-
-        if (!items.isEmpty()) {
-            items = new ArrayList<>(datasetRepo.insertItems(items));
-            datasetRepo.updateDatasetItemCount(datasetId, items.size());
-        }
-        return withItems(dataset, items);
+        return items;
     }
 
     private static EvaluationDataset withItems(EvaluationDataset dataset,
@@ -256,10 +296,17 @@ public class TestsetGeneratorService {
         var kg = new KnowledgeGraph();
         for (var chunk : chunks) {
             var id = String.valueOf(chunk.get("id"));
-            var content = (String) chunk.get("content");
+            var content = chunk.get("content") == null ? "" : String.valueOf(chunk.get("content"));
             var metadata = parseMetadata(chunk.get("metadata"));
-            var embedding = chunk.get("embedding") == null
-                    ? null : PgVectorParser.parse(String.valueOf(chunk.get("embedding")));
+            // 单 chunk 的 embedding 文本损坏只降级为无向量（不参与相似边），不废掉整批
+            double[] embedding = null;
+            if (chunk.get("embedding") != null) {
+                try {
+                    embedding = PgVectorParser.parse(String.valueOf(chunk.get("embedding")));
+                } catch (Exception e) {
+                    log.warn("Embedding 解析失败，chunk {} 降级为无向量", id, e);
+                }
+            }
             kg.addNode(new Node(id, content, metadata, embedding));
         }
         // 实体：唯一来源（无兜底；chunk 无实体行 → 不参与实体边）
@@ -282,7 +329,7 @@ public class TestsetGeneratorService {
                     try {
                         return Map.<String, List<String>>entry(node.id(), extractor.extract(node));
                     } catch (Exception e) {
-                        log.warn("Themes 抽取失败: chunk={}, err={}", node.id(), e.getMessage());
+                        log.warn("Themes 抽取失败: chunk={}", node.id(), e);
                         return Map.<String, List<String>>entry(node.id(), List.of());
                     }
                 });
@@ -293,7 +340,7 @@ public class TestsetGeneratorService {
             results.forEach(e -> {
                 themesByNode.put(e.getKey(), e.getValue());
                 int current = done.incrementAndGet();
-                if (current % 20 == 0 || current == total) {
+                if (current % THEME_PROGRESS_EVERY == 0 || current == total) {
                     progress.onProgress("kg_build", current, total, "主题抽取 " + current + "/" + total);
                 }
             });

@@ -4,6 +4,9 @@ import com.smart.rag.evaluation.testset.graph.Node;
 import com.smart.rag.evaluation.testset.graph.Relationship;
 import com.smart.rag.evaluation.testset.graph.RelationshipType;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -17,6 +20,8 @@ import java.util.Map;
  * </p>
  */
 public final class VectorCosineBuilder {
+
+    private static final Logger log = LoggerFactory.getLogger(VectorCosineBuilder.class);
 
     private final double threshold;
 
@@ -47,8 +52,9 @@ public final class VectorCosineBuilder {
     /** 标准余弦相似度；零向量安全（返回 0）。 */
     static double cosine(double[] a, double[] b) {
         if (a.length != b.length) {
-            throw new IllegalArgumentException(
-                    "向量维度不一致: " + a.length + " vs " + b.length);
+            // 混合维度向量库属内部数据错误（非客户端输入），降级跳过该对而非废掉整批
+            log.warn("向量维度不一致，跳过该节点对: {} vs {}", a.length, b.length);
+            return 0.0;
         }
         double dot = 0.0;
         double normA = 0.0;

@@ -139,6 +139,11 @@ public class DatasetController {
             return ResponseEntity.status(404)
                     .body(Map.of("error", "Item not found: " + itemId));
         }
+        // 归属校验：datasetId 路径参数不是装饰——防止跨数据集改写他集 item
+        if (existing.get().datasetId() == null || existing.get().datasetId() != datasetId) {
+            return ResponseEntity.status(404)
+                    .body(Map.of("error", "Item " + itemId + " does not belong to dataset " + datasetId));
+        }
 
         EvaluationDatasetItem item = existing.get();
         EvaluationDatasetItem updated = new EvaluationDatasetItem(

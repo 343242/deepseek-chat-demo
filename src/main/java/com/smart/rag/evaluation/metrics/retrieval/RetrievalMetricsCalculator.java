@@ -31,6 +31,10 @@ public class RetrievalMetricsCalculator {
         if (retrievedIds == null || retrievedIds.isEmpty()) {
             return new RetrievalMetrics(0, 0, 0, 0, 0);
         }
+        if (k <= 0) {
+            // 非法截断位（配置错误或调用方传 0/负数）：全 0，而非 subList(0, 负数) 抛 IndexOutOfBoundsException
+            return new RetrievalMetrics(0, 0, 0, 0, 0);
+        }
 
         List<String> topK = retrievedIds.subList(0, Math.min(k, retrievedIds.size()));
 
@@ -85,7 +89,6 @@ public class RetrievalMetricsCalculator {
      */
     private double computeNDCG(List<String> retrievedIds, Set<String> relevantIds, int k) {
         List<String> topK = retrievedIds.subList(0, Math.min(k, retrievedIds.size()));
-
         // 计算 DCG
         double dcg = 0;
         for (int i = 0; i < topK.size(); i++) {

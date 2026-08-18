@@ -52,16 +52,33 @@ public final class EntityOverlapBuilder {
     }
 
     private Relationship overlap(Node x, Node y, Map<String, Integer> noisy) {
+        // 预过滤噪声实体，后续剪枝才能以剩余总比较数为上界
+        var xs = new ArrayList<String>();
+        for (String ex : x.entities()) {
+            if (!noisy.containsKey(ex)) {
+                xs.add(ex);
+            }
+        }
+        var ys = new ArrayList<String>();
+        for (String ey : y.entities()) {
+            if (!noisy.containsKey(ey)) {
+                ys.add(ey);
+            }
+        }
+        int total = xs.size() * ys.size();
+        if (total == 0) {
+            return null;
+        }
         int matches = 0;
         var matchedPairs = new ArrayList<Map.Entry<String, String>>();
         int comparisons = 0;
-        for (String ex : x.entities()) {
-            if (noisy.containsKey(ex)) {
-                continue;
-            }
-            for (String ey : y.entities()) {
-                if (noisy.containsKey(ey)) {
-                    continue;
+        for (String ex : xs) {
+            for (String ey : ys) {
+                // 剪枝：即使剩余比较全部命中也达不到 OVERLAP_THRESHOLD，提前放弃该节点对
+                // （O(N²) 节点对 × O(实体²) 的主要放大场景是"完全不相关"的对，此处命中即跳过）
+                int remaining = total - comparisons;
+                if ((double) (matches + remaining) / total < OVERLAP_THRESHOLD) {
+                    return null;
                 }
                 comparisons++;
                 if (jaroWinkler(ex.toLowerCase(), ey.toLowerCase()) >= DISTANCE_THRESHOLD) {

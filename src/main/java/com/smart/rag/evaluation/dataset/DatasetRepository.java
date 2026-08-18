@@ -12,6 +12,7 @@ import java.sql.PreparedStatement;
 import java.time.OffsetDateTime;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 
@@ -53,8 +54,10 @@ public class DatasetRepository {
         List<String> tags = null;
         var tagsArray = rs.getArray("tags");
         if (tagsArray != null) {
-            String[] tagArr = (String[]) tagsArray.getArray();
-            tags = List.of(tagArr);
+            // PG 数组可能含 null 元素（List.of 会 NPE），过滤掉
+            tags = java.util.Arrays.stream((String[]) tagsArray.getArray())
+                    .filter(Objects::nonNull)
+                    .toList();
         }
 
         return new EvaluationDatasetItem(
@@ -127,27 +130,12 @@ public class DatasetRepository {
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     RETURNING id, dataset_id, question, ground_truth_answer, relevant_chunk_ids, relevant_content, tags, status, seq
                     """)) {
-                ps.setLong(1, item.datasetId());
-                ps.setString(2, item.question());
-                ps.setString(3, item.groundTruthAnswer());
-                if (item.relevantChunkIds() != null && !item.relevantChunkIds().isEmpty()) {
-                    ps.setArray(4, conn.createArrayOf("TEXT", item.relevantChunkIds().toArray()));
-                } else {
-                    ps.setNull(4, java.sql.Types.ARRAY);
-                }
-                ps.setString(5, item.relevantContent());
-                if (item.tags() != null && !item.tags().isEmpty()) {
-                    ps.setArray(6, conn.createArrayOf("VARCHAR", item.tags().toArray()));
-                } else {
-                    ps.setNull(6, java.sql.Types.ARRAY);
-                }
-                ps.setString(7, item.status().getValue());
-                ps.setInt(8, item.seq());
-
+                bindInsertParams(ps, conn, item);
                 try (var rs = ps.executeQuery()) {
                     if (rs.next()) {
                         return itemRowMapper.mapRow(rs, 0);
                     }
+                    log.warn("insertItem RETURNING returned no row for datasetId={}", item.datasetId());
                 }
             }
             return item;
@@ -162,35 +150,46 @@ public class DatasetRepository {
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     RETURNING id, dataset_id, question, ground_truth_answer, relevant_chunk_ids, relevant_content, tags, status, seq
                     """)) {
-                for (EvaluationDatasetItem item : items) {
-                    ps.setLong(1, item.datasetId());
-                    ps.setString(2, item.question());
-                    ps.setString(3, item.groundTruthAnswer());
-                    if (item.relevantChunkIds() != null && !item.relevantChunkIds().isEmpty()) {
-                        ps.setArray(4, conn.createArrayOf("TEXT", item.relevantChunkIds().toArray()));
-                    } else {
-                        ps.setNull(4, java.sql.Types.ARRAY);
-                    }
-                    ps.setString(5, item.relevantContent());
-                    if (item.tags() != null && !item.tags().isEmpty()) {
-                        ps.setArray(6, conn.createArrayOf("VARCHAR", item.tags().toArray()));
-                    } else {
-                        ps.setNull(6, java.sql.Types.ARRAY);
-                    }
-                    ps.setString(7, item.status().getValue());
-                    ps.setInt(8, item.seq());
-
+                // 按下标回填：record 按内容 equals，indexOf 在重复内容时会命中第一条导致回填丢失
+                for (int i = 0; i < items.size(); i++) {
+                    bindInsertParams(ps, conn, items.get(i));
                     try (var rs = ps.executeQuery()) {
                         if (rs.next()) {
-                            var inserted = itemRowMapper.mapRow(rs, 0);
-                            // update in-place in list for caller
-                            items.set(items.indexOf(item), inserted);
+                            items.set(i, itemRowMapper.mapRow(rs, 0));
+                        } else {
+                            log.warn("insertItems RETURNING returned no row at index {} (datasetId={})",
+                                    i, items.get(i).datasetId());
                         }
                     }
                 }
             }
             return items;
         });
+    }
+
+    /**
+     * 绑定 INSERT 的 8 个参数（relevant_chunk_ids/tags 的数组/null 双分支）。
+     * insertItem 与 insertItems 共用，避免同一段绑定逻辑复制两份。
+     */
+    private void bindInsertParams(PreparedStatement ps, Connection conn,
+                                  EvaluationDatasetItem item) throws java.sql.SQLException {
+        ps.setLong(1, item.datasetId());
+        ps.setString(2, item.question());
+        ps.setString(3, item.groundTruthAnswer());
+        setTextArrayOrNull(ps, conn, 4, "TEXT", item.relevantChunkIds());
+        ps.setString(5, item.relevantContent());
+        setTextArrayOrNull(ps, conn, 6, "VARCHAR", item.tags());
+        ps.setString(7, item.status().getValue());
+        ps.setInt(8, item.seq());
+    }
+
+    private static void setTextArrayOrNull(PreparedStatement ps, Connection conn, int index,
+                                           String sqlType, java.util.Collection<String> values) throws java.sql.SQLException {
+        if (values != null && !values.isEmpty()) {
+            ps.setArray(index, conn.createArrayOf(sqlType, values.toArray()));
+        } else {
+            ps.setNull(index, java.sql.Types.ARRAY);
+        }
     }
 
     public List<EvaluationDatasetItem> listItemsByDatasetId(long datasetId) {
@@ -222,17 +221,9 @@ public class DatasetRepository {
                     """)) {
                 ps.setString(1, item.question());
                 ps.setString(2, item.groundTruthAnswer());
-                if (item.relevantChunkIds() != null && !item.relevantChunkIds().isEmpty()) {
-                    ps.setArray(3, conn.createArrayOf("TEXT", item.relevantChunkIds().toArray()));
-                } else {
-                    ps.setNull(3, java.sql.Types.ARRAY);
-                }
+                setTextArrayOrNull(ps, conn, 3, "TEXT", item.relevantChunkIds());
                 ps.setString(4, item.relevantContent());
-                if (item.tags() != null && !item.tags().isEmpty()) {
-                    ps.setArray(5, conn.createArrayOf("VARCHAR", item.tags().toArray()));
-                } else {
-                    ps.setNull(5, java.sql.Types.ARRAY);
-                }
+                setTextArrayOrNull(ps, conn, 5, "VARCHAR", item.tags());
                 ps.setString(6, item.status().getValue());
                 ps.setLong(7, item.id());
                 ps.executeUpdate();

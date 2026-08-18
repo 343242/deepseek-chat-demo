@@ -11,7 +11,8 @@ import java.util.regex.Pattern;
  */
 public final class JsonExtractorUtil {
 
-    private static final Pattern MARKDOWN_JSON = Pattern.compile("```json\\s*\\n([\\s\\S]*?)\\n\\s*```");
+    /** ```json / ``` 代码块均可，且不要求标签后换行（```` ```json{...}```` 同行写法也能匹配） */
+    private static final Pattern MARKDOWN_JSON = Pattern.compile("```json?\\s*([\\s\\S]*?)```");
 
     private JsonExtractorUtil() {}
 

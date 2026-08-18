@@ -1,6 +1,5 @@
 package com.smart.rag.evaluation.testset.synthesizers;
 
-import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smart.rag.evaluation.testset.graph.GraphAlgorithms;
 import com.smart.rag.evaluation.testset.graph.KnowledgeGraph;
@@ -41,7 +40,7 @@ public final class MultiHopAbstractSynthesizer extends QuerySynthesizer {
             GraphAlgorithms.findNIndirectClusters(kg,
                     rel -> rel.type() == RelationshipType.SIMILARITY, 1, DEPTH_LIMIT);
             return true;
-        } catch (IllegalArgumentException e) {
+        } catch (IllegalStateException e) {
             return false;
         }
     }
@@ -124,7 +123,8 @@ public final class MultiHopAbstractSynthesizer extends QuerySynthesizer {
     @Override
     public GeneratedSample generateSample(Scenario scenario) {
         if (!(scenario instanceof MultiHopScenario multi)) {
-            throw new IllegalArgumentException("scenario 类型应为 MultiHopScenario");
+            // sealed 体系外的类型不匹配是编程错误，用 IllegalStateException
+            throw new IllegalStateException("scenario 类型应为 MultiHopScenario");
         }
         var contexts = makeContexts(multi.nodes(), Node::pageContent);
         var prompt = TestsetPrompts.MULTI_HOP_QA.formatted(

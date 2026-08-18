@@ -73,23 +73,8 @@ public class NoiseSensitivityScorer {
     private boolean judgeChunkVerdicts(String question, String answer,
                                        List<Document> contextDocs,
                                        boolean[] relevant, boolean[] faithful) {
-        var sb = new StringBuilder();
-        for (int i = 0; i < contextDocs.size(); i++) {
-            sb.append("片段").append(i + 1).append("：\n")
-                    .append(contextDocs.get(i).getText()).append("\n\n");
-        }
-        var prompt = """
-                给定问题、生成的回答与一组检索片段。逐片段判断两项：
-                - useful：该片段对回答该问题是否有用
-                - supports_answer：仅凭该片段能否支撑生成的回答（回答内容可由该片段推导）
-
-                问题：%s
-                生成的回答：%s
-
-                %s
-                输出 JSON（不要输出其他内容，每个片段一项，按顺序）：
-                {"chunks": [{"index": 1, "useful": true, "supports_answer": false}, ...]}
-                """.formatted(question, answer, sb);
+        var sb = ContextTextBuilder.build(contextDocs);
+        var prompt = GenerationPrompts.CHUNK_DUAL_VERDICT.formatted(question, answer, sb);
         var verdict = judge.evaluate(prompt);
         if (!verdict.success()) {
             log.warn("NoiseSensitivity 片段判决失败: {}", verdict.errorMessage());
@@ -113,7 +98,7 @@ public class NoiseSensitivityScorer {
             }
             return true;
         } catch (Exception e) {
-            log.warn("NoiseSensitivity 解析失败: {}", e.getMessage());
+            log.warn("NoiseSensitivity 解析失败: {}", e);
             return false;
         }
     }
@@ -123,16 +108,7 @@ public class NoiseSensitivityScorer {
         if (groundTruthAnswer == null || groundTruthAnswer.isBlank()) {
             return null;
         }
-        var prompt = """
-                给定生成的回答与标准答案。判断：生成的回答是否完整覆盖了标准答案的全部要点，
-                且没有与标准答案矛盾的内容。满足则 correct=true。
-
-                生成的回答：%s
-                标准答案：%s
-
-                输出 JSON（不要输出其他内容）：
-                {"correct": true, "reason": "..."}
-                """.formatted(answer, groundTruthAnswer);
+        var prompt = GenerationPrompts.ANSWER_CORRECTNESS_CHECK.formatted(answer, groundTruthAnswer);
         var verdict = judge.evaluate(prompt);
         if (!verdict.success()) {
             log.warn("NoiseSensitivity 正确性判决失败: {}", verdict.errorMessage());
@@ -145,7 +121,7 @@ public class NoiseSensitivityScorer {
                     });
             return !Boolean.TRUE.equals(parsed.get("correct"));
         } catch (Exception e) {
-            log.warn("NoiseSensitivity 正确性解析失败: {}", e.getMessage());
+            log.warn("NoiseSensitivity 正确性解析失败: {}", e);
             return null;
         }
     }

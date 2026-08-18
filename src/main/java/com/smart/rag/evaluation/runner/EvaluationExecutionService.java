@@ -10,6 +10,8 @@ import com.smart.rag.infrastructure.concurrent.ScopeOptions;
 import com.smart.rag.infrastructure.concurrent.ScopePolicy;
 import com.smart.rag.infrastructure.concurrent.ScopedTasks;
 import com.smart.rag.infrastructure.concurrent.TaskScope;
+import com.smart.rag.infrastructure.exception.ClientException;
+import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -111,6 +113,9 @@ public class EvaluationExecutionService {
         evalExecutor.submit(() -> {
             long runId = run.id();
             long acquireTimeoutSeconds = evalProps.getRunner().getAcquireTimeoutSeconds();
+            // 只有成功 acquire 才置位，finally 按位释放——否则超时拒绝路径会 release 未获取的许可，
+            // 逐步击穿 max-concurrent-runs 背压
+            boolean acquired = false;
             try {
                 if (!evalRunSemaphore.tryAcquire(acquireTimeoutSeconds, TimeUnit.SECONDS)) {
                     log.warn("Run {} rejected: concurrency limit (acquire timeout {}s)", runId, acquireTimeoutSeconds);
@@ -118,6 +123,7 @@ public class EvaluationExecutionService {
                             "{\"error\":\"concurrency limit exceeded, try again later\"}");
                     return;
                 }
+                acquired = true;
                 executeRun(run, items, config);
             } catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
@@ -129,7 +135,9 @@ public class EvaluationExecutionService {
                 resultRepo.updateRunStatus(runId, EvaluationRunStatus.FAILED,
                         "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
             } finally {
-                evalRunSemaphore.release();
+                if (acquired) {
+                    evalRunSemaphore.release();
+                }
                 progressSink.complete(runId);
             }
         });
@@ -233,6 +241,60 @@ public class EvaluationExecutionService {
         resultRepo.updateRunStatus(run.id(), status, summaryJson);
 
         return new RunSummary(run.id(), status, summary);
+    }
+
+    /**
+     * 根据请求覆盖项构建评估配置。
+     * <p>
+     * 类型校验集中在此处：JSON 反序列化后 configOverride 是弱类型 Map，类型不符抛
+     * {@link ClientException}（HTTP 400），而非裸强转的 ClassCastException（500）。
+     * </p>
+     */
+    public EvalConfig buildEvalConfig(Map<String, Object> override) {
+        EvalConfig config = new EvalConfig();
+        config.setVectorTopK(evalProps.getRunner().getDefaultK());
+        config.setBm25TopK(evalProps.getRunner().getDefaultK());
+
+        if (override == null) {
+            return config;
+        }
+        if (override.containsKey("topK")) {
+            int topK = requireInt(override.get("topK"), "topK");
+            config.setVectorTopK(topK);
+            config.setBm25TopK(topK);
+            config.setTopK(topK);
+        }
+        config.setRerankEnabled(requireBool(override, "rerankEnabled"));
+        config.setMmrEnabled(requireBool(override, "mmrEnabled"));
+        config.setQueryRewriteEnabled(requireBool(override, "queryRewriteEnabled"));
+        config.setGenerationEnabled(requireBool(override, "generationEnabled"));
+        config.setParentChildEnabled(requireBool(override, "parentChildEnabled"));
+        if (override.containsKey("testUserId")) {
+            Object v = override.get("testUserId");
+            if (!(v instanceof Number n)) {
+                throw new ClientException(ClientErrorCode.BAD_REQUEST, "testUserId 必须是数字");
+            }
+            config.setTestUserId(n.longValue());
+        }
+        return config;
+    }
+
+    private static int requireInt(Object value, String field) {
+        if (!(value instanceof Number n)) {
+            throw new ClientException(ClientErrorCode.BAD_REQUEST, field + " 必须是数字");
+        }
+        return n.intValue();
+    }
+
+    private static boolean requireBool(Map<String, Object> override, String field) {
+        if (!override.containsKey(field)) {
+            return true; // 未覆盖时保持默认开启
+        }
+        Object v = override.get(field);
+        if (!(v instanceof Boolean b)) {
+            throw new ClientException(ClientErrorCode.BAD_REQUEST, field + " 必须是布尔值");
+        }
+        return b;
     }
 
     /**

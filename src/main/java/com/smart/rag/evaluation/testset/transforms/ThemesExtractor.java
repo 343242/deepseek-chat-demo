@@ -1,6 +1,5 @@
 package com.smart.rag.evaluation.testset.transforms;
 
-import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smart.rag.evaluation.testset.graph.Node;
 import com.smart.rag.evaluation.util.JsonExtractorUtil;
@@ -35,6 +34,9 @@ public class ThemesExtractor {
             {"themes": ["主题1", "主题2"]}
             """;
 
+    /** 输入截断上限：ragas 输入模型带 max_num 约束且分块上限 32k token；chunk 来自向量库已远小于此，仅防御超长输入。 */
+    private static final int MAX_INPUT_LENGTH = 8000;
+
     private final ChatClient chatClient;
     private final ObjectMapper objectMapper;
 
@@ -64,13 +66,13 @@ public class ThemesExtractor {
             });
             return themes.stream().distinct().toList();
         } catch (Exception e) {
-            log.warn("Themes 抽取解析失败: chunk={}, err={}", node.id(), e.getMessage());
+            log.warn("Themes 抽取解析失败: chunk={}", node.id(), e);
             return List.of();
         }
     }
 
     /** ragas 输入模型带 max_num 约束且分块上限 32k token；chunk 来自向量库已远小于此，仅截断防御超长输入。 */
     private static String truncate(String content) {
-        return content.length() <= 8000 ? content : content.substring(0, 8000);
+        return content.length() <= MAX_INPUT_LENGTH ? content : content.substring(0, MAX_INPUT_LENGTH);
     }
 }

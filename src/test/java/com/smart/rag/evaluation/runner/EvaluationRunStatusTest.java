@@ -45,11 +45,10 @@ class EvaluationRunStatusTest {
         }
 
         @Test
-        @DisplayName("非法值抛异常")
+        @DisplayName("非法值降级为 PENDING（RowMapper 一条脏数据不放倒列表查询）")
         void illegalValue() {
-            assertThatThrownBy(() -> EvaluationRunStatus.fromValue("unknown"))
-                    .isInstanceOf(IllegalStateException.class)
-                    .hasMessageContaining("unknown");
+            assertThat(EvaluationRunStatus.fromValue("unknown"))
+                    .isEqualTo(EvaluationRunStatus.PENDING);
         }
     }
 

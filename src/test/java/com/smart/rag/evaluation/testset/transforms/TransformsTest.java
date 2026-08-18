@@ -137,7 +137,7 @@ class TransformsTest {
         }
 
         @Test
-        @DisplayName("过阈建边、不过阈不建、缺向量跳过、维度不一致抛异常")
+        @DisplayName("过阈建边、不过阈不建、缺向量跳过、维度不一致降级 0")
         void buildsSimilarityRelationship() {
             var a = node("a", new double[]{1.0, 0.0});
             var b = node("b", new double[]{0.9, 0.1});
@@ -154,9 +154,9 @@ class TransformsTest {
             assertThat(rel.bidirectional()).isTrue();
             assertThat(rel.weight()).isCloseTo(0.994, org.assertj.core.data.Offset.offset(0.01));
 
-            assertThatThrownBy(() -> new VectorCosineBuilder(0.7).cosine(
-                    new double[]{1.0}, new double[]{1.0, 2.0}))
-                    .isInstanceOf(IllegalArgumentException.class);
+            // 维度不一致降级为 0（warn + 跳过），单对坏向量不废掉整批
+            assertThat(new VectorCosineBuilder(0.7).cosine(
+                    new double[]{1.0}, new double[]{1.0, 2.0})).isEqualTo(0.0);
         }
 
         @Test

@@ -17,13 +17,16 @@ import java.util.Map;
  * <p>
  * 衡量检索到的上下文对回答问题的有用程度。
  * LLM-as-Judge + Few-Shot 示例对每个片段打 1-5 分有用度，
- * 本地计算 usefulness≥3 的片段占比作为最终分数（范围 0-1）。
+ * 本地计算 usefulness≥{@value #USEFULNESS_THRESHOLD} 的片段占比作为最终分数（范围 0-1）。
  * </p>
  */
 @Component
 public class ContextRelevanceScorer {
 
     private static final Logger log = LoggerFactory.getLogger(ContextRelevanceScorer.class);
+
+    /** 片段有用度判定阈值：评分 ≥ 3 记为有用（部分相关以上） */
+    static final int USEFULNESS_THRESHOLD = 3;
 
     private final LlmJudge judge;
     private final ObjectMapper objectMapper;
@@ -36,78 +39,52 @@ public class ContextRelevanceScorer {
     /**
      * 计算上下文相关性
      *
-     * @param question       用户问题
-     * @param contextDocs    检索到的文档片段
+     * @param question    用户问题
+     * @param contextDocs 检索到的文档片段
      * @return 上下文相关性分数（0-1），Judge 失败返回 -1
      */
     public double score(String question, List<Document> contextDocs) {
         if (contextDocs == null || contextDocs.isEmpty()) return 0;
 
-        StringBuilder chunksBuilder = new StringBuilder();
-        for (int i = 0; i < contextDocs.size(); i++) {
-            chunksBuilder.append("片段").append(i + 1).append("：\n");
-            chunksBuilder.append(contextDocs.get(i).getText()).append("\n\n");
-        }
-
-        String prompt = """
-                给定以下用户问题和检索到的文档片段，评估每个片段对回答问题的有用程度。
-
-                示例：
-                问题：什么是 RAG？
-                片段1："RAG（Retrieval-Augmented Generation）是一种结合检索和生成的 AI 技术。"
-                → usefulness: 5（直接包含答案）
-                片段2："Transformer 架构由 Google 在 2017 年提出。"
-                → usefulness: 1（与问题无关）
-
-                ---
-
-                问题：%s
-
-                文档片段：
-                %s
-
-                请评估每个文档片段的有用程度。
-                评分标准：
-                - 5分：直接包含答案
-                - 4分：高度相关，提供重要线索
-                - 3分：部分相关，提供背景信息
-                - 2分：轻微相关
-                - 1分：完全无关
-
-                输出 JSON（只包含 chunk_scores 数组，不要输出汇总比例）：
-                {
-                  "chunk_scores": [
-                    {"chunk_index": 0, "usefulness": 4, "reason": "..."},
-                    {"chunk_index": 1, "usefulness": 1, "reason": "..."}
-                  ]
-                }
-                """.formatted(question, chunksBuilder.toString());
-
-        var verdict = judge.evaluate(prompt);
+        var verdict = judge.evaluate(buildPrompt(question, contextDocs));
         if (!verdict.success()) {
             log.warn("Context relevance judge failed: {}", verdict.errorMessage());
             return -1;
         }
+        return computeScore(verdict.rawJson(), contextDocs.size());
+    }
 
+    private String buildPrompt(String question, List<Document> contextDocs) {
+        return GenerationPrompts.CHUNK_USEFULNESS.formatted(question, ContextTextBuilder.build(contextDocs));
+    }
+
+    /**
+     * 始终本地计算：usefulness ≥ 阈值的 chunk 数 / 总 chunk 数——
+     * 不信任 Judge 自报的汇总比例，避免 LLM 估值偏差。
+     * 返回条目数与片段数对账，不匹配判无效（-1），与 ContextPrecisionLlmScorer 一致。
+     */
+    private double computeScore(String rawJson, int chunkCount) {
         try {
-            String json = JsonExtractorUtil.extractJson(verdict.rawJson());
+            String json = JsonExtractorUtil.extractJson(rawJson);
             Map<String, Object> result = objectMapper.readValue(json, new TypeReference<>() {});
 
-            // 始终本地计算：usefulness >= 3 的 chunk 数 / 总 chunk 数
-            // 不信任 Judge 自报的汇总比例，避免 LLM 估值偏差
             @SuppressWarnings("unchecked")
             List<Map<String, Object>> chunkScores = (List<Map<String, Object>>) result.get("chunk_scores");
             if (chunkScores == null || chunkScores.isEmpty()) {
-                log.warn("Judge returned no chunk_scores for {} chunks", contextDocs.size());
+                log.warn("Judge returned no chunk_scores for {} chunks", chunkCount);
+                return -1;
+            }
+            if (chunkScores.size() != chunkCount) {
+                log.warn("Judge returned {} chunk_scores for {} chunks", chunkScores.size(), chunkCount);
                 return -1;
             }
 
             long useful = chunkScores.stream()
-                    .filter(c -> parseUsefulness(c) >= 3)
+                    .filter(c -> parseUsefulness(c) >= USEFULNESS_THRESHOLD)
                     .count();
             return (double) useful / chunkScores.size();
         } catch (Exception e) {
-            log.warn("Failed to parse context relevance result: {}", e.getMessage());
+            log.warn("Failed to parse context relevance result: {}", e);
             return -1;
         }
     }
@@ -124,5 +101,4 @@ public class ContextRelevanceScorer {
         }
         return 0;
     }
-
 }

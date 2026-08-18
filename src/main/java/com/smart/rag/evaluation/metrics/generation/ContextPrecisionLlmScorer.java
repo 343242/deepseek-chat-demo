@@ -66,22 +66,8 @@ public class ContextPrecisionLlmScorer {
 
     private int[] judgeVerdicts(String question, String groundTruthAnswer,
                                 List<Document> contextDocs) {
-        var sb = new StringBuilder();
-        for (int i = 0; i < contextDocs.size(); i++) {
-            sb.append("片段").append(i + 1).append("：\n")
-                    .append(contextDocs.get(i).getText()).append("\n\n");
-        }
-        var prompt = """
-                给定问题、标准答案与一组检索片段。逐片段判断：该片段对推导出标准答案是否有用。
-                有用输出 "1"，无用输出 "0"。
-
-                问题：%s
-                标准答案：%s
-
-                %s
-                输出 JSON（不要输出其他内容，每个片段一项，按顺序）：
-                {"verdicts": [{"index": 1, "verdict": 1, "reason": "..."}, ...]}
-                """.formatted(question, groundTruthAnswer, sb);
+        var sb = new StringBuilder(ContextTextBuilder.build(contextDocs));
+        var prompt = GenerationPrompts.CHUNK_VERDICT_FOR_REFERENCE.formatted(question, groundTruthAnswer, sb);
         var verdict = judge.evaluate(prompt);
         if (!verdict.success()) {
             log.warn("ContextPrecision 判决失败: {}", verdict.errorMessage());
@@ -105,7 +91,7 @@ public class ContextPrecisionLlmScorer {
             }
             return result;
         } catch (Exception e) {
-            log.warn("ContextPrecision 解析失败: {}", e.getMessage());
+            log.warn("ContextPrecision 解析失败: {}", e);
             return null;
         }
     }

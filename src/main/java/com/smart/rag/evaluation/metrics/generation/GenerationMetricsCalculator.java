@@ -60,7 +60,7 @@ public class GenerationMetricsCalculator {
     public GenerationMetrics calculate(String question, String answer,
                                        String groundTruthAnswer,
                                        List<Document> contextDocs) {
-        String contextText = buildContextText(contextDocs);
+        String contextText = ContextTextBuilder.build(contextDocs);
         boolean hasGroundTruth = groundTruthAnswer != null && !groundTruthAnswer.isBlank();
         // null 与空列表统一为空列表；空上下文时两个 LLM 指标由各自 Scorer 返回 0（无片段即无噪声/无排序）
         var docs = contextDocs == null ? List.<Document>of() : contextDocs;
@@ -92,15 +92,5 @@ public class GenerationMetricsCalculator {
         return new GenerationMetrics(faithfulness, contextRecall, answerRelevance,
                 contextRelevance, answerCorrectness, noiseSensitivity, contextPrecisionLlm,
                 factualCorrectness, rougeL, bleu);
-    }
-
-    private String buildContextText(List<Document> docs) {
-        if (docs == null || docs.isEmpty()) return "";
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < docs.size(); i++) {
-            sb.append("片段").append(i + 1).append("：\n");
-            sb.append(docs.get(i).getText()).append("\n\n");
-        }
-        return sb.toString();
     }
 }

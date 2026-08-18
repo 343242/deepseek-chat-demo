@@ -64,15 +64,7 @@ public class FactualCorrectnessScorer {
     }
 
     private Optional<List<String>> decomposeGroundTruth(String groundTruth) {
-        var prompt = """
-                把以下标准答案分解为原子主张列表：每条主张是一个独立的、最小粒度的事实陈述。
-
-                标准答案：
-                %s
-
-                输出 JSON 数组（不要输出其他内容）：
-                ["主张1", "主张2"]
-                """.formatted(groundTruth);
+        var prompt = GenerationPrompts.CLAIM_DECOMPOSITION.formatted(groundTruth);
         var verdict = judge.evaluate(prompt);
         if (!verdict.success()) {
             log.warn("主张分解失败: {}", verdict.errorMessage());
@@ -84,7 +76,7 @@ public class FactualCorrectnessScorer {
                     objectMapper.readValue(json, new TypeReference<List<String>>() {
                     })));
         } catch (Exception e) {
-            log.warn("主张解析失败: {}", e.getMessage());
+            log.warn("主张解析失败: {}", e);
             return Optional.empty();
         }
     }
@@ -96,18 +88,7 @@ public class FactualCorrectnessScorer {
         } catch (Exception e) {
             return null;
         }
-        var prompt = """
-                给定一个回答与一组主张。逐主张判断：该主张能否从回答中直接推导出来。
-
-                回答：
-                %s
-
-                主张：
-                %s
-
-                输出 JSON（不要输出其他内容）：
-                {"verifications": [{"index": 1, "supported": true, "reason": "..."}, ...]}
-                """.formatted(answer, claimsJson);
+        var prompt = GenerationPrompts.CLAIM_VS_ANSWER_VERIFICATION.formatted(answer, claimsJson);
         var verdict = judge.evaluate(prompt);
         if (!verdict.success()) {
             log.warn("主张验证失败: {}", verdict.errorMessage());
@@ -130,7 +111,7 @@ public class FactualCorrectnessScorer {
             }
             return result;
         } catch (Exception e) {
-            log.warn("主张验证解析失败: {}", e.getMessage());
+            log.warn("主张验证解析失败: {}", e);
             return null;
         }
     }

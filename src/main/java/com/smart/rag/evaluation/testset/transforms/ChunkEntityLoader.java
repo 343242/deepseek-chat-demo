@@ -1,5 +1,7 @@
 package com.smart.rag.evaluation.testset.transforms;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
@@ -22,6 +24,8 @@ import java.util.UUID;
 @Component
 public class ChunkEntityLoader {
 
+    private static final Logger log = LoggerFactory.getLogger(ChunkEntityLoader.class);
+
     private final JdbcTemplate jdbc;
 
     public ChunkEntityLoader(JdbcTemplate jdbc) {
@@ -36,7 +40,22 @@ public class ChunkEntityLoader {
         if (chunkIds.isEmpty()) {
             return Map.of();
         }
-        var uuids = chunkIds.stream().map(UUID::fromString).toArray(UUID[]::new);
+        // 非 UUID 的 chunk id 只降级为"无实体"（不参与实体边），不废掉整批装载
+        var uuids = chunkIds.stream()
+                .filter(id -> {
+                    try {
+                        UUID.fromString(id);
+                        return true;
+                    } catch (IllegalArgumentException e) {
+                        log.warn("chunk id 不是合法 UUID，跳过实体装载: {}", id);
+                        return false;
+                    }
+                })
+                .map(UUID::fromString)
+                .toArray(UUID[]::new);
+        if (uuids.length == 0) {
+            return Map.of();
+        }
         return jdbc.query(
                 """
                         SELECT ce.chunk_id::text AS chunk_id, e.name_norm

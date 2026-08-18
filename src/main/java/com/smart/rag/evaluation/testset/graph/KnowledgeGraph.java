@@ -62,13 +62,15 @@ public final class KnowledgeGraph {
         return nodes.values().stream().filter(n -> !n.entities().isEmpty()).toList();
     }
 
-    /** 按节点 id 集合取节点（保持图谱内部顺序）。 */
+    /** 按节点 id 集合取节点（保持图谱内部顺序）。id 不存在的跳过。 */
     public Set<Node> nodesByIds(Set<String> ids) {
         var result = new LinkedHashSet<Node>(ids.size());
-        ids.forEach(id -> nodes.values().stream()
-                .filter(n -> n.id().equals(id))
-                .findFirst()
-                .ifPresent(result::add));
+        ids.forEach(id -> {
+            var node = nodes.get(id);
+            if (node != null) {
+                result.add(node);
+            }
+        });
         return result;
     }
 }

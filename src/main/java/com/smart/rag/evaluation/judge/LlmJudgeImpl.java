@@ -6,6 +6,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 
+import com.smart.rag.evaluation.metrics.generation.GenerationPrompts;
 import com.smart.rag.evaluation.util.JsonExtractorUtil;
 
 import java.util.Collections;
@@ -49,27 +50,14 @@ public class LlmJudgeImpl implements LlmJudge {
             return JudgeVerdict.ok(response);
         } catch (Exception e) {
             // 网络层错误已由 ResilientChatClient 重试，此处仅兜底降级，避免中断整条评测
-            log.warn("Judge invocation failed: {}", e.getMessage());
+            log.warn("Judge invocation failed: {}", e);
             return JudgeVerdict.failed(e.getMessage());
         }
     }
 
     @Override
     public List<String> generateQuestions(String answer) {
-        String prompt = """
-                给定以下回答，生成 3 个该回答可能回应的问题。
-                问题应该简洁、具体。
-
-                回答：
-                %s
-
-                输出 JSON 数组（不要输出其他内容）：
-                [
-                  "问题1",
-                  "问题2",
-                  "问题3"
-                ]
-                """.formatted(answer);
+        var prompt = GenerationPrompts.REVERSE_QUESTION_GENERATION.formatted(answer);
 
         JudgeVerdict verdict = evaluate(prompt);
         if (!verdict.success()) {
@@ -81,7 +69,7 @@ public class LlmJudgeImpl implements LlmJudge {
             String json = JsonExtractorUtil.extractJson(verdict.rawJson());
             return objectMapper.readValue(json, new TypeReference<>() {});
         } catch (Exception e) {
-            log.warn("Failed to parse generated questions: {}", e.getMessage());
+            log.warn("Failed to parse generated questions: {}", e);
             return Collections.emptyList();
         }
     }

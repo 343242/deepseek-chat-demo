@@ -70,6 +70,15 @@ public class EvaluationProgressSink {
     }
 
     /**
+     * 该 run 是否仍有活跃 sink（任务在本进程内执行中）。
+     * 供 sweeper 区分"仍在执行的长任务"与"JVM 崩溃后的孤儿记录"——
+     * 崩溃重启后内存 sink 已丢失，isActive 为 false。
+     */
+    public boolean isActive(long runId) {
+        return sinks.containsKey(runId);
+    }
+
+    /**
      * 以 Flux 形式订阅某 run 的进度流（供 SSE 桥接消费）。
      */
     public Flux<EvaluationProgressEvent> subscribe(long runId) {

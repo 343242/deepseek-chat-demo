@@ -90,18 +90,18 @@ class GraphAlgorithmsTest {
     class FindNIndirectClusters {
 
         @Test
-        @DisplayName("参数校验：depthLimit<2 / n<1 / 无匹配关系 抛 IllegalArgumentException")
+        @DisplayName("参数校验：depthLimit<2 / n<1 / 无匹配关系 抛 IllegalStateException（内部前置条件错误）")
         void validatesArguments() {
             var kg = graph(Relationship.of("a", "b", RelationshipType.SIMILARITY, 0.9));
             assertThatThrownBy(() -> GraphAlgorithms.findNIndirectClusters(
                     kg, rel -> true, 1, 1))
-                    .isInstanceOf(IllegalArgumentException.class);
+                    .isInstanceOf(IllegalStateException.class);
             assertThatThrownBy(() -> GraphAlgorithms.findNIndirectClusters(
                     kg, rel -> true, 0, 3))
-                    .isInstanceOf(IllegalArgumentException.class);
+                    .isInstanceOf(IllegalStateException.class);
             assertThatThrownBy(() -> GraphAlgorithms.findNIndirectClusters(
                     kg, rel -> rel.type() == RelationshipType.ENTITY_OVERLAP, 1, 3))
-                    .isInstanceOf(IllegalArgumentException.class)
+                    .isInstanceOf(IllegalStateException.class)
                     .hasMessageContaining("No relationships match");
         }
 

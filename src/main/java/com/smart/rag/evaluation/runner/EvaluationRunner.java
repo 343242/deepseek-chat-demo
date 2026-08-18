@@ -8,7 +8,9 @@ import com.smart.rag.rag.chunk.ParentDocumentPostProcessor;
 import com.smart.rag.evaluation.config.EvaluationProperties;
 import com.smart.rag.evaluation.dataset.DatasetRepository;
 import com.smart.rag.evaluation.dataset.EvaluationDatasetItem;
+import com.smart.rag.evaluation.metrics.generation.ContextTextBuilder;
 import com.smart.rag.evaluation.metrics.generation.GenerationMetrics;
+import com.smart.rag.evaluation.metrics.generation.GenerationPrompts;
 import com.smart.rag.evaluation.metrics.generation.GenerationMetricsCalculator;
 import com.smart.rag.evaluation.metrics.retrieval.RetrievalMetrics;
 import com.smart.rag.evaluation.metrics.retrieval.RetrievalMetricsCalculator;
@@ -115,65 +117,29 @@ public class EvaluationRunner {
         PipelineInstrumenter inst = new PipelineInstrumenter(objectMapper);
 
         try {
-            // 1. 查询规范化
-            String normalized = queryNormalizer.normalize(item.question());
-            inst.capture("after_normalize", normalized);
+            // 1-2. 查询规范化 + 改写（可选）
+            var prepared = prepareQuery(item.question(), config, inst);
+            queryRewritten = prepared.rewritten();
 
-            // 2. 查询改写（可选）
-            String queryText = normalized;
-            if (config.isQueryRewriteEnabled()) {
-                queryText = rewriteQuery(normalized);
-                queryRewritten = queryText;
-            }
-            inst.capture("after_rewrite", queryText);
-
-            // 3. 检索阶段
-            Query query = new Query(queryText);
-            HybridDocumentRetriever retriever = createEvalRetriever(config);
-            List<Document> retrieved = retriever.retrieve(query);
-            List<String> retrievedIds = extractedDocIds(retrieved);
-            inst.capture("after_retrieval", retrievedIds);
-
-            // 4. MMR 阶段（可选） — 先去冗余，减少 Rerank 算力浪费
-            List<Document> afterMmr = retrieved;
-            if (config.isMmrEnabled()) {
-                MmrDocumentPostProcessor mmrProc = new MmrDocumentPostProcessor(
-                        properties.mmrLambda(), properties.mmrTopK(), properties.fusionTopK(), vectorStoreMapper);
-                afterMmr = mmrProc.process(query, retrieved);
-            }
-            inst.capture("after_mmr", extractedDocIds(afterMmr));
-
-            // 5. Rerank 阶段（可选） -- 去冗余后精排，使用注入的单例 Bean
-            List<Document> afterRerank = afterMmr;
-            if (config.isRerankEnabled() && rerankPostProcessor != null) {
-                afterRerank = rerankPostProcessor.process(query, afterMmr);
-            }
-            inst.capture("after_rerank", extractedDocIds(afterRerank));
-
-            // 6. ParentChild 替换（可选）
-            List<Document> afterParent = config.isParentChildEnabled()
-                    ? parentProcessor.process(query, afterRerank) : afterRerank;
-            inst.capture("after_parent_child", extractedDocIds(afterParent));
+            // 3-6. 检索 → MMR → Rerank → ParentChild 流水线
+            Query query = new Query(prepared.query());
+            List<Document> finalDocs = runRetrievalPipeline(query, config, inst);
 
             // 7. 检索结果
-            retrievedDocIds = extractedDocIds(afterParent);
+            retrievedDocIds = extractedDocIds(finalDocs);
 
-            // 8. 计算检索指标（基于最终列表 afterParent，与存入结果行的 retrievedDocIds 同源，
+            // 8. 检索指标（基于最终列表，与存入结果行的 retrievedDocIds 同源，
             //    确保 Recall/Precision/NDCG 反映生成器实际看到的文档）
-            Set<String> relevantIds = item.relevantChunkIds() != null
-                    ? item.relevantChunkIds() : Set.of();
-            int k = config.getTopK() != null ? config.getTopK() : evalProps.getRunner().getDefaultK();
-            retrievalMetrics = metricsCalculator.calculate(
-                    extractedDocIds(afterParent), relevantIds, k);
+            retrievalMetrics = computeRetrievalMetrics(item, config, finalDocs);
 
             // 9. LLM 生成 + 生成指标
             if (config.isGenerationEnabled()) {
-                generatedAnswer = generateAnswer(queryText, afterParent);
+                generatedAnswer = generateAnswer(prepared.query(), finalDocs);
                 inst.capture("after_generation", generatedAnswer);
 
                 GenerationMetrics genMetrics = generationMetricsCalculator.calculate(
                         item.question(), generatedAnswer,
-                        item.groundTruthAnswer(), afterParent);
+                        item.groundTruthAnswer(), finalDocs);
                 generationMetrics = objectMapper.writeValueAsString(genMetrics);
             }
 
@@ -188,6 +154,58 @@ public class EvaluationRunner {
                 queryRewritten, retrievedDocIds, generatedAnswer,
                 inst.getSnapshots(), retrievalMetrics, generationMetrics,
                 error, (int) (System.currentTimeMillis() - start));
+    }
+
+    /** 规范化（+ 可选改写）后的查询。rewritten 仅在改写开启且成功时非 null。 */
+    private record PreparedQuery(String query, @Nullable String rewritten) {
+    }
+
+    private PreparedQuery prepareQuery(String question, EvalConfig config,
+                                       PipelineInstrumenter inst) {
+        String normalized = queryNormalizer.normalize(question);
+        inst.capture("after_normalize", normalized);
+        if (!config.isQueryRewriteEnabled()) {
+            inst.capture("after_rewrite", normalized);
+            return new PreparedQuery(normalized, null);
+        }
+        String rewritten = rewriteQuery(normalized);
+        inst.capture("after_rewrite", rewritten);
+        return new PreparedQuery(rewritten, rewritten);
+    }
+
+    /** 检索 → MMR（可选，先去冗余减少 Rerank 算力）→ Rerank（可选）→ ParentChild（可选）。 */
+    private List<Document> runRetrievalPipeline(Query query, EvalConfig config,
+                                                PipelineInstrumenter inst) {
+        HybridDocumentRetriever retriever = createEvalRetriever(config);
+        List<Document> retrieved = retriever.retrieve(query);
+        inst.capture("after_retrieval", extractedDocIds(retrieved));
+
+        List<Document> afterMmr = retrieved;
+        if (config.isMmrEnabled()) {
+            MmrDocumentPostProcessor mmrProc = new MmrDocumentPostProcessor(
+                    properties.mmrLambda(), properties.mmrTopK(), properties.fusionTopK(), vectorStoreMapper);
+            afterMmr = mmrProc.process(query, retrieved);
+        }
+        inst.capture("after_mmr", extractedDocIds(afterMmr));
+
+        List<Document> afterRerank = afterMmr;
+        if (config.isRerankEnabled() && rerankPostProcessor != null) {
+            afterRerank = rerankPostProcessor.process(query, afterMmr);
+        }
+        inst.capture("after_rerank", extractedDocIds(afterRerank));
+
+        List<Document> afterParent = config.isParentChildEnabled()
+                ? parentProcessor.process(query, afterRerank) : afterRerank;
+        inst.capture("after_parent_child", extractedDocIds(afterParent));
+        return afterParent;
+    }
+
+    private RetrievalMetrics computeRetrievalMetrics(EvaluationDatasetItem item, EvalConfig config,
+                                                     List<Document> finalDocs) {
+        Set<String> relevantIds = item.relevantChunkIds() != null
+                ? item.relevantChunkIds() : Set.of();
+        int k = config.getTopK() != null ? config.getTopK() : evalProps.getRunner().getDefaultK();
+        return metricsCalculator.calculate(extractedDocIds(finalDocs), relevantIds, k);
     }
 
     private HybridDocumentRetriever createEvalRetriever(EvalConfig config) {
@@ -220,28 +238,15 @@ public class EvaluationRunner {
                 return transformed.text();
             }
         } catch (Exception e) {
-            log.warn("Query rewrite failed, using original: {}", e.getMessage());
+            log.warn("Query rewrite failed, using original: {}", e);
         }
         return queryText;
     }
 
     private String generateAnswer(String queryText, List<Document> contextDocs) {
-        StringBuilder contextBuilder = new StringBuilder();
-        for (int i = 0; i < contextDocs.size(); i++) {
-            contextBuilder.append("片段").append(i + 1).append("：\n");
-            contextBuilder.append(contextDocs.get(i).getText()).append("\n\n");
-        }
-
-        String prompt = """
-                基于以下检索到的文档片段回答用户的问题。
-                如果文档片段中没有相关信息，请如实说明。
-
-                文档片段：
-                %s
-
-                用户问题：%s
-
-                回答：""".formatted(contextBuilder.toString(), queryText);
+        var prompt = GenerationPrompts.RAG_ANSWER.formatted(
+                ContextTextBuilder.build(contextDocs),
+                queryText);
 
         ChatClient chatClient = rewriteClientResolver.resolve(evalProps.getGenerationModel());
         return chatClient.prompt()

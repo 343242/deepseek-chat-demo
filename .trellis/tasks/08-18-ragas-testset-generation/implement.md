@@ -49,3 +49,13 @@
 - 算法行为与 ragas 0.4.3 源码（eval/ragas/src/ragas/testset/）逐函数对照；
 - Python 参照实现（eval/generate_testset.py + eval/README.md）作为端到端行为对照；
 - 端到端冒烟（可选，需 evaluation profile + 实体重导语料）：生成 ≥1 条多跳样本。
+
+## 完成记录（2026-08-18）
+
+- 全部 Step 完成；实现偏差记录：
+  - **Leiden 未接线**：核对 ragas 0.4.3 源码发现 MultiHopAbstract 实际调用 find_n_indirect_clusters（纯 DFS），
+    Leiden 版不在任何合成器调用路径 → 按无死代码原则改译 DFS 版（SHA256 派生种子保复现）
+  - Jaro-Winkler 手写实现，四组样例与 rapidfuzz 数值完全一致（0.933333/0.866667/0/1.0）
+  - LLM 响应解析统一 JsonNode 导航（只取目标字段），免疫 LLM 杂键
+- 验证：全量 mvn test 绿（P1 后 1690 个，P2 后 1705 个）；GitNexus impact（LOW，仅 DatasetController 依赖）+
+  detect_changes（LOW，零 affected，改动全部位于 evaluation 模块）

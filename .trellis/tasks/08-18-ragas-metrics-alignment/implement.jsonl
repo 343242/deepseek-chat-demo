@@ -1,1 +1,6 @@
-{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/backend/llm-spi.md", "reason": "LLM 调用契约与禁注入清单"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "record/枚举/禁用模式"}
+{"file": "eval/ragas/src/ragas/metrics/_answer_correctness.py", "reason": "TP/FP/FN 提示词与 F1 加权逻辑（翻译对照）"}
+{"file": "eval/ragas/src/ragas/metrics/_context_precision.py", "reason": "判决提示词与平均精度公式"}
+{"file": "eval/ragas/src/ragas/metrics/_factual_correctness.py", "reason": "主张分解 + NLI 提示词与 F-beta"}
+{"file": "eval/ragas/src/ragas/metrics/_noise_sensitivity.py", "reason": "布尔矩阵语义（复用 faithfulness 提示词）"}

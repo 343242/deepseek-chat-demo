@@ -26,6 +26,7 @@ import type {
 import type { ChatMode, MessageStatus } from '@/types/chat'
 import type { ConversationStatus, TitleSource } from '@/types/conversation'
 import type { ApprovalStatus, TeamMemberRole } from '@/types/team'
+import type { EvalGenJobStatus, EvalItemStatus, EvalRunStatus } from '@/types/evaluation'
 
 export type BadgeVariant = 'neutral' | 'brand' | 'success' | 'warning' | 'error' | 'outline'
 
@@ -118,4 +119,27 @@ export const SOURCE_LABEL: Record<string, string> = {
 export function sourceLabel(source?: string | null): string | null {
   if (!source) return null
   return SOURCE_LABEL[source] ?? source
+}
+
+/* ============ 评估：数据集条目状态（线框 09 §2.2） ============ */
+export const EVALUATION_ITEM_STATUS_META: Record<EvalItemStatus, StatusMeta> = {
+  draft: { label: '草稿', variant: 'neutral' },
+  approved: { label: '已通过', variant: 'success', icon: CheckCircle2 },
+  rejected: { label: '已拒绝', variant: 'error', icon: XCircle },
+}
+
+/* ============ 评估：运行状态（线框 09 §3.2） ============ */
+export const EVALUATION_RUN_STATUS_META: Record<EvalRunStatus, StatusMeta> = {
+  pending: { label: '待启动', variant: 'neutral', icon: Clock },
+  running: { label: '运行中', variant: 'brand', icon: Loader, spin: true },
+  completed: { label: '已完成', variant: 'success', icon: CheckCircle2 },
+  failed: { label: '失败', variant: 'error', icon: XCircle },
+}
+
+/* ============ 评估：数据集生成任务状态 ============ */
+export const EVALUATION_GEN_JOB_STATUS_META: Record<EvalGenJobStatus, StatusMeta> = {
+  pending: { label: '排队中', variant: 'neutral', icon: Clock },
+  running: { label: '生成中', variant: 'brand', icon: Loader, spin: true },
+  completed: { label: '已完成', variant: 'success', icon: CheckCircle2 },
+  failed: { label: '失败', variant: 'error', icon: XCircle },
 }

@@ -21,6 +21,12 @@ export interface ApiFetchOptions extends Omit<RequestInit, 'body'> {
   params?: Record<string, string | number | boolean | undefined | null>
   /** 内部用：防止 refresh 重放死循环 */
   _retried?: boolean
+  /**
+   * 裸响应模式（EVAL-2，评估模块专用）：成功返回原始响应体（不要求 GlobalResponse 信封），
+   * 但 GlobalExceptionHandler 产出的错误信封（HTTP 200 + code !== 0）仍按业务错误抛出。
+   * 401 refresh / credentials / 分页等行为与非 raw 路径一致。
+   */
+  raw?: boolean
 }
 
 function buildUrl(path: string, params?: ApiFetchOptions['params']): string {
@@ -80,7 +86,7 @@ function emitUnauthorized() {
  * @returns 成功时 `data` 字段（raw 模式返回原始响应体）
  */
 export async function apiFetch<T>(path: string, opts: ApiFetchOptions = {}): Promise<T> {
-  const { json, body: rawBody, params, _retried, headers, ...rest } = opts
+  const { json, body: rawBody, params, _retried, raw, headers, ...rest } = opts
 
   const finalHeaders = new Headers(headers)
   let body: BodyInit | null | undefined
@@ -124,7 +130,31 @@ export async function apiFetch<T>(path: string, opts: ApiFetchOptions = {}): Pro
     return (await res.text()) as unknown as T
   }
 
-  const envelope: unknown = await res.json()
+  const parsed: unknown = await res.json()
+
+  // raw 模式（EVAL-2）：评估模块裸 JSON 契约——成功体无信封（含 202），
+  // 但异常路径仍可能走 GlobalExceptionHandler 出 HTTP 200 错误信封，或控制器自身 4xx + {"error"}
+  if (raw) {
+    if (isGlobalResponse(parsed)) {
+      if (parsed.code !== ERROR_CODE.SUCCESS) {
+        if (parsed.code === ERROR_CODE.UNAUTHORIZED && !_retried) {
+          emitUnauthorized()
+        }
+        throw new ApiError(parsed.message || '请求失败', parsed.code, res.status)
+      }
+      return parsed.data as T
+    }
+    if (!res.ok) {
+      const message =
+        typeof parsed === 'object' && parsed !== null && 'error' in parsed && typeof parsed.error === 'string'
+          ? parsed.error
+          : `请求失败（${res.status}）`
+      throw new ApiError(message, ERROR_CODE.INTERNAL, res.status)
+    }
+    return parsed as T
+  }
+
+  const envelope = parsed
   if (!isGlobalResponse(envelope)) {
     throw new ApiError('响应格式异常，请稍后重试', ERROR_CODE.INTERNAL, res.status)
   }

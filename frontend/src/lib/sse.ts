@@ -2,6 +2,7 @@ import { apiFetch } from './api-fetch'
 import type { ChatRequest, SseFrame, SseHandlers, CancelReason } from '@/types/chat'
 import type { AgentMetadata, FallbackMeta } from '@/types/chat'
 import type { Reference } from '@/types/document'
+import type { EvalRunProgressEvent, EvalRunTerminalEvent } from '@/types/evaluation'
 
 /**
  * SSE 流式解析（DS §11.3 关键约束）
@@ -204,4 +205,70 @@ export function cancelChat(conversationId: string, reason: CancelReason = 'USER_
     method: 'POST',
     json: { conversationId, reason },
   }).catch(() => ({ cancelled: false }))
+}
+
+/* ============ 评估运行进度订阅（DS §11.17 · 线框 09 §3.3） ============ */
+
+export interface EvalRunEventHandlers {
+  onProgress?: (event: EvalRunProgressEvent) => void
+  /** 终态：流上 done 帧或已结束 run 的终态回放 */
+  onDone?: (event: EvalRunTerminalEvent) => void
+  /** 后端 event:error 帧（run 失败或进度流异常收尾） */
+  onError?: (event: EvalRunTerminalEvent) => void
+  /** 连接层断开（断流/404）。EventSource 会自动重连（DS §11.17）；组件以此切换轮询兜底 */
+  onConnectionError?: () => void
+}
+
+/**
+ * 订阅评测运行 SSE（GET /api/evaluation/runs/{runId}/events，EventSource 原生自动重连）。
+ *
+ * 与 chat 的 POST 流不同（DS §11.3 vs §11.17）：GET 端点可用 EventSource；迟到订阅后端 replay
+ * 最近 20 条 progress；已结束（completed/failed）的 run 后端直接回放单帧终态后关流。
+ * 返回退订函数——"后台运行"关闭面板只退订不中断评测（SSE 只是观察窗，不承载执行）。
+ */
+export function subscribeEvalRunEvents(runId: number, handlers: EvalRunEventHandlers): () => void {
+  const source = new EventSource(`/api/evaluation/runs/${runId}/events`, { withCredentials: true })
+
+  let closed = false
+  /** 断开只上报一次（重连成功收到任意帧后复位），避免自动重连期重复告警 */
+  let disconnected = false
+  const close = () => {
+    if (closed) return
+    closed = true
+    source.close()
+  }
+  const markConnected = () => {
+    disconnected = false
+  }
+
+  source.addEventListener('progress', (e) => {
+    markConnected()
+    const data = parseJson<EvalRunProgressEvent>((e as MessageEvent<string>).data)
+    if (data) handlers.onProgress?.(data)
+  })
+
+  source.addEventListener('done', (e) => {
+    markConnected()
+    const data = parseJson<EvalRunTerminalEvent>((e as MessageEvent<string>).data) ?? {}
+    handlers.onDone?.(data)
+    close()
+  })
+
+  // EventSource 的 'error' 监听同时收到两类事件：后端 event:error 帧（MessageEvent，有 data）
+  // 与连接层错误（无 data）。前者是业务终态需 close，后者依赖自动重连。
+  source.addEventListener('error', (e) => {
+    const me = e as MessageEvent<string>
+    if (typeof me.data === 'string') {
+      markConnected()
+      const data = parseJson<EvalRunTerminalEvent>(me.data) ?? {}
+      handlers.onError?.(data)
+      close()
+      return
+    }
+    if (closed || disconnected) return
+    disconnected = true
+    handlers.onConnectionError?.()
+  })
+
+  return close
 }

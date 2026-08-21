@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/frontend/quality-and-testing.md", "reason": "四质量门 + 禁用模式逐项核对"}
+{"file": ".trellis/spec/frontend/data-and-state.md", "reason": "queryKey/轮询/SSE/错误处理合规"}
+{"file": "docs/frontend/wireframes/09-evaluation.md", "reason": "线框 §1–§5 逐条验收对照（含 EVAL-1..6）"}
+{"file": ".trellis/tasks/08-21-evaluation-frontend/prd.md", "reason": "Acceptance Criteria 逐项核对"}

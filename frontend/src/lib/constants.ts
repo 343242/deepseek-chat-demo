@@ -71,3 +71,24 @@ export const UPLOAD_LIMITS = {
   concurrentChunks: 4,
   maxBatch: 10,
 } as const
+
+/** 评估模块限制（线框 09 EVAL-6 + 后端 EvaluationRunController.MAX_COMPARE_RUNS / EvaluationProperties.runner） */
+export const EVALUATION = {
+  /** 同时运行的评测上限（超出直接 FAILED，summary.error="concurrency limit exceeded"） */
+  maxConcurrentRuns: 2,
+  /** 单次对比的 run 数上限（POST /runs/compare 校验） */
+  maxCompareRuns: 10,
+  /** 对比最少 run 数（基线 + 1） */
+  minCompareRuns: 2,
+  /** topK 取值区间（EvaluationRunner.EvalConfig） */
+  topKMin: 1,
+  topKMax: 50,
+  /** 结果表分页大小（后端 size 上限 500） */
+  resultsPageSize: 50,
+  /** 条目表前端分页大小（GET /{id} 全量返回） */
+  itemsPageSize: 20,
+  /** 生成任务轮询间隔（design.md §2：轮询而非 SSE） */
+  generationPollMs: 3000,
+  /** 运行状态轮询间隔（SSE 断流兜底） */
+  runPollMs: 5000,
+} as const

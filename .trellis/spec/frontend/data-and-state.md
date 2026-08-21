@@ -53,8 +53,34 @@ apiFetch<DocumentDTO>('/documents/upload', { method: 'POST', body: fd })   // Fo
 ```
 
 - JSON 请求体传 `json`（自动序列化 + 401 重放可重建），**不要**自己 `JSON.stringify`。
-- 需要整个 envelope（含 code/message）时才传 `raw: true`。
+- 裸 JSON 契约端点（无 GlobalResponse 信封，如评估模块）传 `raw: true`，见下节。
 - 组件/页面**禁止**直接 `import { apiFetch }` 发请求——请求逻辑收口在 `api/` 领域模块。
+
+### raw 模式（裸 JSON 契约端点，EVAL-2 场景）
+
+**Scope/Trigger**：后端控制器直接返回裸对象（不包 `GlobalResponse.ok`），且分页 0 基、启动类端点返回 202。当前唯一用户是评估模块（`DatasetController` / `EvaluationRunController`），别的端点以后若出现同样契约也走此模式。
+
+**契约**（`apiFetch(path, { raw: true })` 的响应分支，非 raw 路径逐字节不变）：
+
+1. body 是 GlobalResponse 形状 → 沿用 `code` 判定：`code !== 0` 抛 `ApiError`（覆盖 GlobalExceptionHandler 的 **HTTP 200 错误信封**，如"runIds 不能为空"、权限不足）；`code === 0` 返回 `data`（防御，正常不出现）。
+2. 裸 JSON + `res.ok`（含 202）→ 原样返回响应体。
+3. 裸 JSON + `!res.ok` → 提取 `body.error` 文案抛 `ApiError`（评估控制器自身的 4xx `{"error": "..."}`）。
+4. 401 refresh 单例 / credentials / buildUrl 与非 raw 路径完全复用——**禁止**为裸契约另写 fetch 封装（会出现第二个 refresh 锁，违反 IA-6）。
+
+**配套约定**（评估模块 API 层，`api/evaluation.ts`）：
+- 分页换算收口在 queryFn：UI 1 基 ↔ 后端 0 基（`page - 1`），组件无感知；`initialPageParam: 0`。
+- jsonb 字段三态防御解包用纯函数 `parseMetricField`（`lib/eval-metrics.ts`）：对象 / JSON 字符串 / PGobject `{type:'jsonb',value}` 归一，解析失败返回 null——JdbcTemplate 读 jsonb 无类型处理器时的已知形态。
+- 生成指标 `-1` 是"未计算"哨兵：展示层 `formatMetric` → '—'，**不得**当 0 参与展示或均值。
+
+**Wrong vs Correct**：
+
+```ts
+// Wrong：裸契约端点用默认模式——apiFetch 对无信封 JSON 抛"响应格式异常"
+api.get<DatasetListResponse>('/evaluation/datasets', { params })
+
+// Correct
+apiFetch<DatasetListResponse>('/evaluation/datasets', { method: 'GET', raw: true, params })
+```
 
 ### 二进制与导航端点例外
 
@@ -134,15 +160,26 @@ store 的 `send` 只做**编排**：构造乐观消息 → 调 `lib/sse.ts` 的 
 
 ---
 
-## SSE 流式聊天（`lib/sse.ts`）
+## SSE 流式（`lib/sse.ts`）
 
-硬约束（DS §11.3）：
+### POST 聊天流（DS §11.3）
+
+硬约束：
 
 - **必须** `fetch` + `ReadableStream` 手动解析——POST 带 `@RequestBody`，`EventSource` 不支持。
 - 帧按空行（`\n\n`）切分，字段 `event:` / `data:`；**内容帧没有 event 名**（默认事件即内容）。
 - 帧映射用纯函数 `mapFrame(event, data): SseFrame | null`：未知 event 名返回 null 忽略（前向兼容）；JSON 字段用 `safeJson` + 类型兜底（非法 JSON → 空数组/空对象），**不让坏帧炸掉整条流**。
 - 解析器不依赖"按 event 名分发"的高层封装，底层读行。
 - 取消 = 软取消 `POST /chat/stream/cancel`（幂等，`.catch(() => …)` 静默）+ `AbortController.abort()` 兜底断流，两者叠加（`chat-store.ts:155-165`）。
+
+### GET 事件流（DS §11.17，评估运行进度）
+
+GET 端点走**原生 EventSource**（`subscribeEvalRunEvents`，`lib/sse.ts`）——与聊天流是两条路径，别混用：
+
+- 自动重连是**特性**（DS §11.17 允许）；迟到订阅靠后端 replay 最近 20 条恢复。
+- `addEventListener('error')` 同时收到两类事件：后端 `event:error` 帧（MessageEvent，有 `data`）与连接层错误（无 `data`）——按 `typeof me.data === 'string'` 区分；前者是业务终态需 `close()`，后者只通知组件切轮询兜底。
+- 终态（done/error 帧）后必须主动 `close()`，返回退订函数；"后台运行"只退订不中断后端执行（SSE 是观察窗）。
+- 断开告警只上报一次/次断开（重连成功收到任意帧复位），避免重连期重复 toast。
 
 配套 Vite 代理已为 SSE 调优（`timeout: 0`、关闭缓冲，`vite.config.ts`），动代理配置前先确认流式不受影响。
 

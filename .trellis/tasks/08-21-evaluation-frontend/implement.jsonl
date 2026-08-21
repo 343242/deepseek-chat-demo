@@ -1,0 +1,8 @@
+{"file": ".trellis/spec/frontend/index.md", "reason": "前端技术栈总纲（React 19/Tailwind v4/bun only）"}
+{"file": ".trellis/spec/frontend/directory-structure.md", "reason": "文件组织/命名/queryKey 工厂/路由注册规则"}
+{"file": ".trellis/spec/frontend/data-and-state.md", "reason": "react-query 与 apiFetch 收口规则、SSE 仅限 lib/sse.ts"}
+{"file": ".trellis/spec/frontend/ui-and-styling.md", "reason": "shadcn 组件使用与样式约定"}
+{"file": ".trellis/spec/frontend/quality-and-testing.md", "reason": "四质量门与禁用模式清单"}
+{"file": "docs/frontend/wireframes/09-evaluation.md", "reason": "页面设计源头：布局/交互/状态全集/EVAL-1..6 决策"}
+{"file": "docs/frontend/DESIGN-SYSTEM.md", "reason": "§11.17 EvalRunProgress 组件规范、§10 基础组件、§13 格式化"}
+{"file": "docs/frontend/INFORMATION-ARCHITECTURE.md", "reason": "IA §3.2/§6.3 后台页面权限与 IA-6 并发 401 单 refresh"}

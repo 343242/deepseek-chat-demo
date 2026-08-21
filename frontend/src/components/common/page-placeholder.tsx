@@ -20,7 +20,8 @@ export function PagePlaceholder({
   )
 }
 
-/** 带标题栏的页面容器（后台表格密集页通用） */
+/** 带标题栏的页面容器（后台表格密集页通用）。
+ *  AppShell 的 <main> 为 overflow-hidden（聊天页内部自管滚动），长内容页由本容器自行滚动。 */
 export function PageContainer({ title, subtitle, children, actions }: {
   title: string
   subtitle?: string
@@ -28,7 +29,7 @@ export function PageContainer({ title, subtitle, children, actions }: {
   actions?: React.ReactNode
 }) {
   return (
-    <div className="mx-auto flex w-full max-w-[var(--layout-content-max-w)] flex-1 flex-col p-6">
+    <div className="mx-auto flex w-full max-w-[var(--layout-content-max-w)] flex-1 flex-col overflow-y-auto p-6">
       <div className="mb-6 flex items-start justify-between gap-4">
         <div>
           <h1 className="text-xl font-semibold text-fg">{title}</h1>

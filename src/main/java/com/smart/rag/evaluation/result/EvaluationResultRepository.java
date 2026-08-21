@@ -239,6 +239,12 @@ public class EvaluationResultRepository {
                            THEN (generation_metrics::jsonb ->> 'rougeL')::double precision END) AS avg_rouge_l,
                   AVG(CASE WHEN (generation_metrics::jsonb ->> 'bleu')::double precision >= 0
                            THEN (generation_metrics::jsonb ->> 'bleu')::double precision END) AS avg_bleu,
+                  AVG(CASE WHEN (generation_metrics::jsonb ->> 'answerSimilarity')::double precision >= 0
+                           THEN (generation_metrics::jsonb ->> 'answerSimilarity')::double precision END) AS avg_answer_similarity,
+                  AVG(CASE WHEN (generation_metrics::jsonb ->> 'contextEntityRecall')::double precision >= 0
+                           THEN (generation_metrics::jsonb ->> 'contextEntityRecall')::double precision END) AS avg_context_entity_recall,
+                  AVG(CASE WHEN (generation_metrics::jsonb ->> 'contextUtilization')::double precision >= 0
+                           THEN (generation_metrics::jsonb ->> 'contextUtilization')::double precision END) AS avg_context_utilization,
                   COUNT(*) AS total_items,
                   COUNT(*) FILTER (WHERE error IS NOT NULL) AS error_items
                 FROM evaluation_result

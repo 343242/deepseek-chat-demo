@@ -122,6 +122,19 @@ public final class GenerationPrompts {
             {"verdicts": [{"index": 1, "verdict": 1, "reason": "..."}, ...]}
             """;
 
+    /** 片段对生成回答有用性判决（ContextUtilization，ragas LLMContextPrecisionWithoutReference） */
+    static final String CHUNK_VERDICT_FOR_ANSWER = """
+            给定问题、生成的回答与一组检索片段。逐片段判断：该片段对得出该回答是否有用。
+            有用输出 "1"，无用输出 "0"。
+
+            问题：%s
+            生成的回答：%s
+
+            %s
+            输出 JSON（不要输出其他内容，每个片段一项，按顺序）：
+            {"verdicts": [{"index": 1, "verdict": 1, "reason": "..."}, ...]}
+            """;
+
     /** 片段有用性 + 回答支撑双判决（NoiseSensitivity） */
     static final String CHUNK_DUAL_VERDICT = """
             给定问题、生成的回答与一组检索片段。逐片段判断两项：
@@ -148,22 +161,22 @@ public final class GenerationPrompts {
             {"correct": true, "reason": "..."}
             """;
 
-    /** 标准答案分解为原子主张（FactualCorrectness） */
+    /** 原子主张分解（FactualCorrectness，双向服务 reference 与 response 的分解） */
     static final String CLAIM_DECOMPOSITION = """
-            把以下标准答案分解为原子主张列表：每条主张是一个独立的、最小粒度的事实陈述。
+            把以下文本分解为原子主张列表：每条主张是一个独立的、最小粒度的事实陈述。
 
-            标准答案：
+            文本：
             %s
 
             输出 JSON 数组（不要输出其他内容）：
             ["主张1", "主张2"]
             """;
 
-    /** 主张对照回答验证（FactualCorrectness） */
-    static final String CLAIM_VS_ANSWER_VERIFICATION = """
-            给定一个回答与一组主张。逐主张判断：该主张能否从回答中直接推导出来。
+    /** 主张对照前提文本验证（FactualCorrectness 双向：response主张vs reference、reference主张vs response） */
+    static final String CLAIM_VS_PREMISE_VERIFICATION = """
+            给定一段前提文本与一组主张。逐主张判断：该主张能否从前提文本中直接推导出来。
 
-            回答：
+            前提文本：
             %s
 
             主张：
@@ -173,20 +186,52 @@ public final class GenerationPrompts {
             {"verifications": [{"index": 1, "supported": true, "reason": "..."}, ...]}
             """;
 
-    /** 反向问题生成（AnswerRelevance，经 LlmJudge.generateQuestions） */
-    public static final String REVERSE_QUESTION_GENERATION = """
-            给定以下回答，生成 3 个该回答可能回应的问题。
-            问题应该简洁、具体。
+    /** 反向问题生成（AnswerRelevance，经 LlmJudge.generateQuestionsWithFlags；单次一个问题 + noncommittal 判定） */
+    public static final String REVERSE_QUESTION_WITH_FLAG = """
+            给定以下回答，完成两件事：
+            1. 生成一个该回答最可能在回应的问题（简洁、具体）
+            2. 判断该回答是否为含糊回避型（noncommittal）：回答逃避问题、含糊其辞、模棱两可，
+               或属于「我不知道 / 无法确定」这类未给出实质内容的表现则判定为 true
+
+            示例：
+            回答："抱歉，我不知道这个问题的答案。"
+            → {"question": "导致这个现象的原因是什么？", "noncommittal": true}
+
+            回答："RAG 是一种结合检索与生成的 AI 架构，先检索相关文档再基于文档生成回答。"
+            → {"question": "什么是 RAG？", "noncommittal": false}
 
             回答：
             %s
 
-            输出 JSON 数组（不要输出其他内容）：
-            [
-              "问题1",
-              "问题2",
-              "问题3"
-            ]
+            输出 JSON（不要输出其他内容）：
+            {"question": "...", "noncommittal": false}
+            """;
+
+    /** 实体抽取（ContextEntityRecall，翻译 ragas ExtractEntitiesPrompt 指令与 4 个 few-shot） */
+    static final String ENTITY_EXTRACTION = """
+            给定一段文本，提取其中的唯一实体，不重复；同一实体的不同表述或指称视为一个实体。
+
+            示例 1：
+            文本："The Eiffel Tower, located in Paris, France, is one of the most iconic landmarks globally. Millions of visitors are attracted to it each year for its breathtaking views of the city. Completed in 1889, it was constructed in time for the 1889 World's Fair."
+            → {"entities": ["Eiffel Tower", "Paris", "France", "1889", "World's Fair"]}
+
+            示例 2：
+            文本："The Colosseum in Rome, also known as the Flavian Amphitheatre, stands as a monument to Roman architectural and engineering achievement. Construction began under Emperor Vespasian in AD 70 and was completed by his son Titus in AD 80."
+            → {"entities": ["Colosseum", "Rome", "Flavian Amphitheatre", "Vespasian", "AD 70", "Titus", "AD 80"]}
+
+            示例 3：
+            文本："The Great Wall of China, stretching over 21,196 kilometers from east to west, is a marvel of ancient defensive architecture. Built to protect against invasions from the north, its construction started as early as the 7th century BC. Today, it is a UNESCO World Heritage Site."
+            → {"entities": ["Great Wall of China", "21,196 kilometers", "7th century BC", "UNESCO World Heritage Site"]}
+
+            示例 4：
+            文本："The Apollo 11 mission, which launched on July 16, 1969, marked the first time humans landed on the Moon. Astronauts Neil Armstrong, Buzz Aldrin, and Michael Collins made history, with Armstrong being the first man to step on the lunar surface."
+            → {"entities": ["Apollo 11 mission", "July 16, 1969", "Moon", "Neil Armstrong", "Buzz Aldrin", "Michael Collins"]}
+
+            文本：
+            %s
+
+            输出 JSON（不要输出其他内容，实体保持原文形式，不要翻译）：
+            {"entities": ["实体1", "实体2"]}
             """;
 
     /** RAG 回答生成（EvaluationRunner 的生成阶段） */

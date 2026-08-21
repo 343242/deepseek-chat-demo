@@ -1,5 +1,6 @@
 package com.smart.rag.evaluation.metrics.generation;
 
+import com.smart.rag.evaluation.config.EvaluationProperties;
 import com.smart.rag.evaluation.judge.LlmJudge;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -9,13 +10,15 @@ import org.springframework.stereotype.Component;
 import java.util.List;
 
 /**
- * 回答相关性评分器（Answer Relevance）
+ * 回答相关性评分器（翻译 ragas ResponseRelevancy / AnswerRelevancy）
  * <p>
- * 衡量回答是否直接回应了用户的问题。
- * 方法（对齐 RAGAS）：
- * 1. 从 answer 反向生成 N 个可能的问题（LLM 调用）
- * 2. 计算每个生成问题与原始问题的 embedding cosine 相似度
- * 3. Answer Relevance = 平均 cosine 相似度（范围 0-1）
+ * 衡量回答是否直接回应了用户的问题。算法：
+ * <ol>
+ *   <li>从 answer 反向生成 strictness 个独立采样（温度 0.3，每次一个问题 + noncommittal 标志）</li>
+ *   <li>计算每个生成问题与原始问题的 embedding cosine 相似度，取均值</li>
+ *   <li>全部采样均 noncommittal（含糊/回避型回答）时分数归 0</li>
+ * </ol>
+ * score = mean(cosine) × (all_noncommittal ? 0 : 1)。哨兵：采样全部失败/问题全空 → -1。
  * </p>
  */
 @Component
@@ -25,10 +28,13 @@ public class AnswerRelevanceScorer {
 
     private final LlmJudge judge;
     private final EmbeddingModel embeddingModel;
+    private final EvaluationProperties props;
 
-    public AnswerRelevanceScorer(LlmJudge judge, EmbeddingModel embeddingModel) {
+    public AnswerRelevanceScorer(LlmJudge judge, EmbeddingModel embeddingModel,
+                                 EvaluationProperties props) {
         this.judge = judge;
         this.embeddingModel = embeddingModel;
+        this.props = props;
     }
 
     /**
@@ -39,15 +45,29 @@ public class AnswerRelevanceScorer {
      * @return 回答相关性分数（0-1），失败返回 -1
      */
     public double score(String question, String answer) {
-        // Step 1: 从 answer 反向生成问题
-        List<String> generatedQuestions = judge.generateQuestions(answer);
-        if (generatedQuestions.isEmpty()) {
-            log.warn("No questions generated from answer");
+        int strictness = props.getMetrics().getAnswerRelevancy().getStrictness();
+        List<LlmJudge.GeneratedQuestion> samples =
+                judge.generateQuestionsWithFlags(answer, strictness);
+        if (samples.isEmpty()
+                || samples.stream().allMatch(s -> s.question() == null || s.question().isBlank())) {
+            log.warn("No questions generated from answer (all samples empty or failed)");
             return -1;
         }
+        // 全部采样 noncommittal → 归 0（ragas: int(not all_noncommittal) 乘子）
+        boolean allNoncommittal = samples.stream().allMatch(LlmJudge.GeneratedQuestion::noncommittal);
 
-        // Step 2: 计算 embedding 相似度（批量 embed：一次请求替代 N 次往返）
-        float[] originalEmbedding = embeddingModel.embed(question);
+        var questions = samples.stream()
+                .map(LlmJudge.GeneratedQuestion::question)
+                .filter(q -> q != null && !q.isBlank())
+                .toList();
+
+        float[] originalEmbedding;
+        try {
+            originalEmbedding = embeddingModel.embed(question);
+        } catch (Exception e) {
+            log.warn("Failed to embed original question", e);
+            return -1;
+        }
         if (originalEmbedding == null || originalEmbedding.length == 0) {
             log.warn("Failed to embed original question");
             return -1;
@@ -55,7 +75,7 @@ public class AnswerRelevanceScorer {
 
         List<float[]> embeddings;
         try {
-            embeddings = embeddingModel.embed(generatedQuestions);
+            embeddings = embeddingModel.embed(questions);
         } catch (Exception e) {
             log.warn("Failed to embed generated questions", e);
             return -1;
@@ -70,11 +90,11 @@ public class AnswerRelevanceScorer {
             }
         }
 
-        // 所有 embedding 失败 = 评测无效，返回 -1（与 question 生成失败一致）
         if (count == 0) {
             log.warn("All generated-question embeddings failed");
             return -1;
         }
-        return totalSimilarity / count;
+        double mean = totalSimilarity / count;
+        return allNoncommittal ? 0.0 : mean;
     }
 }

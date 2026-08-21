@@ -52,8 +52,9 @@ public class EvaluationConfig {
     @Bean
     public LlmJudge llmJudge(ChatClient judgeChatClient,
                              EvaluationProperties evaluationProperties,
-                             ObjectMapper objectMapper) {
+                             ObjectMapper objectMapper,
+                             com.smart.rag.infrastructure.concurrent.ScopedTasks scopedTasks) {
         log.info("LlmJudge initialized with candidate: {}", evaluationProperties.getJudgeModel());
-        return new LlmJudgeImpl(judgeChatClient, objectMapper);
+        return new LlmJudgeImpl(judgeChatClient, objectMapper, scopedTasks);
     }
 }

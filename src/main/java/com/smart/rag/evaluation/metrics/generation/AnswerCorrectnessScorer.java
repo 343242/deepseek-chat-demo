@@ -2,6 +2,7 @@ package com.smart.rag.evaluation.metrics.generation;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.smart.rag.evaluation.config.EvaluationProperties;
 import com.smart.rag.evaluation.judge.LlmJudge;
 import com.smart.rag.evaluation.util.JsonExtractorUtil;
 import org.slf4j.Logger;
@@ -15,10 +16,12 @@ import java.util.Map;
 import java.util.Optional;
 
 /**
- * 答案正确性评分器（翻译 ragas AnswerCorrectness，legacy 路径）。
+ * 答案正确性评分器（翻译 ragas AnswerCorrectness）。
  * <p>
- * 两步分离：TP/FP/FN 分类（事实性）+ embedding 语义相似度，按 ragas 默认权重
- * [0.75, 0.25] 加权：score = 0.75 × F1 + 0.25 × cosine(answer, ground_truth)。
+ * 两步分离：TP/FP/FN 分类（事实性 F-beta）+ embedding 语义相似度，按可配权重加权
+ * （ragas 默认 [0.75, 0.25]，beta 默认 1.0）：
+ * score = factualityWeight × Fβ + similarityWeight × cosine(answer, ground_truth)。
+ * β&lt;1 偏精度（重罚幻觉）、β&gt;1 偏召回（重罚遗漏）。
  * 哨兵约定同 {@link FaithfulnessScorer}（Judge 失败 -1；无声明答案事实性记 1.0）。
  * </p>
  */
@@ -27,23 +30,22 @@ public class AnswerCorrectnessScorer {
 
     private static final Logger log = LoggerFactory.getLogger(AnswerCorrectnessScorer.class);
 
-    private static final double FACTUALITY_WEIGHT = 0.75;
-    private static final double SIMILARITY_WEIGHT = 0.25;
-
     private final LlmJudge judge;
     private final ObjectMapper objectMapper;
     private final EmbeddingModel embeddingModel;
+    private final EvaluationProperties props;
 
     public AnswerCorrectnessScorer(LlmJudge judge, ObjectMapper objectMapper,
-                                   EmbeddingModel embeddingModel) {
+                                   EmbeddingModel embeddingModel, EvaluationProperties props) {
         this.judge = judge;
         this.objectMapper = objectMapper;
         this.embeddingModel = embeddingModel;
+        this.props = props;
     }
 
     /**
-     * @param question         用户问题
-     * @param answer           生成的回答
+     * @param question          用户问题
+     * @param answer            生成的回答
      * @param groundTruthAnswer 标准答案
      * @return 正确性分数（0-1），Judge 失败 -1
      */
@@ -51,6 +53,15 @@ public class AnswerCorrectnessScorer {
         if (groundTruthAnswer == null || groundTruthAnswer.isBlank()) {
             return -1;
         }
+        double factualityWeight = props.getMetrics().getAnswerCorrectness().getFactualityWeight();
+        double similarityWeight = props.getMetrics().getAnswerCorrectness().getSimilarityWeight();
+        double beta = props.getMetrics().getAnswerCorrectness().getBeta();
+        if (factualityWeight < 0 || similarityWeight < 0
+                || factualityWeight + similarityWeight == 0) {
+            log.warn("AnswerCorrectness 权重配置非法: [{}, {}]", factualityWeight, similarityWeight);
+            return -1;
+        }
+
         var answerStatementsOpt = extractStatements(answer);
         var gtStatementsOpt = extractStatements(groundTruthAnswer);
         if (answerStatementsOpt.isEmpty() || gtStatementsOpt.isEmpty()) {
@@ -61,7 +72,7 @@ public class AnswerCorrectnessScorer {
         if (answerStatements.isEmpty() && gtStatements.isEmpty()) {
             // 双方均无陈述：事实性记 1.0（无声明即无错误），仅保留语义分量
             double similarity = semanticSimilarity(answer, groundTruthAnswer);
-            return similarity < 0 ? -1 : FACTUALITY_WEIGHT * 1.0 + SIMILARITY_WEIGHT * similarity;
+            return similarity < 0 ? -1 : factualityWeight * 1.0 + similarityWeight * similarity;
         }
 
         var classification = classifyStatements(question, answerStatements, gtStatements);
@@ -71,18 +82,14 @@ public class AnswerCorrectnessScorer {
         int tp = classification.get().size("TP");
         int fp = classification.get().size("FP");
         int fn = classification.get().size("FN");
-        double denominator = 2.0 * tp + fp + fn;
-        if (denominator == 0.0) {
-            // 陈述非空但分类结果全空：LLM 输出与陈述数不匹配，判无效而非放 NaN 进聚合
-            return -1;
-        }
-        double f1 = (2.0 * tp) / denominator;
+        // ragas fbeta：P=R=0（分类全空）时事实分记 0，与语义分量照常加权
+        double fBeta = FactualCorrectnessScorer.fbeta(tp, fp, fn, beta);
         double similarity = semanticSimilarity(answer, groundTruthAnswer);
         if (similarity < 0) {
             // embedding 失败：与模块哨兵约定一致返回 -1，避免把"语义分 0"混入加权拉低结果
             return -1;
         }
-        return FACTUALITY_WEIGHT * f1 + SIMILARITY_WEIGHT * similarity;
+        return factualityWeight * fBeta + similarityWeight * similarity;
     }
 
     private Optional<List<String>> extractStatements(String text) {

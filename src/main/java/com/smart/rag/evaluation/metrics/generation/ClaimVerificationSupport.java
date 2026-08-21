@@ -58,17 +58,36 @@ public class ClaimVerificationSupport {
     }
 
     /**
-     * Step 2: 验证每个 claim 是否可从 context 推导。
+     * Step 2: 验证每个 claim 是否可从 context 推导（聚合版）。
      *
      * @return supported / total（0-1）；Judge 失败/数量不匹配返回 -1
      */
     public double verifyClaims(List<String> claims, String context) {
+        boolean[] verdicts = verifyClaimVerdicts(claims, context);
+        if (verdicts == null) {
+            return -1;
+        }
+        long supported = 0;
+        for (boolean v : verdicts) {
+            if (v) {
+                supported++;
+            }
+        }
+        return (double) supported / verdicts.length;
+    }
+
+    /**
+     * Step 2 的逐主张版本（NoiseSensitivity 语句级矩阵需要每个 claim 的独立判决）。
+     *
+     * @return 与 claims 等长的布尔数组（true=可推导）；Judge 失败/数量不匹配返回 null
+     */
+    public boolean[] verifyClaimVerdicts(List<String> claims, String context) {
         String claimsJson;
         try {
             claimsJson = objectMapper.writeValueAsString(claims);
         } catch (Exception e) {
             log.warn("Failed to serialize claims: {}", e);
-            return -1;
+            return null;
         }
 
         var prompt = GenerationPrompts.CLAIM_VERIFICATION.formatted(context, claimsJson);
@@ -76,7 +95,7 @@ public class ClaimVerificationSupport {
         var verdict = judge.evaluate(prompt);
         if (!verdict.success()) {
             log.warn("Failed to verify claims: {}", verdict.errorMessage());
-            return -1;
+            return null;
         }
 
         try {
@@ -90,16 +109,17 @@ public class ClaimVerificationSupport {
                     || verifications.size() != claims.size()) {
                 log.warn("Judge returned {} verifications for {} claims",
                         verifications == null ? 0 : verifications.size(), claims.size());
-                return -1;
+                return null;
             }
 
-            long supported = verifications.stream()
-                    .filter(v -> Boolean.TRUE.equals(v.get("supported")))
-                    .count();
-            return (double) supported / verifications.size();
+            var verdictArray = new boolean[verifications.size()];
+            for (int i = 0; i < verifications.size(); i++) {
+                verdictArray[i] = Boolean.TRUE.equals(verifications.get(i).get("supported"));
+            }
+            return verdictArray;
         } catch (Exception e) {
             log.warn("Failed to parse verification result: {}", e);
-            return -1;
+            return null;
         }
     }
 }

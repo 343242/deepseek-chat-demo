@@ -159,6 +159,22 @@ class ChatModelAdapterTest {
         }
 
         @Test
+        @DisplayName("options 携带 temperature → 透传进 ChatRequest；未设置保持 null（存量调用方零影响）")
+        void temperaturePassthrough() {
+            when(delegate.chat(any())).thenReturn(simpleResponse("ok"));
+
+            var options = org.springframework.ai.chat.prompt.ChatOptions.builder()
+                .temperature(0.01).build();
+            adapter.call(new Prompt(List.of(new UserMessage("hi")), options));
+            adapter.call(new Prompt(List.of(new UserMessage("hi"))));
+
+            ArgumentCaptor<ChatRequest> captor = ArgumentCaptor.forClass(ChatRequest.class);
+            org.mockito.Mockito.verify(delegate, org.mockito.Mockito.times(2)).chat(captor.capture());
+            assertThat(captor.getAllValues().get(0).temperature()).isEqualTo(0.01);
+            assertThat(captor.getAllValues().get(1).temperature()).isNull();
+        }
+
+        @Test
         @DisplayName("AC10：历史 AssistantMessage 携 reasoning_content metadata → extractHistory 提取进 MessageInformation.metadata（供请求体回传）")
         void reasoningContentExtractedFromToolCallHistory() {
             when(delegate.chat(any())).thenReturn(simpleResponse("ok"));

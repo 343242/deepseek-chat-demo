@@ -191,8 +191,11 @@ public class ChatModelAdapter implements ChatModel {
         String systemPrompt = extractSystemPrompt(prompt);
         List<MessageInformation> history = extractHistory(prompt);
         List<ChatTool> tools = extractTools(prompt);
+        // 温度透传：仅当调用方经 .options(...) 显式设置时生效（如 evaluation judge 0.01 /
+        // 多采样 0.3 / persona 1.0），未设置保持 null 不注入请求体，存量调用方零影响
+        Double temperature = prompt.getOptions() != null ? prompt.getOptions().getTemperature() : null;
         return new ChatRequest(prompt.getContents(), systemPrompt, history,
-            null, null, null, Map.of(), tools, null);
+            temperature, null, null, Map.of(), tools, null);
     }
 
     /** Fix B-i 请求侧：从 ToolCallingChatOptions 提取 ToolCallback 转 ChatTool */

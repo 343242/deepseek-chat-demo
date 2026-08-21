@@ -71,13 +71,13 @@ class SynthesizersTest {
     }
 
     private static Node chunkNode(String id, List<String> themes) {
-        var node = new Node(id, "内容-" + id, Map.of(), new double[]{1.0});
+        var node = new Node(id, "内容-" + id, Map.of());
         node.setThemes(themes);
         return node;
     }
 
     private static Node entityNode(String id, String... entities) {
-        var node = new Node(id, "内容-" + id, Map.of(), new double[]{1.0});
+        var node = new Node(id, "内容-" + id, Map.of());
         node.setEntities(new java.util.LinkedHashSet<>(List.of(entities)));
         return node;
     }

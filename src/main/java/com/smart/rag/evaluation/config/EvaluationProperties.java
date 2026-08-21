@@ -3,6 +3,7 @@ package com.smart.rag.evaluation.config;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -32,6 +33,9 @@ public class EvaluationProperties {
 
     /** 运行器相关配置 */
     private Runner runner = new Runner();
+
+    /** 指标参数配置（对齐 ragas 各指标构造参数） */
+    private Metrics metrics = new Metrics();
 
     // ======================== 便捷方法 ========================
 
@@ -84,6 +88,14 @@ public class EvaluationProperties {
         this.runner = runner;
     }
 
+    public Metrics getMetrics() {
+        return metrics;
+    }
+
+    public void setMetrics(Metrics metrics) {
+        this.metrics = metrics;
+    }
+
     // ======================== 嵌套配置类 ========================
 
     /**
@@ -121,11 +133,20 @@ public class EvaluationProperties {
          */
         private String synthesisModel;
 
-        /** 向量余弦相似边阈值（chunk 现成向量 vs ragas 摘要向量分布不同，必要时校准） */
+        /** 向量余弦相似边阈值（摘要向量，ragas prechunked 默认 0.7） */
         private double cosineThreshold = 0.7;
 
-        /** 固定中文 persona 列表（不 LLM 生成，对应 Python 参照实现的内置 persona） */
-        private List<PersonaConfig> personas = defaultPersonas();
+        /**
+         * 固定中文 persona 列表；为空时由 PersonaGenerator 自动生成
+         * （对齐 ragas persona_list=None 时 generate_personas_from_kg 的默认行为）。
+         */
+        private List<PersonaConfig> personas = new ArrayList<>();
+
+        /** 自动生成 persona 数量（personas 为空时生效；ragas num_personas 默认 3） */
+        private int numPersonas = 3;
+
+        /** 节点问题潜力过滤（ragas CustomNodeFilter 移植） */
+        private NodeFilter nodeFilter = new NodeFilter();
 
         public int getSize() {
             return size;
@@ -167,12 +188,34 @@ public class EvaluationProperties {
             this.personas = personas;
         }
 
-        private static List<PersonaConfig> defaultPersonas() {
-            return List.of(
-                    new PersonaConfig("企业新员工", "刚入职的员工，对公司制度、流程、术语不熟悉，会提出基础、直接的问题"),
-                    new PersonaConfig("一线业务人员", "日常借助知识库解决具体业务问题的员工，提问具体、面向实操"),
-                    new PersonaConfig("技术工程师", "关注系统设计、集成方式和技术细节，提问专业且深入"),
-                    new PersonaConfig("部门管理员", "负责知识库内容维护与权限管理，关注规范口径和管理流程"));
+        public int getNumPersonas() {
+            return numPersonas;
+        }
+
+        public void setNumPersonas(int numPersonas) {
+            this.numPersonas = numPersonas;
+        }
+
+        public NodeFilter getNodeFilter() {
+            return nodeFilter;
+        }
+
+        public void setNodeFilter(NodeFilter nodeFilter) {
+            this.nodeFilter = nodeFilter;
+        }
+    }
+
+    /** 节点问题潜力过滤配置（ragas CustomNodeFilter min_score） */
+    public static class NodeFilter {
+        /** 潜力评分 ≤ minScore 的 chunk 被剔除（ragas 默认 2） */
+        private int minScore = 2;
+
+        public int getMinScore() {
+            return minScore;
+        }
+
+        public void setMinScore(int minScore) {
+            this.minScore = minScore;
         }
     }
 
@@ -291,6 +334,136 @@ public class EvaluationProperties {
 
         public void setMaxConcurrentRuns(int maxConcurrentRuns) {
             this.maxConcurrentRuns = maxConcurrentRuns;
+        }
+    }
+
+    /** 指标参数（默认值 = ragas 0.4.3 各指标构造默认） */
+    public static class Metrics {
+
+        private AnswerCorrectness answerCorrectness = new AnswerCorrectness();
+
+        private FactualCorrectness factualCorrectness = new FactualCorrectness();
+
+        private NoiseSensitivity noiseSensitivity = new NoiseSensitivity();
+
+        private AnswerRelevancy answerRelevancy = new AnswerRelevancy();
+
+        public AnswerCorrectness getAnswerCorrectness() {
+            return answerCorrectness;
+        }
+
+        public void setAnswerCorrectness(AnswerCorrectness answerCorrectness) {
+            this.answerCorrectness = answerCorrectness;
+        }
+
+        public FactualCorrectness getFactualCorrectness() {
+            return factualCorrectness;
+        }
+
+        public void setFactualCorrectness(FactualCorrectness factualCorrectness) {
+            this.factualCorrectness = factualCorrectness;
+        }
+
+        public NoiseSensitivity getNoiseSensitivity() {
+            return noiseSensitivity;
+        }
+
+        public void setNoiseSensitivity(NoiseSensitivity noiseSensitivity) {
+            this.noiseSensitivity = noiseSensitivity;
+        }
+
+        public AnswerRelevancy getAnswerRelevancy() {
+            return answerRelevancy;
+        }
+
+        public void setAnswerRelevancy(AnswerRelevancy answerRelevancy) {
+            this.answerRelevancy = answerRelevancy;
+        }
+
+        /** AnswerCorrectness：事实性 F-beta 与语义相似度加权（ragas weights=[0.75,0.25]、beta=1.0） */
+        public static class AnswerCorrectness {
+            /** 事实性分量权重 */
+            private double factualityWeight = 0.75;
+
+            /** 语义相似度分量权重 */
+            private double similarityWeight = 0.25;
+
+            /** F-beta 的 beta（&lt;1 偏精度重罚幻觉，&gt;1 偏召回重罚遗漏） */
+            private double beta = 1.0;
+
+            public double getFactualityWeight() {
+                return factualityWeight;
+            }
+
+            public void setFactualityWeight(double factualityWeight) {
+                this.factualityWeight = factualityWeight;
+            }
+
+            public double getSimilarityWeight() {
+                return similarityWeight;
+            }
+
+            public void setSimilarityWeight(double similarityWeight) {
+                this.similarityWeight = similarityWeight;
+            }
+
+            public double getBeta() {
+                return beta;
+            }
+
+            public void setBeta(double beta) {
+                this.beta = beta;
+            }
+        }
+
+        /** FactualCorrectness：mode 与 beta（ragas 默认 f1 / 1.0） */
+        public static class FactualCorrectness {
+            /** precision | recall | f1 */
+            private String mode = "f1";
+
+            private double beta = 1.0;
+
+            public String getMode() {
+                return mode;
+            }
+
+            public void setMode(String mode) {
+                this.mode = mode;
+            }
+
+            public double getBeta() {
+                return beta;
+            }
+
+            public void setBeta(double beta) {
+                this.beta = beta;
+            }
+        }
+
+        /** NoiseSensitivity：relevant（ragas 默认）| irrelevant */
+        public static class NoiseSensitivity {
+            private String mode = "relevant";
+
+            public String getMode() {
+                return mode;
+            }
+
+            public void setMode(String mode) {
+                this.mode = mode;
+            }
+        }
+
+        /** AnswerRelevancy：反向问题独立采样次数（ragas strictness 默认 3） */
+        public static class AnswerRelevancy {
+            private int strictness = 3;
+
+            public int getStrictness() {
+                return strictness;
+            }
+
+            public void setStrictness(int strictness) {
+                this.strictness = strictness;
+            }
         }
     }
 }

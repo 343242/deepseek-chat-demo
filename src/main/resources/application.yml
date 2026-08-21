@@ -83,12 +83,33 @@ app:
       max-chunks: ${EVALUATION_DATASET_MAX_CHUNKS:200}
       # 出题主模型候选 ID（问题与参考答案生成；强模型）。留空用默认 chat 候选
       synthesis-model: qwen3.8-max
-      # 向量余弦相似边阈值（chunk 现成向量；对照 Python 参照实现校准）
+      # 摘要向量余弦相似边阈值（ragas prechunked 默认 0.7）
       cosine-threshold: 0.7
-      # 固定中文 persona（不 LLM 生成）；缺省内置 4 个，可按业务覆盖
+      # persona 列表；为空时自动生成（对齐 ragas persona_list=None 默认，PersonaGenerationPrompt）
       # personas:
       #   - name: 企业新员工
       #     role-description: 刚入职的员工，对公司制度流程不熟悉
+      # 自动生成 persona 数量（personas 为空时生效；ragas num_personas 默认 3）
+      num-personas: 3
+      node-filter:
+        # 问题潜力过滤（ragas CustomNodeFilter）：评分 ≤ min-score 的 chunk 剔除
+        min-score: 2
+    metrics:
+      # AnswerCorrectness（ragas 默认 [0.75, 0.25]、beta=1.0；beta<1 偏精度重罚幻觉，>1 偏召回重罚遗漏）
+      answer-correctness:
+        factuality-weight: 0.75
+        similarity-weight: 0.25
+        beta: 1.0
+      # FactualCorrectness mode：precision | recall | f1（ragas 默认 f1）
+      factual-correctness:
+        mode: f1
+        beta: 1.0
+      # NoiseSensitivity mode：relevant（ragas 默认）| irrelevant
+      noise-sensitivity:
+        mode: relevant
+      # AnswerRelevancy 反向问题独立采样次数（ragas strictness 默认 3）
+      answer-relevancy:
+        strictness: 3
     runner:
       default-k: 10
       concurrency: 2

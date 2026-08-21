@@ -19,7 +19,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class GraphAlgorithmsTest {
 
     private static Node node(String id) {
-        return new Node(id, "content-" + id, Map.of("userId", "1"), new double[]{0.1, 0.2});
+        return new Node(id, "content-" + id, Map.of("userId", "1"));
     }
 
     private static KnowledgeGraph graph(Relationship... relationships) {

@@ -3,7 +3,6 @@ package com.smart.rag.evaluation.testset.transforms;
 import com.smart.rag.evaluation.testset.graph.Node;
 import com.smart.rag.evaluation.testset.graph.Relationship;
 import com.smart.rag.evaluation.testset.graph.RelationshipType;
-
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -12,11 +11,11 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 向量余弦相似关系构建器（对应 ragas {@code CosineSimilarityBuilder}）。
+ * 向量余弦相似关系构建器（翻译 ragas {@code CosineSimilarityBuilder} prechunked 配置）。
  * <p>
- * 与 ragas 的差异仅在输入：ragas 对 chunk 摘要重新 embedding，本实现直接用
- * vector_store 现成 chunk 向量（零 embedding 调用）。阈值经配置暴露，默认 0.7，
- * 因 chunk 原文向量与摘要向量的分布不同，首跑后对照 Python 参照实现校准。
+ * 输入为 summary embedding（ragas prechunked 默认：property=summary_embedding →
+ * summary_similarity，threshold=0.7）：对全部节点两两算 cosine，≥ 阈值建立双向关系。
+ * 无摘要向量的节点跳过（摘要生成/嵌入失败的降级路径）。
  * </p>
  */
 public final class VectorCosineBuilder {
@@ -35,10 +34,10 @@ public final class VectorCosineBuilder {
             for (int j = i + 1; j < nodes.size(); j++) {
                 var a = nodes.get(i);
                 var b = nodes.get(j);
-                if (a.embedding() == null || b.embedding() == null) {
+                if (a.summaryEmbedding() == null || b.summaryEmbedding() == null) {
                     continue;
                 }
-                double similarity = cosine(a.embedding(), b.embedding());
+                double similarity = cosine(a.summaryEmbedding(), b.summaryEmbedding());
                 if (similarity >= threshold) {
                     relationships.add(new Relationship(a.id(), b.id(),
                             RelationshipType.SIMILARITY, similarity, true,

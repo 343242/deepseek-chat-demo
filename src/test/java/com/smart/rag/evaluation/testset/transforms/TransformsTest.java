@@ -1,40 +1,104 @@
 package com.smart.rag.evaluation.testset.transforms;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.smart.rag.evaluation.testset.graph.Node;
+import com.smart.rag.evaluation.testset.graph.RelationshipType;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.ai.chat.client.ChatClient;
 
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.when;
 
-@DisplayName("transforms 包算法")
+@ExtendWith(MockitoExtension.class)
+@DisplayName("transforms 包算法与抽取器")
 class TransformsTest {
 
+    @Mock
+    private ChatClient chatClient;
+
+    @Mock
+    private ChatClient.ChatClientRequestSpec spec;
+
+    @Mock
+    private ChatClient.CallResponseSpec response;
+
+    private final ObjectMapper objectMapper = new ObjectMapper();
+
+    @BeforeEach
+    void stubFluentChain() {
+        lenient().when(chatClient.prompt()).thenReturn(spec);
+        lenient().when(spec.user(anyString())).thenReturn(spec);
+        lenient().when(spec.call()).thenReturn(response);
+    }
+
+    private void llmReturns(String json) {
+        when(response.content()).thenReturn(json);
+    }
+
     @Nested
-    @DisplayName("PgVectorParser")
-    class PgVectorParserTest {
+    @DisplayName("SummaryExtractor")
+    class SummaryExtractorTest {
 
         @Test
-        @DisplayName("标准格式解析并保留精度")
-        void parsesStandardFormat() {
-            var vec = PgVectorParser.parse("[0.123, -0.45, 1e-3]");
-            assertThat(vec).containsExactly(0.123, -0.45, 0.001);
+        @DisplayName("正常解析 {text}；空返回/脏返回降级空串")
+        void extractsSummary() {
+            var extractor = new SummaryExtractor(chatClient, objectMapper);
+            var node = new Node("c1", "长文本内容", Map.of());
+
+            llmReturns("{\"text\": \"这段内容讲多屏协同。\"}");
+            assertThat(extractor.extract(node)).isEqualTo("这段内容讲多屏协同。");
+
+            llmReturns("   ");
+            assertThat(extractor.extract(node)).isEmpty();
+
+            llmReturns("抱歉无法总结");
+            assertThat(extractor.extract(node)).isEmpty();
+        }
+    }
+
+    @Nested
+    @DisplayName("NodePotentialFilter")
+    class NodePotentialFilterTest {
+
+        private Node node(String summary) {
+            var n = new Node("c1", "chunk 内容", Map.of());
+            n.setSummary(summary);
+            return n;
         }
 
         @Test
-        @DisplayName("空数组、null、非包裹格式与脏数据的错误路径")
-        void rejectsInvalidInput() {
-            assertThat(PgVectorParser.parse("[]")).isEmpty();
-            assertThatThrownBy(() -> PgVectorParser.parse(null))
-                    .isInstanceOf(IllegalArgumentException.class);
-            assertThatThrownBy(() -> PgVectorParser.parse("0.1,0.2"))
-                    .isInstanceOf(IllegalArgumentException.class);
-            assertThatThrownBy(() -> PgVectorParser.parse("[0.1,abc]"))
-                    .isInstanceOf(IllegalArgumentException.class);
+        @DisplayName("score ≤ minScore 剔除；更高分保留；无摘要跳过过滤（保留）")
+        void filtersByScore() {
+            var filter = new NodePotentialFilter(chatClient, objectMapper, 2);
+
+            llmReturns("{\"score\": 2}");
+            assertThat(filter.shouldRemove(node("摘要"))).isTrue();
+
+            llmReturns("{\"score\": 3}");
+            assertThat(filter.shouldRemove(node("摘要"))).isFalse();
+
+            // ragas 原版行为：无 summary 跳过过滤（保留节点，不触发 LLM）
+            assertThat(filter.shouldRemove(node(""))).isFalse();
+        }
+
+        @Test
+        @DisplayName("评分失败/脏返回保留节点")
+        void keepsNodeOnFailure() {
+            var filter = new NodePotentialFilter(chatClient, objectMapper, 2);
+            llmReturns("无法评分");
+            assertThat(filter.shouldRemove(node("摘要"))).isFalse();
         }
     }
 
@@ -62,18 +126,15 @@ class TransformsTest {
     @DisplayName("EntityOverlapBuilder 实体重叠边")
     class EntityOverlapBuilderTest {
 
-        private com.smart.rag.evaluation.testset.graph.Node node(
-                String id, Set<String> entities) {
-            var n = new com.smart.rag.evaluation.testset.graph.Node(
-                    id, "content-" + id, Map.of(), new double[]{1.0});
+        private Node node(String id, Set<String> entities) {
+            var n = new Node(id, "content-" + id, Map.of());
             n.setEntities(entities);
             return n;
         }
 
         /** 6 节点图：超高频实体（出现 6 次）被噪声剔除，其余实体最多出现 2 次。 */
-        private List<com.smart.rag.evaluation.testset.graph.Node> fixture(
-                Set<String> extraA, Set<String> extraB) {
-            var nodes = new java.util.ArrayList<com.smart.rag.evaluation.testset.graph.Node>();
+        private List<Node> fixture(Set<String> extraA, Set<String> extraB) {
+            var nodes = new java.util.ArrayList<Node>();
             var a = new java.util.HashSet<>(Set.of("超高频"));
             a.addAll(extraA);
             var b = new java.util.HashSet<>(Set.of("超高频"));
@@ -97,8 +158,7 @@ class TransformsTest {
             assertThat(rels).hasSize(1);
             var rel = rels.getFirst();
             assertThat(rel.source() + "->" + rel.target()).isEqualTo("a->b");
-            assertThat(rel.type()).isEqualTo(
-                    com.smart.rag.evaluation.testset.graph.RelationshipType.ENTITY_OVERLAP);
+            assertThat(rel.type()).isEqualTo(RelationshipType.ENTITY_OVERLAP);
             assertThat(rel.bidirectional()).isTrue();
             assertThat(rel.weight()).isEqualTo(0.5);
             @SuppressWarnings("unchecked")
@@ -127,17 +187,19 @@ class TransformsTest {
     }
 
     @Nested
-    @DisplayName("VectorCosineBuilder 向量相似边")
+    @DisplayName("VectorCosineBuilder 摘要向量相似边")
     class VectorCosineBuilderTest {
 
-        private com.smart.rag.evaluation.testset.graph.Node node(
-                String id, double[] embedding) {
-            return new com.smart.rag.evaluation.testset.graph.Node(
-                    id, "c-" + id, Map.of(), embedding);
+        private Node node(String id, double[] summaryEmbedding) {
+            var n = new Node(id, "c-" + id, Map.of());
+            if (summaryEmbedding != null) {
+                n.setSummaryEmbedding(summaryEmbedding);
+            }
+            return n;
         }
 
         @Test
-        @DisplayName("过阈建边、不过阈不建、缺向量跳过、维度不一致降级 0")
+        @DisplayName("过阈建边、不过阈不建、无摘要向量跳过、维度不一致降级 0")
         void buildsSimilarityRelationship() {
             var a = node("a", new double[]{1.0, 0.0});
             var b = node("b", new double[]{0.9, 0.1});
@@ -148,8 +210,7 @@ class TransformsTest {
 
             assertThat(rels).hasSize(1);
             var rel = rels.getFirst();
-            assertThat(rel.type()).isEqualTo(
-                    com.smart.rag.evaluation.testset.graph.RelationshipType.SIMILARITY);
+            assertThat(rel.type()).isEqualTo(RelationshipType.SIMILARITY);
             // ragas CosineSimilarityBuilder 的边是双向的（间接簇路径枚举依赖反向通行）
             assertThat(rel.bidirectional()).isTrue();
             assertThat(rel.weight()).isCloseTo(0.994, org.assertj.core.data.Offset.offset(0.01));

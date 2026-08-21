@@ -17,7 +17,8 @@ import com.smart.rag.evaluation.testset.synthesizers.Scenario;
 import com.smart.rag.evaluation.testset.synthesizers.SingleHopSpecificSynthesizer;
 import com.smart.rag.evaluation.testset.transforms.ChunkEntityLoader;
 import com.smart.rag.evaluation.testset.transforms.EntityOverlapBuilder;
-import com.smart.rag.evaluation.testset.transforms.PgVectorParser;
+import com.smart.rag.evaluation.testset.transforms.NodePotentialFilter;
+import com.smart.rag.evaluation.testset.transforms.SummaryExtractor;
 import com.smart.rag.evaluation.testset.transforms.ThemesExtractor;
 import com.smart.rag.evaluation.testset.transforms.VectorCosineBuilder;
 import com.smart.rag.infrastructure.concurrent.ScopeJoiner;
@@ -28,6 +29,7 @@ import com.smart.rag.infrastructure.concurrent.TaskScope;
 import com.smart.rag.infrastructure.llm.adapter.RewriteClientResolver;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
@@ -43,11 +45,12 @@ import java.util.Objects;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * KG 式测试集生成编排器（翻译 ragas TestsetGenerator.generate_with_chunks 的编排流程，
- * 取代旧的单 chunk 生成路径）。
+ * KG 式测试集生成编排器（翻译 ragas TestsetGenerator.generate_with_chunks 的编排流程）。
  * <p>
- * 阶段：采样 chunk（含现成向量）→ 实体装载（唯一来源 rag_chunk_entity）→ 主题抽取
- * （cheap 模型，ScopedTasks 并发）→ 本地建边（实体重叠 + 向量余弦，零 LLM）→
+ * 管线序对齐 ragas {@code default_transforms_for_prechunked}：
+ * 采样 chunk → 实体装载（唯一来源 rag_chunk_entity）→ 摘要（cheap 模型）→
+ * 问题潜力过滤（≤minScore 剔除）→ 主题抽取 ∥ 摘要向量（cheap 模型并发 / 批量 embed）→
+ * 本地建边（实体重叠 + 摘要余弦，零 LLM）→ persona（配置或自动生成）→
  * 合成器可用性检查与 ceil 分配 → 场景生成 + 样本合成（场景 cheap、样本主模型）→
  * 去重落库。单条失败不中断批次（fork 内吞异常为空贡献，同 ragas raise_exceptions=False
  * 的设计意图；NaN 占位 bug 不翻译）。
@@ -60,12 +63,15 @@ public class TestsetGeneratorService {
 
     /**
      * 合成器随机种子：固定值保证同输入可复现（对齐 ragas 默认 42 的实验可复现语义）。
-     * 三个合成器共用同一 seed。
+     * 三个合成器与 persona 补齐重采样共用同一 seed。
      */
     private static final long RANDOM_SEED = 42L;
 
     /** 主题抽取进度的事件频率（每 N 个 chunk 报一次，避免事件风暴） */
     private static final int THEME_PROGRESS_EVERY = 20;
+
+    /** 摘要向量批量 embed 的批大小（对齐 embedding 候选 params.batch-size） */
+    private static final int EMBED_BATCH_SIZE = 20;
 
     /** 生成阶段进度回调（供异步任务 SSE 转发）。 */
     public interface ProgressListener {
@@ -82,6 +88,7 @@ public class TestsetGeneratorService {
     private final DatasetRepository datasetRepo;
     private final ObjectMapper objectMapper;
     private final ScopedTasks scopedTasks;
+    private final EmbeddingModel embeddingModel;
 
     public TestsetGeneratorService(JdbcTemplate jdbc,
                                    ChunkEntityLoader entityLoader,
@@ -89,7 +96,8 @@ public class TestsetGeneratorService {
                                    EvaluationProperties props,
                                    DatasetRepository datasetRepo,
                                    ObjectMapper objectMapper,
-                                   ScopedTasks scopedTasks) {
+                                   ScopedTasks scopedTasks,
+                                   EmbeddingModel embeddingModel) {
         this.jdbc = jdbc;
         this.entityLoader = entityLoader;
         this.clientResolver = clientResolver;
@@ -97,6 +105,7 @@ public class TestsetGeneratorService {
         this.datasetRepo = datasetRepo;
         this.objectMapper = objectMapper;
         this.scopedTasks = scopedTasks;
+        this.embeddingModel = embeddingModel;
     }
 
     /**
@@ -117,7 +126,7 @@ public class TestsetGeneratorService {
                 0, "ragas_kg", props.getJudgeModel(), 0, null, null, null));
         final long datasetId = dataset.id();
 
-        // 2. 采样 chunk（含现成向量）
+        // 2. 采样 chunk
         progress.onProgress("sampling", 0, 1, "采样知识库 chunk");
         var chunks = sampleChunks(userId, datasetProps.getMaxChunks());
         if (chunks.isEmpty()) {
@@ -127,16 +136,39 @@ public class TestsetGeneratorService {
         }
         progress.onProgress("sampling", 1, 1, "采样 " + chunks.size() + " 个 chunk");
 
-        // 3. 建 KG：实体（DB 唯一来源）→ 主题（cheap 模型并发抽取）
-        var kg = buildKnowledgeGraph(chunks, userId, progress);
+        // 3. 节点 + 实体（DB 唯一来源；chunk 无实体行 → 不参与实体边）
+        var nodes = loadNodes(chunks);
+        var entitiesByChunk = entityLoader.loadEntities(
+                nodes.stream().map(Node::id).toList(), userId);
+        nodes.forEach(node ->
+                node.setEntities(entitiesByChunk.getOrDefault(node.id(), java.util.Set.of())));
+        progress.onProgress("kg_build", nodes.size(), nodes.size(),
+                "实体装载完成，" + entitiesByChunk.size() + "/" + nodes.size() + " 个 chunk 有实体");
 
-        // 4. 本地建边：实体重叠 + 向量余弦
+        // 4. 摘要（cheap 模型并发，单 chunk 失败降级为空摘要）
+        summarize(nodes, progress);
+
+        // 5. 问题潜力过滤（ragas CustomNodeFilter：score ≤ minScore 剔除）
+        var survivors = filterByPotential(nodes, progress);
+        if (survivors.isEmpty()) {
+            log.warn("All nodes filtered out by question potential filter");
+            datasetRepo.updateDatasetItemCount(datasetId, 0);
+            return withItems(dataset, List.of());
+        }
+
+        // 6. 主题（cheap 模型并发）+ 摘要向量（批量 embed）
+        extractThemes(survivors, progress);
+        embedSummaries(survivors, progress);
+
+        // 7. KG + 本地建边：实体重叠 + 摘要余弦
+        var kg = new KnowledgeGraph();
+        survivors.forEach(kg::addNode);
         addRelationships(kg, progress);
 
-        // 5. 合成器（按数据可用性降级）
-        var personas = datasetProps.getPersonas().stream()
-                .map(p -> new Persona(p.getName(), p.getRoleDescription()))
-                .toList();
+        // 8. persona：配置列表非空用配置，否则自动生成（ragas persona_list=None 默认）
+        var personas = resolvePersonas(kg, progress);
+
+        // 9. 合成器（按数据可用性降级）
         var synthesizers = buildSynthesizers(kg);
         if (synthesizers.isEmpty()) {
             log.warn("No synthesizer available: kg has neither entities nor relationships");
@@ -147,17 +179,160 @@ public class TestsetGeneratorService {
         log.info("Synthesizers available: {}", availableNames);
         progress.onProgress("scenarios", 0, 1, "合成器: " + String.join(", ", availableNames));
 
-        // 6-7. 场景生成 + 样本合成（失败贡献空）
+        // 10-11. 场景生成 + 样本合成（失败贡献空）
         var pending = generateScenarios(synthesizers, kg, personas, progress);
         var samples = synthesizeSamples(pending, progress);
 
-        // 8. 后处理与落库
+        // 12. 后处理与落库
         var items = postProcess(samples, datasetId, name, progress);
         if (!items.isEmpty()) {
             items = new ArrayList<>(datasetRepo.insertItems(items));
             datasetRepo.updateDatasetItemCount(datasetId, items.size());
         }
         return withItems(dataset, items);
+    }
+
+    private List<Node> loadNodes(List<Map<String, Object>> chunks) {
+        var nodes = new ArrayList<Node>(chunks.size());
+        for (var chunk : chunks) {
+            var id = String.valueOf(chunk.get("id"));
+            var content = chunk.get("content") == null ? "" : String.valueOf(chunk.get("content"));
+            var metadata = parseMetadata(chunk.get("metadata"));
+            nodes.add(new Node(id, content, metadata));
+        }
+        return nodes;
+    }
+
+    /** 摘要抽取（cheap 模型并发）。失败贡献空摘要（节点被过滤跳过、不参与相似边）。 */
+    private void summarize(List<Node> nodes, ProgressListener progress) {
+        var extractor = new SummaryExtractor(
+                clientResolver.resolve(props.getGenerationModel()), objectMapper);
+        try (TaskScope scope = openScope("testset-summary")) {
+            for (var node : nodes) {
+                scope.fork("summary-" + node.id(), () -> Map.<String, String>entry(
+                        node.id(), extractor.extract(node)));
+            }
+            @SuppressWarnings("unchecked")
+            var results = (List<Map.Entry<String, String>>) (List<?>)
+                    scope.join(ScopeJoiner.successfulResults(Object.class));
+            nodes.forEach(node -> node.setSummary(""));
+            results.forEach(e -> nodeById(nodes, e.getKey()).ifPresent(
+                    n -> n.setSummary(e.getValue() == null ? "" : e.getValue())));
+        }
+        long summarized = nodes.stream().filter(n -> !n.summary().isBlank()).count();
+        progress.onProgress("summary", nodes.size(), nodes.size(),
+                "摘要完成 " + summarized + "/" + nodes.size());
+    }
+
+    /** 问题潜力过滤（并发打分）。评分失败/无摘要 → 保留（ragas 同款跳过语义）。 */
+    private List<Node> filterByPotential(List<Node> nodes, ProgressListener progress) {
+        var filter = new NodePotentialFilter(
+                clientResolver.resolve(props.getGenerationModel()), objectMapper,
+                props.getDataset().getNodeFilter().getMinScore());
+        Map<String, Boolean> removals = new HashMap<>();
+        try (TaskScope scope = openScope("testset-filter")) {
+            for (var node : nodes) {
+                scope.fork("filter-" + node.id(), () -> Map.<String, Boolean>entry(
+                        node.id(), filter.shouldRemove(node)));
+            }
+            @SuppressWarnings("unchecked")
+            var results = (List<Map.Entry<String, Boolean>>) (List<?>)
+                    scope.join(ScopeJoiner.successfulResults(Object.class));
+            results.forEach(e -> removals.put(e.getKey(), e.getValue()));
+        }
+        var survivors = nodes.stream()
+                .filter(n -> !removals.getOrDefault(n.id(), Boolean.FALSE))
+                .toList();
+        progress.onProgress("filter", survivors.size(), nodes.size(),
+                "潜力过滤保留 " + survivors.size() + "/" + nodes.size() + " 个 chunk");
+        return survivors;
+    }
+
+    /** 主题抽取（cheap 模型并发，单 chunk 失败贡献空）。 */
+    private void extractThemes(List<Node> nodes, ProgressListener progress) {
+        var extractor = new ThemesExtractor(
+                clientResolver.resolve(props.getGenerationModel()), objectMapper);
+        var themesByNode = new HashMap<String, List<String>>();
+        var done = new AtomicInteger();
+        try (TaskScope scope = openScope("testset-extract")) {
+            int total = nodes.size();
+            for (var node : nodes) {
+                scope.fork("themes-" + node.id(), () -> {
+                    try {
+                        return Map.<String, List<String>>entry(node.id(), extractor.extract(node));
+                    } catch (Exception e) {
+                        log.warn("Themes 抽取失败: chunk={}", node.id(), e);
+                        return Map.<String, List<String>>entry(node.id(), List.of());
+                    }
+                });
+            }
+            @SuppressWarnings("unchecked")
+            var results = (List<Map.Entry<String, List<String>>>) (List<?>)
+                    scope.join(ScopeJoiner.successfulResults(Object.class));
+            results.forEach(e -> {
+                themesByNode.put(e.getKey(), e.getValue());
+                int current = done.incrementAndGet();
+                if (current % THEME_PROGRESS_EVERY == 0 || current == total) {
+                    progress.onProgress("kg_build", current, total, "主题抽取 " + current + "/" + total);
+                }
+            });
+        }
+        nodes.forEach(node -> node.setThemes(themesByNode.getOrDefault(node.id(), List.of())));
+    }
+
+    /** 摘要向量（批量 embed；无摘要/批量失败的节点不带向量，不参与相似边与 persona 分组）。 */
+    private void embedSummaries(List<Node> nodes, ProgressListener progress) {
+        var withSummary = nodes.stream().filter(n -> !n.summary().isBlank()).toList();
+        for (int i = 0; i < withSummary.size(); i += EMBED_BATCH_SIZE) {
+            var batch = withSummary.subList(i, Math.min(i + EMBED_BATCH_SIZE, withSummary.size()));
+            try {
+                var embeddings = embeddingModel.embed(
+                        batch.stream().map(Node::summary).toList());
+                for (int j = 0; j < batch.size() && j < embeddings.size(); j++) {
+                    var vector = embeddings.get(j);
+                    if (vector != null && vector.length > 0) {
+                        batch.get(j).setSummaryEmbedding(convert(vector));
+                    }
+                }
+            } catch (Exception e) {
+                log.warn("摘要向量批量 embed 失败（batch {}），该批降级为无向量", i / EMBED_BATCH_SIZE, e);
+            }
+        }
+        long embedded = nodes.stream().filter(n -> n.summaryEmbedding() != null).count();
+        progress.onProgress("embed", (int) embedded, nodes.size(),
+                "摘要向量完成 " + embedded + "/" + nodes.size());
+    }
+
+    private static double[] convert(float[] vector) {
+        var result = new double[vector.length];
+        for (int i = 0; i < vector.length; i++) {
+            result[i] = vector[i];
+        }
+        return result;
+    }
+
+    private List<Persona> resolvePersonas(KnowledgeGraph kg, ProgressListener progress) {
+        var configured = props.getDataset().getPersonas();
+        if (configured != null && !configured.isEmpty()) {
+            var personas = configured.stream()
+                    .map(p -> new Persona(p.getName(), p.getRoleDescription()))
+                    .toList();
+            progress.onProgress("personas", personas.size(), personas.size(),
+                    "使用配置 persona " + personas.size() + " 个");
+            return personas;
+        }
+        var generator = new PersonaGenerator(
+                clientResolver.resolve(props.getDataset().getSynthesisModel()),
+                objectMapper, scopedTasks);
+        var personas = generator.generate(kg.nodes(),
+                props.getDataset().getNumPersonas(), RANDOM_SEED);
+        progress.onProgress("personas", personas.size(), personas.size(),
+                "自动生成 persona " + personas.size() + " 个");
+        return personas;
+    }
+
+    private static java.util.Optional<Node> nodeById(List<Node> nodes, String id) {
+        return nodes.stream().filter(n -> n.id().equals(id)).findFirst();
     }
 
     private void addRelationships(KnowledgeGraph kg, ProgressListener progress) {
@@ -291,65 +466,7 @@ public class TestsetGeneratorService {
                 items.size(), dataset.createdAt(), dataset.updatedAt(), items);
     }
 
-    private KnowledgeGraph buildKnowledgeGraph(List<Map<String, Object>> chunks,
-                                               long userId, ProgressListener progress) {
-        var kg = new KnowledgeGraph();
-        for (var chunk : chunks) {
-            var id = String.valueOf(chunk.get("id"));
-            var content = chunk.get("content") == null ? "" : String.valueOf(chunk.get("content"));
-            var metadata = parseMetadata(chunk.get("metadata"));
-            // 单 chunk 的 embedding 文本损坏只降级为无向量（不参与相似边），不废掉整批
-            double[] embedding = null;
-            if (chunk.get("embedding") != null) {
-                try {
-                    embedding = PgVectorParser.parse(String.valueOf(chunk.get("embedding")));
-                } catch (Exception e) {
-                    log.warn("Embedding 解析失败，chunk {} 降级为无向量", id, e);
-                }
-            }
-            kg.addNode(new Node(id, content, metadata, embedding));
-        }
-        // 实体：唯一来源（无兜底；chunk 无实体行 → 不参与实体边）
-        var entitiesByChunk = entityLoader.loadEntities(
-                kg.nodes().stream().map(Node::id).toList(), userId);
-        kg.nodes().forEach(node ->
-                node.setEntities(entitiesByChunk.getOrDefault(node.id(), java.util.Set.of())));
-        progress.onProgress("kg_build", kg.nodeCount(), kg.nodeCount(),
-                "实体装载完成，" + entitiesByChunk.size() + "/" + kg.nodeCount() + " 个 chunk 有实体");
-
-        // 主题：cheap 模型并发抽取，单 chunk 失败贡献空
-        var extractor = new ThemesExtractor(
-                clientResolver.resolve(props.getGenerationModel()), objectMapper);
-        var themesByNode = new HashMap<String, List<String>>();
-        var done = new AtomicInteger();
-        try (TaskScope scope = openScope("testset-extract")) {
-            int total = kg.nodeCount();
-            for (var node : kg.nodes()) {
-                scope.fork("themes-" + node.id(), () -> {
-                    try {
-                        return Map.<String, List<String>>entry(node.id(), extractor.extract(node));
-                    } catch (Exception e) {
-                        log.warn("Themes 抽取失败: chunk={}", node.id(), e);
-                        return Map.<String, List<String>>entry(node.id(), List.of());
-                    }
-                });
-            }
-            @SuppressWarnings("unchecked")
-            var results = (List<Map.Entry<String, List<String>>>) (List<?>)
-                    scope.join(ScopeJoiner.successfulResults(Object.class));
-            results.forEach(e -> {
-                themesByNode.put(e.getKey(), e.getValue());
-                int current = done.incrementAndGet();
-                if (current % THEME_PROGRESS_EVERY == 0 || current == total) {
-                    progress.onProgress("kg_build", current, total, "主题抽取 " + current + "/" + total);
-                }
-            });
-        }
-        kg.nodes().forEach(node -> node.setThemes(themesByNode.getOrDefault(node.id(), List.of())));
-        return kg;
-    }
-
-    /** 从 vector_store 随机采样 chunk（含 embedding 列，pgvector 文本格式）。 */
+    /** 从 vector_store 随机采样 chunk（相似边输入为摘要向量，无需取 embedding 列）。 */
     private List<Map<String, Object>> sampleChunks(long userId, int limit) {
         String filterJson;
         try {
@@ -358,7 +475,7 @@ public class TestsetGeneratorService {
             filterJson = "{\"userId\": \"" + userId + "\"}";
         }
         return jdbc.queryForList("""
-                SELECT id, content, metadata, embedding::text AS embedding
+                SELECT id, content, metadata
                 FROM vector_store
                 WHERE metadata @> ?::jsonb
                 ORDER BY RANDOM()

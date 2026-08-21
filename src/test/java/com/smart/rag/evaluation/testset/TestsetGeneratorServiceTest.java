@@ -16,6 +16,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentMatchers;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.jdbc.core.JdbcTemplate;
 
 import java.util.ArrayList;
@@ -38,7 +39,8 @@ import static org.mockito.Mockito.when;
 
 /**
  * {@link TestsetGeneratorService} 编排测试：LLM 链按罐头 JSON 桩化
- * （单条 JSON 同时含 themes/mapping 键，兼容两阶段解析，避免并发下的桩顺序问题）。
+ * （单条 JSON 同时含 text/score/themes/mapping 键，兼容摘要/过滤/主题/匹配四阶段解析，
+ * 避免并发下的桩顺序问题）。
  */
 @DisplayName("KG 测试集生成编排器")
 class TestsetGeneratorServiceTest {
@@ -49,6 +51,7 @@ class TestsetGeneratorServiceTest {
     private DatasetRepository datasetRepo;
     private ChatClient cheapClient;
     private ChatClient mainClient;
+    private EmbeddingModel embeddingModel;
     private RecordingScopedTasks scopedTasks;
     private EvaluationProperties properties;
 
@@ -58,6 +61,7 @@ class TestsetGeneratorServiceTest {
         entityLoader = mock(ChunkEntityLoader.class);
         resolver = mock(RewriteClientResolver.class);
         datasetRepo = mock(DatasetRepository.class);
+        embeddingModel = mock(EmbeddingModel.class);
         scopedTasks = new RecordingScopedTasks();
 
         properties = new EvaluationProperties();
@@ -66,15 +70,30 @@ class TestsetGeneratorServiceTest {
         properties.getDataset().setSynthesisModel(null);
         properties.getRunner().setConcurrency(2);
         properties.getRunner().setItemTimeoutSeconds(60);
+        // 配置 persona（跳过自动生成路径，本用例聚焦编排）
+        properties.getDataset().getPersonas().add(
+                new EvaluationProperties.PersonaConfig("一线业务人员", "日常使用知识库解决业务问题"));
 
         // cheap（抽取候选）与 main（出题，synthesis-model=null → 默认候选）分别桩化
         cheapClient = mockChatClient("""
-                {"themes": ["多屏协同"], "mapping": {"一线业务人员": ["多屏协同"]}}""");
+                {"text": "讲多屏协同与畅连通话。", "score": 5, "themes": ["多屏协同"], "mapping": {"一线业务人员": ["多屏协同"]}}""");
         mainClient = mockChatClient(
                 "{\"query\": \"怎么用多屏协同？\", \"answer\": \"下拉控制中心打开超级终端。\"}");
         lenient().when(resolver.resolve("deepseek-v4-flash")).thenReturn(cheapClient);
         lenient().when(resolver.resolve(null)).thenReturn(mainClient);
         lenient().when(resolver.resolveDefault()).thenReturn(mainClient);
+
+        // 摘要向量批量 embed：按输入条数返回正交单位向量（摘要间不建相似边，聚焦单跳路径）
+        lenient().when(embeddingModel.embed(ArgumentMatchers.<List<String>>any())).thenAnswer(inv -> {
+            List<String> input = inv.getArgument(0);
+            List<float[]> out = new ArrayList<>(input.size());
+            for (int i = 0; i < input.size(); i++) {
+                float[] v = new float[2];
+                v[i % 2] = 1.0f;
+                out.add(v);
+            }
+            return out;
+        });
 
         lenient().when(datasetRepo.insertDataset(ArgumentMatchers.any(EvaluationDataset.class)))
                 .thenReturn(new EvaluationDataset(
@@ -93,29 +112,28 @@ class TestsetGeneratorServiceTest {
         return client;
     }
 
-    private static Map<String, Object> chunkRow(String id, String content, String embedding) {
+    private static Map<String, Object> chunkRow(String id, String content) {
         var row = new LinkedHashMap<String, Object>();
         row.put("id", id);
         row.put("content", content);
         row.put("metadata", Map.of("userId", "1"));
-        row.put("embedding", embedding);
         return row;
     }
 
     @Test
-    @DisplayName("全链路：采样→实体→主题→边→场景→样本→去重落库（含 ScopedTasks 断言）")
+    @DisplayName("全链路：采样→实体→摘要→过滤→主题/向量→边→场景→样本→去重落库（含 ScopedTasks 断言）")
     void fullFlowGeneratesDedupedItems() {
         var id1 = "11111111-1111-1111-1111-111111111111";
         var id2 = "22222222-2222-2222-2222-222222222222";
         when(jdbc.queryForList(anyString(), anyString(), anyInt())).thenReturn(List.of(
-                chunkRow(id1, "多屏协同需要登录同一华为账号。", "[0.1,0.9]"),
-                chunkRow(id2, "畅连通话依赖华为账号。", "[0.9,0.1]")));
+                chunkRow(id1, "多屏协同需要登录同一华为账号。"),
+                chunkRow(id2, "畅连通话依赖华为账号。")));
         when(entityLoader.loadEntities(anyList(), anyLong())).thenReturn(Map.of(
                 id1, Set.of("多屏协同", "华为账号"),
                 id2, Set.of("畅连", "华为账号")));
         var progressCount = new AtomicInteger();
         var service = new TestsetGeneratorService(jdbc, entityLoader, resolver, properties,
-                datasetRepo, new ObjectMapper(), scopedTasks);
+                datasetRepo, new ObjectMapper(), scopedTasks, embeddingModel);
 
         var result = service.generate("dataset", 1L,
                 (phase, current, total, message) -> progressCount.incrementAndGet());
@@ -130,9 +148,10 @@ class TestsetGeneratorServiceTest {
         assertThat(item.tags()).contains("single_hop_specific_query_synthesizer");
         assertThat(progressCount.get()).isGreaterThanOrEqualTo(3);
 
-        // 三段 ScopedTasks：主题抽取 / 场景 / 样本合成，均 COLLECT_ALL 且并发=2
+        // 五段 ScopedTasks：摘要 / 过滤 / 主题抽取 / 场景 / 样本合成，均 COLLECT_ALL 且并发=2
         assertThat(scopedTasks.scopeNames()).containsExactly(
-                "testset-extract", "testset-scenarios", "testset-synthesize");
+                "testset-summary", "testset-filter", "testset-extract",
+                "testset-scenarios", "testset-synthesize");
         assertThat(scopedTasks.lastOptions().policy()).isEqualTo(ScopePolicy.COLLECT_ALL);
         assertThat(scopedTasks.lastOptions().maxConcurrency()).isEqualTo(2);
         verify(datasetRepo).insertItems(anyList());
@@ -144,7 +163,7 @@ class TestsetGeneratorServiceTest {
     void emptySampleReturnsEarly() {
         when(jdbc.queryForList(anyString(), anyString(), anyInt())).thenReturn(List.of());
         var service = new TestsetGeneratorService(jdbc, entityLoader, resolver, properties,
-                datasetRepo, new ObjectMapper(), scopedTasks);
+                datasetRepo, new ObjectMapper(), scopedTasks, embeddingModel);
 
         var result = service.generate("dataset", 1L, null);
 

@@ -7,8 +7,9 @@ import java.util.Set;
 /**
  * 知识图谱节点（对应 ragas {@code testset/graph.py::Node}，预切块模式下恒为 CHUNK 类型）。
  * <p>
- * 核心字段（id/pageContent/metadata/embedding）构造后不变；实体与主题是分阶段附加的富化信息，
- * 由编排器在单线程阶段边界写入（loader/extractor 返回结果、编排器统一 attach），不在并发任务内修改。
+ * 核心字段（id/pageContent/metadata）构造后不变；摘要/摘要向量/实体/主题是分阶段附加的
+ * 富化信息，由编排器在单线程阶段边界写入（extractor 返回结果、编排器统一 attach），
+ * 不在并发任务内修改。
  * </p>
  */
 public final class Node {
@@ -16,16 +17,16 @@ public final class Node {
     private final String id;
     private final String pageContent;
     private final Map<String, Object> metadata;
-    private final double[] embedding;
 
+    private String summary = "";
+    private double[] summaryEmbedding;
     private Set<String> entities = Set.of();
     private List<String> themes = List.of();
 
-    public Node(String id, String pageContent, Map<String, Object> metadata, double[] embedding) {
+    public Node(String id, String pageContent, Map<String, Object> metadata) {
         this.id = id;
         this.pageContent = pageContent;
         this.metadata = Map.copyOf(metadata);
-        this.embedding = embedding;
     }
 
     public String id() {
@@ -40,9 +41,22 @@ public final class Node {
         return metadata;
     }
 
-    /** chunk 在 vector_store 中的现成向量；主题相似边的唯一输入。 */
-    public double[] embedding() {
-        return embedding;
+    /** chunk 摘要（SummaryExtractor 产出；空 = 未生成或失败，被过滤器跳过） */
+    public String summary() {
+        return summary;
+    }
+
+    public void setSummary(String summary) {
+        this.summary = summary == null ? "" : summary;
+    }
+
+    /** 摘要向量（summary embedding；null = 无摘要或嵌入失败，不参与相似边与 persona 分组） */
+    public double[] summaryEmbedding() {
+        return summaryEmbedding;
+    }
+
+    public void setSummaryEmbedding(double[] summaryEmbedding) {
+        this.summaryEmbedding = summaryEmbedding;
     }
 
     /** 实体规范名集合（rag_entity.name_norm，经实体中心索引层 ETL 产出）。 */

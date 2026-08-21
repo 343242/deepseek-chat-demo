@@ -14,6 +14,7 @@ import com.smart.rag.infrastructure.llm.adapter.RewriteClientResolver;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 import org.mockito.ArgumentMatchers;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.embedding.EmbeddingModel;
@@ -156,6 +157,13 @@ class TestsetGeneratorServiceTest {
         assertThat(scopedTasks.lastOptions().maxConcurrency()).isEqualTo(2);
         verify(datasetRepo).insertItems(anyList());
         verify(datasetRepo).updateDatasetItemCount(100L, 1);
+
+        // 采样 SQL 回归防护：vector_store.metadata 是 json 类型，@> 仅 jsonb 可用（曾致生成任务全败）
+        var sqlCaptor = ArgumentCaptor.forClass(String.class);
+        verify(jdbc).queryForList(sqlCaptor.capture(), anyString(), anyInt());
+        assertThat(sqlCaptor.getValue())
+                .contains("metadata->>'userId'")
+                .doesNotContain("@>");
     }
 
     @Test

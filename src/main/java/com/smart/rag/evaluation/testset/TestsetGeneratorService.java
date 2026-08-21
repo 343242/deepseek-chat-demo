@@ -468,19 +468,15 @@ public class TestsetGeneratorService {
 
     /** 从 vector_store 随机采样 chunk（相似边输入为摘要向量，无需取 embedding 列）。 */
     private List<Map<String, Object>> sampleChunks(long userId, int limit) {
-        String filterJson;
-        try {
-            filterJson = objectMapper.writeValueAsString(Map.of("userId", String.valueOf(userId)));
-        } catch (Exception e) {
-            filterJson = "{\"userId\": \"" + userId + "\"}";
-        }
+        // vector_store.metadata 为 json 类型（V2，Spring AI pgvector schema），@> 包含操作符仅 jsonb 可用；
+        // 过滤沿用全库惯例 metadata->>（VectorStoreMapper.xml），userId 入库为字符串（EtlPipelineServiceImpl）
         return jdbc.queryForList("""
                 SELECT id, content, metadata
                 FROM vector_store
-                WHERE metadata @> ?::jsonb
+                WHERE metadata->>'userId' = ?
                 ORDER BY RANDOM()
                 LIMIT ?
-                """, filterJson, limit);
+                """, String.valueOf(userId), limit);
     }
 
     @SuppressWarnings("unchecked")

@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 21
-- **Last Active**: 2026-08-18
+- **Total Sessions**: 22
+- **Last Active**: 2026-08-21
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~727 | Active |
+| `journal-1.md` | ~761 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 22 | 2026-08-21 | 评估模块前端工作台开发（08-21-evaluation-frontend） | `4b488be`, `f93b6af` | `agentic-rag-dev` |
 | 21 | 2026-08-18 | 用量统计重写 + 每轮 Token/耗时显示 + 前端用量页 | `b9450b6`, `d8a8535`, `d117129`, `56a80fa` | `agentic-rag-dev` |
 | 20 | 2026-08-16 | 批量删除文档：/batch-delete 端点 + 表格多选 | `2f8cefb` | `agentic-rag-dev` |
 | 19 | 2026-08-16 | 批量上传改造：前端走批量端点 + 后端限 10 个/200MB | `ff22d54` | `agentic-rag-dev` |

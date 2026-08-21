@@ -725,3 +725,37 @@ Completed mcp-db-source-of-truth task: code review P0-P3 fixes (13 issues), dele
 ### Next Steps
 
 - None - task complete
+
+
+## Session 22: 评估模块前端工作台开发（08-21-evaluation-frontend）
+
+**Date**: 2026-08-21
+**Task**: 评估模块前端工作台开发（08-21-evaluation-frontend）
+**Branch**: `agentic-rag-dev`
+
+### Summary
+
+按线框 09 v0.1.1 落地 /admin/evaluation 评估工作台：apiFetch raw 模式适配 EVAL-2 裸 JSON 契约（复用 401 refresh 单例）、types/api/evaluation 三层、lib/sse.ts 新增 EventSource GET 订阅路径（DS §11.17）、9 组件 + 页面编排（URL query 持久化）、jsonb 三态解包与 -1 哨兵纯函数 + 24 单测；四项质量门全绿、detect_changes LOW。附带归档 08-18 三个 ragas 后端任务（代码早已落地验证）。规范沉淀：data-and-state.md raw 模式契约与 SSE 双路径。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4b488be` | (see git log) |
+| `f93b6af` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

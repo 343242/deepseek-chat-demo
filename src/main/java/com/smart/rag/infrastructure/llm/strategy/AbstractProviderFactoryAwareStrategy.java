@@ -10,16 +10,14 @@ import java.util.function.Function;
 import java.util.stream.Collectors;
 
 /**
- * 抽象基类 — 消除 EmbeddingCapabilityStrategy 和 RerankCapabilityStrategy 中
- * providerFactories 收集与 createClient 模板的 DRY 违反。
+ * 抽象基类 — 消除 ChatCapabilityStrategy / EmbeddingCapabilityStrategy /
+ * RerankCapabilityStrategy 中 providerFactories 收集与 createClient 模板的 DRY 违反。
  * <p>
  * 子类只需：
  * <ol>
  *   <li>提供 {@link #capability()} 返回值（来自 {@link CapabilityStrategy}）</li>
  *   <li>实现 {@link #createGenericClient(String, String, String, ModelCandidate)} 返回 fallback 客户端</li>
  * </ol>
- * <p>
- * ChatCapabilityStrategy 不使用此基类（chat 没有 ProviderClientFactory 扩展点）。
  */
 public abstract class AbstractProviderFactoryAwareStrategy implements CapabilityStrategy {
 

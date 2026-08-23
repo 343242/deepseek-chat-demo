@@ -10,10 +10,17 @@ import org.springframework.stereotype.Component;
 /**
  * 百炼 Rerank 客户端工厂
  * <p>
- * 创建百炼原生 Rerank 客户端，使用 DashScope OpenAI 兼容端点。
+ * 产出保留的手写 {@link BailianRerankClient}（qwen3-rerank 官方推荐路径即 OpenAI 兼容端点
+ * {@code /compatible-api/v1/reranks}，设计决策 5 不迁移 SDK）。域名来源为
+ * {@code provider.url} 的域名部分（剥离兼容层路径——rerank 兼容端点为绝对路径，直接拼接
+ * provider.url 会产生 {@code /compatible-mode/v1/compatible-api/...} 双路径），endpoint 取
+ * {@code endpoints.rerank} 声明，未声明时回退 {@code /compatible-api/v1/reranks} 默认值。
  */
 @Component
 public class BailianRerankClientFactory implements ProviderClientFactory {
+
+    /** qwen3-rerank 专用兼容端点（默认值；profile 可经 endpoints.rerank 覆盖） */
+    static final String DEFAULT_RERANK_ENDPOINT = "/compatible-api/v1/reranks";
 
     @Override
     public String providerId() {
@@ -27,9 +34,8 @@ public class BailianRerankClientFactory implements ProviderClientFactory {
 
     @Override
     public CapabilityClient create(String baseUrl, String endpoint, String apiKey, ModelCandidate candidate) {
-        // 百炼 rerank 端点已迁移到 workspace 级 MaaS 域名（与 embedding 一致）。WorkspaceId 后续改为配置项。
-        String rerankBaseUrl = "https://llm-l3buonxbvhgk4qiy.cn-beijing.maas.aliyuncs.com";
-        String rerankEndpoint = "/compatible-api/v1/reranks";
-        return new BailianRerankClient(rerankBaseUrl, rerankEndpoint, apiKey, candidate);
+        String domain = DashScopeUrls.domainBase(baseUrl);
+        String rerankEndpoint = endpoint != null && !endpoint.isBlank() ? endpoint : DEFAULT_RERANK_ENDPOINT;
+        return new BailianRerankClient(domain, rerankEndpoint, apiKey, candidate);
     }
 }

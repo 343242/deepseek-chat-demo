@@ -1,5 +1,6 @@
 package com.smart.rag.infrastructure.llm.client.bailian;
 
+import com.smart.rag.infrastructure.llm.EmbeddingCapable;
 import com.smart.rag.infrastructure.llm.EmbeddingType;
 import org.jspecify.annotations.NonNull;
 import org.springframework.ai.document.Document;
@@ -14,37 +15,36 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Spring AI {@link EmbeddingModel} 适配器 — 桥接 {@link BailianEmbeddingClient}（SPI 层）
+ * Spring AI {@link EmbeddingModel} 适配器 — 桥接 {@link EmbeddingCapable}（SPI 层）
  * 与 Spring AI 框架类型。
  * <p>
  * <b>设计原则</b>（详见 spec §5.5 Adapter 模式）：
  * <ul>
  *   <li>SRP — Spring AI 适配代码集中在此，不污染 SPI 客户端</li>
- *   <li>ISP — {@link BailianEmbeddingClient} 仅实现 {@code EmbeddingCapable}，
+ *   <li>ISP — SPI 客户端（如 BailianEmbeddingClient）仅实现 {@code EmbeddingCapable}，
  *       Spring AI 调用方（PgVectorStore、AnswerRelevanceScorer）通过本适配器获取 {@code EmbeddingModel} 视图</li>
  *   <li>LSP — 本适配器是独立的 {@code EmbeddingModel} 实现，所有方法委托给底层 SPI 客户端</li>
  * </ul>
  * <p>
- * <b>生命周期</b>：本适配器不持有任何资源（HTTP 连接、线程池等由底层
- * {@link BailianEmbeddingClient} 管理）。资源释放由
+ * <b>生命周期</b>：本适配器不持有任何资源（HTTP 连接、线程池等由底层 SPI 客户端管理）。资源释放由
  * {@link com.smart.rag.infrastructure.llm.registry.LlmClientRegistry} 统一管理。
  * <p>
  * <b>命名映射</b>：SPI 接口 {@code dimension()}（单数）→ Spring AI {@code dimensions()}（复数）。
  * 本适配器在方法签名上对齐 Spring AI，内部委托给 SPI 的 {@code dimension()}。
  * <p>
- * 使用方式：{@code new BailianSpringAiEmbeddingAdapter(bailianEmbeddingClient)}
+ * 构造参数为 {@link EmbeddingCapable}（设计 §4.4 泛化：底层客户端替换对适配器透明）
  * 或通过 {@link com.smart.rag.infrastructure.llm.config.LlmAutoConfiguration#embeddingModel} 自动装配。
  */
 public class BailianSpringAiEmbeddingAdapter implements EmbeddingModel {
 
-    private final BailianEmbeddingClient delegate;
+    private final EmbeddingCapable delegate;
 
-    public BailianSpringAiEmbeddingAdapter(BailianEmbeddingClient delegate) {
+    public BailianSpringAiEmbeddingAdapter(EmbeddingCapable delegate) {
         this.delegate = delegate;
     }
 
     /** 返回被适配的底层 SPI 客户端（供 {@code LlmAutoConfiguration} 等做类型检测） */
-    public BailianEmbeddingClient delegate() {
+    public EmbeddingCapable delegate() {
         return delegate;
     }
 
@@ -135,7 +135,7 @@ public class BailianSpringAiEmbeddingAdapter implements EmbeddingModel {
     /**
      * 向量维度（用于 PgVectorStore schema 校验等）。
      * <p>
-     * 委托给 SPI 的 {@link BailianEmbeddingClient#dimension()}。
+     * 委托给 SPI 的 {@link EmbeddingCapable#dimension()}。
      */
     @Override
     public int dimensions() {

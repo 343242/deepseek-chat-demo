@@ -97,10 +97,17 @@ app:
   llm:
     providers:
       bailian:
+        # chat 走 SDK 原生路由（BailianChatClientFactory 守卫命中 dashscope.aliyuncs.com，
+        # sdkBaseUrl = 域名 + /api/v1，剥离此处的 compatible-mode 兼容层路径）；
+        # endpoints.chat 仅在 SDK 守卫不命中回落 GenericChatClient 时使用
         url: https://dashscope.aliyuncs.com/compatible-mode/v1
         api-key: ${DASHSCOPE_API_KEY}
         endpoints:
           chat: /chat/completions
+          # embedding 原生路由（SDK facade 内置路径，此声明供 Generic 回退路径）
+          embedding: /api/v1/services/embeddings/text-embedding/text-embedding
+          # qwen3-rerank 专用兼容端点（绝对路径，工厂以域名部分拼接）
+          rerank: /compatible-api/v1/reranks
       deepseek:
         url: https://api.deepseek.com
         api-key: ${DEEPSEEK_API_KEY}

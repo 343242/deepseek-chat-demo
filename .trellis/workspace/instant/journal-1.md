@@ -759,3 +759,39 @@ Completed mcp-db-source-of-truth task: code review P0-P3 fixes (13 issues), dele
 ### Next Steps
 
 - None - task complete
+
+
+## Session 23: 百炼 SDK 接入：dashscope-sdk-java 适配自研 LLM SPI（P0-P3 全量实施）
+
+**Date**: 2026-08-23
+**Task**: 百炼 SDK 接入：dashscope-sdk-java 适配自研 LLM SPI（P0-P3 全量实施）
+**Branch**: `agentic-rag-dev`
+
+### Summary
+
+按 docs/design/bailian-sdk-integration.md v5 完成四期实施：P0 真机实测（dev chat 现状确坏 400 input.messages；facade 路由策略 a 否决采 b——qwen3.7/3.8 系走 MultiModalConversation、qwen3-max/plus 走 Generation；SDK HTTP 无内置重试；okhttp 回退 4.12.0 对齐 + opendataloader okhttp-jvm exclusion + victools 4.38 仲裁锁）；P1 BailianChatClient（双 facade 路由 + Flowable→Flux 薄桥 + DashScopeStreamAccumulator 轮末汇总包契约 + BYOK 域名守卫 + ChatCapabilityStrategy 工厂感知，真机四场景验证；修复 DashScope 流式中间块非终止 finish_reason 字面 null 过早收口问题）；P2 BailianEmbeddingClient SDK 同名全量重写（并发分批/text_index 对位/零向量/instruct 配套保留）+ embedding/rerank 工厂域名配置化 + stable 补 endpoint 声明 + adapter 泛化（真机双模型 45 条并发分批验证）；P3 spec 更新。全量 mvn test 1789 全绿；detect_changes 影响面确认在 llm 模块内。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `361a984` | (see git log) |
+| `7f5fd92` | (see git log) |
+| `b899c18` | (see git log) |
+| `d4617f4` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

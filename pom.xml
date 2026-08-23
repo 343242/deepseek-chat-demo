@@ -22,9 +22,11 @@
         <spring-ai.version>1.1.6</spring-ai.version>
         <redisson.version>3.52.0</redisson.version>
         <mcp.sdk.version>2.0.0</mcp.sdk.version>
-        <okhttp.version>5.4.0</okhttp.version>
-        <!-- okhttp-jvm 5.4.0 编译于 Kotlin 2.1.21；覆盖 Boot BOM 管理的 1.9.25，避免 stdlib 被仲裁降级 -->
+        <!-- 与 dashscope-sdk-java 传递的 okhttp 4.12.0 同版对齐（消除 duplicate-class 与二进制兼容风险） -->
+        <okhttp.version>4.12.0</okhttp.version>
+        <!-- okhttp 4.12 仅要求 stdlib ≥1.8.21；此 pin 把 SDK 传递的 1.8.21 仲裁到 2.1.21 -->
         <kotlin.version>2.1.21</kotlin.version>
+        <dashscope-sdk.version>2.22.30</dashscope-sdk.version>
         <argLine></argLine>
     </properties>
 
@@ -326,11 +328,19 @@
             <version>3.18.0</version>
         </dependency>
 
-        <!-- OkHttp 5.x：根构件 okhttp 是 KMP 空壳 jar（0 class），Maven 消费者必须使用 JVM 变体构件 -->
+        <!-- OkHttp 经典构件：与 dashscope-sdk-java 传递的 okhttp 4.12.0 同版对齐 -->
         <dependency>
             <groupId>com.squareup.okhttp3</groupId>
-            <artifactId>okhttp-jvm</artifactId>
+            <artifactId>okhttp</artifactId>
             <version>${okhttp.version}</version>
+        </dependency>
+
+        <!-- 阿里云百炼官方 SDK（dashscope-sdk-java）——bailian provider CHAT/EMBEDDING 客户端底层实现。
+             传递依赖 okhttp/okio/RxJava2/gson 已与项目对齐或无坐标交叉，零 exclusion。 -->
+        <dependency>
+            <groupId>com.alibaba</groupId>
+            <artifactId>dashscope-sdk-java</artifactId>
+            <version>${dashscope-sdk.version}</version>
         </dependency>
 
         <!-- Log4j 2（替代 Logback） -->
@@ -412,6 +422,14 @@
             <groupId>org.opendataloader</groupId>
             <artifactId>opendataloader-pdf-core</artifactId>
             <version>2.5.0</version>
+            <exclusions>
+                <!-- 其传递的 okhttp-jvm 5.4.0 与本项目 okhttp 4.12.0（dashscope-sdk-java 对齐版）
+                     在 classpath 形成重复 okhttp3.* 类；排除后由项目侧 4.12.0 统一供给 -->
+                <exclusion>
+                    <groupId>com.squareup.okhttp3</groupId>
+                    <artifactId>okhttp-jvm</artifactId>
+                </exclusion>
+            </exclusions>
         </dependency>
 
         <!-- fastutil: primitive collection types (Long2DoubleMap, Long2IntMap, Long2ObjectMap) for graph algorithm layer -->
@@ -455,6 +473,17 @@
                 <groupId>org.jsoup</groupId>
                 <artifactId>jsoup</artifactId>
                 <version>1.22.1</version>
+            </dependency>
+            <!--
+                victools jsonschema-generator 仲裁：dashscope-sdk-java 传递 4.31.1（Maven nearest-wins）
+                会把 Spring AI 工具回调链路（按 4.38.x 编译，依赖 AnnotationHelper）打挂成
+                NoClassDefFoundError。锁 4.38.0 对齐 Spring AI 1.1.6 的 victools 模块版本；
+                SDK 对 generator 核心仅用基础 schema 生成 API，4.x 前向兼容。
+            -->
+            <dependency>
+                <groupId>com.github.victools</groupId>
+                <artifactId>jsonschema-generator</artifactId>
+                <version>4.38.0</version>
             </dependency>
         </dependencies>
     </dependencyManagement>

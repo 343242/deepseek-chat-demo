@@ -1,0 +1,4 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/backend/llm-spi.md", "reason": "LLM SPI 契约与 Resolver 模式——BailianChatClient/BailianEmbeddingClient 必须遵守"}
+{"file": "docs/design/bailian-sdk-integration.md", "reason": "本任务技术设计唯一事实源"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "RemoteException 错误分类映射约束"}

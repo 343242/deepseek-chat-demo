@@ -354,6 +354,59 @@ ChatClient client = ChatClient.builder(new ChatModelAdapter(chatCapable)).build(
 
 ---
 
+## 百炼 SDK 客户端接入（08-23-bailian-sdk-integration）
+
+> bailian provider 的 CHAT/EMBEDDING 底层实现为 dashscope-sdk-java（官方 SDK），
+> 经 `ProviderClientFactory` 扩展点注入；RERANK 保留手写客户端（官方推荐路径即兼容端点）。
+
+### 工厂分流与守卫
+
+- `ChatCapabilityStrategy` 与 Embedding/Rerank 同构（`AbstractProviderFactoryAwareStrategy`）。
+  bailian 的三能力均有 `ProviderClientFactory`；非 bailian provider 走 Generic* 回落。
+- **BYOK/DB 守卫（CHAT）**：DB 行 `provider_code='bailian'` + 自定义 baseUrl（私有网关）不得
+  被 SDK 客户端劫持（DashScope 原生协议打该 URL 会静默打挂）。`BailianChatClientFactory` 仅在
+  baseUrl 属 `dashscope.aliyuncs.com` / `*.maas.aliyuncs.com` 或候选显式 `params.sdk-client: true`
+  时产出 `BailianChatClient`，否则回落 `GenericChatClient`。
+- **URL 归一化**：SDK baseUrl = provider.url 的域名部分 + `/api/v1`（`DashScopeUrls`）。stable 的
+  `.../compatible-mode/v1` 兼容层路径必须剥离——rerank 兼容端点 `/compatible-api/v1/reranks` 为
+  绝对路径，与带路径的 provider.url 直接拼接会产生双路径。
+- apiKey 经 param 级 `.apiKey(...)` 传递；**禁止** `Constants.baseHttpApiUrl` 全局静态覆盖
+  （多客户端多域名共存会互相污染）。
+
+### SDK facade 双路由（P0 真机实测矩阵）
+
+| 模型族 | facade | 路由 |
+|---|---|---|
+| qwen3.7-plus / qwen3.8-max（次版本 ≥3.7）及 `-vl` 系 | `MultiModalConversation` | multimodal-generation |
+| qwen3-max / qwen-plus-latest（其余） | `Generation` | text-generation |
+
+- 路由由候选 `params.route: text|multimodal` 显式声明，未声明按模型名推断
+  （`BailianChatClient.resolveRoute`）。**路由错配服务端报 400 `url error`**——SDK Models
+  常量收录某模型 ≠ 该路由可调（qwen3.7-plus 收录于 Generation.Models 但 text 路由拒服务）。
+- multimodal 路由消息形状：content 为 `[{text: ...}]` 数组（纯文本用法）；工具轮 assistant 的
+  content 允许空数组 + toolCalls 元数据；tool 结果消息 role=tool + toolCallId（真机验证通过）。
+
+### 流式契约注意（易踩坑）
+
+- **中间块可能携带非终止 finish_reason（字面 `"null"` 字符串）**：收口轮末汇总包必须以
+  「识别到终止枚举（stop/length/tool_calls/content_filter）」为触发条件，仅判非空会过早收口、
+  吞掉真正终止块（P1 真机发现，`DashScopeStreamAccumulator` 有回归单测守护）。
+- DashScope 每 chunk 均携带累积 usage（非 OpenAI 的流末 usage-only 块形态）；tool_calls 分片
+  为 OpenAI index 语义（首片 id+name、后续 arguments 片段、尾片 finish=tool_calls 且
+  toolCalls 空片段）→ 轮末汇总必须由 accumulator drain 产出，不能读尾片字段。
+- 显式 `incrementalOutput(true)` 才透传增量；false/null 时 SDK 会强制 wire 层 true 并内部
+  合并后发累积值（`Generation.mergeSingleResponse`），与 StreamChunk 增量语义不符。
+
+### 依赖对齐约束
+
+- okhttp 锁 4.12.0（与 SDK 传递依赖同版）；`opendataloader-pdf-core` 传递 `okhttp-jvm:5.4.0`
+  已 exclusion——新增传递 okhttp 的依赖时必须检查 duplicate-class。
+- SDK HTTP 路径无内置重试（仅 WebSocket 有）；重试语义唯一归 Resilient 层。
+- `TextEmbedding` facade 无 ConnectionOptions 构造器（沿用 SDK 默认超时）；`Generation` /
+  `MultiModalConversation` 有（构造器第三参）。
+
+---
+
 ## Related
 
 - 任务记录：

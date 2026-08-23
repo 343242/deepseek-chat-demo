@@ -24,7 +24,8 @@ import java.util.concurrent.ConcurrentMap;
  *
  * <h3>生命周期</h3>
  * <ul>
- *   <li>{@link #getOrCreate(long)}：run 启动时调用（或在 SSE 订阅时兜底创建）</li>
+ *   <li>{@link #getOrCreate(long)}：run 启动时由 {@code EvaluationExecutionService.submitRun} 预创建
+ *       （保证先于执行线程的订阅可回放）</li>
  *   <li>{@link #emit(long, EvaluationProgressEvent)}：每完成一个 item 调用</li>
  *   <li>{@link #complete(long)}：run 结束（成功/失败/背压拒绝）时调用，发送 onComplete 并从 map 移除释放引用</li>
  * </ul>
@@ -79,9 +80,13 @@ public class EvaluationProgressSink {
     }
 
     /**
-     * 以 Flux 形式订阅某 run 的进度流（供 SSE 桥接消费）。
+     * 以 Flux 形式订阅某 run 的进度流（不创建）：sink 缺失 = run 已结束（complete 时移除），
+     * 返回空 Flux 让桥接立即收尾——避免执行线程移除 sink 后的晚到订阅兜底重建出
+     * 永不 complete 的流（entry 泄漏 + 连接挂到超时，镜像 {@code GenerationProgressSink} 的语义）。
+     * 活 run 的 sink 由 {@code EvaluationExecutionService.submitRun} 预创建，此处无需补建。
      */
     public Flux<EvaluationProgressEvent> subscribe(long runId) {
-        return getOrCreate(runId).asFlux();
+        Sinks.Many<EvaluationProgressEvent> sink = sinks.get(runId);
+        return sink != null ? sink.asFlux() : Flux.empty();
     }
 }

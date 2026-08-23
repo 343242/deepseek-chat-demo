@@ -53,6 +53,20 @@ public class GenerationJobRepository {
                 """, truncate(error), jobId);
     }
 
+    /**
+     * 仅当任务仍处于 pending/running 时标记 FAILED（条件更新）。
+     * <p>
+     * sweeper 的"查询 → 检查内存 sink → 更新"是非原子序列：任务可能在检查之后、更新之前
+     * 已被执行线程收尾，无条件 UPDATE 会把终态改回 failed。返回受影响行数供调用方判定。
+     */
+    public int markFailedIfPendingOrRunning(long jobId, String error) {
+        return jdbc.update("""
+                UPDATE evaluation_dataset_gen_run
+                SET status = 'failed', error = ?, completed_at = NOW()
+                WHERE id = ? AND status IN ('pending', 'running')
+                """, truncate(error), jobId);
+    }
+
     /** 进度落库（SSE 断线后状态查询仍可见最近进度）。 */
     public void updateProgress(long jobId, String progressJson) {
         jdbc.update(

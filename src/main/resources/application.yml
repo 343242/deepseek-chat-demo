@@ -94,6 +94,8 @@ app:
       node-filter:
         # 问题潜力过滤（ragas CustomNodeFilter）：评分 ≤ min-score 的 chunk 剔除
         min-score: 2
+      # 同时执行的生成任务数（独立于 runner.max-concurrent-runs，长任务不占评估并发额度）
+      max-concurrent-jobs: 2
     metrics:
       # AnswerCorrectness（ragas 默认 [0.75, 0.25]、beta=1.0；beta<1 偏精度重罚幻觉，>1 偏召回重罚遗漏）
       answer-correctness:

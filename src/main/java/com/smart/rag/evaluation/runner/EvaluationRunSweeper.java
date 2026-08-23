@@ -79,14 +79,17 @@ public class EvaluationRunSweeper {
                     log.debug("Run {} still active in-process, skip stale reap", run.id());
                     continue;
                 }
-                // updateRunStatus 在 status=failed 时会自动设置 completed_at = NOW()
-                resultRepo.updateRunStatus(run.id(), EvaluationRunStatus.FAILED,
+                // 条件更新（status=running）收窄 TOCTOU 窗口：run 在 isActive 检查后、此 UPDATE 前
+                // 自然完成时更新 0 行，不会把 completed 改回 failed
+                int updated = resultRepo.markFailedIfRunning(run.id(),
                         "{\"error\":\"marked stale by sweeper (running over " + staleMinutes + " minutes)\"}");
-                // 清理残留的 sink entry（JVM 崩溃前未走 finally 的 complete）
-                progressSink.complete(run.id());
-                reaped++;
-                log.warn("Reaped stale run {}: startedAt={} exceeded {}min threshold",
-                        run.id(), startedAt, staleMinutes);
+                if (updated > 0) {
+                    // 清理残留的 sink entry（JVM 崩溃前未走 finally 的 complete）
+                    progressSink.complete(run.id());
+                    reaped++;
+                    log.warn("Reaped stale run {}: startedAt={} exceeded {}min threshold",
+                            run.id(), startedAt, staleMinutes);
+                }
             }
             if (reaped > 0) {
                 log.info("Sweeper reaped {} stale run(s)", reaped);
@@ -131,10 +134,13 @@ public class EvaluationRunSweeper {
     }
 
     private void reap(long jobId, OffsetDateTime since, int staleMinutes) {
-        genJobRepo.markFailed(jobId,
-                "marked stale by sweeper (over " + staleMinutes + " minutes since " + since + ")");
-        genProgressSink.complete(jobId);
-        log.warn("Reaped stale generation job {}: since={} exceeded {}min threshold",
-                jobId, since, staleMinutes);
+        // 条件更新（status IN pending/running）防 TOCTOU：任务在 isActive 检查后自然完成时
+        // 更新 0 行，跳过 complete 与日志——不会把 completed 改回 failed
+        String reason = "marked stale by sweeper (over " + staleMinutes + " minutes since " + since + ")";
+        if (genJobRepo.markFailedIfPendingOrRunning(jobId, reason) > 0) {
+            genProgressSink.complete(jobId);
+            log.warn("Reaped stale generation job {}: since={} exceeded {}min threshold",
+                    jobId, since, staleMinutes);
+        }
     }
 }

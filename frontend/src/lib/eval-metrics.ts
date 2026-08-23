@@ -121,7 +121,7 @@ export interface CompareColumn {
 
 /**
  * 构造对比表行：首列为基线，其余列计算 ▲▼ 差值。
- * comparison 按 run name 键控（重名互相覆盖），此处按 runId 反查，查不到的列整列 '—'。
+ * comparison 以 runId 为键（后端保证唯一，同名 run 不再互相覆盖），此处按 runId 反查，查不到的列整列 '—'。
  */
 export function buildCompareRows(columns: readonly CompareColumn[]): CompareRow[] {
   return COMPARE_METRIC_DEFS.map((def) => {

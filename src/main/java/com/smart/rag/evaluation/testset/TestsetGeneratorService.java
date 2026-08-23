@@ -32,6 +32,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.ai.embedding.EmbeddingModel;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.Duration;
 import java.util.ArrayList;
@@ -89,6 +90,7 @@ public class TestsetGeneratorService {
     private final ObjectMapper objectMapper;
     private final ScopedTasks scopedTasks;
     private final EmbeddingModel embeddingModel;
+    private final TransactionTemplate transactionTemplate;
 
     public TestsetGeneratorService(JdbcTemplate jdbc,
                                    ChunkEntityLoader entityLoader,
@@ -97,7 +99,8 @@ public class TestsetGeneratorService {
                                    DatasetRepository datasetRepo,
                                    ObjectMapper objectMapper,
                                    ScopedTasks scopedTasks,
-                                   EmbeddingModel embeddingModel) {
+                                   EmbeddingModel embeddingModel,
+                                   TransactionTemplate transactionTemplate) {
         this.jdbc = jdbc;
         this.entityLoader = entityLoader;
         this.clientResolver = clientResolver;
@@ -106,10 +109,17 @@ public class TestsetGeneratorService {
         this.objectMapper = objectMapper;
         this.scopedTasks = scopedTasks;
         this.embeddingModel = embeddingModel;
+        this.transactionTemplate = transactionTemplate;
     }
 
     /**
      * 生成数据集并入库。
+     * <p>
+     * 数据集行不在开头插入：整条 LLM/Embedding 管线先在内存完成，最后通过
+     * {@link #persist} 在单个事务内原子落库（数据集 + 数据项 + 条数统计）——
+     * 中途任何硬失败（数据库、未预期的运行时异常）都不会留下孤儿数据集或部分 item，
+     * 事务也只在快速写路径上短暂持有连接，不会跨越分钟级的 LLM 调用。
+     * </p>
      *
      * @param name     数据集名称
      * @param userId   采样用户 ID（vector_store 与实体层都按该用户过滤）
@@ -120,23 +130,16 @@ public class TestsetGeneratorService {
         var progress = listener == null ? NO_OP : listener;
         var datasetProps = props.getDataset();
 
-        // 1. 数据集记录（source 标识生成方式）
-        var dataset = datasetRepo.insertDataset(new EvaluationDataset(
-                null, name, "Ragas KG multi-hop dataset for user " + userId,
-                0, "ragas_kg", props.getJudgeModel(), 0, null, null, null));
-        final long datasetId = dataset.id();
-
-        // 2. 采样 chunk
+        // 1. 采样 chunk
         progress.onProgress("sampling", 0, 1, "采样知识库 chunk");
         var chunks = sampleChunks(userId, datasetProps.getMaxChunks());
         if (chunks.isEmpty()) {
             log.warn("No chunks found for userId={}, cannot generate dataset", userId);
-            datasetRepo.updateDatasetItemCount(datasetId, 0);
-            return withItems(dataset, List.of());
+            return persist(name, userId, List.of());
         }
         progress.onProgress("sampling", 1, 1, "采样 " + chunks.size() + " 个 chunk");
 
-        // 3. 节点 + 实体（DB 唯一来源；chunk 无实体行 → 不参与实体边）
+        // 2. 节点 + 实体（DB 唯一来源；chunk 无实体行 → 不参与实体边）
         var nodes = loadNodes(chunks);
         var entitiesByChunk = entityLoader.loadEntities(
                 nodes.stream().map(Node::id).toList(), userId);
@@ -145,51 +148,73 @@ public class TestsetGeneratorService {
         progress.onProgress("kg_build", nodes.size(), nodes.size(),
                 "实体装载完成，" + entitiesByChunk.size() + "/" + nodes.size() + " 个 chunk 有实体");
 
-        // 4. 摘要（cheap 模型并发，单 chunk 失败降级为空摘要）
+        // 3. 摘要（cheap 模型并发，单 chunk 失败降级为空摘要）
         summarize(nodes, progress);
 
-        // 5. 问题潜力过滤（ragas CustomNodeFilter：score ≤ minScore 剔除）
+        // 4. 问题潜力过滤（ragas CustomNodeFilter：score ≤ minScore 剔除）
         var survivors = filterByPotential(nodes, progress);
         if (survivors.isEmpty()) {
             log.warn("All nodes filtered out by question potential filter");
-            datasetRepo.updateDatasetItemCount(datasetId, 0);
-            return withItems(dataset, List.of());
+            return persist(name, userId, List.of());
         }
 
-        // 6. 主题（cheap 模型并发）+ 摘要向量（批量 embed）
+        // 5. 主题（cheap 模型并发）+ 摘要向量（批量 embed）
         extractThemes(survivors, progress);
         embedSummaries(survivors, progress);
 
-        // 7. KG + 本地建边：实体重叠 + 摘要余弦
+        // 6. KG + 本地建边：实体重叠 + 摘要余弦
         var kg = new KnowledgeGraph();
         survivors.forEach(kg::addNode);
         addRelationships(kg, progress);
 
-        // 8. persona：配置列表非空用配置，否则自动生成（ragas persona_list=None 默认）
+        // 7. persona：配置列表非空用配置，否则自动生成（ragas persona_list=None 默认）
         var personas = resolvePersonas(kg, progress);
 
-        // 9. 合成器（按数据可用性降级）
+        // 8. 合成器（按数据可用性降级）
         var synthesizers = buildSynthesizers(kg);
         if (synthesizers.isEmpty()) {
             log.warn("No synthesizer available: kg has neither entities nor relationships");
-            datasetRepo.updateDatasetItemCount(datasetId, 0);
-            return withItems(dataset, List.of());
+            return persist(name, userId, List.of());
         }
         var availableNames = synthesizers.stream().map(QuerySynthesizer::name).toList();
         log.info("Synthesizers available: {}", availableNames);
         progress.onProgress("scenarios", 0, 1, "合成器: " + String.join(", ", availableNames));
 
-        // 10-11. 场景生成 + 样本合成（失败贡献空）
+        // 9-10. 场景生成 + 样本合成（失败贡献空）
         var pending = generateScenarios(synthesizers, kg, personas, progress);
         var samples = synthesizeSamples(pending, progress);
 
-        // 12. 后处理与落库
-        var items = postProcess(samples, datasetId, name, progress);
-        if (!items.isEmpty()) {
-            items = new ArrayList<>(datasetRepo.insertItems(items));
-            datasetRepo.updateDatasetItemCount(datasetId, items.size());
-        }
-        return withItems(dataset, items);
+        // 11. 后处理与原子落库
+        var items = postProcess(samples, name, progress);
+        return persist(name, userId, items);
+    }
+
+    /**
+     * 数据集 + 数据项 + 条数统计在单个事务内原子落库（写路径快速，事务不跨越 LLM 调用）。
+     * 空结果（采样为空/全被过滤/无合成器可用）同样落一个 0 条的数据集，保持既有
+     * "job completed + 空 dataset" 语义。
+     */
+    private EvaluationDataset persist(String name, long userId, List<EvaluationDatasetItem> items) {
+        return transactionTemplate.execute(tx -> {
+            var inserted = datasetRepo.insertDataset(new EvaluationDataset(
+                    null, name, "Ragas KG multi-hop dataset for user " + userId,
+                    0, "ragas_kg", props.getJudgeModel(), 0, null, null, null));
+            var saved = items.isEmpty()
+                    ? List.<EvaluationDatasetItem>of()
+                    : datasetRepo.insertItems(bindDatasetId(items, inserted.id()));
+            datasetRepo.updateDatasetItemCount(inserted.id(), saved.size());
+            return withItems(inserted, saved);
+        });
+    }
+
+    /** item 在管线内构建时 dataset 尚未创建（落库后置），此处统一绑定真实的 datasetId。 */
+    private static List<EvaluationDatasetItem> bindDatasetId(List<EvaluationDatasetItem> items,
+                                                             long datasetId) {
+        return items.stream()
+                .map(i -> new EvaluationDatasetItem(i.id(), datasetId, i.question(),
+                        i.groundTruthAnswer(), i.relevantChunkIds(), i.relevantContent(),
+                        i.tags(), i.status(), i.seq()))
+                .toList();
     }
 
     private List<Node> loadNodes(List<Map<String, Object>> chunks) {
@@ -430,9 +455,9 @@ public class TestsetGeneratorService {
         return samples;
     }
 
-    /** 空条目过滤 + 问题去重（对应 Python 参照实现）。返回带 seq 的待落库条目。 */
+    /** 空条目过滤 + 问题去重（对应 Python 参照实现）。datasetId 由 persist 落库时统一绑定。 */
     private List<EvaluationDatasetItem> postProcess(List<GeneratedSample> samples,
-                                                    long datasetId, String name,
+                                                    String name,
                                                     ProgressListener progress) {
         var seen = new LinkedHashSet<String>();
         var items = new ArrayList<EvaluationDatasetItem>();
@@ -448,7 +473,7 @@ public class TestsetGeneratorService {
                 continue;
             }
             items.add(new EvaluationDatasetItem(
-                    null, datasetId, question, s.reference().strip(),
+                    null, null, question, s.reference().strip(),
                     new LinkedHashSet<>(s.relevantChunkIds()),
                     String.join("\n\n", s.referenceContexts()),
                     List.of(s.synthesizerName()), null, items.size()));
@@ -466,10 +491,30 @@ public class TestsetGeneratorService {
                 items.size(), dataset.createdAt(), dataset.updatedAt(), items);
     }
 
-    /** 从 vector_store 随机采样 chunk（相似边输入为摘要向量，无需取 embedding 列）。 */
+    /**
+     * 从 vector_store 随机采样 chunk（相似边输入为摘要向量，无需取 embedding 列）。
+     * <p>
+     * 两段式避免 {@code ORDER BY RANDOM()} 对全部命中行排序：先用 {@code random() < 0.1}
+     * 预筛收窄排序集（命中行数远大于 limit 时显著降低排序量），采样不足 limit 再退回
+     * 无预筛查询兜底——两级每行入选概率均等，保持均匀无偏。
+     * </p>
+     */
     private List<Map<String, Object>> sampleChunks(long userId, int limit) {
+        if (limit <= 0) {
+            return List.of();
+        }
         // vector_store.metadata 为 json 类型（V2，Spring AI pgvector schema），@> 包含操作符仅 jsonb 可用；
         // 过滤沿用全库惯例 metadata->>（VectorStoreMapper.xml），userId 入库为字符串（EtlPipelineServiceImpl）
+        var prefiltered = jdbc.queryForList("""
+                SELECT id, content, metadata
+                FROM vector_store
+                WHERE metadata->>'userId' = ? AND random() < 0.1
+                ORDER BY RANDOM()
+                LIMIT ?
+                """, String.valueOf(userId), limit);
+        if (prefiltered.size() >= limit) {
+            return prefiltered;
+        }
         return jdbc.queryForList("""
                 SELECT id, content, metadata
                 FROM vector_store

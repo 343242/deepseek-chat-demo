@@ -75,11 +75,30 @@ class DatasetControllerTest {
         }
 
         @Test
-        @DisplayName("缺 userId：400")
+        @DisplayName("缺 userId：抛 ClientException（全局处理器转 400）")
         void rejectsMissingUserId() {
-            var response = controller.generateDataset(Map.of("name", "ds"));
+            org.assertj.core.api.Assertions.assertThatThrownBy(
+                            () -> controller.generateDataset(Map.of("name", "ds")))
+                    .isInstanceOf(com.smart.rag.infrastructure.exception.ClientException.class);
+        }
 
-            assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+        @Test
+        @DisplayName("userId 类型错误（字符串）：400 而非 ClassCastException 500")
+        void rejectsNonNumericUserId() {
+            org.assertj.core.api.Assertions.assertThatThrownBy(
+                            () -> controller.generateDataset(Map.of("name", "ds", "userId", "1")))
+                    .isInstanceOf(com.smart.rag.infrastructure.exception.ClientException.class);
+        }
+
+        @Test
+        @DisplayName("name 类型错误（数字）：回退默认名提交，不 500")
+        void nonStringNameFallsBackToDefault() {
+            var response = controller.generateDataset(Map.of("name", 123, "userId", 1));
+
+            assertThat(response.getStatusCode()).isEqualTo(HttpStatus.ACCEPTED);
+            org.mockito.Mockito.verify(jobService).submit(
+                    org.mockito.ArgumentMatchers.startsWith("dataset-"),
+                    org.mockito.ArgumentMatchers.eq(1L));
         }
     }
 

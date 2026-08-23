@@ -72,16 +72,32 @@ class GenerationJobSweeperTest {
         when(genJobRepo.listByStatus("pending")).thenReturn(List.of(
                 job(3L, "pending", stale),      // stale → reap（崩溃窗口孤儿）
                 job(4L, "pending", fresh)));    // 新鲜 → 保留
+        // 条件更新命中（仍处于 pending/running，1 行受影响）
+        when(genJobRepo.markFailedIfPendingOrRunning(anyLong(), anyString())).thenReturn(1);
 
         sweeper.reapStaleGenerationJobs();
 
         // 只清理 1 与 3，新鲜任务（2、4）不动
-        verify(genJobRepo).markFailed(org.mockito.ArgumentMatchers.eq(1L), anyString());
-        verify(genJobRepo).markFailed(org.mockito.ArgumentMatchers.eq(3L), anyString());
-        verify(genJobRepo, never()).markFailed(org.mockito.ArgumentMatchers.eq(2L), anyString());
-        verify(genJobRepo, never()).markFailed(org.mockito.ArgumentMatchers.eq(4L), anyString());
+        verify(genJobRepo).markFailedIfPendingOrRunning(org.mockito.ArgumentMatchers.eq(1L), anyString());
+        verify(genJobRepo).markFailedIfPendingOrRunning(org.mockito.ArgumentMatchers.eq(3L), anyString());
+        verify(genJobRepo, never()).markFailedIfPendingOrRunning(org.mockito.ArgumentMatchers.eq(2L), anyString());
+        verify(genJobRepo, never()).markFailedIfPendingOrRunning(org.mockito.ArgumentMatchers.eq(4L), anyString());
         verify(genProgressSink).complete(1L);
         verify(genProgressSink).complete(3L);
+    }
+
+    @Test
+    @DisplayName("条件更新 0 行（任务在 isActive 检查后自然完成）：不改状态、不 complete sink（TOCTOU 防护）")
+    void raceWithNaturalCompletionSkipsCompensation() {
+        var stale = OffsetDateTime.now().minusHours(2);
+        when(genJobRepo.listByStatus("running")).thenReturn(List.of(job(1L, "running", stale)));
+        when(genJobRepo.listByStatus("pending")).thenReturn(List.of());
+        // 模拟：sweeper 检查 sink 后、UPDATE 前，任务被执行线程收尾 → 条件更新 0 行
+        when(genJobRepo.markFailedIfPendingOrRunning(anyLong(), anyString())).thenReturn(0);
+
+        sweeper.reapStaleGenerationJobs();
+
+        verify(genProgressSink, never()).complete(anyLong());
     }
 
     @Test
@@ -92,7 +108,7 @@ class GenerationJobSweeperTest {
 
         sweeper.reapStaleGenerationJobs();
 
-        verify(genJobRepo, never()).markFailed(anyLong(), anyString());
+        verify(genJobRepo, never()).markFailedIfPendingOrRunning(anyLong(), anyString());
     }
 
     @Test
@@ -103,7 +119,7 @@ class GenerationJobSweeperTest {
 
         assertThatCode(() -> sweeper.reapStaleGenerationJobs())
                 .doesNotThrowAnyException();
-        verify(genJobRepo, never()).markFailed(anyLong(), anyString());
+        verify(genJobRepo, never()).markFailedIfPendingOrRunning(anyLong(), anyString());
     }
 
     @Test
@@ -116,7 +132,7 @@ class GenerationJobSweeperTest {
 
         sweeper.reapStaleGenerationJobs();
 
-        verify(genJobRepo, never()).markFailed(anyLong(), anyString());
+        verify(genJobRepo, never()).markFailedIfPendingOrRunning(anyLong(), anyString());
         assertThat(Optional.ofNullable(record.startedAt())).isEmpty();
     }
 }

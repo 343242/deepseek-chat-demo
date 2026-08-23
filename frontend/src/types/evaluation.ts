@@ -190,7 +190,7 @@ export interface EvalCompareEntry {
   metrics: EvalAggregateMetrics
 }
 
-/** POST /runs/compare 响应（⚠️ 以 run name 为键，重名互相覆盖——前端以 runId 反查，design.md §5） */
+/** POST /runs/compare 响应（以 runId 字符串为键；前端以 Object.values + entry.runId 反查，design.md §5） */
 export interface EvalCompareResponse {
   comparison: Record<string, EvalCompareEntry>
 }

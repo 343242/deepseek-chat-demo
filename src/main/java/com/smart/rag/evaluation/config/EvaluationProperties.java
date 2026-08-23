@@ -148,6 +148,15 @@ public class EvaluationProperties {
         /** 节点问题潜力过滤（ragas CustomNodeFilter 移植） */
         private NodeFilter nodeFilter = new NodeFilter();
 
+        /**
+         * 同时执行的测试集生成任务数。
+         * <p>
+         * 独立于 {@code runner.max-concurrent-runs}：生成任务是小时级长任务，
+         * 与评估 run 共用并发额度时会长期占住评估的许可（max-concurrent-runs=2 时
+         * 一个生成任务可占满全部额度，饿死评估 run），因此资源隔离、各自限额。
+         */
+        private int maxConcurrentJobs = 2;
+
         public int getSize() {
             return size;
         }
@@ -202,6 +211,14 @@ public class EvaluationProperties {
 
         public void setNodeFilter(NodeFilter nodeFilter) {
             this.nodeFilter = nodeFilter;
+        }
+
+        public int getMaxConcurrentJobs() {
+            return maxConcurrentJobs;
+        }
+
+        public void setMaxConcurrentJobs(int maxConcurrentJobs) {
+            this.maxConcurrentJobs = maxConcurrentJobs;
         }
     }
 

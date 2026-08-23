@@ -72,8 +72,8 @@ public class EvaluationSseBridge {
 
     /**
      * 已结束 run 的终态直连（镜像 testset 的 GenerationSseBridge.bridgeTerminated）：
-     * run 终态时 sink 已 complete 并移除，subscribe 会兜底创建永不 complete 的 sink
-     * （entry 泄漏 + 连接挂到超时），因此不订阅、直接回放终态事件并立即收尾。
+     * run 终态时 sink 已 complete 并移除，此时 subscribe 只会得到立即完成的空流（无状态信息），
+     * 因此不订阅、直接回放携带 run 终态的事件并立即收尾。
      */
     public SseEmitter bridgeTerminated(EvaluationRun run) {
         SseEmitter emitter = new SseEmitter(0L); // 立即完成，无需超时

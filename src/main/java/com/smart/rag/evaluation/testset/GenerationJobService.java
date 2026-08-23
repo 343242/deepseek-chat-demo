@@ -14,9 +14,9 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Semaphore;
 
 /**
- * 测试集生成任务编排（镜像 {@code EvaluationExecutionService} 的异步生命周期）：
- * fire-and-forget 到 evalExecutor（虚拟线程），evalRunSemaphore 背压防打爆 LLM API，
- * 进度经 {@link GenerationProgressSink} 推送 SSE 并落库（断线可查）。
+ * 测试集生成任务编排（镜像 {@code EvaluationExecutionService} 的异步生命周期，资源相互隔离）：
+ * fire-and-forget 到 generationExecutor（虚拟线程，独立于评估 run 的 evalExecutor），
+ * generationRunSemaphore 背压防打爆 LLM API，进度经 {@link GenerationProgressSink} 推送 SSE 并落库（断线可查）。
  */
 @Service
 public class GenerationJobService {
@@ -28,23 +28,23 @@ public class GenerationJobService {
     private final GenerationProgressSink progressSink;
     private final EvaluationProperties props;
     private final ObjectMapper objectMapper;
-    private final ExecutorService evalExecutor;
-    private final Semaphore evalRunSemaphore;
+    private final ExecutorService generationExecutor;
+    private final Semaphore generationRunSemaphore;
 
     public GenerationJobService(TestsetGeneratorService generator,
                                 GenerationJobRepository jobRepo,
                                 GenerationProgressSink progressSink,
                                 EvaluationProperties props,
                                 ObjectMapper objectMapper,
-                                @Qualifier("evalExecutor") ExecutorService evalExecutor,
-                                @Qualifier("evalRunSemaphore") Semaphore evalRunSemaphore) {
+                                @Qualifier("generationExecutor") ExecutorService generationExecutor,
+                                @Qualifier("generationRunSemaphore") Semaphore generationRunSemaphore) {
         this.generator = generator;
         this.jobRepo = jobRepo;
         this.progressSink = progressSink;
         this.props = props;
         this.objectMapper = objectMapper;
-        this.evalExecutor = evalExecutor;
-        this.evalRunSemaphore = evalRunSemaphore;
+        this.generationExecutor = generationExecutor;
+        this.generationRunSemaphore = generationRunSemaphore;
     }
 
     /**
@@ -61,7 +61,7 @@ public class GenerationJobService {
         long jobId = jobRepo.insert(userId, name, configJson);
         progressSink.getOrCreate(jobId);
         try {
-            evalExecutor.execute(() -> execute(jobId, name, userId));
+            generationExecutor.execute(() -> execute(jobId, name, userId));
         } catch (java.util.concurrent.RejectedExecutionException e) {
             jobRepo.markFailed(jobId, "生成任务提交失败：executor 拒绝执行（" + e + "）");
             progressSink.complete(jobId);
@@ -75,10 +75,10 @@ public class GenerationJobService {
         var runner = props.getRunner();
         boolean acquired = false;
         try {
-            acquired = evalRunSemaphore.tryAcquire(
+            acquired = generationRunSemaphore.tryAcquire(
                     runner.getAcquireTimeoutSeconds(), java.util.concurrent.TimeUnit.SECONDS);
             if (!acquired) {
-                jobRepo.markFailed(jobId, "生成并发上限（max-concurrent-runs）等待超时");
+                jobRepo.markFailed(jobId, "生成并发上限（dataset.max-concurrent-jobs）等待超时");
                 return;
             }
             jobRepo.markRunning(jobId);
@@ -99,7 +99,7 @@ public class GenerationJobService {
             jobRepo.markFailed(jobId, e.getMessage() != null ? e.getMessage() : e.toString());
         } finally {
             if (acquired) {
-                evalRunSemaphore.release();
+                generationRunSemaphore.release();
             }
             progressSink.complete(jobId);
         }

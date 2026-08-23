@@ -60,8 +60,10 @@ public class EvaluationRunController {
     /**
      * 启动评估运行（异步）。
      * <p>
-     * 创建 run 记录（标记 running）后立即返回，实际评测在虚拟线程上 fire-and-forget 执行。
-     * 客户端可通过 {@code GET /{runId}/events} 订阅 SSE 进度，或轮询 run 状态。
+     * 所有前置校验（数据集存在、配置类型、数据项非空）在落库前完成——run 记录一旦标记
+     * running 就必须有执行方接管，校验失败时直接 400，不留无人执行的 running 记录
+     * （那种记录只能等 sweeper 超时回收）。校验通过后创建 run 记录并 fire-and-forget 提交，
+     * 实际评测在虚拟线程上执行。客户端可通过 {@code GET /{runId}/events} 订阅 SSE 进度，或轮询 run 状态。
      * </p>
      */
     @PostMapping
@@ -77,20 +79,22 @@ public class EvaluationRunController {
                     .body(Map.of("error", "Dataset not found: " + request.datasetId()));
         }
 
+        // 前置校验（可能抛 ClientException → 400）：配置类型检查在 Service 层
+        var config = executionService.buildEvalConfig(request.configOverride());
+
+        // 数据项加载：空数据集拒绝启动，避免 total=0 的空跑
+        List<EvaluationDatasetItem> items = datasetRepo.listItemsByDatasetId(request.datasetId());
+        if (items.isEmpty()) {
+            return ResponseEntity.badRequest()
+                    .body(Map.of("error", "Dataset has no items: " + request.datasetId()));
+        }
+
         String name = request.name() != null && !request.name().isBlank()
                 ? request.name()
                 : "run-" + System.currentTimeMillis();
 
-        // 创建运行记录（同步，标记 running）
+        // 校验全部通过，创建运行记录（同步，标记 running）并异步提交（fire-and-forget）
         EvaluationRun run = executionService.createRun(request.datasetId(), name, request.configOverride());
-
-        // 构建评估配置（类型校验在 Service 层，类型不符抛 ClientException → 400）
-        var config = executionService.buildEvalConfig(request.configOverride());
-
-        // 获取数据项
-        List<EvaluationDatasetItem> items = datasetRepo.listItemsByDatasetId(request.datasetId());
-
-        // 异步提交（fire-and-forget），HTTP 线程立即返回
         executionService.submitRun(run, items, config);
 
         return ResponseEntity.accepted().body(Map.of(
@@ -105,8 +109,8 @@ public class EvaluationRunController {
      * <p>
      * 推送 per-item 进度事件（{@code event: progress}），结束时发 {@code event: done}。
      * 即使订阅晚于任务启动，也能收到最近 20 条历史进度（replay）。
-     * run 不存在返回 404；已结束（completed/failed）直接回放终态，避免兜底创建
-     * 永不 complete 的 sink（entry 泄漏 + 连接挂到超时）。
+     * run 不存在返回 404；已结束（completed/failed）直接回放终态收尾——
+     * sink 已随任务结束移除，subscribe 只会得到立即完成的空流，终态直连能携带完整状态信息。
      * </p>
      */
     @GetMapping(value = "/{runId}/events", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
@@ -170,7 +174,9 @@ public class EvaluationRunController {
                 continue;
             }
             EvaluationRun r = run.get();
-            comparison.put(r.name(), buildComparisonEntry(r));
+            // runId 作 key：name 是用户可控显示字段、不唯一，同名 run 互相覆盖会静默丢列
+            // （前端 compare-tab 按 Object.values + entry.runId 反查，不依赖 key 语义）
+            comparison.put(String.valueOf(r.id()), buildComparisonEntry(r));
         }
         return ResponseEntity.ok(Map.of("comparison", comparison));
     }

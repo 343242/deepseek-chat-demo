@@ -11,7 +11,9 @@ import com.smart.rag.infrastructure.concurrent.ScopePolicy;
 import com.smart.rag.infrastructure.concurrent.ScopedTasks;
 import com.smart.rag.infrastructure.concurrent.TaskScope;
 import com.smart.rag.infrastructure.exception.ClientException;
+import com.smart.rag.infrastructure.exception.ServiceException;
 import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;
+import com.smart.rag.infrastructure.exception.errorcode.ServiceErrorCode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -22,6 +24,7 @@ import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutorService;
+import java.util.concurrent.RejectedExecutionException;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -38,6 +41,9 @@ import java.util.concurrent.atomic.AtomicLong;
 public class EvaluationExecutionService {
 
     private static final Logger log = LoggerFactory.getLogger(EvaluationExecutionService.class);
+
+    /** configOverride.topK 上限（下限 1；检索侧无更大硬限制，此为防滥用护栏） */
+    private static final int MAX_TOPK = 100;
 
     private final EvaluationRunner evaluationRunner;
     private final EvaluationResultRepository resultRepo;
@@ -101,6 +107,8 @@ public class EvaluationExecutionService {
      *   <li>异常时标记 run 为 FAILED，finally 释放信号量 + 完成 sink</li>
      * </ol>
      * 进度通过 {@link EvaluationProgressSink} 推送到 SSE 订阅者。
+     * executor 拒绝（已关闭/饱和）时 {@code execute} 同步抛出——补偿标记 FAILED、完成 sink
+     * 并抛 {@link ServiceException}，不留 running 孤儿（镜像 {@code GenerationJobService.submit}）。
      *
      * @param run     已创建并标记为 running 的运行记录
      * @param items   数据项列表
@@ -110,37 +118,48 @@ public class EvaluationExecutionService {
         // 预创建 sink，确保 SSE 订阅（可能稍晚到达）能拿到所有进度
         progressSink.getOrCreate(run.id());
 
-        evalExecutor.submit(() -> {
-            long runId = run.id();
-            long acquireTimeoutSeconds = evalProps.getRunner().getAcquireTimeoutSeconds();
-            // 只有成功 acquire 才置位，finally 按位释放——否则超时拒绝路径会 release 未获取的许可，
-            // 逐步击穿 max-concurrent-runs 背压
-            boolean acquired = false;
-            try {
-                if (!evalRunSemaphore.tryAcquire(acquireTimeoutSeconds, TimeUnit.SECONDS)) {
-                    log.warn("Run {} rejected: concurrency limit (acquire timeout {}s)", runId, acquireTimeoutSeconds);
+        try {
+            evalExecutor.execute(() -> {
+                long runId = run.id();
+                long acquireTimeoutSeconds = evalProps.getRunner().getAcquireTimeoutSeconds();
+                // 只有成功 acquire 才置位，finally 按位释放——否则超时拒绝路径会 release 未获取的许可，
+                // 逐步击穿 max-concurrent-runs 背压
+                boolean acquired = false;
+                try {
+                    if (!evalRunSemaphore.tryAcquire(acquireTimeoutSeconds, TimeUnit.SECONDS)) {
+                        log.warn("Run {} rejected: concurrency limit (acquire timeout {}s)", runId, acquireTimeoutSeconds);
+                        resultRepo.updateRunStatus(runId, EvaluationRunStatus.FAILED,
+                                "{\"error\":\"concurrency limit exceeded, try again later\"}");
+                        return;
+                    }
+                    acquired = true;
+                    executeRun(run, items, config);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    log.warn("Run {} interrupted while acquiring semaphore", runId);
                     resultRepo.updateRunStatus(runId, EvaluationRunStatus.FAILED,
-                            "{\"error\":\"concurrency limit exceeded, try again later\"}");
-                    return;
+                            "{\"error\":\"interrupted\"}");
+                } catch (Exception e) {
+                    log.error("Run {} failed unexpectedly: {}", runId, e.getMessage(), e);
+                    resultRepo.updateRunStatus(runId, EvaluationRunStatus.FAILED,
+                            "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
+                } finally {
+                    if (acquired) {
+                        evalRunSemaphore.release();
+                    }
+                    progressSink.complete(runId);
                 }
-                acquired = true;
-                executeRun(run, items, config);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-                log.warn("Run {} interrupted while acquiring semaphore", runId);
-                resultRepo.updateRunStatus(runId, EvaluationRunStatus.FAILED,
-                        "{\"error\":\"interrupted\"}");
-            } catch (Exception e) {
-                log.error("Run {} failed unexpectedly: {}", runId, e.getMessage(), e);
-                resultRepo.updateRunStatus(runId, EvaluationRunStatus.FAILED,
-                        "{\"error\":\"" + escapeJson(e.getMessage()) + "\"}");
-            } finally {
-                if (acquired) {
-                    evalRunSemaphore.release();
-                }
-                progressSink.complete(runId);
-            }
-        });
+            });
+        } catch (RejectedExecutionException e) {
+            // run 此时已是 running 且 sink 已预创建：不补偿则记录无人接管、sink 残留
+            // （sink 存活还会让 sweeper 误判"仍在执行"而不回收）
+            log.error("Run {} submit rejected by executor: {}", run.id(), e.toString());
+            resultRepo.updateRunStatus(run.id(), EvaluationRunStatus.FAILED,
+                    "{\"error\":\"executor rejected submission\"}");
+            progressSink.complete(run.id());
+            throw new ServiceException(ServiceErrorCode.INTERNAL_ERROR,
+                    "评估任务提交失败：评估执行器不可用", e);
+        }
     }
 
     /**
@@ -260,6 +279,10 @@ public class EvaluationExecutionService {
         }
         if (override.containsKey("topK")) {
             int topK = requireInt(override.get("topK"), "topK");
+            if (topK < 1 || topK > MAX_TOPK) {
+                throw new ClientException(ClientErrorCode.BAD_REQUEST,
+                        "topK 必须在 1 到 " + MAX_TOPK + " 之间");
+            }
             config.setVectorTopK(topK);
             config.setBm25TopK(topK);
             config.setTopK(topK);

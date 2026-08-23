@@ -8,6 +8,8 @@ import com.smart.rag.evaluation.testset.GenerationJobRecord;
 import com.smart.rag.evaluation.testset.GenerationJobService;
 import com.smart.rag.evaluation.testset.GenerationProgressSink;
 import com.smart.rag.evaluation.testset.GenerationSseBridge;
+import com.smart.rag.infrastructure.exception.ClientException;
+import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.MediaType;
@@ -33,6 +35,9 @@ public class DatasetController {
 
     private static final Logger log = LoggerFactory.getLogger(DatasetController.class);
 
+    /** 分页 size 上限（与 EvaluationRunController 对齐） */
+    private static final int MAX_PAGE_SIZE = 500;
+
     private final DatasetRepository datasetRepo;
     private final GenerationJobService generationJobService;
     private final GenerationProgressSink generationProgressSink;
@@ -52,17 +57,25 @@ public class DatasetController {
     }
 
     /**
-     * 提交 KG 式测试集生成任务（异步，返回 202 + jobId）
+     * 提交 KG 式测试集生成任务（异步，返回 202 + jobId）。
+     * <p>
+     * 原始 Map 手工做类型校验：错误类型直接抛 {@link ClientException}（400），
+     * 而非裸强转的 ClassCastException（500）。
+     * </p>
      */
     @PostMapping("/generate")
     public ResponseEntity<Map<String, Object>> generateDataset(
             @RequestBody Map<String, Object> request) {
-        String name = (String) request.getOrDefault("name", "dataset-" + System.currentTimeMillis());
-        if (request.get("userId") == null) {
-            return ResponseEntity.badRequest()
-                    .body(Map.of("error", "userId is required"));
+        Object rawName = request.get("name");
+        String name = rawName instanceof String s && !s.isBlank()
+                ? s
+                : "dataset-" + System.currentTimeMillis();
+        Object rawUserId = request.get("userId");
+        if (!(rawUserId instanceof Number n)) {
+            throw new ClientException(ClientErrorCode.BAD_REQUEST,
+                    "userId 必须提供且为数字" + (rawUserId == null ? "" : "（收到 " + rawUserId.getClass().getSimpleName() + "）"));
         }
-        long userId = ((Number) request.get("userId")).longValue();
+        long userId = n.longValue();
 
         long jobId = generationJobService.submit(name, userId);
         return ResponseEntity.accepted().body(Map.of("jobId", jobId, "status", "pending"));
@@ -92,19 +105,21 @@ public class DatasetController {
     }
 
     /**
-     * 列出数据集（分页）
+     * 列出数据集（分页，page ≥ 0，size 1..500；与 EvaluationRunController 的钳制策略一致）
      */
     @GetMapping
     public ResponseEntity<Map<String, Object>> listDatasets(
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "20") int size) {
-        List<EvaluationDataset> datasets = datasetRepo.listDatasets(page, size);
+        int safePage = Math.max(0, page);
+        int safeSize = Math.min(Math.max(1, size), MAX_PAGE_SIZE);
+        List<EvaluationDataset> datasets = datasetRepo.listDatasets(safePage, safeSize);
         int total = datasetRepo.countDatasets();
         return ResponseEntity.ok(Map.of(
                 "datasets", datasets,
                 "total", total,
-                "page", page,
-                "size", size
+                "page", safePage,
+                "size", safeSize
         ));
     }
 

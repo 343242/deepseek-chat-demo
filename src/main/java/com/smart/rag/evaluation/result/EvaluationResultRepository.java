@@ -91,6 +91,20 @@ public class EvaluationResultRepository {
                 statusValue, summary, statusValue, statusValue, runId);
     }
 
+    /**
+     * 仅当 run 仍处于 running 时标记 FAILED（条件更新）。
+     * <p>
+     * sweeper 的"查询 → 检查内存 sink → 更新"是非原子序列：run 可能在检查之后、更新之前
+     * 已被执行线程自然收尾（completed/failed），无条件 UPDATE 会把终态改回 failed。
+     * 返回受影响行数：0 = 已被执行线程收尾，调用方应跳过后续补偿动作。
+     */
+    public int markFailedIfRunning(long runId, String summary) {
+        return jdbc.update("""
+                UPDATE evaluation_run SET status = 'failed', summary = ?::jsonb, completed_at = NOW()
+                WHERE id = ? AND status = 'running'
+                """, summary, runId);
+    }
+
     public Optional<EvaluationRun> findRunById(long id) {
         try {
             return Optional.of(jdbc.queryForObject(
@@ -183,10 +197,12 @@ public class EvaluationResultRepository {
     }
 
     public List<Map<String, Object>> listResultsByRunId(long runId, int page, int size) {
+        // long 运算防 page*size 溢出为负 OFFSET（page 上限未受控时 int 乘法可能回绕）
+        long offset = (long) page * size;
         return jdbc.queryForList(
                 "SELECT id, run_id, item_id, item_question_snapshot, retrieval_metrics, generation_metrics, error, latency_ms " +
                         "FROM evaluation_result WHERE run_id = ? ORDER BY id LIMIT ? OFFSET ?",
-                runId, size, page * size);
+                runId, size, offset);
     }
 
     public int countResultsByRunId(long runId) {

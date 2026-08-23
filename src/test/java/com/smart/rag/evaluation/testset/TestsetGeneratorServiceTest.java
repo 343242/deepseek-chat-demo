@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smart.rag.evaluation.config.EvaluationProperties;
 import com.smart.rag.evaluation.dataset.DatasetRepository;
 import com.smart.rag.evaluation.dataset.EvaluationDataset;
+import com.smart.rag.evaluation.dataset.EvaluationDatasetItem;
 import com.smart.rag.evaluation.testset.transforms.ChunkEntityLoader;
 import com.smart.rag.infrastructure.concurrent.DefaultScopedTasks;
 import com.smart.rag.infrastructure.concurrent.ScopeOptions;
@@ -55,6 +56,7 @@ class TestsetGeneratorServiceTest {
     private EmbeddingModel embeddingModel;
     private RecordingScopedTasks scopedTasks;
     private EvaluationProperties properties;
+    private org.springframework.transaction.support.TransactionTemplate txTemplate;
 
     @BeforeEach
     void setUp() {
@@ -64,6 +66,10 @@ class TestsetGeneratorServiceTest {
         datasetRepo = mock(DatasetRepository.class);
         embeddingModel = mock(EmbeddingModel.class);
         scopedTasks = new RecordingScopedTasks();
+        // 事务模板桩：mock PTM 的 getTransaction 返回 null、commit/rollback 无动作，
+        // execute 回调在"无真实事务"下直跑——单测只验证编排，不验证事务本身
+        txTemplate = new org.springframework.transaction.support.TransactionTemplate(
+                mock(org.springframework.transaction.PlatformTransactionManager.class));
 
         properties = new EvaluationProperties();
         properties.getDataset().setSize(2);
@@ -134,7 +140,7 @@ class TestsetGeneratorServiceTest {
                 id2, Set.of("畅连", "华为账号")));
         var progressCount = new AtomicInteger();
         var service = new TestsetGeneratorService(jdbc, entityLoader, resolver, properties,
-                datasetRepo, new ObjectMapper(), scopedTasks, embeddingModel);
+                datasetRepo, new ObjectMapper(), scopedTasks, embeddingModel, txTemplate);
 
         var result = service.generate("dataset", 1L,
                 (phase, current, total, message) -> progressCount.incrementAndGet());
@@ -155,29 +161,46 @@ class TestsetGeneratorServiceTest {
                 "testset-scenarios", "testset-synthesize");
         assertThat(scopedTasks.lastOptions().policy()).isEqualTo(ScopePolicy.COLLECT_ALL);
         assertThat(scopedTasks.lastOptions().maxConcurrency()).isEqualTo(2);
-        verify(datasetRepo).insertItems(anyList());
-        verify(datasetRepo).updateDatasetItemCount(100L, 1);
 
-        // 采样 SQL 回归防护：vector_store.metadata 是 json 类型，@> 仅 jsonb 可用（曾致生成任务全败）
+        // 落库后置 + 原子化：采样（写前）→ insertDataset → insertItems → updateDatasetItemCount（写事务内），
+        // 且 insertItems 收到的 item 已绑定真实 datasetId（管线内构建时 dataset 尚未创建）
+        var inOrder = org.mockito.Mockito.inOrder(jdbc, datasetRepo);
+        inOrder.verify(jdbc, org.mockito.Mockito.atLeastOnce()).queryForList(anyString(), anyString(), anyInt());
+        inOrder.verify(datasetRepo).insertDataset(ArgumentMatchers.any(EvaluationDataset.class));
+        @SuppressWarnings("unchecked")
+        var itemsCaptor = ArgumentCaptor.forClass((Class<List<EvaluationDatasetItem>>) (Class<?>) List.class);
+        inOrder.verify(datasetRepo).insertItems(itemsCaptor.capture());
+        inOrder.verify(datasetRepo).updateDatasetItemCount(100L, 1);
+        assertThat(itemsCaptor.getValue())
+                .isNotEmpty()
+                .allSatisfy(i -> assertThat(i.datasetId()).isEqualTo(100L));
+
+        // 采样 SQL 回归防护：vector_store.metadata 是 json 类型，@> 仅 jsonb 可用（曾致生成任务全败）；
+        // 两段式采样（random()<0.1 预筛，命中 2 < maxChunks 5 → 兜底全量查询也会执行），两级 SQL 都要合规
         var sqlCaptor = ArgumentCaptor.forClass(String.class);
-        verify(jdbc).queryForList(sqlCaptor.capture(), anyString(), anyInt());
-        assertThat(sqlCaptor.getValue())
-                .contains("metadata->>'userId'")
-                .doesNotContain("@>");
+        verify(jdbc, org.mockito.Mockito.atLeastOnce()).queryForList(sqlCaptor.capture(), anyString(), anyInt());
+        assertThat(sqlCaptor.getAllValues())
+                .isNotEmpty()
+                .allSatisfy(sql -> assertThat(sql)
+                        .contains("metadata->>'userId'")
+                        .doesNotContain("@>"));
     }
 
     @Test
-    @DisplayName("空采样提前返回：不建 KG、不调 LLM、条数为 0")
+    @DisplayName("空采样提前返回：不建 KG、不调 LLM、只落一个 0 条数据集")
     void emptySampleReturnsEarly() {
         when(jdbc.queryForList(anyString(), anyString(), anyInt())).thenReturn(List.of());
         var service = new TestsetGeneratorService(jdbc, entityLoader, resolver, properties,
-                datasetRepo, new ObjectMapper(), scopedTasks, embeddingModel);
+                datasetRepo, new ObjectMapper(), scopedTasks, embeddingModel, txTemplate);
 
         var result = service.generate("dataset", 1L, null);
 
         assertThat(result.id()).isEqualTo(100L);
         assertThat(result.items()).isEmpty();
         assertThat(scopedTasks.scopeNames()).isEmpty();
+        // 仍落一个空数据集（保持"job completed + 空 dataset"语义），但无 item 写入
+        verify(datasetRepo).insertDataset(ArgumentMatchers.any(EvaluationDataset.class));
+        verify(datasetRepo, org.mockito.Mockito.never()).insertItems(anyList());
         verify(datasetRepo).updateDatasetItemCount(100L, 0);
     }
 

@@ -10,6 +10,7 @@ import org.springframework.stereotype.Repository;
 import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.time.OffsetDateTime;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
@@ -105,9 +106,11 @@ public class DatasetRepository {
     }
 
     public List<EvaluationDataset> listDatasets(int page, int size) {
+        // long 运算防 page*size 溢出为负 OFFSET（page 上限未受控时 int 乘法可能回绕）
+        long offset = (long) page * size;
         return jdbc.query(
                 "SELECT * FROM evaluation_dataset ORDER BY created_at DESC LIMIT ? OFFSET ?",
-                datasetRowMapper, size, page * size);
+                datasetRowMapper, size, offset);
     }
 
     public int countDatasets() {
@@ -142,29 +145,82 @@ public class DatasetRepository {
         });
     }
 
+    /**
+     * 批量插入数据项（单语句 UNNEST 并行数组，一次数据库往返）。
+     * <p>
+     * 逐条 INSERT 在数据集规模增长后产生大量数据库往返；改为一条
+     * {@code INSERT ... SELECT * FROM UNNEST(...)} 把 N 行打包进单语句。
+     * 列级空集合/null（relevant_chunk_ids、tags）用外层数组的 NULL 元素表达，
+     * 语义与单条插入的 {@code setNull} 一致。RETURNING 行序不保证与输入对齐，
+     * 按 seq（数据集内唯一，postProcess 按序分配）回填生成的 id。
+     * </p>
+     */
     public List<EvaluationDatasetItem> insertItems(List<EvaluationDatasetItem> items) {
+        if (items == null || items.isEmpty()) {
+            return items == null ? List.of() : items;
+        }
         return jdbc.execute((Connection conn) -> {
             try (PreparedStatement ps = conn.prepareStatement("""
                     INSERT INTO evaluation_dataset_item
                         (dataset_id, question, ground_truth_answer, relevant_chunk_ids, relevant_content, tags, status, seq)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    SELECT * FROM UNNEST(?::bigint[], ?::text[], ?::text[], ?::text[][], ?::text[], ?::varchar[][], ?::text[], ?::int[])
                     RETURNING id, dataset_id, question, ground_truth_answer, relevant_chunk_ids, relevant_content, tags, status, seq
                     """)) {
-                // 按下标回填：record 按内容 equals，indexOf 在重复内容时会命中第一条导致回填丢失
+                ps.setArray(1, conn.createArrayOf("bigint",
+                        items.stream().map(EvaluationDatasetItem::datasetId).toArray(Long[]::new)));
+                ps.setArray(2, textColumn(conn, items, EvaluationDatasetItem::question));
+                ps.setArray(3, textColumn(conn, items, EvaluationDatasetItem::groundTruthAnswer));
+                ps.setArray(4, arrayColumn(conn, items, EvaluationDatasetItem::relevantChunkIds, "TEXT"));
+                ps.setArray(5, textColumn(conn, items, EvaluationDatasetItem::relevantContent));
+                ps.setArray(6, arrayColumn(conn, items, EvaluationDatasetItem::tags, "VARCHAR"));
+                ps.setArray(7, textColumn(conn, items, i -> i.status().getValue()));
+                ps.setArray(8, conn.createArrayOf("int4",
+                        items.stream().map(EvaluationDatasetItem::seq).toArray(Integer[]::new)));
+
+                var bySeq = new HashMap<Integer, EvaluationDatasetItem>();
+                try (var rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        var row = itemRowMapper.mapRow(rs, 0);
+                        bySeq.put(row.seq(), row);
+                    }
+                }
                 for (int i = 0; i < items.size(); i++) {
-                    bindInsertParams(ps, conn, items.get(i));
-                    try (var rs = ps.executeQuery()) {
-                        if (rs.next()) {
-                            items.set(i, itemRowMapper.mapRow(rs, 0));
-                        } else {
-                            log.warn("insertItems RETURNING returned no row at index {} (datasetId={})",
-                                    i, items.get(i).datasetId());
-                        }
+                    var saved = bySeq.get(items.get(i).seq());
+                    if (saved != null) {
+                        items.set(i, saved);
                     }
                 }
             }
             return items;
         });
+    }
+
+    /** 一维 text 列（question/answer/content/status）打包为 text[]。 */
+    private static java.sql.Array textColumn(Connection conn,
+                                             List<EvaluationDatasetItem> items,
+                                             java.util.function.Function<EvaluationDatasetItem, String> getter)
+            throws java.sql.SQLException {
+        return conn.createArrayOf("text",
+                items.stream().map(getter).toArray(String[]::new));
+    }
+
+    /**
+     * 数组列（relevant_chunk_ids TEXT[] / tags VARCHAR[]）打包为二维数组：
+     * 空集合或 null 的行用 NULL 元素表达（对应列值 NULL，与单条插入的 setNull 语义一致）。
+     */
+    private static java.sql.Array arrayColumn(Connection conn,
+                                              List<EvaluationDatasetItem> items,
+                                              java.util.function.Function<EvaluationDatasetItem, ? extends java.util.Collection<String>> getter,
+                                              String elementType)
+            throws java.sql.SQLException {
+        Object[] outer = new Object[items.size()];
+        for (int i = 0; i < items.size(); i++) {
+            var values = getter.apply(items.get(i));
+            outer[i] = (values == null || values.isEmpty())
+                    ? null
+                    : conn.createArrayOf(elementType, values.toArray());
+        }
+        return conn.createArrayOf(elementType, outer);
     }
 
     /**

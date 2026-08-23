@@ -43,6 +43,7 @@ public class EvaluationExecutorConfig implements DisposableBean {
     private static final Logger log = LoggerFactory.getLogger(EvaluationExecutorConfig.class);
 
     private ExecutorService evalExecutorService;
+    private ExecutorService generationExecutorService;
 
     /**
      * 评测 run 专用虚拟线程 executor。
@@ -72,9 +73,38 @@ public class EvaluationExecutorConfig implements DisposableBean {
         return new Semaphore(permits);
     }
 
+    /**
+     * 测试集生成任务专用虚拟线程 executor（与 {@code evalExecutor} 资源隔离）。
+     * <p>
+     * 生成任务是小时级长任务，与评估 run 共用 executor + semaphore 时会长期占住
+     * 评估的并发许可（max-concurrent-runs=2 时一个生成任务可占满全部额度，饿死评估 run）。
+     */
+    @Lazy
+    @Bean("generationExecutor")
+    public ExecutorService generationExecutor() {
+        generationExecutorService = Executors.newVirtualThreadPerTaskExecutor();
+        log.info("Testset generation executor: virtual thread per-task (isolated from evaluation)");
+        return generationExecutorService;
+    }
+
+    /**
+     * 生成任务并发数背压信号量。
+     * <p>
+     * 许可数取自 {@code app.evaluation.dataset.max-concurrent-jobs}（默认 2，
+     * 与评估 run 各自限额、互不挤占）。
+     */
+    @Lazy
+    @Bean("generationRunSemaphore")
+    public Semaphore generationRunSemaphore(EvaluationProperties properties) {
+        int permits = properties.getDataset().getMaxConcurrentJobs();
+        log.info("Testset generation semaphore: permits={} (isolated from evaluation runs)", permits);
+        return new Semaphore(permits);
+    }
+
     @Override
     public void destroy() {
         shutdownExecutor(evalExecutorService, "Evaluation executor");
+        shutdownExecutor(generationExecutorService, "Testset generation executor");
     }
 
     /**

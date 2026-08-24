@@ -828,3 +828,36 @@ Completed mcp-db-source-of-truth task: code review P0-P3 fixes (13 issues), dele
 ### Next Steps
 
 - None - task complete
+
+
+## Session 25: Undertow 迁移替代 Tomcat（含链路级验证）
+
+**Date**: 2026-08-25
+**Task**: Undertow 迁移替代 Tomcat（含链路级验证）
+**Branch**: `agentic-rag-dev`
+
+### Summary
+
+pom.xml 切换容器：排除 spring-boot-starter-tomcat、引入 spring-boot-starter-undertow（BOM 2.3.24.Final），Java 代码与 application.yml 零变更。按任务 PRD 三级验证计划实测：1834 单测全绿；认证/验证码链路、SSE 四链路（chat 80 帧增量无缓冲、documents/events 心跳、ASYNC dispatch 认证快照恢复 0 WARN/0 ERROR）、Range 下载 206、multipart 上传+ETL、actuator 全通过；SIGTERM 优雅停机 30s phase 毫秒级精确生效。附带发现 scripts/api-test.sh 与现 API 契约漂移（40 项失败均非容器回归）。dev 库已清空并由 Flyway 重建（admin 种子恢复）。已推送 GitHub 343242/smart-rag；cnb 远程 HTTPS 认证不可用待处理。
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `274accd` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

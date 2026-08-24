@@ -13,7 +13,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
@@ -27,12 +26,14 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.when;
@@ -114,11 +115,11 @@ class PersonalUploadStrategyTest {
             assertThat(r.status()).isEqualTo(EtlStatus.FAILED);
         });
 
-        // 仅成功的候选被 dispatch（b 未 persist，不应进入 dispatch）
-        @SuppressWarnings("rawtypes")
-        ArgumentCaptor<List> captor = ArgumentCaptor.forClass(List.class);
-        verify(etlDispatchService).dispatch(captor.capture());
-        assertThat(captor.getValue()).hasSize(1);
+        // 仅成功的文档被异步投递 ETL（b 未 persist，不应投递）
+        verify(etlDispatchService).dispatchAsync(eq(100L), eq(BUCKET), contains("a.pdf"),
+                eq("a.pdf"), eq("application/pdf"), eq(10L), eq(USER_ID), isNull());
+        verify(etlDispatchService, times(1)).dispatchAsync(anyLong(), anyString(), anyString(),
+                anyString(), anyString(), anyLong(), any(), any());
 
         // b 已上传到 MinIO（persist 前失败）→ 回滚删除，避免孤儿对象
         verify(fileStorageService).delete(eq(BUCKET), contains("b.pdf"));
@@ -138,7 +139,8 @@ class PersonalUploadStrategyTest {
 
         assertThat(result).hasSize(1);
         assertThat(result.get(0).status()).isEqualTo(EtlStatus.PROCESSING);
-        verify(etlDispatchService).dispatch(org.mockito.ArgumentMatchers.anyList());
+        verify(etlDispatchService).dispatchAsync(eq(200L), eq(BUCKET), contains("a.pdf"),
+                eq("a.pdf"), eq("application/pdf"), eq(10L), eq(USER_ID), isNull());
         verify(fileStorageService, never()).delete(anyString(), anyString());
     }
 
@@ -158,11 +160,9 @@ class PersonalUploadStrategyTest {
         MultipartFile f1 = mockFile("c.pdf");
         List<DocumentUploadResponse> result = s.uploadBatch(List.of(f1), null, null, USER_ID);
 
-        // 已 persist → 已登记 dispatch 候选，仍被 dispatch（避免 UPLOADED 死状态）
-        @SuppressWarnings("rawtypes")
-        ArgumentCaptor<List> captor = ArgumentCaptor.forClass(List.class);
-        verify(etlDispatchService).dispatch(captor.capture());
-        assertThat(captor.getValue()).hasSize(1);
+        // 已 persist → 已登记候选，仍被异步投递（避免 UPLOADED 死状态）
+        verify(etlDispatchService).dispatchAsync(eq(300L), eq(BUCKET), contains("c.pdf"),
+                eq("c.pdf"), eq("application/pdf"), eq(10L), eq(USER_ID), isNull());
         // 已 persist → 不回滚 MinIO（对象保留，ETL 可处理）
         verify(fileStorageService, never()).delete(anyString(), anyString());
         // 响应标记失败但带文档 id（客户端知道文档已落库）

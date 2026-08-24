@@ -153,9 +153,12 @@ public class PersonalUploadStrategy implements UploadStrategy {
             }
         }
 
-        // 所有成功 persist 的候选统一 dispatch，即使批次中后续文件失败也已覆盖，避免 UPLOADED 死状态
-        if (!candidates.isEmpty()) {
-            etlDispatchService.dispatch(candidates);
+        // 所有成功 persist 的候选统一投递（即使批次中后续文件失败也已覆盖，避免 UPLOADED 死状态）。
+        // 逐文件 dispatchAsync：经 outbox → Redis Stream 异步消费，HTTP 请求落库后立即返回，
+        // 不再阻塞 ETL；单文档失败进重试/DLQ，与整批其余文档错误隔离（对齐 TeamUploadStrategy）。
+        for (EtlCandidate c : candidates) {
+            etlDispatchService.dispatchAsync(c.documentId(), c.bucket(), c.objectKey(),
+                    c.fileName(), c.mimeType(), c.fileSize(), c.userId(), c.teamId());
         }
 
         log.info("Batch upload completed: succeeded={}, total={}, userId={}", candidates.size(), responses.size(), userId);

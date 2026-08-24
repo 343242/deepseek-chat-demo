@@ -31,7 +31,7 @@
     </properties>
 
     <dependencies>
-        <!-- Spring Boot Web（排除默认 Logback） -->
+        <!-- Spring Boot Web（排除默认 Logback 与默认容器 Tomcat——容器由下方 undertow starter 供给） -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>
@@ -40,7 +40,17 @@
                     <groupId>org.springframework.boot</groupId>
                     <artifactId>spring-boot-starter-logging</artifactId>
                 </exclusion>
+                <exclusion>
+                    <groupId>org.springframework.boot</groupId>
+                    <artifactId>spring-boot-starter-tomcat</artifactId>
+                </exclusion>
             </exclusions>
+        </dependency>
+
+        <!-- Undertow Web 容器（版本随 Boot BOM；替代 Tomcat：更低内存 + SSE 长连接更轻线程模型） -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-undertow</artifactId>
         </dependency>
 
         <!-- Spring Boot AOP（@AdminAudit 切面；aspectjweaver + spring-aop） -->

@@ -995,6 +995,7 @@ class DefaultTaskScopeTest {
 
         @Test
         @DisplayName("scoped flux closes scope when subscription is cancelled")
+        @SuppressWarnings("removal") // guards ScopedFlux behavior while the deprecated API still exists
         void scopedFlux_closesScopeWhenSubscriptionIsCancelled() {
             AtomicBoolean closed = new AtomicBoolean();
 

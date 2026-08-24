@@ -329,6 +329,7 @@ class ConcurrentP0RegressionTest {
 
     @Nested
     @DisplayName("P0-10: ScopedFlux marked @Deprecated for removal")
+    @SuppressWarnings("removal") // intentionally references the deprecated API to assert its deprecation
     class P0_10_ScopedFluxDeprecated {
 
         @Test

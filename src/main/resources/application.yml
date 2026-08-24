@@ -1,8 +1,7 @@
 spring:
   servlet:
     multipart:
-      # 205MB = 批量上传业务上限 200MB（DocumentProperties.maxBatchTotalSize）+ multipart 边界开销。
-      # 单文件容器上限仍由 max-file-size（55MB）独立约束，不受本值影响。
+      # 205MB = 批量上传业务上限 200MB + multipart 边界开销；单文件上限由 max-file-size 独立约束
       max-request-size: 205MB
       max-file-size: 55MB
   profiles:
@@ -14,27 +13,25 @@ spring:
         initialized: ${MCP_INITIALIZED:false}
         type: SYNC
         request-timeout: ${MCP_REQUEST_TIMEOUT:30s}
-        # Tavily 远程 MCP（Streamable-HTTP）。Bearer Token 由 Admin API 加密保存并注入 header，
-        # 不走 URL query——MCP SDK streamable-http transport 会跑 OAuth 协商层盖过 query param。
-        # 未入库工具默认拒绝；需先刷新并由 ADMIN 显式启用。
+        # Tavily 远程 MCP。Bearer Token 由 Admin API 加密注入 header（不走 URL query——
+        # SDK OAuth 协商会盖过 query param）；未入库工具默认拒绝
         streamable-http:
           connections:
             tavily:
               url: https://mcp.tavily.com/mcp
 
 app:
-  # 展示时区——JVM TZ 与 API 输出展示时区从同一环境变量派生，永远一致（设计文档 §5）
+  # 展示时区——JVM TZ 与 API 输出展示时区从同一环境变量派生，保持一致
   time-zone: ${APP_TIME_ZONE:Asia/Shanghai}
   date-format: yyyy-MM-dd HH:mm:ss
   cors:
     allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000}
   sse:
-    # 文档状态流空闲收尾宽限期：用户无在途文档且持续无事件超过此时长即 complete 连接
-    # （DocumentSseRegistry）。在途文档豁免，不受此值约束；emitter 10 分钟超时为兜底上限
+    # 文档状态流空闲收尾宽限期；在途文档豁免（emitter 10 分钟超时为兜底上限）
     document-idle-grace-ms: ${SSE_DOC_IDLE_GRACE_MS:60000}
   etl:
     consumer:
-      # ETL 索引任务消费配置（EtlDocumentConsumer）；topic 与 OutboxRelay 有序主题白名单保持一致
+      # topic 必须与 app.messaging.ordered-topics 白名单一致（OutboxRelay 有序投递依赖）
       topic: ${ETL_CONSUMER_TOPIC:rag_index_document}
       group: ${ETL_CONSUMER_GROUP:index-group}
       batch-size: ${ETL_CONSUMER_BATCH_SIZE:5}
@@ -46,19 +43,13 @@ app:
       probe-timeout-seconds: 10
       probe-cache-ttl-seconds: 30
       pre-probe-interval-ms: 20000
-      # list: populate to activate DynamicModelSelector + ProbeStreamHandler
-      # list:
-      #   - id: example
-      #     provider: provider-name
-      #     model: model-name
-      #     priority: 1
-      #     supports-thinking: false
+      # 填充 list 激活 DynamicModelSelector + ProbeStreamHandler（候选结构见 app.llm.capabilities.chat.candidates）
   rag:
     fts-config: ${RAG_FTS_CONFIG:jiebacfg}
     entity:
       embedding-batch-size: ${RAG_ENTITY_EMBEDDING_BATCH_SIZE:10}
       description-max-length: ${RAG_ENTITY_DESCRIPTION_MAX_LENGTH:500}
-      # === Path C 在线检索（§7.2）===
+      # === Path C 在线检索 ===
       match-threshold: ${RAG_ENTITY_MATCH_THRESHOLD:0.85}
       frontier-budget: ${RAG_ENTITY_FRONTIER_BUDGET:50}
       chunk-top-k: ${RAG_ENTITY_CHUNK_TOP_K:20}
@@ -71,78 +62,71 @@ app:
       weak-tie-enabled: ${RAG_ENTITY_WEAK_TIE_ENABLED:true}
       extraction-model: ${RAG_ENTITY_EXTRACTION_MODEL:}
       community-detection-enabled: ${RAG_ENTITY_COMMUNITY_DETECTION_ENABLED:true}
-      # === V30 共现图增量维护（docs/design/incremental-cooccurrence-maintenance.md §7）===
-      # 持锁事务 lock_timeout（§8-4 初始值 10s，验证 #12 压测定标：取 ≥ p99 写事务时长的安全倍数）
+      # === V30 共现图增量维护（docs/design/incremental-cooccurrence-maintenance.md）===
       lock-timeout-millis: ${RAG_ENTITY_LOCK_TIMEOUT_MILLIS:10000}
-      # LockRetryExecutor 重试次数（退避 1s/2s/4s × jitter，仅 40P01/40001/55P03）
+      # 重试退避 1s/2s/4s × jitter，仅 40P01/40001/55P03
       lock-retry-attempts: ${RAG_ENTITY_LOCK_RETRY_ATTEMPTS:3}
-      # 同 scope 写闸门等待上限（§3.6：排队零 DB 连接占用；超时走 §6.2 次日重链接）
+      # 同 scope 写闸门等待上限；排队不占 DB 连接，超时走次日重链接
       write-gate-wait-millis: ${RAG_ENTITY_WRITE_GATE_WAIT_MILLIS:120000}
-      # derive 防抖窗口（§3.6：批量 N 文档合并为窗口末尾一次 derive；0 = 关闭回退逐文档即时）
+      # derive 防抖窗口：批量文档合并为窗口末尾一次 derive；0 = 关闭（逐文档即时）
       derive-debounce-millis: ${RAG_ENTITY_DERIVE_DEBOUNCE_MILLIS:30000}
-      # 每日 8:00 对账（§6）
       reconcile:
         enabled: ${RAG_ENTITY_RECONCILE_ENABLED:true}
         cron: ${RAG_ENTITY_RECONCILE_CRON:0 0 8 * * *}
-        # 每周强制 derive 日（旁路指纹门控，自愈结构分自身漂移，默认周一）
+        # 每周强制 derive 日（旁路指纹门控），默认周一
         force-derive-day: ${RAG_ENTITY_RECONCILE_FORCE_DERIVE_DAY:MONDAY}
-        # 每日重链接重抽上限（§6.2 全量重建限流；0 = 不限）
+        # 每日重链接重抽上限（全量重建限流；0 = 不限）
         relink-limit: ${RAG_ENTITY_RECONCILE_RELINK_LIMIT:0}
-  # 评估模块（全局恒装载，原 application-evaluation.yml 整合至此；接口权限 evaluation:manage）
+  # 评估模块（接口权限 evaluation:manage）
   evaluation:
-    # 抽取模型候选 ID（主题抽取、persona 匹配、概念组合；便宜模型）
+    # 抽取用便宜模型候选（主题抽取/persona 匹配/概念组合）
     generation-model: deepseek-v4-flash
     test-user-id: ${EVALUATION_TEST_USER_ID:1}
     dataset:
-      # 目标测试集条数（ragas 式生成）
+      # 目标测试集条数
       size: ${EVALUATION_DATASET_SIZE:50}
       # 参与知识图谱构建的最大 chunk 数（随机采样）
       max-chunks: ${EVALUATION_DATASET_MAX_CHUNKS:200}
-      # 出题主模型候选 ID（问题与参考答案生成；强模型）。留空用默认 chat 候选
+      # 出题主模型候选（强模型）；留空用默认 chat 候选
       synthesis-model: qwen3.8-max
       # 摘要向量余弦相似边阈值（ragas prechunked 默认 0.7）
       cosine-threshold: 0.7
-      # persona 列表；为空时自动生成（对齐 ragas persona_list=None 默认，PersonaGenerationPrompt）
-      # personas:
-      #   - name: 企业新员工
-      #     role-description: 刚入职的员工，对公司制度流程不熟悉
-      # 自动生成 persona 数量（personas 为空时生效；ragas num_personas 默认 3）
+      # personas 列表；为空时自动生成 num-personas 个
       num-personas: 3
       node-filter:
-        # 问题潜力过滤（ragas CustomNodeFilter）：评分 ≤ min-score 的 chunk 剔除
+        # 问题潜力过滤：评分 ≤ min-score 的 chunk 剔除
         min-score: 2
-      # 同时执行的生成任务数（独立于 runner.max-concurrent-runs，长任务不占评估并发额度）
+      # 生成任务并发（独立于 runner.max-concurrent-runs，不占评估并发额度）
       max-concurrent-jobs: 2
     metrics:
-      # AnswerCorrectness（ragas 默认 [0.75, 0.25]、beta=1.0；beta<1 偏精度重罚幻觉，>1 偏召回重罚遗漏）
+      # beta<1 偏精度（重罚幻觉），>1 偏召回（重罚遗漏）；权重为 ragas 默认
       answer-correctness:
         factuality-weight: 0.75
         similarity-weight: 0.25
         beta: 1.0
-      # FactualCorrectness mode：precision | recall | f1（ragas 默认 f1）
+      # precision | recall | f1（ragas 默认 f1）
       factual-correctness:
         mode: f1
         beta: 1.0
-      # NoiseSensitivity mode：relevant（ragas 默认）| irrelevant
+      # relevant（ragas 默认）| irrelevant
       noise-sensitivity:
         mode: relevant
-      # AnswerRelevancy 反向问题独立采样次数（ragas strictness 默认 3）
+      # 反向问题独立采样次数（ragas strictness 默认 3）
       answer-relevancy:
         strictness: 3
     runner:
       default-k: 10
       concurrency: 2
-      # 信号量获取超时（秒）：并发 run 数达上限时，新 run 等待获取信号量的最长时间
+      # 并发 run 达上限时新 run 等待信号量的最长时间（秒）
       acquire-timeout-seconds: 60
-      # 单条 item 的 ScopedTasks 作用域超时（秒）；LLM 调用级超时在 llm 模块配置
+      # 单条 item 作用域超时（秒）；LLM 调用级超时在 llm 模块配置
       item-timeout-seconds: 300
-      # run 被判定为 stale 的阈值（分钟）：超时仍 running 的 run/gen_run 被 sweeper 标记 FAILED
+      # 超时仍 running 的 run 被 sweeper 标记 FAILED（分钟）
       stale-run-minutes: 30
-      # 同时执行的最大 run 数（虚拟线程 unlimited，靠此 Semaphore 限并发，防打爆 LLM API）
+      # 最大并发 run 数（虚拟线程靠此 Semaphore 限流，防打爆 LLM API）
       max-concurrent-runs: 2
-    # Judge 候选 ID，对应 app.llm.capabilities.chat.candidates[].id；留空回退默认 chat 候选。
-    # 建议 Judge 与 generation-model 选不同候选，避免自评偏差；但候选必须在环境中真实声明
-    # （resolver 对未声明候选 fail-fast，会阻断启动）
+    # Judge 候选 ID（app.llm.capabilities.chat.candidates[].id）；留空回退默认 chat 候选。
+    # 建议与 generation-model 选不同候选避免自评偏差；未声明候选会 fail-fast 阻断启动
     judge:
       candidate-id: ${EVALUATION_JUDGE_CANDIDATE_ID:}
   cag:
@@ -164,8 +148,7 @@ app:
     context-window-ratio: ${AGENT_CONTEXT_WINDOW_RATIO:0.8}
     tool-timeout-ms: ${AGENT_TOOL_TIMEOUT_MS:10000}
     degrade-on-failure: ${AGENT_DEGRADE_ON_FAILURE:true}
-    # Phase 4 ReAct 循环增强 prompt（自省/原子决策/中间答案引导）已迁移到独立 XML 文件：
-    # classpath:static/prompt/agent/*.xml（按 AgentIntent 索引，由 AgentPromptLoader 加载）。
+    # ReAct 增强 prompt 在 classpath:static/prompt/agent/*.xml（AgentPromptLoader 加载）
   sandbox:
     enabled: ${SANDBOX_ENABLED:true}
     max-concurrency: ${SANDBOX_MAX_CONCURRENCY:3}
@@ -189,7 +172,7 @@ app:
     circuit-breaker:
       failure-threshold: ${MESSAGING_CB_FAILURE_THRESHOLD:5}
       cooldown-millis: ${MESSAGING_CB_COOLDOWN_MILLIS:30000}
-    # 共享退避表（BackoffSchedule，16 级；RetrySweeper 消费端重试 + child 2 OutboxRelay 共用）
+    # 共享退避表（16 级；消费端重试 + OutboxRelay 共用）
     backoff-ms: [1000, 5000, 10000, 30000, 60000, 120000, 180000, 240000,
                  300000, 360000, 420000, 480000, 540000, 600000, 1200000, 1800000]
     redis:
@@ -198,9 +181,9 @@ app:
       retry-prefix: ${MESSAGING_RETRY_PREFIX:retry:}
       retry-zset-prefix: ${MESSAGING_RETRY_ZSET_PREFIX:retry-zset:}
       consumer-name-prefix: ${MESSAGING_CONSUMER_NAME_PREFIX:app:}
-      # P1-5：降级为 lag 告警阈值（物理裁剪改 StreamTrimTask MINID，见 app.messaging.redis.trim-poll-interval）
+      # 仅作 lag 告警阈值；物理裁剪由 StreamTrimTask MINID 执行
       trim-threshold: ${MESSAGING_TRIM_THRESHOLD:100000}
-      # P2-8：DLQ 统一 MAXLEN（审计保留期）
+      # DLQ 审计保留上限（MAXLEN）
       dlq-trim-threshold: ${MESSAGING_DLQ_TRIM_THRESHOLD:50000}
       read-block-ms: ${MESSAGING_READ_BLOCK_MS:2000}
       read-batch: ${MESSAGING_READ_BATCH:32}
@@ -209,29 +192,29 @@ app:
       retry-poll-interval: ${MESSAGING_RETRY_POLL_INTERVAL:5s}
       trim-poll-interval: ${MESSAGING_TRIM_POLL_INTERVAL:60s}
       max-attempts: ${MESSAGING_MAX_ATTEMPTS:16}
-      # P2-14：retry hash TTL（覆盖最大退避窗口 ×2）
+      # retry hash TTL（覆盖最大退避窗口 ×2）
       retry-hash-ttl: ${MESSAGING_RETRY_HASH_TTL:2h}
-      # §3 Redis 故障韧性：pollLoop 指数退避重连（1s→30s，±20% jitter 防同步重连风暴）
+      # pollLoop 指数退避重连（jitter 防同步重连风暴）
       reconnect-backoff:
         initial-ms: ${MESSAGING_RECONNECT_INITIAL_MS:1000}
         multiplier: ${MESSAGING_RECONNECT_MULTIPLIER:2.0}
         max-ms: ${MESSAGING_RECONNECT_MAX_MS:30000}
         jitter-factor: ${MESSAGING_RECONNECT_JITTER_FACTOR:0.2}
-      # P1-4（强制）：XREADGROUP BLOCK 走独立连接池，不占业务共享 Redis 连接
+      # XREADGROUP BLOCK 走独立连接池，不占业务共享 Redis 连接
       consumer:
         connection:
           share-native-connection: false
           pool:
             max-active: ${MESSAGING_CONSUMER_POOL_MAX_ACTIVE:32}
             max-idle: ${MESSAGING_CONSUMER_POOL_MAX_IDLE:32}
-    # Publisher outbox（child 2：OutboxMessageBus / OutboxRelay）——DB 事务级最终一致投递
+    # Publisher outbox——DB 事务级最终一致投递
     outbox:
       enabled: ${MESSAGING_OUTBOX_ENABLED:true}
       poll-interval: ${MESSAGING_OUTBOX_POLL_INTERVAL:5s}
       batch-size: ${MESSAGING_OUTBOX_BATCH_SIZE:32}
-      # drain-until-empty：单 poll 内 claim 批数上限（防饿死；峰值恢复 ~64 msg/s）
+      # 单 poll 内 claim 批数上限（防饿死）
       max-batches-per-poll: ${MESSAGING_OUTBOX_MAX_BATCHES_PER_POLL:10}
-      # 与消费端重试窗口相互独立；仅统计真实投递尝试（gate OPEN 时冻结，P1-7）
+      # 与消费端重试窗口独立；gate OPEN 时冻结
       max-attempts: ${MESSAGING_OUTBOX_MAX_ATTEMPTS:16}
       immediate-retry-count: ${MESSAGING_OUTBOX_IMMEDIATE_RETRY_COUNT:2}
       immediate-retry-interval-ms: ${MESSAGING_OUTBOX_IMMEDIATE_RETRY_INTERVAL_MS:100}
@@ -243,28 +226,26 @@ app:
       cleanup-cron: ${MESSAGING_OUTBOX_CLEANUP_CRON:0 0 4 * * *}
       leader-lock-key: ${MESSAGING_OUTBOX_LEADER_LOCK_KEY:outbox:relay:leader}
       cb-signal-prefix: ${MESSAGING_OUTBOX_CB_SIGNAL_PREFIX:messaging:cb:}
-      # isOpen() 本地缓存 TTL（热路径不每消息一次 Redis RTT）
+      # isOpen() 本地缓存 TTL（热路径省 Redis RTT）
       cb-local-cache-ttl-ms: ${MESSAGING_OUTBOX_CB_LOCAL_CACHE_TTL_MS:2000}
-      # claiming 行超时回收阈值（绑定 claimPending SQL 参数，单源）
+      # claiming 行超时回收阈值（绑定 claimPending SQL 参数）
       claiming-timeout-seconds: ${MESSAGING_OUTBOX_CLAIMING_TIMEOUT_SECONDS:300}
-      # gate OPEN 时顺延 next_retry_at 的间隔（冻结 attempts，P1-7）
+      # gate OPEN 时顺延 next_retry_at（冻结 attempts）
       gate-defer-interval: ${MESSAGING_OUTBOX_GATE_DEFER_INTERVAL:5s}
   llm:
     byok:
-      # BYOK 总开关；基础默认 false（避免未配 master-key 时 fail-fast 阻断启动，P0-3）。
-      # 启用：env LLM_BYOK_ENABLED=true 且 SECURITY_CRYPTO_MASTER_KEY=<base64-32B>
-      # （v4：env 名从 LLM_MASTER_KEY 改为 SECURITY_CRYPTO_MASTER_KEY，统一管理多模块加密）
+      # BYOK 总开关；默认 false（未配 master-key 时不 fail-fast 阻断启动）。
+      # 启用需 env LLM_BYOK_ENABLED=true 且 SECURITY_CRYPTO_MASTER_KEY=<base64-32B>
       enabled: ${LLM_BYOK_ENABLED:false}
 
-  # v4：通用安全原语（infrastructure/security/），LLM BYOK + MCP admin 共用
+  # 通用安全原语（LLM BYOK + MCP admin 共用）
   security:
     ssrf:
-      # SSRF 防护端口白名单（HostSafetyValidator 用）；默认 80/443
+      # SSRF 防护端口白名单；默认 80/443
       allowed-ports: [80, 443]
     crypto:
-      # AES/GCM master-key（base64 编码 32B = 256-bit），env 注入；不入库不入 git
-      # 由 SecretCipher 用，LLM ApiKeyCipher + MCP Bearer Token 共享
-      # 缺失时 SecretCipher 不可用，BYOK enabled=true 会 fail-fast，MCP Bearer Token 加密会运行时失败
+      # AES/GCM master-key（base64 32B），env 注入，不入 git；LLM ApiKey 与 MCP Token 加密共用。
+      # 缺失时 BYOK enabled=true 会 fail-fast，MCP Bearer Token 加密运行时失败
       master-key: ${SECURITY_CRYPTO_MASTER_KEY:}
 
 # MCP：DB 是运行时事实源，YAML connections 仅用于首次 bootstrap。
@@ -276,16 +257,16 @@ mcp:
       open-duration-ms: ${MCP_CB_OPEN_DURATION_MS:30000}
       half-open-max-calls: ${MCP_CB_HALF_OPEN_MAX_CALLS:2}
 
-# K8s 探针：恒暴露 /health/liveness + /health/readiness（原 stable 专属开关，现全局恒生效）
+# K8s 探针：恒暴露 /health/liveness + /health/readiness
 management:
   endpoint:
     health:
       probes:
         enabled: true
 
-# MyBatis 全局语句超时兜底（V30 §8-1：秒）。profile 文件的 mybatis-plus.configuration.* 逐键合并，
-# 本值全局生效；重 CTE（对账重投影 / 源侧指纹）已按设计在锁内/无锁只读路径运行，不需更细的超时。
-# 注意：不设 JDBC socketTimeout 全局硬顶——会杀掉对账合法长语句（§8-2）。
+# 全局语句超时兜底（秒）；profile 的 mybatis-plus.configuration.* 逐键合并，本值全局生效。
+# 若 profile 设 JDBC socketTimeout，必须大于本值：语句先被 MyBatis 干净取消，socket 超时仅兜底
+# 挂死连接（dev：socketTimeout=360 > 300）
 mybatis-plus:
   configuration:
     default-statement-timeout: 300

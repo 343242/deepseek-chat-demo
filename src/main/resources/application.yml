@@ -1,4 +1,63 @@
+server:
+  port: 8080
+  # 信任反代 X-Forwarded-*，使 getRemoteAddr() 返回真实客户端 IP（限流/审计准确）；
+  # 仅在受信反向代理（nginx/ALB）后部署时语义成立，直连时头可伪造但不影响功能
+  forward-headers-strategy: framework
+  # 优雅停机：SIGTERM 时不立即关 socket，让 in-flight 请求处理完；
+  # 与 app.messaging.shutdown-timeout（Redis consumer）+ log4j2 shutdownHook=disable 构成完整链路
+  shutdown: graceful
+
 spring:
+  lifecycle:
+    # 优雅停机最长等待 30s（覆盖典型 SSE 长会话 tail；超时强制关闭）
+    timeout-per-shutdown-phase: 30s
+  datasource:
+    # socketTimeout 须大于全局语句超时 300s（见文末 mybatis-plus）：语句先被 MyBatis 干净取消，
+    # socket 超时仅兜底挂死连接；tcpKeepAlive 防空闲连接被中间设备静默掐断
+    url: jdbc:postgresql://${DB_HOST:localhost}:5432/${DB_NAME:smart_rag}?socketTimeout=${DB_SOCKET_TIMEOUT:360}&tcpKeepAlive=true
+    username: ${POSTGRES_USER:postgres}
+    password: ${POSTGRES_PASSWORD}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+      keepalive-time: 60000
+      leak-detection-threshold: 60000
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+    baseline-version: "0"
+    validate-on-migrate: true
+    clean-disabled: true
+  redis:
+    redisson:
+      # 生产需 env 提供 REDIS_PASSWORD；dev profile 整块覆盖此字符串（本地无密码）
+      config: |
+        codec: !<org.redisson.codec.JsonJacksonCodec> {}
+        singleServerConfig:
+          address: "redis://${REDIS_HOST:localhost}:${REDIS_PORT:6379}"
+          password: "${REDIS_PASSWORD}"
+          connectionPoolSize: 16
+          connectionMinimumIdleSize: 4
+          timeout: 3000
+          retryAttempts: 2
+          retryInterval: 500
+  data:
+    redis:
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD}
+      timeout: 3000ms
+      lettuce:
+        pool:
+          max-active: 16
+          max-idle: 8
+          min-idle: 4
+          max-wait: 3000ms
   servlet:
     multipart:
       # 205MB = 批量上传业务上限 200MB + multipart 边界开销；单文件上限由 max-file-size 独立约束
@@ -19,6 +78,19 @@ spring:
           connections:
             tavily:
               url: https://mcp.tavily.com/mcp
+    vectorstore:
+      pgvector:
+        index-type: HNSW
+        distance-type: COSINE_DISTANCE
+        # 须与 db/migration V27 后的列定义 vector(1536) 一致；上限受 pgvector HNSW 2000 维约束
+        dimensions: 1536
+        initialize-schema: true
+        table-name: vector_store
+    chat:
+      memory:
+        repository:
+          jdbc:
+            initialize-schema: never
 
 app:
   # 展示时区——JVM TZ 与 API 输出展示时区从同一环境变量派生，保持一致
@@ -26,6 +98,27 @@ app:
   date-format: yyyy-MM-dd HH:mm:ss
   cors:
     allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:3000}
+  ratelimit:
+    login:
+      limit: 30        # 30 次 / 30 分钟
+      ttl-sec: 1800
+    register:
+      limit: 10        # 10 次 / 20 分钟（注册攻击面更大，阈值更紧）
+      ttl-sec: 1200
+  jwt:
+    secret: ${JWT_SECRET}
+    access-expiration: ${JWT_ACCESS_EXPIRATION:900}
+    refresh-expiration: ${JWT_REFRESH_EXPIRATION:86400}
+    issuer: smart-rag
+    redis-prefix: "auth:token:"
+    # 生产 Cookie 必须 Secure（防 HTTP 降级截获 token）；dev 在 profile 中显式 false
+    cookie-secure: true
+    # SameSite 默认 Lax 适配同源/反代部署；前后端跨域部署改 None（后端另有强制校验兜底）
+    cookie-same-site: ${JWT_COOKIE_SAMESITE:Lax}
+  snowflake:
+    epoch: ${SNOWFLAKE_EPOCH:2026-01-01T00:00:00+08:00}
+    datacenter-id: ${SNOWFLAKE_DATACENTER_ID:0}
+    worker-id: ${SNOWFLAKE_WORKER_ID:0}
   sse:
     # 文档状态流空闲收尾宽限期；在途文档豁免（emitter 10 分钟超时为兜底上限）
     document-idle-grace-ms: ${SSE_DOC_IDLE_GRACE_MS:60000}
@@ -36,6 +129,26 @@ app:
       group: ${ETL_CONSUMER_GROUP:index-group}
       batch-size: ${ETL_CONSUMER_BATCH_SIZE:5}
       invisible-duration: ${ETL_CONSUMER_INVISIBLE_DURATION:30m}
+    # 线程池生产级容量；dev 在 profile 中缩容
+    executor:
+      io:
+        core-pool-size: 8
+        max-pool-size: 16
+        queue-capacity: 100
+        thread-name-prefix: "etl-io-"
+        keep-alive-seconds: 60
+      cpu:
+        core-pool-size: 4
+        max-pool-size: 8
+        queue-capacity: 50
+        thread-name-prefix: "etl-cpu-"
+        keep-alive-seconds: 60
+      merge:
+        core-pool-size: 4
+        max-pool-size: 8
+        queue-capacity: 50
+        thread-name-prefix: "merge-"
+        keep-alive-seconds: 120
   chat:
     memory:
       max-messages: ${CHAT_MEMORY_MAX_MESSAGES:20}
@@ -237,6 +350,93 @@ app:
       # BYOK 总开关；默认 false（未配 master-key 时不 fail-fast 阻断启动）。
       # 启用需 env LLM_BYOK_ENABLED=true 且 SECURITY_CRYPTO_MASTER_KEY=<base64-32B>
       enabled: ${LLM_BYOK_ENABLED:false}
+    providers:
+      bailian:
+        # 专属 maas 实例（非 dashscope 公共端点），SDK 原生路由守卫不命中，全走 GenericChatClient
+        url: https://llm-l3buonxbvhgk4qiy.cn-beijing.maas.aliyuncs.com
+        api-key: ${DASHSCOPE_API_KEY}
+        endpoints:
+          chat: /api/v1/services/aigc/multimodal-generation/generation
+          embedding: /api/v1/services/embeddings/text-embedding/text-embedding
+          # rerank 必须用 OpenAI 兼容端点 /compatible-api/v1/reranks（顶层 model/query/documents/top_n）；
+          # 原生端点要求 {input:{query,documents}}，顶层格式会 400
+          rerank: /compatible-api/v1/reranks
+      deepseek:
+        url: ${DEEPSEEK_BASE_URL:https://api.deepseek.com}
+        api-key: ${DEEPSEEK_API_KEY}
+        endpoints:
+          chat: /chat/completions
+      zhipu:
+        url: ${ZHIPU_BASE_URL:https://open.bigmodel.cn/api/paas/v4}
+        api-key: ${ZHIPU_API_KEY}
+        endpoints:
+          chat: /chat/completions
+      minimax:
+        url: ${MINIMAX_BASE_URL:https://api.minimaxi.com/v1}
+        api-key: ${MINIMAX_API_KEY}
+        endpoints:
+          chat: /v1/text/chatcompletion_v2
+    capabilities:
+      chat:
+        default-model: deepseek-v4-flash
+        deep-thinking-model: deepseek-v4-pro
+        candidates:
+          - id: deepseek-v4-flash
+            provider: deepseek
+            model: deepseek-v4-flash
+            supports-streaming: true
+            priority: 1
+          - id: qwen3.7-plus
+            provider: bailian
+            model: qwen3.7-plus
+            supports-streaming: true
+            priority: 2
+          - id: deepseek-v4-pro
+            provider: deepseek
+            model: deepseek-v4-pro
+            supports-streaming: true
+            priority: 3
+          - id: qwen3.8-max
+            provider: bailian
+            model: qwen3.8-max
+            supports-thinking: true
+            priority: 4
+      embedding:
+        default-model: qwen3.7-text-embedding
+        candidates:
+          - id: qwen3.7-text-embedding
+            provider: bailian
+            model: qwen3.7-text-embedding
+            dimension: 1536
+            # 百炼同步接口单请求行数上限 20（text-embedding-v3/v4 为 10，未声明时客户端默认 10）
+            params:
+              batch-size: 20
+            priority: 1
+          - id: text-embedding-v4
+            provider: bailian
+            model: text-embedding-v4
+            dimension: 1536
+            priority: 2
+      reranking:
+        default-model: qwen3-rerank
+        candidates:
+          - id: qwen3-rerank
+            provider: bailian
+            model: qwen3-rerank
+            priority: 1
+    resilience:
+      retry:
+        max-attempts: 3
+        base-delay-ms: 500
+        max-delay-ms: 5000
+        multiplier: 2.0
+      circuit-breaker:
+        failure-threshold: 5
+        open-duration-ms: 30000
+        half-open-max-calls: 2
+      probe:
+        enabled: true
+        probe-timeout-ms: 3000
 
   # 通用安全原语（LLM BYOK + MCP admin 共用）
   security:
@@ -257,17 +457,39 @@ mcp:
       open-duration-ms: ${MCP_CB_OPEN_DURATION_MS:30000}
       half-open-max-calls: ${MCP_CB_HALF_OPEN_MAX_CALLS:2}
 
-# K8s 探针：恒暴露 /health/liveness + /health/readiness
+# 可观测性：端点仅暴露 health/info/prometheus（业务敏感指标只走 prometheus 抓取）；
+# K8s 探针恒暴露 /health/liveness + /health/readiness；
+# tracing 仅做本地日志 traceId 串联（不外发 span，全采样无开销），链路明细走 trace_event 表 + AOP
 management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
   endpoint:
     health:
+      # 生产默认收紧：未认证不可见 details（含 DB URL/候选配置）；dev 在 profile 中放开
+      show-details: when-authorized
       probes:
         enabled: true
+  tracing:
+    sampling:
+      probability: 1.0
+  metrics:
+    tags:
+      application: smart-rag
 
 # 全局语句超时兜底（秒）；profile 的 mybatis-plus.configuration.* 逐键合并，本值全局生效。
 # 若 profile 设 JDBC socketTimeout，必须大于本值：语句先被 MyBatis 干净取消，socket 超时仅兜底
-# 挂死连接（dev：socketTimeout=360 > 300）
+# 挂死连接（base URL 默认 socketTimeout=360 > 300）
 mybatis-plus:
+  mapper-locations: classpath*:/mapper/**/*.xml
   configuration:
+    map-underscore-to-camel-case: true
     default-statement-timeout: 300
+  global-config:
+    db-config:
+      logic-delete-field: deleted
+      logic-delete-value: 1
+      logic-not-delete-value: 0
+      id-type: auto
 # Log4j 2 配置见 log4j2.xml，此处不再配置 logging.level

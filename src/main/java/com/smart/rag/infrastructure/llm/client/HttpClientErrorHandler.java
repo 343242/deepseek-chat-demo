@@ -4,7 +4,7 @@ import com.smart.rag.infrastructure.exception.RemoteException;
 import com.smart.rag.infrastructure.exception.errorcode.RemoteErrorCode;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.web.client.ResourceAccessException;
+import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestClientResponseException;
 
 import java.io.IOException;
@@ -14,13 +14,13 @@ import java.io.IOException;
  * <p>
  * 将所有异常统一转换为 {@link RemoteException}，保持异常层级一致：
  * <ul>
- *   <li>IOException — 包装为 {@code RemoteException(LLM_TRANSIENT_ERROR)}，保留原始 cause，
+ * <li>IOException — 包装为 {@code RemoteException(LLM_TRANSIENT_ERROR)}，保留原始 cause，
  *       使 RetryPolicy 通过 {@code getErrorCode() == LLM_TRANSIENT_ERROR} 判定可重试</li>
- *   <li>ResourceAccessException — Spring {@code RestClient} 抛出的资源访问异常，
- *       当其 cause 为 {@link IOException} 时解包并按 IOException 路径处理</li>
- *   <li>RemoteException — 原样返回（已是正确类型）</li>
- *   <li>RestClientResponseException — 按 HTTP 状态码映射为对应的 RemoteException</li>
- *   <li>其他 Exception — 包装为 RemoteException(LLM_STREAM_ERROR)</li>
+ * <li>RemoteException — 原样返回（已是正确类型）</li>
+ * <li>RestClientResponseException — 按 HTTP 状态码映射为对应的 RemoteException</li>
+ * <li>RestClientException（含 ResourceAccessException）— cause 为 {@link IOException} 时解包并按
+ *       IOException 路径处理（瞬态可重试）</li>
+ * <li>其他 Exception — 包装为 RemoteException(LLM_STREAM_ERROR)</li>
  * </ul>
  */
 public final class HttpClientErrorHandler {
@@ -52,10 +52,6 @@ public final class HttpClientErrorHandler {
         if (e instanceof RemoteException re) {
             return re;
         }
-        // Unwrap Spring RestClient ResourceAccessException → IOException (same semantics)
-        if (e instanceof ResourceAccessException rae && rae.getCause() instanceof IOException ioCause) {
-            return translate(operation, url, ioCause);
-        }
         if (e instanceof IOException io) {
             log.warn("{} 请求 IO 异常: {} - {}", operation, url, io.getMessage());
             return new RemoteException(RemoteErrorCode.LLM_TRANSIENT_ERROR,
@@ -78,6 +74,13 @@ public final class HttpClientErrorHandler {
             }
             return new RemoteException(code,
                 operation + " failed: HTTP " + status + " from " + url + ": " + body, rcre);
+        }
+        // Unwrap RestClientException（含 ResourceAccessException）的 IOException cause → LLM_TRANSIENT_ERROR。
+        // 约束：RestClient 的 HttpMessageConverterExtractor 读响应体超时/被重置时抛
+        // RestClientException("Error while extracting response ...")，cause 为 IOException——
+        // 必须在 RestClientResponseException 之后判定（后者是前者的子类，需优先按状态码映射）。
+        if (e instanceof RestClientException rce && rce.getCause() instanceof IOException ioCause) {
+            return translate(operation, url, ioCause);
         }
         return new RemoteException(RemoteErrorCode.LLM_STREAM_ERROR,
             operation + " failed: " + url + " - " + e.getMessage(), e);

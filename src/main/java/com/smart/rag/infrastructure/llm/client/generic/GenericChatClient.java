@@ -40,7 +40,8 @@ public class GenericChatClient extends AbstractChatClient {
     private static final Logger log = LoggerFactory.getLogger(GenericChatClient.class);
     private static final MediaType JSON_MEDIA = MediaType.get("application/json; charset=utf-8");
     private static final int CONNECT_TIMEOUT_SECONDS = 10;
-    private static final int READ_TIMEOUT_SECONDS = 60;
+    /** 阻塞补全对长 chunk 的抽取（DeepSeek 等）可超 60s，读超时需覆盖慢请求；流式走 STREAM_READ_TIMEOUT_SECONDS */
+    private static final int READ_TIMEOUT_SECONDS = 120;
     private static final int STREAM_READ_TIMEOUT_SECONDS = 120;
 
     private final String baseUrl;

@@ -2,6 +2,7 @@
 
 > 模块：`com.demo.chat.rag.upload`（个人）、`com.demo.chat.team.controller`（团队）
 > 分支：`rag-dev`
+> 状态：现行实现；[presigned-direct-upload.md](presigned-direct-upload.md) 实施完成后，本文档的数据面（后端代理分片 + composeObject 合并）将被浏览器直传取代并分阶段退役
 
 ## 概述
 

@@ -28,6 +28,8 @@ HEAD /api/documents/{id}/download
 
 MinIO 只在内部网络提供服务，浏览器始终访问应用端点。该部署只采用后端代理流式传输，不向前端返回对象存储地址或凭据。
 
+> 修订（2026-08-25）：本约束**仅在下载/预览侧维持**。上传侧由 [presigned-direct-upload.md](presigned-direct-upload.md) 修订为浏览器直传（presigned URL 为短期受限上传能力，非持久对象地址）；本文件的流式代理设计不受影响。
+
 ## 2. 根因与必须同时修正的定义
 
 原文件已经在上传时写入 MinIO，`rag_document` 也保存 bucket、storage key、文件名、大小和 MIME。缺陷不在对象缺失，而在应用层没有授权后的二进制输出契约。

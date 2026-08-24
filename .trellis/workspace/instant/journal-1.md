@@ -795,3 +795,36 @@ Completed mcp-db-source-of-truth task: code review P0-P3 fixes (13 issues), dele
 ### Next Steps
 
 - None - task complete
+
+
+## Session 24: 共现图增量维护 V30 实施
+
+**Date**: 2026-08-25
+**Task**: 共现图增量维护 V30 实施
+**Branch**: `agentic-rag-dev`
+
+### Summary
+
+按 docs/design/incremental-cooccurrence-maintenance.md 完成 V30 全量实施：迁移 SQL、五 Mapper 改写（RETURNING 增量/对称递减/指纹/孤儿清扫）、ScopeLockTemplate/LockRetryExecutor/ScopeWriteGate/DeriveDebouncer 锁基建、写删路径重写、WeakTieScoreCalculator derive 分解、EntityGraphReconcileJob 每日对账+重链接、MapperWriteAuditTest 静态审计；1834 测试全绿。待办：真实 PG 集成验证（V30 试跑/SQL 正确性）与 #12/#21/#22 压测定标。构建备注：WSL 下全局 maven settings 的 localRepository=D:\MavenRepository 路径泄漏，需 -Dmaven.repo.local=~/.m2/repository 绕过
+
+### Main Changes
+
+- Detailed change bullets were not supplied; see the summary above.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `2589b3c` | (see git log) |
+
+### Testing
+
+- Validation was not recorded for this session.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- None - task complete

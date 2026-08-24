@@ -32,12 +32,13 @@
         <foreach collection="entityIds" item="id" open="(" separator="," close=")">#{id}</foreach>
     </delete>
 
-    <!-- 标记指定实体 community_stale=TRUE -->
+    <!-- 标记指定实体 community_stale=TRUE（已是 TRUE 的行跳过重写，缩小锁窗口与死元版本堆积） -->
     <update id="markCommunityStale">
         UPDATE rag_entity
         SET community_stale = TRUE
         WHERE id IN
         <foreach collection="entityIds" item="id" open="(" separator="," close=")">#{id}</foreach>
+          AND NOT community_stale
     </update>
 
     <!-- 批量更新 embedding -->
@@ -74,10 +75,11 @@
         LIMIT #{limit}
     </select>
 
-<!-- ==================== 结构分写回（§5.2，CommunityDetectionJob 调用）==================== -->
+<!-- ==================== 结构分写回（§5.2 / V30 §3.2.1 read-compute-write）==================== -->
 
 <!-- 批量写回 Leiden 社区分配：单条 UPDATE FROM VALUES，按 userId 隔离。
-     teamId 仅作记录传入（community 归属已由 Leiden 的共现图作用域保证），不参与 WHERE。 -->
+     teamId 仅作记录传入（community 归属已由 Leiden 的共现图作用域保证），不参与 WHERE；值未变的行跳过重写。
+     V30：Java 侧按 entityId 升序传入（§3.2.1 防线二），且须在 ScopeLockTemplate 持锁事务内执行。 -->
 <update id="batchUpdateCommunities">
     UPDATE rag_entity e
     SET community_id = v.community_id,
@@ -90,46 +92,82 @@
     ) AS v(entity_id, community_id)
     WHERE e.id = v.entity_id
       AND e.user_id = #{userId,jdbcType=BIGINT}
+      AND e.community_id IS DISTINCT FROM v.community_id
 </update>
 
-<!-- bridge_score 计算（§5.2 Step 2）：邻居中属于不同社区的数量（排除自身社区）。
-     LEFT JOIN + FILTER 覆盖作用域内全部实体——非桥实体 reset 为 0，保证重跑幂等（AC6）。
-     比 §5.2 原文（仅 INNER JOIN 覆盖有跨社区邻居的实体）更严谨：防止"曾是桥现已不是"的陈旧分残留。 -->
-<update id="updateBridgeScores">
+<!-- weak_tie 批量写回（V30 §3.2.1：WeakTieScoreCalculator 锁外内存计算的有序写回）。
+     语义对齐原 updateWeakTieScores CTE：仅含有邻居对的实体进批次（hub degree&gt;=100 / 无邻居对 /
+     孤立实体不在批次、保持默认）；值未变的行跳过重写。 -->
+<update id="updateWeakTieBatch">
     UPDATE rag_entity e
-    SET bridge_score = sub.distinct_communities,
+    SET weak_tie_score = v.weak_tie_score,
         updated_at = NOW()
     FROM (
-        SELECT
-            e0.id AS entity_id,
-            COALESCE(
-                count(DISTINCT e2.community_id)
-                    FILTER (WHERE e2.community_id IS NOT NULL
-                             AND e2.community_id &lt;&gt; e0.community_id),
-                0
-            ) AS distinct_communities
-        FROM rag_entity e0
-        LEFT JOIN v_entity_neighbors vn
-            ON vn.entity_id = e0.id
-           AND vn.user_id = #{userId,jdbcType=BIGINT}
-           AND (#{teamId,jdbcType=BIGINT} IS NULL AND vn.team_id IS NULL OR vn.team_id = #{teamId,jdbcType=BIGINT})
-        LEFT JOIN rag_entity e2 ON e2.id = vn.neighbor_id
-        WHERE e0.user_id = #{userId,jdbcType=BIGINT}
-          AND (#{teamId,jdbcType=BIGINT} IS NULL AND e0.team_id IS NULL OR e0.team_id = #{teamId,jdbcType=BIGINT})
-        GROUP BY e0.id
-    ) sub
-    WHERE e.id = sub.entity_id
+        VALUES
+        <foreach collection="items" item="item" separator=",">
+            (#{item.entityId}, #{item.weakTieScore})
+        </foreach>
+    ) AS v(entity_id, weak_tie_score)
+    WHERE e.id = v.entity_id
+      AND e.weak_tie_score IS DISTINCT FROM v.weak_tie_score
+</update>
+
+<!-- bridge_score 批量写回（V30 §3.2.1：内存计算（Leiden 分区 + 邻接）的有序写回）。
+     覆盖全 scope 实体（含图外孤立实体的 reset-0 语义）；值未变的行跳过重写。 -->
+<update id="updateBridgeBatch">
+    UPDATE rag_entity e
+    SET bridge_score = v.bridge_score,
+        updated_at = NOW()
+    FROM (
+        VALUES
+        <foreach collection="items" item="item" separator=",">
+            (#{item.entityId}, #{item.bridgeScore})
+        </foreach>
+    ) AS v(entity_id, bridge_score)
+    WHERE e.id = v.entity_id
+      AND e.bridge_score IS DISTINCT FROM v.bridge_score
 </update>
 
 <!-- 全量清除作用域内所有实体的 community_stale（§5.2⑤：Leiden 覆盖全部节点）。
-     非增量部分清除——degree=0 新实体也应标记非 stale（下一轮无需重算）。 -->
+     非增量部分清除——degree=0 新实体也应标记非 stale（下一轮无需重算）；已为 FALSE 的行跳过重写（终态不变）。 -->
 <update id="clearStaleFlag">
     UPDATE rag_entity
     SET community_stale = FALSE,
         updated_at = NOW()
     WHERE user_id = #{userId,jdbcType=BIGINT}
       AND (#{teamId,jdbcType=BIGINT} IS NULL AND team_id IS NULL OR team_id = #{teamId,jdbcType=BIGINT})
+      AND community_stale
 </update>
+
+<!-- ==================== 对账支持（V30 §6）==================== -->
+
+<!-- 作用域枚举（§6）：rag_entity UNION rag_entity_cooccurrence——覆盖"实体已尽失但边残留"
+     的异常漂移 scope（链接在实体在由 deleteOrphans 的 degree=0 前置保证，边表无此前提） -->
+<resultMap id="scopeRow" type="com.smart.rag.rag.mapper.EntityMapper$ScopeRow">
+    <constructor>
+        <arg column="user_id" javaType="java.lang.Long"/>
+        <arg column="team_id" javaType="java.lang.Long"/>
+    </constructor>
+</resultMap>
+<select id="selectDistinctScopes" resultMap="scopeRow">
+    SELECT DISTINCT user_id, team_id FROM rag_entity
+    UNION
+    SELECT DISTINCT user_id, team_id FROM rag_entity_cooccurrence
+</select>
+
+<!-- scope 全部实体清单（V30 §6 阶段二图快照：含图外孤立实体——bridge reset-0 语义需覆盖） -->
+<resultMap id="entityMetaRow" type="com.smart.rag.rag.mapper.EntityMapper$EntityMeta">
+    <constructor>
+        <arg column="id" javaType="_long"/>
+        <arg column="degree" javaType="_int"/>
+    </constructor>
+</resultMap>
+<select id="selectScopeEntityMetas" resultMap="entityMetaRow">
+    SELECT id, degree
+    FROM rag_entity
+    WHERE user_id = #{userId,jdbcType=BIGINT}
+      AND (#{teamId,jdbcType=BIGINT} IS NULL AND team_id IS NULL OR team_id = #{teamId,jdbcType=BIGINT})
+</select>
 
 <!-- ==================== Path C 在线检索查询（§6.2/§6.3/§6.4，仅读取）==================== -->
 
@@ -214,31 +252,43 @@
 </select>
 
 <!-- §6.3 投票回链 chunks：frontier JOIN rag_chunk_entity JOIN vector_store，max 聚合 + array_agg。
-     安全隔离：vs.metadata->>'userId' = :userIdStr（字符串双轨）。 -->
+     安全隔离：vs.metadata->>'userId' = :userIdStr（字符串双轨）。先在 frontier×rag_chunk_entity 上聚合排序取 Top-K，再回链 vector_store 取 content——大文本不进聚合哈希。 -->
 <select id="voteBacklinkChunks" resultMap="votedChunk">
     WITH frontier(id, name_display, composite_score) AS (
         VALUES
         <foreach collection="frontier" item="fe" separator=",">
             (#{fe.id}::bigint, #{fe.nameDisplay}::text, #{fe.compositeScore}::double precision)
         </foreach>
+    ),
+    aggregated AS (
+        SELECT
+            ce.chunk_id,
+            MAX(f.composite_score) AS chunk_score,
+            array_to_string(array_agg(f.name_display ORDER BY f.composite_score DESC), ',') AS voted_by_entities
+        FROM frontier f
+        JOIN rag_chunk_entity ce ON ce.entity_id = f.id
+        WHERE EXISTS (
+            SELECT 1 FROM vector_store vs
+            WHERE vs.id = ce.chunk_id
+              AND vs.metadata->>'userId' = #{userIdStr}
+        )
+        GROUP BY ce.chunk_id
+        ORDER BY chunk_score DESC
+        LIMIT #{chunkTopK}
     )
     SELECT
-        ce.chunk_id,
+        a.chunk_id,
         vs.content,
         vs.metadata::text AS metadata,
-        MAX(f.composite_score) AS chunk_score,
-        array_to_string(array_agg(f.name_display ORDER BY f.composite_score DESC), ',') AS voted_by_entities
-    FROM frontier f
-    JOIN rag_chunk_entity ce ON ce.entity_id = f.id
-    JOIN vector_store vs ON vs.id = ce.chunk_id
-    WHERE vs.metadata->>'userId' = #{userIdStr}
-    GROUP BY ce.chunk_id, vs.content, vs.metadata::text
-    ORDER BY chunk_score DESC
-    LIMIT #{chunkTopK}
+        a.chunk_score,
+        a.voted_by_entities
+    FROM aggregated a
+    JOIN vector_store vs ON vs.id = a.chunk_id
+    ORDER BY a.chunk_score DESC
 </select>
 
 <!-- §6.4 SAG 结构扩展（H=1 单跳，纯结构 JOIN）：frontier → events → 新 entities → 新 events → 新 chunks。
-     不施加 query 语义过滤（忠于 SAG §3.4）。chunk_score = δ × composite_score（结构传递分）。 -->
+     不施加 query 语义过滤（忠于 SAG §3.4）。chunk_score = δ × composite_score（结构传递分）；同样先聚合取 Top-K 再回链 content。 -->
 <select id="expandChunks" resultMap="expandedChunk">
     WITH frontier_with_score(id, composite_score) AS (
         VALUES
@@ -269,20 +319,32 @@
         JOIN rag_chunk_entity ce ON ce.chunk_id = e.chunk_id
         WHERE ce.entity_id IN (SELECT entity_id FROM expanded_entities)
           AND e.user_id = #{userId,jdbcType=BIGINT}
+    ),
+    aggregated AS (
+        SELECT
+            ee.chunk_id,
+            #{expansionDecay} * MAX(f.composite_score) AS chunk_score,
+            array_to_string(array_agg(DISTINCT ex.entity_id), ',') AS discovered_via_entities
+        FROM expanded_events ee
+        JOIN rag_chunk_entity ex ON ex.chunk_id = ee.chunk_id
+        JOIN frontier_with_score f ON f.id = ex.entity_id
+        WHERE EXISTS (
+            SELECT 1 FROM vector_store vs
+            WHERE vs.id = ee.chunk_id
+              AND vs.metadata->>'userId' = #{userIdStr}
+        )
+        GROUP BY ee.chunk_id
+        ORDER BY chunk_score DESC
+        LIMIT #{expandChunkTopK}
     )
     SELECT
-        ee.chunk_id,
+        a.chunk_id,
         vs.content,
         vs.metadata::text AS metadata,
-        #{expansionDecay} * MAX(f.composite_score) AS chunk_score,
-        array_to_string(array_agg(DISTINCT ex.entity_id), ',') AS discovered_via_entities
-    FROM expanded_events ee
-    JOIN vector_store vs ON vs.id = ee.chunk_id
-    JOIN rag_chunk_entity ex ON ex.chunk_id = ee.chunk_id
-    JOIN frontier_with_score f ON f.id = ex.entity_id
-    WHERE vs.metadata->>'userId' = #{userIdStr}
-    GROUP BY ee.chunk_id, vs.content, vs.metadata::text
-    ORDER BY chunk_score DESC
-    LIMIT #{expandChunkTopK}
+        a.chunk_score,
+        a.discovered_via_entities
+    FROM aggregated a
+    JOIN vector_store vs ON vs.id = a.chunk_id
+    ORDER BY a.chunk_score DESC
 </select>
 </mapper>

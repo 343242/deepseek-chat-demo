@@ -71,6 +71,23 @@ app:
       weak-tie-enabled: ${RAG_ENTITY_WEAK_TIE_ENABLED:true}
       extraction-model: ${RAG_ENTITY_EXTRACTION_MODEL:}
       community-detection-enabled: ${RAG_ENTITY_COMMUNITY_DETECTION_ENABLED:true}
+      # === V30 共现图增量维护（docs/design/incremental-cooccurrence-maintenance.md §7）===
+      # 持锁事务 lock_timeout（§8-4 初始值 10s，验证 #12 压测定标：取 ≥ p99 写事务时长的安全倍数）
+      lock-timeout-millis: ${RAG_ENTITY_LOCK_TIMEOUT_MILLIS:10000}
+      # LockRetryExecutor 重试次数（退避 1s/2s/4s × jitter，仅 40P01/40001/55P03）
+      lock-retry-attempts: ${RAG_ENTITY_LOCK_RETRY_ATTEMPTS:3}
+      # 同 scope 写闸门等待上限（§3.6：排队零 DB 连接占用；超时走 §6.2 次日重链接）
+      write-gate-wait-millis: ${RAG_ENTITY_WRITE_GATE_WAIT_MILLIS:120000}
+      # derive 防抖窗口（§3.6：批量 N 文档合并为窗口末尾一次 derive；0 = 关闭回退逐文档即时）
+      derive-debounce-millis: ${RAG_ENTITY_DERIVE_DEBOUNCE_MILLIS:30000}
+      # 每日 8:00 对账（§6）
+      reconcile:
+        enabled: ${RAG_ENTITY_RECONCILE_ENABLED:true}
+        cron: ${RAG_ENTITY_RECONCILE_CRON:0 0 8 * * *}
+        # 每周强制 derive 日（旁路指纹门控，自愈结构分自身漂移，默认周一）
+        force-derive-day: ${RAG_ENTITY_RECONCILE_FORCE_DERIVE_DAY:MONDAY}
+        # 每日重链接重抽上限（§6.2 全量重建限流；0 = 不限）
+        relink-limit: ${RAG_ENTITY_RECONCILE_RELINK_LIMIT:0}
   # 评估模块（全局恒装载，原 application-evaluation.yml 整合至此；接口权限 evaluation:manage）
   evaluation:
     # 抽取模型候选 ID（主题抽取、persona 匹配、概念组合；便宜模型）
@@ -265,4 +282,11 @@ management:
     health:
       probes:
         enabled: true
+
+# MyBatis 全局语句超时兜底（V30 §8-1：秒）。profile 文件的 mybatis-plus.configuration.* 逐键合并，
+# 本值全局生效；重 CTE（对账重投影 / 源侧指纹）已按设计在锁内/无锁只读路径运行，不需更细的超时。
+# 注意：不设 JDBC socketTimeout 全局硬顶——会杀掉对账合法长语句（§8-2）。
+mybatis-plus:
+  configuration:
+    default-statement-timeout: 300
 # Log4j 2 配置见 log4j2.xml，此处不再配置 logging.level

@@ -26,7 +26,8 @@ class RagEntityPropertiesTest {
                     0, 0,
                     0.85, 50, 20, 10, 1, 0.7,
                     0.5, 0.3, 0.2,
-                    true, null, true
+                    true, null, true,
+                    0, 0, 0, 0, null
             );
             assertThat(p.embeddingBatchSize()).isEqualTo(10);
             assertThat(p.descriptionMaxLength()).isEqualTo(500);
@@ -44,7 +45,8 @@ class RagEntityPropertiesTest {
                     0, 0,
                     0, 0, 0, -1, -1, 0,
                     0.5, 0.3, 0.2,
-                    true, null, true
+                    true, null, true,
+                    0, 0, 0, 0, null
             );
             assertThat(p.matchThreshold()).isEqualTo(0.85);
             assertThat(p.frontierBudget()).isEqualTo(50);
@@ -57,10 +59,10 @@ class RagEntityPropertiesTest {
         @Test
         @DisplayName("expansionDecay <=0 或 >1 回退 0.7")
         void decayOutOfRange_fallsBackToDefault() {
-            var tooLow = new RagEntityProperties(0, 0, 0.85, 50, 20, 10, 1, 0.0, 0.5, 0.3, 0.2, true, null, true);
+            var tooLow = new RagEntityProperties(0, 0, 0.85, 50, 20, 10, 1, 0.0, 0.5, 0.3, 0.2, true, null, true, 0, 0, 0, 0, null);
             assertThat(tooLow.expansionDecay()).isEqualTo(0.7);
 
-            var tooHigh = new RagEntityProperties(0, 0, 0.85, 50, 20, 10, 1, 1.5, 0.5, 0.3, 0.2, true, null, true);
+            var tooHigh = new RagEntityProperties(0, 0, 0.85, 50, 20, 10, 1, 1.5, 0.5, 0.3, 0.2, true, null, true, 0, 0, 0, 0, null);
             assertThat(tooHigh.expansionDecay()).isEqualTo(0.7);
         }
     }
@@ -74,7 +76,7 @@ class RagEntityPropertiesTest {
         void negativeAlpha_throws() {
             assertThatThrownBy(() -> new RagEntityProperties(
                     10, 500, 0.85, 50, 20, 10, 1, 0.7,
-                    -0.1, 0.3, 0.2, true, null, true))
+                    -0.1, 0.3, 0.2, true, null, true, 0, 0, 0, 0, null))
                     .isInstanceOf(IllegalArgumentException.class)
                     .hasMessageContaining("α/β/γ");
         }
@@ -84,7 +86,7 @@ class RagEntityPropertiesTest {
         void negativeBeta_throws() {
             assertThatThrownBy(() -> new RagEntityProperties(
                     10, 500, 0.85, 50, 20, 10, 1, 0.7,
-                    0.5, -0.3, 0.2, true, null, true))
+                    0.5, -0.3, 0.2, true, null, true, 0, 0, 0, 0, null))
                     .isInstanceOf(IllegalArgumentException.class);
         }
 
@@ -93,9 +95,40 @@ class RagEntityPropertiesTest {
         void allZero_throws() {
             assertThatThrownBy(() -> new RagEntityProperties(
                     10, 500, 0.85, 50, 20, 10, 1, 0.7,
-                    0, 0, 0, true, null, true))
+                    0, 0, 0, true, null, true, 0, 0, 0, 0, null))
                     .isInstanceOf(IllegalArgumentException.class)
                     .hasMessageContaining("不能同时为 0");
+        }
+    }
+
+    @Nested
+    @DisplayName("V30 增量维护字段默认值（§7）")
+    class IncrementalMaintenanceDefaultsTest {
+
+        @Test
+        @DisplayName("lock/gate/debounce/reconcile 未配置回退默认（reconcile=null → 整组默认）")
+        void incrementalDefaults() {
+            var p = new RagEntityProperties(
+                    0, 0,
+                    0.85, 50, 20, 10, 1, 0.7,
+                    0.5, 0.3, 0.2,
+                    true, null, true,
+                    0, 0, 0, -1, null   // -1 = 未配置（0 是 deriveDebounceMillis 的合法值：关闭防抖）
+            );
+            assertThat(p.lockTimeoutMillis()).isEqualTo(10_000);
+            assertThat(p.lockRetryAttempts()).isEqualTo(3);
+            assertThat(p.writeGateWaitMillis()).isEqualTo(120_000);
+            assertThat(p.deriveDebounceMillis()).isEqualTo(30_000);
+
+            // 0 = 关闭防抖（合法值，不回退）
+            var zeroDebounce = new RagEntityProperties(
+                    10, 500, 0.85, 50, 20, 10, 1, 0.7, 0.5, 0.3, 0.2,
+                    true, null, true, 10_000, 3, 120_000, 0, null);
+            assertThat(zeroDebounce.deriveDebounceMillis()).isZero();
+            assertThat(p.reconcile().enabled()).isTrue();
+            assertThat(p.reconcile().cron()).isEqualTo("0 0 8 * * *");
+            assertThat(p.reconcile().forceDeriveDay()).isEqualTo(java.time.DayOfWeek.MONDAY);
+            assertThat(p.reconcile().relinkLimit()).isZero();
         }
     }
 }

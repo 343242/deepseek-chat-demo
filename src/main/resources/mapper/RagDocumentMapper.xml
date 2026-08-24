@@ -31,4 +31,51 @@
         SELECT id, file_name, file_size, mime_type, storage_key, bucket, user_id, chunk_count, status, error_message, file_checksum, team_id, version, superseded_by, document_group_id, create_time, update_time, deleted FROM rag_document WHERE superseded_by IS NOT NULL AND status != 'SUPERSEDED' AND deleted = 0
     </select>
 
+    <!-- ==================== V30 实体索引增量维护支持 ==================== -->
+
+    <!-- 作用域读取（§5 Step 0）：手写 SQL 且【不过滤】@TableLogic 的 deleted 列——
+         补偿性/乱序到达的清理（如删除事件重放）仍须能读到 scope 并执行，否则僵尸链接无解。 -->
+    <resultMap id="documentScopeRow" type="com.smart.rag.rag.mapper.RagDocumentMapper$DocumentScope">
+        <constructor>
+            <arg column="user_id" javaType="java.lang.Long"/>
+            <arg column="team_id" javaType="java.lang.Long"/>
+        </constructor>
+    </resultMap>
+    <select id="selectScopeById" resultMap="documentScopeRow">
+        SELECT user_id, team_id
+        FROM rag_document
+        WHERE id = #{documentId}
+    </select>
+
+    <!-- 待重链接文档（§6.2，全局无 scope 参数）：抽取从未完成（标记 NULL）+ 文档在册 + ETL 终态 + 宽限期。
+         宽限期（6h）纯为成本控制——避开在途 ETL 的重复 LLM 抽取；重抽本身幂等。
+         部分索引 idx_doc_entity_extraction_pending 直接命中。limit &lt;= 0 时省略 LIMIT（Java 侧传参控制）。 -->
+    <resultMap id="pendingDocRow" type="com.smart.rag.rag.mapper.RagDocumentMapper$PendingDoc">
+        <constructor>
+            <arg column="id" javaType="java.lang.Long"/>
+            <arg column="user_id" javaType="java.lang.Long"/>
+            <arg column="team_id" javaType="java.lang.Long"/>
+        </constructor>
+    </resultMap>
+    <select id="selectDocsPendingEntityExtraction" resultMap="pendingDocRow">
+        SELECT id, user_id, team_id
+        FROM rag_document
+        WHERE deleted = 0
+          AND status = 'COMPLETED'
+          AND entity_extracted_at IS NULL
+          AND update_time &lt; NOW() - INTERVAL '6 hours'
+        ORDER BY update_time
+        <if test="limit != null and limit > 0">
+            LIMIT #{limit}
+        </if>
+    </select>
+
+    <!-- 抽取完成标记（§6.2）：extractAndIndex 所有非异常退出路径写；异常退出不标记，留待重链接。
+         手写 SQL 绕过 @TableLogic 过滤（逻辑删行也可标记，无害幂等）。 -->
+    <update id="markEntityExtracted">
+        UPDATE rag_document
+        SET entity_extracted_at = NOW()
+        WHERE id = #{documentId}
+    </update>
+
 </mapper>

@@ -49,4 +49,35 @@ public interface RagDocumentMapper extends BaseMapper<RagDocument> {
      * 查找需要补偿清理的旧文档（superseded_by IS NOT NULL 但 status != SUPERSEDED）
      */
     List<RagDocument> findStaleSupersededTargets();
+
+    // ==================== V30 实体索引增量维护支持 ====================
+
+    /**
+     * 文档作用域（user_id, teamId 可为 null）。
+     */
+    record DocumentScope(Long userId, Long teamId) {}
+
+    /**
+     * 待重链接文档行（自带 user_id/team_id，恰为发布 EtlVectorizedEvent 所需参数）。
+     */
+    record PendingDoc(Long documentId, Long userId, Long teamId) {}
+
+    /**
+     * 读文档作用域（§5 Step 0）：手写 SQL，【不过滤】@TableLogic 的 deleted 列——
+     * 补偿性/乱序到达的清理仍须能读到 scope 并执行。文档行物理不存在时返回 null。
+     */
+    DocumentScope selectScopeById(@Param("documentId") Long documentId);
+
+    /**
+     * 待重链接文档探测（§6.2，全局查询、无 scope 参数——scope 枚举源是 rag_document 自身）：
+     * 抽取从未完成（entity_extracted_at IS NULL）+ 在册 + COMPLETED + 6h 宽限期。
+     *
+     * @param limit 每日重抽上限；null 或 &lt;= 0 = 不限
+     */
+    List<PendingDoc> selectDocsPendingEntityExtraction(@Param("limit") Integer limit);
+
+    /**
+     * 写抽取完成标记（§6.2）：extractAndIndex 所有非异常退出路径调用；异常退出不标记。
+     */
+    int markEntityExtracted(@Param("documentId") Long documentId);
 }

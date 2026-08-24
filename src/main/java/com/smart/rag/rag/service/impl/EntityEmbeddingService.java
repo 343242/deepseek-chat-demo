@@ -13,14 +13,21 @@ import com.smart.rag.rag.mapper.EntityMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 
 /**
  * 实体 embedding 服务
  * <p>
- * 职责：聚合后 description 的批量 embed → 更新 rag_entity.embedding
+ * 职责：聚合后 description 的批量 embed → 更新 rag_entity.embedding。
+ * <p>
+ * V30 §3.2.1：DB 写回（{@code updateEmbeddingBatch}，rag_entity 多行写）收编进
+ * {@link ScopeLockTemplate} advisory 短事务（毫秒~百毫秒级，LLM 调用留在锁外）；
+ * 写回重试耗尽 → 异常传播 → {@code extractAndIndex} 异常退出 → 完成标记不写 →
+ * §6.2 次日重链接补（幂等；项目无补嵌调度，已核实 selectEntitiesNeedingEmbedding 无调用方）。
  */
 @Service
 public class EntityEmbeddingService {
@@ -33,19 +40,28 @@ public class EntityEmbeddingService {
     private final LlmClientRegistry llmClientRegistry;
     private final EntityMapper entityMapper;
     private final RagEntityProperties properties;
+    private final ScopeLockTemplate scopeLockTemplate;
+    private final LockRetryExecutor lockRetryExecutor;
+    private final TransactionTemplate transactionTemplate;
 
     public EntityEmbeddingService(LlmClientRegistry llmClientRegistry,
                                    EntityMapper entityMapper,
-                                   RagEntityProperties properties) {
+                                   RagEntityProperties properties,
+                                   ScopeLockTemplate scopeLockTemplate,
+                                   LockRetryExecutor lockRetryExecutor,
+                                   TransactionTemplate transactionTemplate) {
         this.llmClientRegistry = llmClientRegistry;
         this.entityMapper = entityMapper;
         this.properties = properties;
+        this.scopeLockTemplate = scopeLockTemplate;
+        this.lockRetryExecutor = lockRetryExecutor;
+        this.transactionTemplate = transactionTemplate;
     }
 
     /**
      * 批量嵌入实体描述
      *
-     * @param entities 需要嵌入的实体列表
+     * @param entities 需要嵌入的实体列表（同一 scope——来自单文档抽取）
      */
     public void embedEntities(List<RagEntity> entities) {
         if (entities == null || entities.isEmpty()) {
@@ -91,25 +107,27 @@ public class EntityEmbeddingService {
     }
 
     /**
-     * 分批 embed 并回写（failure isolation per batch：单批失败继续下一批）
+     * 分批 embed 并回写（LLM 调用 failure isolation per batch：单批失败继续下一批；
+     * DB 写回失败<b>传播</b>——完成标记不写，走 §6.2 次日重链接兜底）
      */
     private void embedInBatches(List<RagEntity> toEmbed, List<String> texts,
                                 EmbeddingCapable embeddingClient) {
         int batchSize = properties.embeddingBatchSize();
         for (int i = 0; i < texts.size(); i += batchSize) {
             int end = Math.min(i + batchSize, texts.size());
+            List<float[]> embeddings;
             try {
-                List<float[]> embeddings =
-                        embeddingClient.embedBatch(texts.subList(i, end), EmbeddingType.DOCUMENT);
-                updateEmbeddings(toEmbed.subList(i, end), embeddings);
+                embeddings = embeddingClient.embedBatch(texts.subList(i, end), EmbeddingType.DOCUMENT);
             } catch (Exception e) {
                 log.error("Failed to embed entity batch [{}-{}]: {}", i, end, e);
+                continue;
             }
+            updateEmbeddings(toEmbed.subList(i, end), embeddings);
         }
     }
 
     /**
-     * 批量回写 embedding（过滤空结果）
+     * 批量回写 embedding（过滤空结果；advisory 短事务 + 按 entityId 升序，§3.2.1 防线二）
      */
     private void updateEmbeddings(List<RagEntity> batchEntities, List<float[]> embeddings) {
         List<EntityMapper.EmbeddingUpdate> updates = new ArrayList<>(batchEntities.size());
@@ -119,9 +137,17 @@ public class EntityEmbeddingService {
                 updates.add(new EntityMapper.EmbeddingUpdate(batchEntities.get(j).getId(), embedding));
             }
         }
-        if (!updates.isEmpty()) {
-            entityMapper.updateEmbeddingBatch(updates);
+        if (updates.isEmpty()) {
+            return;
         }
+        updates.sort(Comparator.comparingLong(EntityMapper.EmbeddingUpdate::id));
+        // 单文档批次内实体同 scope（经 aggregateAndUpsert 构造性保证）
+        Long userId = batchEntities.get(0).getUserId();
+        Long teamId = batchEntities.get(0).getTeamId();
+        lockRetryExecutor.execute(() ->
+                transactionTemplate.executeWithoutResult(status ->
+                        scopeLockTemplate.withinScopeLock(userId, teamId, () ->
+                                entityMapper.updateEmbeddingBatch(updates))));
     }
 
     /**
@@ -147,7 +173,6 @@ public class EntityEmbeddingService {
     /**
      * 安全获取 ChatCapable（用于 description 压缩）
      */
-    @SuppressWarnings("unchecked")
     private ChatCapable getChatClientSafe() {
         try {
             return llmClientRegistry.getDefault(LlmCapability.CHAT, ChatCapable.class);

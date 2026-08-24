@@ -18,8 +18,11 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.transaction.TransactionStatus;
+import org.springframework.transaction.support.TransactionTemplate;
 
 import java.util.List;
+import java.util.function.Consumer;
 
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
@@ -39,16 +42,40 @@ class EntityEmbeddingServiceTest {
     private EmbeddingCapable embeddingCapable;
     @Mock
     private ChatCapable chatCapable;
+    @Mock
+    private ScopeLockTemplate scopeLockTemplate;
+    @Mock
+    private LockRetryExecutor lockRetryExecutor;
+    @Mock
+    private TransactionTemplate transactionTemplate;
+
+    private RagEntityProperties properties;
 
     @InjectMocks
     private EntityEmbeddingService service;
 
-    private RagEntityProperties properties;
-
     @BeforeEach
     void setUp() {
-        properties = new RagEntityProperties(10, 500, 0.85, 50, 20, 10, 1, 0.7, 0.5, 0.3, 0.2, true, null, true);
-        service = new EntityEmbeddingService(llmClientRegistry, entityMapper, properties);
+        properties = new RagEntityProperties(10, 500, 0.85, 50, 20, 10, 1, 0.7, 0.5, 0.3, 0.2, true, null, true, 0, 0, 0, 0, null);
+        service = new EntityEmbeddingService(llmClientRegistry, entityMapper, properties,
+                scopeLockTemplate, lockRetryExecutor, transactionTemplate);
+
+        // 写回经 advisory 短事务（V30 §3.2.1）：替身直接执行临界区
+        lenient().doAnswer(invocation -> {
+            Runnable body = invocation.getArgument(2);
+            body.run();
+            return null;
+        }).when(scopeLockTemplate).withinScopeLock(any(), any(), any());
+        lenient().doAnswer(invocation -> {
+            Runnable body = invocation.getArgument(0);
+            body.run();
+            return null;
+        }).when(lockRetryExecutor).execute(any(Runnable.class));
+        lenient().doAnswer(invocation -> {
+            Consumer<TransactionStatus> consumer = invocation.getArgument(0);
+            consumer.accept(null);
+            return null;
+        }).when(transactionTemplate).executeWithoutResult(any());
     }
 
     // ==================== embedEntities ====================
@@ -120,6 +147,42 @@ class EntityEmbeddingServiceTest {
         }
 
         @Test
+        @DisplayName("写回在 scope advisory 短事务内执行（V30 §3.2.1 收编，锁键 = 实体 scope）")
+        void writeBackWithinScopeLock() {
+            when(llmClientRegistry.getDefault(LlmCapability.EMBEDDING, EmbeddingCapable.class))
+                    .thenReturn(embeddingCapable);
+            when(embeddingCapable.embedBatch(anyList(), eq(EmbeddingType.DOCUMENT)))
+                    .thenReturn(List.of(new float[]{0.5f, 0.5f}));
+            RagEntity entity = new RagEntity();
+            entity.setId(1L);
+            entity.setUserId(100L);
+            entity.setTeamId(20L);
+            entity.setDescription("desc");
+
+            service.embedEntities(List.of(entity));
+
+            verify(scopeLockTemplate).withinScopeLock(eq(100L), eq(20L), any());
+        }
+
+        @Test
+        @DisplayName("写回重试耗尽 → 异常传播（extractAndIndex 异常退出 → 标记不写 → §6.2 次日重链接）")
+        void writeBackExhaustion_propagates() {
+            when(llmClientRegistry.getDefault(LlmCapability.EMBEDDING, EmbeddingCapable.class))
+                    .thenReturn(embeddingCapable);
+            when(embeddingCapable.embedBatch(anyList(), eq(EmbeddingType.DOCUMENT)))
+                    .thenReturn(List.of(new float[]{0.5f, 0.5f}));
+            doThrow(new RuntimeException("55P03 exhausted"))
+                    .when(lockRetryExecutor).execute(any(Runnable.class));
+            RagEntity entity = new RagEntity();
+            entity.setId(1L);
+            entity.setUserId(100L);
+            entity.setDescription("desc");
+
+            org.assertj.core.api.Assertions.assertThatThrownBy(() -> service.embedEntities(List.of(entity)))
+                    .isInstanceOf(RuntimeException.class);
+        }
+
+        @Test
         @DisplayName("description 超 500 字符时尝试 LLM 压缩")
         void longDescriptionCompress() {
             when(llmClientRegistry.getDefault(LlmCapability.CHAT, ChatCapable.class))
@@ -131,8 +194,9 @@ class EntityEmbeddingServiceTest {
             when(embeddingCapable.embedBatch(anyList(), eq(EmbeddingType.DOCUMENT)))
                     .thenReturn(List.of(new float[]{0.3f, 0.7f}));
 
-            properties = new RagEntityProperties(10, 10, 0.85, 50, 20, 10, 1, 0.7, 0.5, 0.3, 0.2, true, null, true);
-            service = new EntityEmbeddingService(llmClientRegistry, entityMapper, properties);
+            properties = new RagEntityProperties(10, 10, 0.85, 50, 20, 10, 1, 0.7, 0.5, 0.3, 0.2, true, null, true, 0, 0, 0, 0, null);
+            service = new EntityEmbeddingService(llmClientRegistry, entityMapper, properties,
+                    scopeLockTemplate, lockRetryExecutor, transactionTemplate);
 
             RagEntity entity = new RagEntity();
             entity.setId(1L);

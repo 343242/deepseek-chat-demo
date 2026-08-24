@@ -20,6 +20,7 @@ import com.smart.rag.rag.entity.RagEvent;
 import com.smart.rag.rag.event.EtlVectorizedEvent;
 import com.smart.rag.rag.mapper.EntityMapper;
 import com.smart.rag.rag.mapper.EventMapper;
+import com.smart.rag.rag.mapper.RagDocumentMapper;
 import com.smart.rag.rag.mapper.VectorStoreMapper;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
@@ -40,10 +41,11 @@ import java.util.concurrent.ExecutorService;
  * <ol>
  *   <li>从 vector_store 查文档所有 chunk</li>
  *   <li>并行 LLM 抽取（per chunk，failure-isolated）</li>
- *   <li>委托 EntityCanonicalizationService 规范化 + UPSERT</li>
+ *   <li>委托 EntityCanonicalizationService 规范化 + UPSERT + 增量共现维护（V30 §4）</li>
  *   <li>写 rag_event</li>
- *   <li>委托 EntityEmbeddingService embedding</li>
- *   <li>标记 community_stale=TRUE</li>
+ *   <li>委托 EntityEmbeddingService embedding（不受 graphChanged 门控，§6.1）</li>
+ *   <li>graphChanged 时经 DeriveDebouncer 触发结构分 derive（V30 §6.1，防抖合并）</li>
+ *   <li>所有非异常退出路径写 entity_extracted_at 完成标记（V30 §6.2）</li>
  * </ol>
  * <p>
  * 仅响应 {@link EtlVectorizedEvent}（chunks 就绪信号），不监听 {@code EtlCompletedEvent}，
@@ -85,32 +87,32 @@ public class EntityExtractionService {
     private final EntityEmbeddingService embeddingService;
     private final EntityMapper entityMapper;
     private final EventMapper eventMapper;
+    private final RagDocumentMapper documentMapper;
     private final VectorStoreMapper vectorStoreMapper;
     private final LlmClientRegistry llmClientRegistry;
     private final ExecutorService etlCpuExecutor;
-    private final EntityIndexService entityIndexService;
-    private final CommunityDetectionJob communityDetectionJob;
+    private final DeriveDebouncer deriveDebouncer;
     private final ScopedTasks scopedTasks;
 
     public EntityExtractionService(EntityCanonicalizationService canonicalizationService,
                                     EntityEmbeddingService embeddingService,
                                     EntityMapper entityMapper,
                                     EventMapper eventMapper,
+                                    RagDocumentMapper documentMapper,
                                     VectorStoreMapper vectorStoreMapper,
                                     LlmClientRegistry llmClientRegistry,
                                     ExecutorService etlCpuExecutor,
-                                    EntityIndexService entityIndexService,
-                                    CommunityDetectionJob communityDetectionJob,
+                                    DeriveDebouncer deriveDebouncer,
                                     ScopedTasks scopedTasks) {
         this.canonicalizationService = canonicalizationService;
         this.embeddingService = embeddingService;
         this.entityMapper = entityMapper;
         this.eventMapper = eventMapper;
+        this.documentMapper = documentMapper;
         this.vectorStoreMapper = vectorStoreMapper;
         this.llmClientRegistry = llmClientRegistry;
         this.etlCpuExecutor = etlCpuExecutor;
-        this.entityIndexService = entityIndexService;
-        this.communityDetectionJob = communityDetectionJob;
+        this.deriveDebouncer = deriveDebouncer;
         this.scopedTasks = scopedTasks;
     }
 
@@ -122,7 +124,10 @@ public class EntityExtractionService {
     }
 
     /**
-     * 编排实体抽取全流程
+     * 编排实体抽取全流程。
+     * <p>
+     * 所有非异常退出路径（成功 / 无 chunk / 无实体）写 {@code entity_extracted_at} 完成标记；
+     * 异常退出不标记——留待对账重链接检测次日重抽（幂等，V30 §6.2）。
      */
     public void extractAndIndex(Long documentId, Long userId, @Nullable Long teamId) {
         log.info("Starting entity extraction for documentId={}, userId={}, teamId={}",
@@ -133,6 +138,7 @@ public class EntityExtractionService {
                     String.valueOf(documentId));
             if (chunkRows.isEmpty()) {
                 log.info("No chunks found for documentId={}, skipping entity extraction", documentId);
+                markEntityExtracted(documentId);
                 return;
             }
             log.info("Found {} chunks for documentId={}", chunkRows.size(), documentId);
@@ -142,29 +148,34 @@ public class EntityExtractionService {
                     extractChunksConcurrently(chunkRows);
             if (extractions.isEmpty()) {
                 log.info("No entities extracted from any chunk for documentId={}", documentId);
+                markEntityExtracted(documentId);
                 return;
             }
 
-            // Step 3: 委托规范化 + UPSERT
-            List<Long> affectedEntityIds = canonicalizationService.aggregateAndUpsert(
-                    extractions, userId, teamId);
+            // Step 3: 委托规范化 + UPSERT + 增量共现维护（V30 §4，RETURNING 驱动）
+            EntityCanonicalizationService.AggregateResult result = canonicalizationService.aggregateAndUpsert(
+                    extractions, userId, teamId, documentId);
 
-            // Step 4: 写 rag_event（per chunk）
+            // Step 4: 写 rag_event（per chunk，自动提交单行——白名单安全，§3.2.1）
             insertEvents(extractions, documentId, userId, teamId);
 
-            // Step 5-7: embedding + community_stale + 结构分重算
-            if (!affectedEntityIds.isEmpty()) {
-                embedAndMarkStale(affectedEntityIds);
-                // Step 7: 触发离线结构分批处理（§8.1 Step 6 续：共现图 + weak_tie + Leiden + bridge）
-                // failure-isolated（§8.3）：结构分计算失败不影响 Path A/B，下次 ETL 重试
-                recomputeStructureScores(userId, teamId);
+            // Step 5: embedding（不受 graphChanged 门控：保留对实体描述更新的自愈覆盖，§6.1）
+            if (!result.entityIds().isEmpty()) {
+                embedEntities(result.entityIds());
             }
 
-            log.info("Entity extraction completed for documentId={}: {} entities, {} extractions",
-                    documentId, affectedEntityIds.size(), extractions.size());
+            // Step 6: 结构分 derive 门控（§6.1：纯重投递 graphChanged=false 跳过 O(scope) 计算；
+            // 防抖合并批量场景的 derive 次数，§3.6）
+            if (result.graphChanged()) {
+                deriveDebouncer.submit(userId, teamId);
+            }
+
+            markEntityExtracted(documentId);
+            log.info("Entity extraction completed for documentId={}: {} entities, {} extractions, graphChanged={}",
+                    documentId, result.entityIds().size(), extractions.size(), result.graphChanged());
 
         } catch (Exception e) {
-            // 整体失败不影响 Path A/B（§8.3 / AC7）
+            // 整体失败不影响 Path A/B（§8.3 / AC7）；完成标记不写 → §6.2 次日重链接兜底（V30）
             log.error("Entity extraction failed for documentId={}: {}", documentId, e.getMessage(), e);
         }
     }
@@ -222,27 +233,15 @@ public class EntityExtractionService {
         }
     }
 
-    /** Step 5-6: 委托 embedding + 标记 community_stale=TRUE */
-    private void embedAndMarkStale(List<Long> affectedEntityIds) {
+    /** Step 5: 委托 embedding（markCommunityStale 已并入写事务且受 graphChanged 门控，V30 §4.1 步骤 9） */
+    private void embedEntities(List<Long> affectedEntityIds) {
         List<RagEntity> entitiesToEmbed = entityMapper.selectByIds(affectedEntityIds);
         embeddingService.embedEntities(entitiesToEmbed);
-        entityMapper.markCommunityStale(affectedEntityIds);
     }
 
-    /**
-     * §8.1 Step 6 续：触发作用域结构分重算（共现图投影 + weak_tie + Leiden 社区 + bridge）。
-     * 顺序：{@link EntityIndexService#recomputeWeakTieScores}（刷新共现图 + 计算 weak_tie）
-     * → {@link CommunityDetectionJob#run}（Leiden + bridge + clearStale）。
-     * 失败隔离（§8.3）：任一步失败仅记录日志，不影响 Path A/B；entity 层用默认分兜底，下次 ETL 重试。
-     */
-    private void recomputeStructureScores(Long userId, @Nullable Long teamId) {
-        try {
-            entityIndexService.recomputeWeakTieScores(userId, teamId);
-            communityDetectionJob.run(userId, teamId);
-        } catch (Exception e) {
-            log.error("Structure score recompute failed for userId={}, teamId={}: {}",
-                    userId, teamId, e.getMessage(), e);
-        }
+    /** §6.2：抽取完成标记（自动提交单语句 UPDATE）。 */
+    private void markEntityExtracted(Long documentId) {
+        documentMapper.markEntityExtracted(documentId);
     }
 
     /**

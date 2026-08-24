@@ -3,40 +3,77 @@
         "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
 <mapper namespace="com.smart.rag.rag.mapper.ChunkEntityMapper">
 
-    <!-- 通过 documentId（经 vector_store 关联）查出受影响的 entity_id 列表 -->
-    <!-- 按文档 ID 查询受影响实体（级联清理用）。
-         通过 rag_event.document_id 关联（事件表是 chunk 归属的权威记录），
-         不依赖 vector_store——fastTrack 临时行被删后其产生的关联仍能查到。 -->
+    <!-- 新落库链接行（insertBatchReturning 的 RETURNING 输出：仅 DB 实际接受的行，
+         被 ON CONFLICT DO NOTHING 吞掉的重复行不出现——V30 §4.2 RETURNING 驱动增量） -->
+    <resultMap id="newLinkRow" type="com.smart.rag.rag.mapper.ChunkEntityMapper$NewLink">
+        <constructor>
+            <arg column="chunk_id" javaType="java.lang.String"/>
+            <arg column="entity_id" javaType="_long"/>
+        </constructor>
+    </resultMap>
+
+    <!-- chunk → entity_id 映射行（selectByChunkIds 输出，§4.1 步骤 4 锁内既有链接快照） -->
+    <resultMap id="chunkLinkRow" type="com.smart.rag.rag.mapper.ChunkEntityMapper$ChunkLink">
+        <constructor>
+            <arg column="chunk_id" javaType="java.lang.String"/>
+            <arg column="entity_id" javaType="_long"/>
+        </constructor>
+    </resultMap>
+
+    <!-- 按文档 ID 查询受影响实体（级联清理用，V30：document_id 直查，废除 rag_event 桥接） -->
     <select id="selectEntityIdsByDocumentId" resultType="java.lang.Long">
-        SELECT DISTINCT ce.entity_id
-        FROM rag_chunk_entity ce
-        INNER JOIN rag_event e ON ce.chunk_id = e.chunk_id
-        WHERE e.document_id = #{documentId}
+        SELECT DISTINCT entity_id
+        FROM rag_chunk_entity
+        WHERE document_id = #{documentId}
     </select>
 
-    <!-- 按 chunk_ids 批量删除 -->
-    <delete id="deleteByChunkIds">
+    <!-- 按文档 ID 批量删除（V30：document_id 直查） -->
+    <delete id="deleteByDocumentId">
         DELETE FROM rag_chunk_entity
+        WHERE document_id = #{documentId}
+    </delete>
+
+    <!-- 锁内读受影响 chunk 的既有链接（§4.1 步骤 4 / §4.3 精确 pair 计算；IN 列表由 Java 按 500 分批） -->
+    <select id="selectByChunkIds" resultMap="chunkLinkRow">
+        SELECT chunk_id, entity_id
+        FROM rag_chunk_entity
         WHERE chunk_id IN
         <foreach collection="chunkIds" item="cid" open="(" separator="," close=")">#{cid}::uuid</foreach>
-    </delete>
+    </select>
 
-    <!-- 按文档 ID 批量删除（经 rag_event 关联；覆盖 vector_store 已删的孤儿 chunk，AC4） -->
-    <delete id="deleteByDocumentId">
-        DELETE FROM rag_chunk_entity ce
-        USING rag_event e
-        WHERE ce.chunk_id = e.chunk_id
-          AND e.document_id = #{documentId}
-    </delete>
-
-    <!-- 批量插入（ON CONFLICT DO NOTHING 处理复合 PK 冲突） -->
-    <insert id="insertBatch">
-        INSERT INTO rag_chunk_entity (chunk_id, entity_id)
+    <!-- 链接插入：ON CONFLICT DO NOTHING + RETURNING（§4.2 幂等 + 落库真值；MyBatis 以 select 承载
+         INSERT...RETURNING）。document_id 为权威文档归属（V30 新列）。 -->
+    <select id="insertBatchReturning" resultMap="newLinkRow">
+        INSERT INTO rag_chunk_entity (chunk_id, entity_id, document_id)
         VALUES
-        <foreach collection="list" item="ce" separator=",">
-            (#{ce.chunkId}::uuid, #{ce.entityId})
+        <foreach collection="links" item="ce" separator=",">
+            (#{ce.chunkId}::uuid, #{ce.entityId}, #{ce.documentId})
         </foreach>
         ON CONFLICT (chunk_id, entity_id) DO NOTHING
-    </insert>
+        RETURNING chunk_id, entity_id
+    </select>
+
+    <!-- 孤儿链接清扫（§6 对账阶段一）：经 rag_entity 限定 scope（R1：行锁获取发生在 lockScope 之后）；
+         逻辑删除行（deleted=1）视同不存在 -->
+    <delete id="deleteOrphanLinksByScope">
+        DELETE FROM rag_chunk_entity ce
+        USING rag_entity re
+        WHERE re.id = ce.entity_id
+          AND re.user_id = #{userId,jdbcType=BIGINT}
+          AND (#{teamId,jdbcType=BIGINT} IS NULL AND re.team_id IS NULL OR re.team_id = #{teamId,jdbcType=BIGINT})
+          AND NOT EXISTS (SELECT 1 FROM rag_document d WHERE d.id = ce.document_id AND d.deleted = 0)
+    </delete>
+
+    <!-- 孤儿链接探测（§6 阶段〇无锁只读）：谓词同 deleteOrphanLinksByScope，仅 EXISTS -->
+    <select id="existsOrphanLinksByScope" resultType="java.lang.Boolean">
+        SELECT EXISTS (
+            SELECT 1
+            FROM rag_chunk_entity ce
+            JOIN rag_entity re ON re.id = ce.entity_id
+            WHERE re.user_id = #{userId,jdbcType=BIGINT}
+              AND (#{teamId,jdbcType=BIGINT} IS NULL AND re.team_id IS NULL OR re.team_id = #{teamId,jdbcType=BIGINT})
+              AND NOT EXISTS (SELECT 1 FROM rag_document d WHERE d.id = ce.document_id AND d.deleted = 0)
+        )
+    </select>
 
 </mapper>

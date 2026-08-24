@@ -42,7 +42,7 @@ class EntitySeedExtractorTest {
 
     @BeforeEach
     void setUp() {
-        properties = new RagEntityProperties(10, 500, 0.85, 50, 20, 10, 1, 0.7, 0.5, 0.3, 0.2, true, null, true);
+        properties = new RagEntityProperties(10, 500, 0.85, 50, 20, 10, 1, 0.7, 0.5, 0.3, 0.2, true, null, true, 0, 0, 0, 0, null);
         extractor = new EntitySeedExtractor(llmClientRegistry, properties);
     }
 
@@ -77,7 +77,7 @@ class EntitySeedExtractorTest {
         @Test
         @DisplayName("extractionModel 非空 → 用 get(candidateId) 而非 getDefault")
         void extract_customModel_usesGetById() {
-            properties = new RagEntityProperties(10, 500, 0.85, 50, 20, 10, 1, 0.7, 0.5, 0.3, 0.2, true, "deepseek-v4-flash", true);
+            properties = new RagEntityProperties(10, 500, 0.85, 50, 20, 10, 1, 0.7, 0.5, 0.3, 0.2, true, "deepseek-v4-flash", true, 0, 0, 0, 0, null);
             extractor = new EntitySeedExtractor(llmClientRegistry, properties);
 
             when(llmClientRegistry.get(eq("deepseek-v4-flash"), eq(ChatCapable.class))).thenReturn(chatCapable);

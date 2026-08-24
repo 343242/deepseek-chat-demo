@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.mapper.BaseMapper;
 import com.smart.rag.rag.entity.RagEntity;
 import org.apache.ibatis.annotations.Mapper;
 import org.apache.ibatis.annotations.Param;
+import org.jspecify.annotations.Nullable;
 
 import java.util.List;
 
@@ -58,7 +59,7 @@ public interface EntityMapper extends BaseMapper<RagEntity> {
      */
     List<RagEntity> selectEntitiesNeedingEmbedding(@Param("limit") int limit);
 
-    // ==================== 结构分写回（§5.2，CommunityDetectionJob 调用）====================
+    // ==================== 结构分写回（§5.2 / V30 §3.2.1 read-compute-write）====================
 
     /**
      * 社区分配项（node → community_id）。CommunityDetectionJob 将 Leiden 输出的
@@ -67,27 +68,67 @@ public interface EntityMapper extends BaseMapper<RagEntity> {
     record CommunityAssignment(long entityId, int communityId) {}
 
     /**
+     * weak_tie 写回批次项（WeakTieScoreCalculator 输出 → updateWeakTieBatch）。
+     */
+    record WeakTieUpdate(long entityId, double weakTieScore) {}
+
+    /**
+     * bridge 写回批次项（内存 bridge 计算（Leiden 分区 + 邻接）输出 → updateBridgeBatch）。
+     */
+    record BridgeUpdate(long entityId, double bridgeScore) {}
+
+    /**
      * 批量写回 Leiden 社区分配（单条 UPDATE ... FROM VALUES，按 userId 隔离）。
+     * V30：Java 侧按 entityId 升序传入，须在 ScopeLockTemplate 持锁事务内执行。
      *
      * @param userId      用户作用域
      * @param teamId      团队作用域（可为 null）
-     * @param communities Leiden 输出的 node → community_id 列表
+     * @param communities Leiden 输出的 node → community_id 列表（entityId 升序）
      */
     void batchUpdateCommunities(@Param("userId") Long userId,
                                 @Param("teamId") Long teamId,
                                 @Param("communities") List<CommunityAssignment> communities);
 
     /**
-     * 计算 bridge_score：邻居中属于不同社区的数量（排除自身社区，§5.2 Step 2 纯 SQL）。
-     * LEFT JOIN + FILTER 保证所有在作用域内的实体都被覆盖（非桥实体 reset 为 0），重跑幂等。
+     * weak_tie 批量写回（V30 §3.2.1：锁外内存计算的有序写回；仅含有邻居对的实体进批次）。
+     * 语义对齐原 updateWeakTieScores CTE（hub degree&gt;=100 / 孤立实体不动）。
      */
-    void updateBridgeScores(@Param("userId") Long userId, @Param("teamId") Long teamId);
+    int updateWeakTieBatch(@Param("items") List<WeakTieUpdate> items);
+
+    /**
+     * bridge_score 批量写回（V30 §3.2.1：覆盖全 scope 实体含孤立实体的 reset-0 语义，
+     * 取代原 updateBridgeScores 全 scope 聚合 SQL——分解为锁外内存计算 + 本有序写回）。
+     */
+    int updateBridgeBatch(@Param("items") List<BridgeUpdate> items);
 
     /**
      * 全量清除该作用域下所有实体的 community_stale（Leiden 覆盖全部节点，§5.2⑤）。
      * 非增量部分清除——degree=0 的新实体也应标记为非 stale。
      */
     void clearStaleFlag(@Param("userId") Long userId, @Param("teamId") Long teamId);
+
+    // ==================== 对账支持（V30 §6）====================
+
+    /**
+     * 作用域行（user_id, team_id），teamId 可为 null（个人文档）。
+     */
+    record ScopeRow(Long userId, Long teamId) {}
+
+    /**
+     * 作用域枚举：rag_entity UNION rag_entity_cooccurrence——覆盖"实体已尽失但边残留"的
+     * 异常漂移 scope（§6 第四轮修正）。
+     */
+    List<ScopeRow> selectDistinctScopes();
+
+    /**
+     * 实体元数据行（图快照用：id + degree——degree 供 WeakTieScoreCalculator 的 hub 预算判定）。
+     */
+    record EntityMeta(long id, int degree) {}
+
+    /**
+     * 读取 scope 全部实体清单（含图外孤立实体——bridge reset-0 语义需覆盖，V30 §6 阶段二）。
+     */
+    List<EntityMeta> selectScopeEntityMetas(@Param("userId") Long userId, @Param("teamId") @Nullable Long teamId);
 
     // ==================== Path C 在线检索查询（§6.2/§6.3/§6.4，仅读取）====================
 

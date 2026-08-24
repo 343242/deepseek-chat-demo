@@ -54,6 +54,9 @@ public class RagDocument {
     /** 文档逻辑标识（同一文档不同版本共享） */
     private String documentGroupId;
 
+    /** 实体抽取完成标记（V30 §6.2：NULL = 抽取未完成/未尝试，对账重链接检测据此重触发） */
+    private OffsetDateTime entityExtractedAt;
+
     @TableField(fill = FieldFill.INSERT)
     private OffsetDateTime createTime;
 
@@ -116,4 +119,7 @@ public class RagDocument {
 
     public String getDocumentGroupId() { return documentGroupId; }
     public void setDocumentGroupId(String documentGroupId) { this.documentGroupId = documentGroupId; }
+
+    public OffsetDateTime getEntityExtractedAt() { return entityExtractedAt; }
+    public void setEntityExtractedAt(OffsetDateTime entityExtractedAt) { this.entityExtractedAt = entityExtractedAt; }
 }

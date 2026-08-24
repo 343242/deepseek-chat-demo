@@ -2,6 +2,8 @@ package com.smart.rag.rag.config;
 
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
+import java.time.DayOfWeek;
+
 /**
  * 实体中心检索配置（{@code app.rag.entity.*}）。
  * <p>
@@ -27,8 +29,31 @@ public record RagEntityProperties(
         double gamma,
         boolean weakTieEnabled,
         String extractionModel,
-        boolean communityDetectionEnabled
+        boolean communityDetectionEnabled,
+        // === V30 共现图增量维护（docs/design/incremental-cooccurrence-maintenance.md）===
+        long lockTimeoutMillis,
+        int lockRetryAttempts,
+        long writeGateWaitMillis,
+        long deriveDebounceMillis,
+        Reconcile reconcile
 ) {
+
+    /**
+     * 每日对账配置（V30 §6/§7：{@code app.rag.entity.reconcile.*}）。
+     */
+    public record Reconcile(
+            boolean enabled,
+            String cron,
+            DayOfWeek forceDeriveDay,
+            int relinkLimit
+    ) {
+        public Reconcile {
+            if (cron == null || cron.isBlank()) cron = "0 0 8 * * *";
+            if (forceDeriveDay == null) forceDeriveDay = DayOfWeek.MONDAY;
+            if (relinkLimit < 0) relinkLimit = 0;
+        }
+    }
+
     public RagEntityProperties {
         // 抽取默认值
         if (embeddingBatchSize <= 0) embeddingBatchSize = 10;
@@ -45,5 +70,11 @@ public record RagEntityProperties(
                     + ", beta=" + beta + ", gamma=" + gamma + "）");
         if (alpha + beta + gamma == 0)
             throw new IllegalArgumentException("实体检索权重 α/β/γ 不能同时为 0，请至少配置一个非零权重");
+        // V30 增量维护默认值
+        if (lockTimeoutMillis <= 0) lockTimeoutMillis = 10_000;      // §8-4 初始值，验证 #12 压测定标
+        if (lockRetryAttempts <= 0) lockRetryAttempts = 3;
+        if (writeGateWaitMillis <= 0) writeGateWaitMillis = 120_000;  // §3.6 写闸门等待上限（0 无意义）
+        if (deriveDebounceMillis < 0) deriveDebounceMillis = 30_000; // §3.6 derive 防抖窗口，0=关闭
+        if (reconcile == null) reconcile = new Reconcile(true, "0 0 8 * * *", DayOfWeek.MONDAY, 0);
     }
 }

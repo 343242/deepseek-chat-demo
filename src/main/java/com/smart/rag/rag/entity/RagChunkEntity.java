@@ -22,6 +22,9 @@ public class RagChunkEntity {
     /** rag_entity.id */
     private Long entityId;
 
+    /** 权威文档归属（V30：删除路径直查，废除 rag_event 桥接） */
+    private Long documentId;
+
     @TableField(fill = com.baomidou.mybatisplus.annotation.FieldFill.INSERT)
     private OffsetDateTime createdAt;
 
@@ -30,6 +33,9 @@ public class RagChunkEntity {
 
     public Long getEntityId() { return entityId; }
     public void setEntityId(Long entityId) { this.entityId = entityId; }
+
+    public Long getDocumentId() { return documentId; }
+    public void setDocumentId(Long documentId) { this.documentId = documentId; }
 
     public OffsetDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(OffsetDateTime createdAt) { this.createdAt = createdAt; }

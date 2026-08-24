@@ -11,6 +11,14 @@
         </constructor>
     </resultMap>
 
+    <resultMap id="pairCountRow" type="com.smart.rag.rag.mapper.EntityCooccurrenceMapper$PairCount">
+        <constructor>
+            <arg column="entity_a" javaType="_long"/>
+            <arg column="entity_b" javaType="_long"/>
+            <arg column="co_count" javaType="_int"/>
+        </constructor>
+    </resultMap>
+
     <!-- 读取作用域内全部共现边（CooccurrenceGraphLoader 用） -->
     <select id="selectByScope" resultMap="cooccurrenceRow">
         SELECT entity_a, entity_b, co_count
@@ -19,7 +27,78 @@
           AND (#{teamId,jdbcType=BIGINT} IS NULL AND team_id IS NULL OR team_id = #{teamId,jdbcType=BIGINT})
     </select>
 
-    <!-- 清除作用域内全部共现边（全量重投影前置，去除失效边 §5.3） -->
+    <!-- ==================== 作用域级 advisory 锁（V30 §3.1）==================== -->
+
+    <!-- 作用域级事务内 advisory 锁。key 表达式只此一处定义，全域一致性由构造保证。
+         hashtextextended 冲突概率 ~2^-64/scope；即使冲突也仅导致无谓串行化，不影响正确性。
+         契约（§3.1，由 ScopeLockTemplate 运行时断言固化）：必须在事务内、且在取任何行锁之前
+         调用（R1）；pg_advisory_xact_lock 在自动提交下立即释放、静默失去串行化。
+         调用点仅限三个持锁事务模板（写路径 / 删除路径 / 对账锁内重写）+ derive/embedding 写回短事务。 -->
+    <select id="lockScope">
+        SELECT pg_advisory_xact_lock(
+            hashtextextended(#{userId,jdbcType=BIGINT}::text || ':' ||
+                             COALESCE(#{teamId,jdbcType=BIGINT}::text, '-1'), 0))
+    </select>
+
+    <!-- 持锁事务的锁等待上限（等价 SET LOCAL lock_timeout；set_config 第三参 true = 事务级）。
+         必须在 lockScope 之前执行：既约束 advisory 队列等待，也约束事务内行锁等待（§8-4）。 -->
+    <select id="setLockTimeout">
+        SELECT set_config('lock_timeout', #{millis}::text, true)
+    </select>
+
+    <!-- ==================== 增量维护（V30 写/删路径）==================== -->
+
+    <!-- 边递增（§4.4）：排序分批由 Java 侧保证（§3.4）；a &lt; b 由 Java 侧 LEAST/GREATEST 规范
+         （插入行保持规范化，递减路径才能按裸列等值匹配）。
+         冲突目标与 uk_cocur_scope_pair 索引表达式逐字对齐、含 LEAST/GREATEST（§11 第三轮修正：
+         裸列形式无法命中表达式索引，首次执行即抛 42P10），与 projectCooccurrence 的 arbiter 一致。 -->
+    <insert id="upsertIncrement">
+        INSERT INTO rag_entity_cooccurrence (entity_a, entity_b, co_count, user_id, team_id)
+        VALUES
+        <foreach collection="pairs" item="p" separator=",">
+            (#{p.entityA}, #{p.entityB}, #{p.coCount}, #{userId}, #{teamId})
+        </foreach>
+        ON CONFLICT (user_id, COALESCE(team_id, -1), LEAST(entity_a, entity_b), GREATEST(entity_a, entity_b))
+        DO UPDATE SET co_count = rag_entity_cooccurrence.co_count + EXCLUDED.co_count
+    </insert>
+
+    <!-- 文档当前贡献的 pair 计数（§5：该文档所有 chunk 内实体两两组合；锁内真值快照） -->
+    <select id="selectPairCountsByDocumentId" resultMap="pairCountRow">
+        SELECT LEAST(e1.entity_id, e2.entity_id)  AS entity_a,
+               GREATEST(e1.entity_id, e2.entity_id) AS entity_b,
+               count(*)                              AS co_count
+        FROM rag_chunk_entity e1
+        JOIN rag_chunk_entity e2
+          ON e1.chunk_id = e2.chunk_id AND e1.entity_id &lt; e2.entity_id
+        WHERE e1.document_id = #{documentId}
+        GROUP BY 1, 2
+    </select>
+
+    <!-- 对称递减（§5：VALUES JOIN，排序分批由 Java 侧保证） -->
+    <update id="decrementByPairs">
+        UPDATE rag_entity_cooccurrence c
+        SET co_count = c.co_count - v.delta
+        FROM (VALUES
+            <foreach collection="pairs" item="p" separator=",">
+                (#{p.entityA}::bigint, #{p.entityB}::bigint, #{p.coCount}::int)
+            </foreach>
+        ) AS v(entity_a, entity_b, delta)
+        WHERE c.entity_a = v.entity_a AND c.entity_b = v.entity_b
+          AND c.user_id = #{userId}
+          AND (#{teamId,jdbcType=BIGINT} IS NULL AND c.team_id IS NULL OR c.team_id = #{teamId,jdbcType=BIGINT})
+    </update>
+
+    <!-- 清零边删除：递减后 co_count&lt;=0 的边立即清除，等价于重投影的"去失效边"语义（§5） -->
+    <delete id="deleteZeroEdges">
+        DELETE FROM rag_entity_cooccurrence
+        WHERE user_id = #{userId,jdbcType=BIGINT}
+          AND (#{teamId,jdbcType=BIGINT} IS NULL AND team_id IS NULL OR team_id = #{teamId,jdbcType=BIGINT})
+          AND co_count &lt;= 0
+    </delete>
+
+    <!-- ==================== 对账（V30 §6，锁内条件重写 + 无锁探测）==================== -->
+
+    <!-- 清除作用域内全部共现边（对账锁内重投影前置；写路径不再调用） -->
     <delete id="deleteByScope">
         DELETE FROM rag_entity_cooccurrence
         WHERE user_id = #{userId,jdbcType=BIGINT}
@@ -27,7 +106,7 @@
     </delete>
 
     <!-- 共现图投影（§5.4）：从 rag_chunk_entity 自连接投影，LEAST/GREATEST 规范边方向。
-         按作用域过滤；ON CONFLICT 幂等（相同数据重跑 co_count 不变、无重复行）。 -->
+         按作用域过滤；ON CONFLICT 幂等。仅对账锁内重写调用（V30 后写路径走 upsertIncrement）。 -->
     <insert id="projectCooccurrence">
         INSERT INTO rag_entity_cooccurrence (entity_a, entity_b, co_count, user_id, team_id)
         SELECT
@@ -53,54 +132,39 @@
         DO UPDATE SET co_count = EXCLUDED.co_count
     </insert>
 
-    <!-- weak_tie_score 批量计算（§5.1 CTE）：neighbor_sets → neighbor_pairs → embeddedness → UPDATE。
-         WHERE re.degree < 100 性能预算（hub 维持默认 0.5）。无邻居/无邻居对的实体不在结果集中，保持默认。 -->
-    <update id="updateWeakTieScores">
-        WITH neighbor_sets AS (
-            SELECT
-                vn.entity_id,
-                array_agg(vn.neighbor_id) AS neighbors
-            FROM v_entity_neighbors vn
-            JOIN rag_entity re ON re.id = vn.entity_id
-            WHERE vn.user_id = #{userId,jdbcType=BIGINT}
-              AND (#{teamId,jdbcType=BIGINT} IS NULL AND vn.team_id IS NULL OR vn.team_id = #{teamId,jdbcType=BIGINT})
-              AND re.degree &lt; 100
-            GROUP BY vn.entity_id
-        ),
-        neighbor_pairs AS (
-            SELECT
-                ns.entity_id,
-                n1.neighbor_id AS n1,
-                n2.neighbor_id AS n2,
-                (
-                    SELECT count(*) FROM v_entity_neighbors vn1
-                    WHERE vn1.entity_id = n1.neighbor_id
-                      AND vn1.neighbor_id IN (
-                          SELECT neighbor_id FROM v_entity_neighbors WHERE entity_id = n2.neighbor_id
-                      )
-                ) AS common_count,
-                (SELECT count(*) FROM v_entity_neighbors WHERE entity_id = n1.neighbor_id) AS deg_n1,
-                (SELECT count(*) FROM v_entity_neighbors WHERE entity_id = n2.neighbor_id) AS deg_n2
-            FROM neighbor_sets ns
-            JOIN v_entity_neighbors n1 ON n1.entity_id = ns.entity_id
-            JOIN v_entity_neighbors n2 ON n2.entity_id = ns.entity_id
-            WHERE n1.neighbor_id &lt; n2.neighbor_id
-              AND n1.user_id = #{userId,jdbcType=BIGINT}
-              AND (#{teamId,jdbcType=BIGINT} IS NULL AND n1.team_id IS NULL OR n1.team_id = #{teamId,jdbcType=BIGINT})
-        ),
-        embeddedness AS (
-            SELECT
-                entity_id,
-                avg(common_count::float / NULLIF(deg_n1 + deg_n2 - common_count, 0)) AS avg_emb
-            FROM neighbor_pairs
-            GROUP BY entity_id
+    <!-- 表侧边指纹（§6）：count + md5(有序 (a,b,co_count) 三元组序列)，与源侧输出格式逐字一致；
+         显式 ::text 拼接（不依赖隐式 anynonarray‖text）。空集时两侧同为 "0:''"。 -->
+    <select id="selectEdgeFingerprint" resultType="java.lang.String">
+        SELECT count(*)::text || ':' || COALESCE(md5(string_agg(
+                   entity_a::text || ':' || entity_b::text || ':' || co_count::text,
+                   ',' ORDER BY entity_a, entity_b)), '')
+        FROM rag_entity_cooccurrence
+        WHERE user_id = #{userId,jdbcType=BIGINT}
+          AND (#{teamId,jdbcType=BIGINT} IS NULL AND team_id IS NULL OR team_id = #{teamId,jdbcType=BIGINT})
+    </select>
+
+    <!-- 源侧指纹（§6 阶段〇）：projectCooccurrence 的 SELECT 形状聚合成指纹
+         （经 rag_entity 限 scope 的同款自连接 + GROUP BY），无锁只读、不阻塞写。 -->
+    <select id="selectSourceFingerprint" resultType="java.lang.String">
+        WITH pairs AS (
+            SELECT LEAST(e1.entity_id, e2.entity_id)  AS a,
+                   GREATEST(e1.entity_id, e2.entity_id) AS b,
+                   count(*)                              AS c
+            FROM rag_chunk_entity e1
+            JOIN rag_chunk_entity e2
+              ON e1.chunk_id = e2.chunk_id AND e1.entity_id &lt; e2.entity_id
+            JOIN rag_entity re1 ON re1.id = e1.entity_id
+            JOIN rag_entity re2 ON re2.id = e2.entity_id
+            WHERE re1.user_id = re2.user_id
+              AND COALESCE(re1.team_id, -1) = COALESCE(re2.team_id, -1)
+              AND re1.user_id = #{userId,jdbcType=BIGINT}
+              AND (#{teamId,jdbcType=BIGINT} IS NULL AND re1.team_id IS NULL OR re1.team_id = #{teamId,jdbcType=BIGINT})
+            GROUP BY 1, 2
         )
-        UPDATE rag_entity e
-        SET weak_tie_score = COALESCE(1.0 - emb.avg_emb, 0.5),
-            updated_at = NOW()
-        FROM embeddedness emb
-        WHERE e.id = emb.entity_id
-          AND e.user_id = #{userId,jdbcType=BIGINT}
-    </update>
+        SELECT count(*)::text || ':' || COALESCE(md5(string_agg(
+                   a::text || ':' || b::text || ':' || c::text,
+                   ',' ORDER BY a, b)), '')
+        FROM pairs
+    </select>
 
 </mapper>

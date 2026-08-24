@@ -24,4 +24,24 @@
         ON CONFLICT (chunk_id) DO NOTHING
     </insert>
 
+    <!-- 孤儿事件清扫（§6 对账阶段一）：rag_event 自带 scope 列直接限定；逻辑删除行视同不存在。
+         同步修复 SAG 检索层（expandChunks）的僵尸事件。 -->
+    <delete id="deleteOrphanEventsByScope">
+        DELETE FROM rag_event e
+        WHERE e.user_id = #{userId,jdbcType=BIGINT}
+          AND (#{teamId,jdbcType=BIGINT} IS NULL AND e.team_id IS NULL OR e.team_id = #{teamId,jdbcType=BIGINT})
+          AND NOT EXISTS (SELECT 1 FROM rag_document d WHERE d.id = e.document_id AND d.deleted = 0)
+    </delete>
+
+    <!-- 孤儿事件探测（§6 阶段〇无锁只读）：谓词同 deleteOrphanEventsByScope，仅 EXISTS -->
+    <select id="existsOrphanEventsByScope" resultType="java.lang.Boolean">
+        SELECT EXISTS (
+            SELECT 1
+            FROM rag_event e
+            WHERE e.user_id = #{userId,jdbcType=BIGINT}
+              AND (#{teamId,jdbcType=BIGINT} IS NULL AND e.team_id IS NULL OR e.team_id = #{teamId,jdbcType=BIGINT})
+              AND NOT EXISTS (SELECT 1 FROM rag_document d WHERE d.id = e.document_id AND d.deleted = 0)
+        )
+    </select>
+
 </mapper>

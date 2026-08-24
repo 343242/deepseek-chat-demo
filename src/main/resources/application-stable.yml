@@ -12,7 +12,9 @@ spring:
     # 优雅停机最长等待 30s（覆盖典型 SSE 长会话的 tail；超时后强制关闭）
     timeout-per-shutdown-phase: 30s
   datasource:
-    url: jdbc:postgresql://${DB_HOST:localhost}:5432/${DB_NAME:smart_rag}
+    # socketTimeout=300s：socket 读挂起（如停机时后端已不可达）最多阻塞 5 分钟即抛错，
+    # 避免 etl 线程无限挂起拖垮关机流程；tcpKeepAlive：防 NAT/防火墙静默掐断空闲连接
+    url: jdbc:postgresql://${DB_HOST:localhost}:5432/${DB_NAME:smart_rag}?socketTimeout=300&tcpKeepAlive=true
     username: ${POSTGRES_USER}
     password: ${POSTGRES_PASSWORD}
     driver-class-name: org.postgresql.Driver

@@ -132,15 +132,34 @@ public class HttpClientFactory {
      * @return 共享 OkHttpClient
      */
     public OkHttpClient sharedOkHttpClient(Duration connectTimeout, Duration readTimeout) {
+        return sharedOkHttpClient(connectTimeout, readTimeout, Duration.ZERO);
+    }
+
+    /**
+     * 获取共享的 OkHttpClient 实例（按超时参数缓存，WS2：缓存键扩展 connect_read_call）。
+     * <p>
+     * 相同 (connectTimeout, readTimeout, callTimeout) 组合返回同一实例；
+     * {@code callTimeout = 0} 表示不限总时长（OkHttp callTimeout(0) 语义）。
+     * 阻塞与流式按用途持不同签名实例——不得为省实例把两路合用（决策 12）：
+     * 合用会把阻塞最坏时长放宽到 stream-call，或把流截断在阻塞 call-timeout。
+     *
+     * @param connectTimeout 连接超时
+     * @param readTimeout    读取超时
+     * @param callTimeout    调用总时长上限（0 = 不限）
+     * @return 共享 OkHttpClient
+     */
+    public OkHttpClient sharedOkHttpClient(Duration connectTimeout, Duration readTimeout, Duration callTimeout) {
         Objects.requireNonNull(connectTimeout, "connectTimeout must not be null");
         Objects.requireNonNull(readTimeout, "readTimeout must not be null");
-        String key = connectTimeout.toMillis() + "_" + readTimeout.toMillis();
+        Objects.requireNonNull(callTimeout, "callTimeout must not be null");
+        String key = connectTimeout.toMillis() + "_" + readTimeout.toMillis() + "_" + callTimeout.toMillis();
         return sharedOkHttpClients.computeIfAbsent(key, k -> {
-            log.info("Creating shared OkHttpClient: connectTimeout={}ms, readTimeout={}ms",
-                connectTimeout.toMillis(), readTimeout.toMillis());
+            log.info("Creating shared OkHttpClient: connectTimeout={}ms, readTimeout={}ms, callTimeout={}ms",
+                connectTimeout.toMillis(), readTimeout.toMillis(), callTimeout.toMillis());
             return new OkHttpClient.Builder()
                 .connectTimeout(connectTimeout)
                 .readTimeout(readTimeout)
+                .callTimeout(callTimeout)
                 .build();
         });
     }

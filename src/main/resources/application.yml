@@ -388,6 +388,12 @@ app:
             model: deepseek-v4-flash
             supports-streaming: true
             priority: 1
+            # 候选级超时覆盖（全部可选，默认值见设计文档 llm-resilience-optimization WS2）：
+            # connect-timeout-ms: 10000        # 连接超时
+            # read-timeout-ms: 120000          # 阻塞读超时
+            # call-timeout-ms: 150000          # 阻塞调用总时长上限
+            # stream-read-timeout-ms: 120000   # 流式相邻 chunk 间隔上限
+            # stream-call-timeout-ms: 300000   # 单流总时长上限（0 = 不限）
           - id: qwen3.7-plus
             provider: bailian
             model: qwen3.7-plus

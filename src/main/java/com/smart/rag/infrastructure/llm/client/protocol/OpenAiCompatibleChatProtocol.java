@@ -15,6 +15,7 @@ import com.smart.rag.infrastructure.llm.ThinkingConfig;
 import com.smart.rag.infrastructure.llm.ThinkingDialect;
 import com.smart.rag.infrastructure.llm.client.HttpClientErrorHandler;
 import com.smart.rag.infrastructure.llm.client.HttpClientFactory;
+import com.smart.rag.infrastructure.llm.client.TimeoutParams;
 import okhttp3.Call;
 import okhttp3.MediaType;
 import okhttp3.OkHttpClient;
@@ -61,9 +62,8 @@ public class OpenAiCompatibleChatProtocol implements ChatProtocol {
     private static final Logger log = LoggerFactory.getLogger(OpenAiCompatibleChatProtocol.class);
     private static final MediaType JSON_MEDIA = MediaType.get("application/json; charset=utf-8");
     private static final int CONNECT_TIMEOUT_SECONDS = 10;
-    /** 阻塞补全对长 chunk 的抽取（DeepSeek 等）可超 60s，读超时需覆盖慢请求；流式走 STREAM_READ_TIMEOUT_SECONDS */
+    /** 阻塞补全对长 chunk 的抽取（DeepSeek 等）可超 60s，读超时需覆盖慢请求；流式超时经 TimeoutParams 配置（WS2） */
     private static final int READ_TIMEOUT_SECONDS = 120;
-    private static final int STREAM_READ_TIMEOUT_SECONDS = 120;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final HttpClientFactory httpClientFactory;
@@ -124,9 +124,13 @@ public class OpenAiCompatibleChatProtocol implements ChatProtocol {
                 requestBuilder.header("Authorization", "Bearer " + endpoint.apiKey());
             }
 
-            // 共享 OkHttpClient（按超时签名缓存，HttpClientFactory.closeAll() 统一管理 — do NOT close here）
+            // 共享 OkHttpClient（按超时签名缓存，HttpClientFactory.closeAll() 统一管理 — do NOT close here）。
+            // 流式双实例结构（WS2 决策 12）：流式 client = (connect, stream-read, stream-call)，与阻塞实例天然分签名
+            TimeoutParams timeouts = TimeoutParams.chatDefaults().mergeWithParams(candidate.params());
             OkHttpClient okHttpClient = httpClientFactory.sharedOkHttpClient(
-                Duration.ofSeconds(CONNECT_TIMEOUT_SECONDS), Duration.ofSeconds(STREAM_READ_TIMEOUT_SECONDS));
+                Duration.ofMillis(timeouts.connectTimeoutMs()),
+                Duration.ofMillis(timeouts.streamReadTimeoutMs()),
+                Duration.ofMillis(timeouts.streamCallTimeoutMs()));
 
             Call call = okHttpClient.newCall(requestBuilder.build());
             sink.onCancel(call::cancel);

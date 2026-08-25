@@ -9,6 +9,7 @@ import com.smart.rag.infrastructure.llm.ToolCallingCapable;
 import com.smart.rag.infrastructure.llm.client.protocol.OpenAiCompatibleChatProtocol;
 import com.smart.rag.infrastructure.llm.client.generic.GenericChatClient;
 import com.smart.rag.infrastructure.llm.metrics.LlmMetrics;
+import com.smart.rag.infrastructure.llm.resilience.AdmissionControl;
 import com.smart.rag.infrastructure.llm.resilience.CircuitBreaker;
 import com.smart.rag.infrastructure.llm.resilience.ProbeHandler;
 import com.smart.rag.infrastructure.llm.resilience.ResilientChatClient;
@@ -51,13 +52,14 @@ public class ChatCapabilityStrategy extends AbstractProviderFactoryAwareStrategy
                                                 CircuitBreaker cb,
                                                 RetryPolicy retry,
                                                 @Nullable ProbeHandler probe,
-                                                @Nullable LlmMetrics metrics) {
+                                                @Nullable LlmMetrics metrics,
+                                                @Nullable AdmissionControl admissionControl) {
         if (!(raw instanceof ChatCapable chatCapable)) {
             throw new IllegalStateException(
                 "CHAT client '" + raw.candidateId() + "' does not implement ChatCapable");
         }
         ResilientChatClient resilient = new ResilientChatClient(
-            chatCapable, cb, retry, probe, metrics);
+            chatCapable, cb, retry, probe, metrics, admissionControl);
         if (raw instanceof ToolCallingCapable) {
             return new ResilientToolCallingChatClient(resilient);
         }

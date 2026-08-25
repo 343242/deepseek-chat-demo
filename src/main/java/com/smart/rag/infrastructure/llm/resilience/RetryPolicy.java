@@ -142,6 +142,8 @@ public class RetryPolicy {
             return false;
         }
         if (e instanceof RemoteException re) {
+            // LLM_BUSY（并发闸门拒绝，WS4）不在可重试码内：立即换下一模型（跨模型降级由
+            // FallbackEligibility 对 RemoteException 自动放行）
             if (re.getErrorCode() == RemoteErrorCode.LLM_RATE_LIMITED) {
                 // Retry-After > 60s：服务端明示长时间限流，同模型等待无意义 → 放弃重试直接降级（决策 15）
                 return !(e instanceof RateLimitedException rle && rle.shouldAbandonRetry());

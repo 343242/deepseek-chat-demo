@@ -23,6 +23,8 @@ public enum RemoteErrorCode implements IErrorCode {
     LLM_STREAM_ERROR(301008, "模型流式调用失败"),
     LLM_TRANSIENT_ERROR(301009, "模型调用瞬态失败（重试耗尽）"),
     LLM_RESPONSE_PARSE_ERROR(301010, "模型响应解析失败"),
+    /** 并发准入闸门 acquire 超时/中断（design llm-resilience-optimization WS4）：不可同模型重试、可跨模型降级 */
+    LLM_BUSY(301011, "模型并发已达上限"),
 
     // ==================== MCP 弹性层 302001–302999 ====================
     MCP_SERVER_UNREACHABLE(302001, "MCP server 不可达"),

@@ -40,6 +40,6 @@ public record LlmConfig(
 
     /** 获取弹性配置（null-safe） */
     public ResilienceConfig resolveResilience() {
-        return resilience != null ? resilience : new ResilienceConfig(null, null, null, null);
+        return resilience != null ? resilience : new ResilienceConfig(null, null, null, null, null, null);
     }
 }

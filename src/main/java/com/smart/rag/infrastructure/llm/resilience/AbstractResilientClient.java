@@ -24,12 +24,21 @@ public abstract class AbstractResilientClient<T extends CapabilityClient> implem
     protected final RetryPolicy retryPolicy;
     @Nullable
     protected final LlmMetrics metrics;
+    @Nullable
+    protected final AdmissionControl admissionControl;
 
-    protected AbstractResilientClient(T delegate, CircuitBreaker circuitBreaker, RetryPolicy retryPolicy, @Nullable LlmMetrics metrics) {
+    protected AbstractResilientClient(T delegate, CircuitBreaker circuitBreaker, RetryPolicy retryPolicy,
+                                      @Nullable LlmMetrics metrics) {
+        this(delegate, circuitBreaker, retryPolicy, metrics, null);
+    }
+
+    protected AbstractResilientClient(T delegate, CircuitBreaker circuitBreaker, RetryPolicy retryPolicy,
+                                      @Nullable LlmMetrics metrics, @Nullable AdmissionControl admissionControl) {
         this.delegate = delegate;
         this.circuitBreaker = circuitBreaker;
         this.retryPolicy = retryPolicy;
         this.metrics = metrics;
+        this.admissionControl = admissionControl;
     }
 
     @Override public String candidateId() { return delegate.candidateId(); }
@@ -74,19 +83,26 @@ public abstract class AbstractResilientClient<T extends CapabilityClient> implem
     protected <R> R executeResilient(RetryPolicy.CheckedSupplier<R> action,
                                       BiConsumer<String, Long> successRecorder,
                                       BiConsumer<String, Long> errorRecorder) {
-        long start = metrics != null ? metrics.startNanos() : 0;
+        // 闸门 acquire 在 metrics 计时起点之前：acquire 失败（LLM_BUSY）不打 error latency（WS4 §3.4.5）。
+        // permit 跨同模型重试持有（退避 sleep 期间不放）——重试风暴不放大并发。
+        AdmissionControl.Lease lease = admissionControl != null ? admissionControl.acquireBlocking() : null;
         try {
-            R result = circuitBreaker.execute(() -> retryPolicy.executeWithBackoff(action));
-            if (metrics != null) successRecorder.accept(candidateId(), start);
-            return result;
-        } catch (Exception e) {
-            if (metrics != null) errorRecorder.accept(candidateId(), start);
-            if (e instanceof RuntimeException re) throw re;
-            // Checked exceptions (e.g., InterruptedException, TimeoutException) are wrapped as
-            // RemoteException(LLM_TRANSIENT_ERROR) — they represent transient operational failures
-            // rather than permanent stream errors, so retry/circuit-breaker semantics apply correctly.
-            throw new RemoteException(RemoteErrorCode.LLM_TRANSIENT_ERROR,
-                "Unexpected checked exception from LLM action: " + e.getMessage(), e);
+            long start = metrics != null ? metrics.startNanos() : 0;
+            try {
+                R result = circuitBreaker.execute(() -> retryPolicy.executeWithBackoff(action));
+                if (metrics != null) successRecorder.accept(candidateId(), start);
+                return result;
+            } catch (Exception e) {
+                if (metrics != null) errorRecorder.accept(candidateId(), start);
+                if (e instanceof RuntimeException re) throw re;
+                // Checked exceptions (e.g., InterruptedException, TimeoutException) are wrapped as
+                // RemoteException(LLM_TRANSIENT_ERROR) — they represent transient operational failures
+                // rather than permanent stream errors, so retry/circuit-breaker semantics apply correctly.
+                throw new RemoteException(RemoteErrorCode.LLM_TRANSIENT_ERROR,
+                    "Unexpected checked exception from LLM action: " + e.getMessage(), e);
+            }
+        } finally {
+            if (lease != null) lease.close();
         }
     }
 }

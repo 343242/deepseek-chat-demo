@@ -5,6 +5,7 @@ import com.smart.rag.infrastructure.llm.LlmCapability;
 import com.smart.rag.infrastructure.llm.ModelCandidate;
 import com.smart.rag.infrastructure.llm.config.ProviderConfig;
 import com.smart.rag.infrastructure.llm.metrics.LlmMetrics;
+import com.smart.rag.infrastructure.llm.resilience.AdmissionControl;
 import com.smart.rag.infrastructure.llm.resilience.CircuitBreaker;
 import com.smart.rag.infrastructure.llm.resilience.ProbeHandler;
 import com.smart.rag.infrastructure.llm.resilience.RetryPolicy;
@@ -35,10 +36,11 @@ public interface CapabilityStrategy {
     CapabilityClient createClient(String baseUrl, String endpoint,
                                   String apiKey, ModelCandidate candidate);
 
-    /** Resilient 包装：将原始 Client 包装为带重试/熔断的装饰器 */
+    /** Resilient 包装：将原始 Client 包装为带重试/熔断/并发闸门的装饰器（WS4） */
     CapabilityClient wrapWithResilience(CapabilityClient raw,
                                         CircuitBreaker circuitBreaker,
                                         RetryPolicy retryPolicy,
                                         @Nullable ProbeHandler probeHandler,
-                                        @Nullable LlmMetrics metrics);
+                                        @Nullable LlmMetrics metrics,
+                                        @Nullable AdmissionControl admissionControl);
 }

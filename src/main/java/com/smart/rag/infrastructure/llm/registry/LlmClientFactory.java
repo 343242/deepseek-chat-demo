@@ -10,9 +10,12 @@ import com.smart.rag.infrastructure.fallback.CircuitBreakerProperties;
 import com.smart.rag.infrastructure.llm.config.LlmConfig;
 import com.smart.rag.infrastructure.llm.config.ModelGroup;
 import com.smart.rag.infrastructure.llm.config.ProbeProperties;
+import com.smart.rag.infrastructure.llm.config.ConcurrencyConfig;
 import com.smart.rag.infrastructure.llm.config.ResilienceConfig;
 import com.smart.rag.infrastructure.llm.config.RetryConfig;
 import com.smart.rag.infrastructure.llm.metrics.LlmMetrics;
+import com.smart.rag.infrastructure.llm.resilience.AdmissionControl;
+import com.smart.rag.infrastructure.llm.resilience.AdmissionControlRegistry;
 import com.smart.rag.infrastructure.llm.resilience.CircuitBreaker;
 import com.smart.rag.infrastructure.llm.resilience.LlmCircuitBreakerAdapterRegistry;
 import com.smart.rag.infrastructure.llm.resilience.ProbeHandler;
@@ -48,6 +51,7 @@ public class LlmClientFactory {
     private final Map<String, LlmProvider> providers;
     private final CapabilityStrategyRegistry strategyRegistry;
     private final LlmCircuitBreakerAdapterRegistry circuitBreakerRegistry;
+    private final AdmissionControlRegistry admissionControlRegistry;
     @Nullable
     private final ProbeStreamHandler probeStreamHandler;
     @Nullable
@@ -63,6 +67,7 @@ public class LlmClientFactory {
                             Map<String, LlmProvider> providers,
                             CapabilityStrategyRegistry strategyRegistry,
                             LlmCircuitBreakerAdapterRegistry circuitBreakerRegistry,
+                            AdmissionControlRegistry admissionControlRegistry,
                             @Nullable ProbeStreamHandler probeStreamHandler,
                             @Nullable SharedProbeRegistry sharedProbeRegistry,
                             @Nullable LlmMetrics metrics) {
@@ -75,6 +80,7 @@ public class LlmClientFactory {
                     + "': " + a.getClass().getName() + " vs " + b.getClass().getName()); }));
         this.strategyRegistry = strategyRegistry;
         this.circuitBreakerRegistry = circuitBreakerRegistry;
+        this.admissionControlRegistry = admissionControlRegistry;
         this.probeStreamHandler = probeStreamHandler;
         this.sharedProbeRegistry = sharedProbeRegistry;
         this.metrics = metrics;
@@ -169,9 +175,11 @@ public class LlmClientFactory {
             if (raw == null) continue;
 
             RetryConfig retryConfig = resilience.resolveRetryConfig(cap);
+            ConcurrencyConfig concurrencyConfig = resilience.resolveConcurrencyConfig(cap);
             CircuitBreakerProperties cbProps = resilience.resolveCircuitBreaker();
             ProbeProperties probeProps = resilience.resolveProbe();
-            CapabilityClient wrapped = wrapWithResilience(raw, cap, retryConfig, cbProps, probeProps);
+            CapabilityClient wrapped = wrapWithResilience(raw, item.candidate(), cap,
+                retryConfig, concurrencyConfig, cbProps, probeProps);
 
             clientsById.put(item.candidate().id(), wrapped);
             fallbackChains.computeIfAbsent(cap, k -> new ArrayList<>()).add(wrapped);
@@ -198,17 +206,36 @@ public class LlmClientFactory {
 
     /** 包装 Resilient 装饰器 */
     private CapabilityClient wrapWithResilience(CapabilityClient raw,
+                                                ModelCandidate candidate,
                                                 LlmCapability capability,
                                                 RetryConfig retryConfig,
+                                                ConcurrencyConfig concurrencyConfig,
                                                 CircuitBreakerProperties cbProps,
                                                 ProbeProperties probeProps) {
         CapabilityStrategy strategy = strategyRegistry.get(capability);
         CircuitBreaker cb = circuitBreakerRegistry.getOrCreate(raw.candidateId());
         RetryPolicy retry = new RetryPolicy(retryConfig);
 
+        // 并发准入闸门（WS4，仅系统链路——用户自带 key 链路已随 WS0 移除，天然不进闸门，决策 14）：
+        // 三级解析 candidate params.max-concurrent（终态覆盖，仅数量）> capability override > global
+        AdmissionControl admission = resolveAdmissionControl(raw.candidateId(),
+            concurrencyConfig, candidate.params());
+
         ProbeHandler probe = getOrCreateProbeHandler(probeProps);
 
-        return strategy.wrapWithResilience(raw, cb, retry, probe, metrics);
+        return strategy.wrapWithResilience(raw, cb, retry, probe, metrics, admission);
+    }
+
+    /** 三级解析闸门配置并经注册表获取（复用/替换语义见 AdmissionControlRegistry） */
+    private AdmissionControl resolveAdmissionControl(String candidateId,
+                                                      ConcurrencyConfig config,
+                                                      Map<String, Object> candidateParams) {
+        ConcurrencyConfig effective = config;
+        Object perCandidate = candidateParams != null ? candidateParams.get("max-concurrent") : null;
+        if (perCandidate instanceof Number n && n.intValue() > 0) {
+            effective = new ConcurrencyConfig(n.intValue(), config.acquireTimeoutMs());
+        }
+        return admissionControlRegistry.getOrCreate(candidateId, effective);
     }
 
     /**

@@ -7,6 +7,7 @@ import com.smart.rag.infrastructure.llm.ModelCandidate;
 import com.smart.rag.infrastructure.llm.client.HttpClientFactory;
 import com.smart.rag.infrastructure.llm.client.generic.GenericEmbeddingClient;
 import com.smart.rag.infrastructure.llm.metrics.LlmMetrics;
+import com.smart.rag.infrastructure.llm.resilience.AdmissionControl;
 import com.smart.rag.infrastructure.llm.resilience.CircuitBreaker;
 import com.smart.rag.infrastructure.llm.resilience.ProbeHandler;
 import com.smart.rag.infrastructure.llm.resilience.RetryPolicy;
@@ -47,11 +48,12 @@ public class EmbeddingCapabilityStrategy extends AbstractProviderFactoryAwareStr
                                                 CircuitBreaker cb,
                                                 RetryPolicy retry,
                                                 @Nullable ProbeHandler probe,
-                                                @Nullable LlmMetrics metrics) {
+                                                @Nullable LlmMetrics metrics,
+                                                @Nullable AdmissionControl admissionControl) {
         if (!(raw instanceof EmbeddingCapable embeddingCapable)) {
             throw new IllegalStateException(
                 "EMBEDDING client '" + raw.candidateId() + "' does not implement EmbeddingCapable");
         }
-        return new ResilientEmbeddingClient(embeddingCapable, cb, retry, metrics);
+        return new ResilientEmbeddingClient(embeddingCapable, cb, retry, metrics, admissionControl);
     }
 }

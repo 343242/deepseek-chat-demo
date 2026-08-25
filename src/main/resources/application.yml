@@ -445,6 +445,19 @@ app:
       probe:
         enabled: true
         probe-timeout-ms: 3000
+      # 并发准入闸门（WS4，仅系统候选）。初值未经压测标定，上线走灰度流程：
+      # 压测定值 → 单候选灰度（per-candidate params.max-concurrent）→ 盯 llm.busy.rejected（应≈0）→ 全量。
+      # 删除本块即禁用（代码默认 max-concurrent=0）。标定约束：各 chat 候选 permit 之和 ≤ boundedElastic 线程数。
+      concurrency:
+        max-concurrent: 64
+        acquire-timeout-ms: 1000
+      concurrency-overrides:
+        embedding:
+          max-concurrent: 16
+          acquire-timeout-ms: 5000
+        reranking:
+          max-concurrent: 8
+          acquire-timeout-ms: 5000
 
   # 通用安全原语（MCP admin 消费）
   security:

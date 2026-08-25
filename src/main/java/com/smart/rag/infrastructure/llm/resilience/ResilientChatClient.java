@@ -41,7 +41,16 @@ public class ResilientChatClient extends AbstractResilientClient<ChatCapable>
                                 RetryPolicy retryPolicy,
                                 @Nullable ProbeHandler probeHandler,
                                 @Nullable LlmMetrics metrics) {
-        super(delegate, circuitBreaker, retryPolicy, metrics);
+        this(delegate, circuitBreaker, retryPolicy, probeHandler, metrics, null);
+    }
+
+    public ResilientChatClient(ChatCapable delegate,
+                                CircuitBreaker circuitBreaker,
+                                RetryPolicy retryPolicy,
+                                @Nullable ProbeHandler probeHandler,
+                                @Nullable LlmMetrics metrics,
+                                @Nullable AdmissionControl admissionControl) {
+        super(delegate, circuitBreaker, retryPolicy, metrics, admissionControl);
         this.probeHandler = probeHandler;
     }
 
@@ -78,7 +87,7 @@ public class ResilientChatClient extends AbstractResilientClient<ChatCapable>
         long start = metrics != null ? metrics.startNanos() : 0;
         // P0a 占位：SPI 已改 Flux<StreamChunk>，但 ProbeHandler/retryStream 仍是 Flux<String>（P2 泛型化 ProbeHandler）。
         // 内部 .map(StreamChunk::text) 回 String 走弹性层，末端再 .map 回 StreamChunk。占位阶段无 tool delta，语义无损。
-        return circuitBreaker.executeStream(() ->
+        Flux<StreamChunk> body = circuitBreaker.executeStream(() ->
             retryPolicy.retryStream(() -> {
                 // P2：ProbeHandler/retryStream/executeStream 已泛型化，透传 Flux<StreamChunk>。
                 // text chunk + 轮末汇总包(toolCalls/finishReason/usage) 直达 ChatModelAdapter（P3 回灌）。
@@ -92,6 +101,8 @@ public class ResilientChatClient extends AbstractResilientClient<ChatCapable>
         }).doOnError(e -> {
             if (metrics != null) metrics.recordChatLatency(candidateId(), start, "error");
         });
+        // 闸门 acquire 先于 probe 订阅（决策 6：排队不消耗 3s 探测预算）；CANCEL 经 doFinally 释放
+        return admissionControl != null ? admissionControl.gateStream(() -> body) : body;
     }
 
     // ======== Tool Calling 操作（委托给底层 delegate） ========

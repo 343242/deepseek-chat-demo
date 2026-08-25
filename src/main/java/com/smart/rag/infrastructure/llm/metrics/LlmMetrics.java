@@ -114,6 +114,42 @@ public class LlmMetrics {
             .increment();
     }
 
+    // ==================== Admission Control（WS4） ====================
+
+    /** 闸门 acquire 失败（BUSY/超时/中断）计数 */
+    public void recordBusyRejected(String candidateId) {
+        if (registry == null) return;
+        registry.counter("llm.busy.rejected", "candidateId", candidateId).increment();
+    }
+
+    /**
+     * 注册在飞并发 gauge（值 = maxConcurrent - availablePermits）。
+     * <p>
+     * 幂等保护同 {@link #registerCircuitBreakerGauge}；evict 时经
+     * {@link #removeInflightGauge} 显式移除，杜绝强引用 gauge 泄漏与僵尸序列。
+     */
+    public void registerInflightGauge(String candidateId, Supplier<Number> valueSupplier) {
+        if (registry == null) return;
+        String gaugeKey = "llm.inflight:" + candidateId;
+        if (!registeredGauges.add(gaugeKey)) return; // idempotent
+        registry.gauge("llm.inflight",
+            io.micrometer.core.instrument.Tags.of("candidateId", candidateId),
+            valueSupplier, s -> s.get().doubleValue());
+    }
+
+    /** 移除在飞并发 gauge（注册表 evict 时调用，AC10 无僵尸序列） */
+    public void removeInflightGauge(String candidateId) {
+        if (registry == null) return;
+        String gaugeKey = "llm.inflight:" + candidateId;
+        if (registeredGauges.remove(gaugeKey)) {
+            io.micrometer.core.instrument.Meter meter = registry.find("llm.inflight")
+                .tag("candidateId", candidateId).meter();
+            if (meter != null) {
+                registry.remove(meter);
+            }
+        }
+    }
+
     // ==================== Client Initialization ====================
 
     /**

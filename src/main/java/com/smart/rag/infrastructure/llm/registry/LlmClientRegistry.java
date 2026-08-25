@@ -10,6 +10,8 @@ import com.smart.rag.infrastructure.exception.errorcode.RemoteErrorCode;
 import com.smart.rag.infrastructure.llm.CapabilityClient;
 import com.smart.rag.infrastructure.llm.LlmCapability;
 import com.smart.rag.infrastructure.llm.metrics.LlmMetrics;
+import com.smart.rag.infrastructure.llm.resilience.AdmissionControlRegistry;
+import com.smart.rag.infrastructure.llm.resilience.LlmCircuitBreakerAdapterRegistry;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
@@ -41,14 +43,20 @@ public class LlmClientRegistry {
 
     private final LlmClientFactory factory;
     private final ScopedTasks scopedTasks;
+    private final AdmissionControlRegistry admissionControlRegistry;
+    private final LlmCircuitBreakerAdapterRegistry circuitBreakerRegistry;
     private final Duration destroyTimeout;
     private final int destroyConcurrency;
     private final AtomicReference<RegistrySnapshot> snapshotRef;
 
     @Autowired
-    public LlmClientRegistry(LlmClientFactory factory, ScopedTasks scopedTasks) {
+    public LlmClientRegistry(LlmClientFactory factory, ScopedTasks scopedTasks,
+                             AdmissionControlRegistry admissionControlRegistry,
+                             LlmCircuitBreakerAdapterRegistry circuitBreakerRegistry) {
         this.factory = factory;
         this.scopedTasks = scopedTasks;
+        this.admissionControlRegistry = admissionControlRegistry;
+        this.circuitBreakerRegistry = circuitBreakerRegistry;
         this.destroyTimeout = DEFAULT_DESTROY_TIMEOUT;
         this.destroyConcurrency = DEFAULT_DESTROY_CONCURRENCY;
         this.snapshotRef = new AtomicReference<>(RegistrySnapshot.empty());
@@ -70,6 +78,12 @@ public class LlmClientRegistry {
     @PreDestroy
     public void destroy() {
         RegistrySnapshot snapshot = snapshotRef.getAndSet(RegistrySnapshot.empty());
+
+        // 闸门/熔断 adapter 注册表同步清理（决策 19：destroy 挂接，AC10 无僵尸序列）
+        snapshot.clientsById().forEach((id, client) -> {
+            admissionControlRegistry.evictQuietly(id);
+            circuitBreakerRegistry.evictQuietly(id);
+        });
 
         ScopeOptions options = ScopeOptions.builder("llm-registry-destroy")
             .policy(ScopePolicy.COLLECT_ALL)
@@ -104,6 +118,9 @@ public class LlmClientRegistry {
         if (old != null) {
             old.clientsById().forEach((id, client) -> {
                 if (!newSnapshot.clientsById().containsKey(id)) {
+                    // 候选消失：旁路 evict 闸门 + 熔断 adapter（决策 19，顺带修复熔断器注册表既有缺口）
+                    admissionControlRegistry.evictQuietly(id);
+                    circuitBreakerRegistry.evictQuietly(id);
                     try { client.close(); } catch (Exception e) {
                         log.warn("Failed to close old client {}: {}", id, e.getMessage());
                     }

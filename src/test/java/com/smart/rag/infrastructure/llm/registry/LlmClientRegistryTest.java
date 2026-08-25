@@ -29,12 +29,14 @@ class LlmClientRegistryTest {
 
     @Mock private LlmClientFactory factory;
     @Mock private ScopedTasks scopedTasks;
+    @Mock private com.smart.rag.infrastructure.llm.resilience.AdmissionControlRegistry admissionControlRegistry;
+    @Mock private com.smart.rag.infrastructure.llm.resilience.LlmCircuitBreakerAdapterRegistry circuitBreakerRegistry;
 
     private LlmClientRegistry registry;
 
     @BeforeEach
     void setUp() {
-        registry = new LlmClientRegistry(factory, scopedTasks);
+        registry = new LlmClientRegistry(factory, scopedTasks, admissionControlRegistry, circuitBreakerRegistry);
     }
 
     private void initSystem(RegistrySnapshot systemSnap) {

@@ -24,7 +24,15 @@ public class ResilientEmbeddingClient extends AbstractResilientClient<EmbeddingC
                                       CircuitBreaker circuitBreaker,
                                       RetryPolicy retryPolicy,
                                       @Nullable LlmMetrics metrics) {
-        super(delegate, circuitBreaker, retryPolicy, metrics);
+        this(delegate, circuitBreaker, retryPolicy, metrics, null);
+    }
+
+    public ResilientEmbeddingClient(EmbeddingCapable delegate,
+                                      CircuitBreaker circuitBreaker,
+                                      RetryPolicy retryPolicy,
+                                      @Nullable LlmMetrics metrics,
+                                      @Nullable AdmissionControl admissionControl) {
+        super(delegate, circuitBreaker, retryPolicy, metrics, admissionControl);
     }
 
     @Override

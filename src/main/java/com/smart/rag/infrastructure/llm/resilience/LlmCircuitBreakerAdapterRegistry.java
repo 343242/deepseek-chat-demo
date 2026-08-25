@@ -56,4 +56,14 @@ public class LlmCircuitBreakerAdapterRegistry {
         adapters.remove(candidateId);
         log.info("Evicted circuit breaker adapter for candidate '{}'", candidateId);
     }
+
+    /** 静默 evict（生命周期旁路调用，异常不传播 — WS4 决策 19） */
+    public void evictQuietly(String candidateId) {
+        try {
+            evict(candidateId);
+        } catch (Exception e) {
+            log.warn("Failed to evict circuit breaker adapter for candidate '{}': {}",
+                candidateId, e.getMessage());
+        }
+    }
 }

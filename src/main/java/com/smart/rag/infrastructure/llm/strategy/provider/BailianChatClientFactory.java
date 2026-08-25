@@ -3,9 +3,10 @@ package com.smart.rag.infrastructure.llm.strategy.provider;
 import com.smart.rag.infrastructure.llm.CapabilityClient;
 import com.smart.rag.infrastructure.llm.LlmCapability;
 import com.smart.rag.infrastructure.llm.ModelCandidate;
-import com.smart.rag.infrastructure.llm.client.HttpClientFactory;
+import com.smart.rag.infrastructure.llm.ResolvedEndpoint;
 import com.smart.rag.infrastructure.llm.client.bailian.BailianChatClient;
 import com.smart.rag.infrastructure.llm.client.generic.GenericChatClient;
+import com.smart.rag.infrastructure.llm.client.protocol.OpenAiCompatibleChatProtocol;
 import com.smart.rag.infrastructure.llm.strategy.ProviderClientFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -19,7 +20,7 @@ import java.util.Map;
  * <p>
  * 产出 {@link BailianChatClient}（SDK facade 按模型族双路由，见该类 Javadoc）。
  * <p>
- * <b>engagement 守卫</b>（设计 §4.3）：DB/BYOK 路径的 {@code provider_code='bailian'} 行可能
+ * <b>engagement 守卫</b>（设计 §4.3）：yml 配置的 {@code provider: bailian} 可能
  * 携带自定义 baseUrl（私有网关/代理）——SDK 客户端以 DashScope 原生协议打该 URL 会静默打挂。
  * 仅当 baseUrl 属 DashScope 官方域（{@code dashscope.aliyuncs.com} /
  * {@code *.maas.aliyuncs.com}）或候选显式声明 {@code params.sdk-client: true} 时产出 SDK
@@ -30,10 +31,10 @@ public class BailianChatClientFactory implements ProviderClientFactory {
 
     private static final Logger log = LoggerFactory.getLogger(BailianChatClientFactory.class);
 
-    private final HttpClientFactory httpClientFactory;
+    private final OpenAiCompatibleChatProtocol chatProtocol;
 
-    public BailianChatClientFactory(HttpClientFactory httpClientFactory) {
-        this.httpClientFactory = httpClientFactory;
+    public BailianChatClientFactory(OpenAiCompatibleChatProtocol chatProtocol) {
+        this.chatProtocol = chatProtocol;
     }
 
     @Override
@@ -52,7 +53,7 @@ public class BailianChatClientFactory implements ProviderClientFactory {
             log.info("BailianChatClientFactory: baseUrl '{}' outside DashScope domains and no "
                 + "params.sdk-client override, falling back to GenericChatClient for candidate '{}'",
                 baseUrl, candidate.id());
-            return new GenericChatClient(baseUrl, endpoint, apiKey, candidate, httpClientFactory);
+            return new GenericChatClient(new ResolvedEndpoint(baseUrl, apiKey, endpoint), candidate, chatProtocol);
         }
         return new BailianChatClient(sdkBaseUrl(baseUrl), apiKey, candidate);
     }

@@ -579,7 +579,7 @@ public class BailianChatClient extends AbstractChatClient implements ToolCalling
 
     /**
      * SDK Flowable 事件流上的轮内累积器（设计 §4.2.3「搬迁非删除」——不复用
-     * {@code client.generic.ToolCallAccumulator}：其为包私有且按 OpenAI index 语义；本类按
+     * {@code client.protocol.ToolCallAccumulator}：其为包私有且按 OpenAI index 语义；本类按
      * DashScope delta 形状新写。真机实证：首片携带 index+id+name，后续片仅 arguments 片段，
      * 尾片 finish_reason=tool_calls 且 toolCalls 为空片段——轮末汇总必须由本类 drain 产出）。
      * <p>

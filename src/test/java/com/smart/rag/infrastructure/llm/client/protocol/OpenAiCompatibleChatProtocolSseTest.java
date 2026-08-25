@@ -1,4 +1,4 @@
-package com.smart.rag.infrastructure.llm.client.generic;
+package com.smart.rag.infrastructure.llm.client.protocol;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.smart.rag.infrastructure.llm.StreamChunk;
@@ -14,14 +14,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 
 /**
- * P1 — GenericChatClient SSE 三态解析单测（design §3，直接测 readSse）。
+ * P1 — OpenAI 兼容协议 SSE 三态解析单测（自 GenericChatClientSseTest 随协议原样搬迁，design §3，直接测 readSse）。
  * <p>
- * 不绕 OkHttp 整链：readSse 改 static 接 ObjectMapper 参数，测试喂 fake SSE Buffer（okio.Buffer）。
+ * 不绕 OkHttp 整链：readSse 为 static 接 ObjectMapper 参数，测试喂 fake SSE Buffer（okio.Buffer）。
  * 覆盖：文本流 / tool_call 首片+arguments 分片累积 / 多工具并行 index / usage 末包 /
  * [DONE] 兜底 / finishReason 后 complete。
  */
-@DisplayName("GenericChatClient SSE 三态解析（readSse）")
-class GenericChatClientSseTest {
+@DisplayName("OpenAiCompatibleChatProtocol SSE 三态解析（readSse）")
+class OpenAiCompatibleChatProtocolSseTest {
 
     // ====== helpers ======
 
@@ -31,7 +31,7 @@ class GenericChatClientSseTest {
         Buffer buf = new Buffer().writeUtf8(sb.toString());
         return Flux.<StreamChunk>create(sink -> {
             try {
-                GenericChatClient.readSse(new ObjectMapper(), buf, mock(Call.class), sink);
+                OpenAiCompatibleChatProtocol.readSse(new ObjectMapper(), buf, mock(Call.class), sink);
                 sink.complete();
             } catch (Exception e) {
                 sink.error(e);

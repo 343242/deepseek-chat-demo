@@ -1,4 +1,4 @@
-package com.smart.rag.infrastructure.llm.client.generic;
+package com.smart.rag.infrastructure.llm.client.protocol;
 
 import com.smart.rag.infrastructure.llm.StreamChunk;
 

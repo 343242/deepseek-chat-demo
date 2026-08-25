@@ -3,11 +3,12 @@ package com.smart.rag.infrastructure.llm.strategy;
 import com.smart.rag.infrastructure.llm.CapabilityClient;
 import com.smart.rag.infrastructure.llm.ChatCapable;
 import com.smart.rag.infrastructure.llm.LlmCapability;
+import com.smart.rag.infrastructure.llm.ModelCandidate;
+import com.smart.rag.infrastructure.llm.ResolvedEndpoint;
 import com.smart.rag.infrastructure.llm.ToolCallingCapable;
-import com.smart.rag.infrastructure.llm.client.HttpClientFactory;
+import com.smart.rag.infrastructure.llm.client.protocol.OpenAiCompatibleChatProtocol;
 import com.smart.rag.infrastructure.llm.client.generic.GenericChatClient;
 import com.smart.rag.infrastructure.llm.metrics.LlmMetrics;
-import com.smart.rag.infrastructure.llm.ModelCandidate;
 import com.smart.rag.infrastructure.llm.resilience.CircuitBreaker;
 import com.smart.rag.infrastructure.llm.resilience.ProbeHandler;
 import com.smart.rag.infrastructure.llm.resilience.ResilientChatClient;
@@ -29,12 +30,12 @@ import java.util.List;
 @Component
 public class ChatCapabilityStrategy extends AbstractProviderFactoryAwareStrategy {
 
-    private final HttpClientFactory httpClientFactory;
+    private final OpenAiCompatibleChatProtocol chatProtocol;
 
     public ChatCapabilityStrategy(List<ProviderClientFactory> factories,
-                                   HttpClientFactory httpClientFactory) {
+                                   OpenAiCompatibleChatProtocol chatProtocol) {
         super(factories);
-        this.httpClientFactory = httpClientFactory;
+        this.chatProtocol = chatProtocol;
     }
 
     @Override public LlmCapability capability() { return LlmCapability.CHAT; }
@@ -42,7 +43,7 @@ public class ChatCapabilityStrategy extends AbstractProviderFactoryAwareStrategy
     @Override
     protected CapabilityClient createGenericClient(String baseUrl, String endpoint,
                                                     String apiKey, ModelCandidate candidate) {
-        return new GenericChatClient(baseUrl, endpoint, apiKey, candidate, httpClientFactory);
+        return new GenericChatClient(new ResolvedEndpoint(baseUrl, apiKey, endpoint), candidate, chatProtocol);
     }
 
     @Override

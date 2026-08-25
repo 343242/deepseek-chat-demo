@@ -121,6 +121,49 @@ public class HostSafetyValidator {
 
     // ===== 内网 IP 黑名单 =====
 
+    /**
+     * host 字面回环判定（免 key 豁免用，design llm-client-stateless §1 决策 4）：
+     * localhost（忽略大小写）/ 127.0.0.0/8 IPv4 字面 / {@code [::1]} 字面。
+     * <p>
+     * 纯字面解析、<b>不发 DNS</b>；解析失败或 host 缺失 → false（fail-safe）。
+     * 供 {@code ProviderConfig.isAvailable()} 的免 key 豁免门卫使用（yml 单源、无输入面，
+     * 运维直接写回环字面量即可；自定义 hosts 别名不在豁免面）。
+     * <p>
+     * 注意 {@link URI#getHost()} 对 IPv6 字面量返回带方括号形式（如 {@code [::1]}）。
+     * 静态方法：调用方（yml 绑定 record）无法注入 bean，与本类实例方法语义无关。
+     */
+    public static boolean isLoopbackEndpoint(String url) {
+        if (url == null || url.isBlank()) return false;
+        URI uri;
+        try {
+            uri = URI.create(url.trim());
+        } catch (Exception e) {
+            return false;
+        }
+        String host = uri.getHost();
+        if (host == null || host.isBlank()) return false;
+        String hostLower = host.toLowerCase();
+        if ("localhost".equals(hostLower)) return true;
+        if (hostLower.startsWith("[") && hostLower.endsWith("]")) {
+            return "[::1]".equals(hostLower);
+        }
+        return isIpv4LoopbackLiteral(host);
+    }
+
+    /** 127.0.0.0/8 IPv4 字面判定（点分四段、各段 0-255、首段 127） */
+    private static boolean isIpv4LoopbackLiteral(String host) {
+        String[] parts = host.split("\\.", -1);
+        if (parts.length != 4) return false;
+        for (String part : parts) {
+            if (part.isEmpty() || part.length() > 3) return false;
+            for (char c : part.toCharArray()) {
+                if (c < '0' || c > '9') return false;
+            }
+            if (Integer.parseInt(part) > 255) return false;
+        }
+        return Integer.parseInt(parts[0]) == 127;
+    }
+
     static boolean isInternalAddress(InetAddress addr) {
         byte[] b = addr.getAddress();
         if (b.length == 4) {

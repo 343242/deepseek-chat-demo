@@ -4,7 +4,7 @@ import com.smart.rag.infrastructure.llm.CapabilityClient;
 import com.smart.rag.infrastructure.llm.ChatCandidate;
 import com.smart.rag.infrastructure.llm.client.bailian.BailianChatClient;
 import com.smart.rag.infrastructure.llm.client.generic.GenericChatClient;
-import com.smart.rag.infrastructure.llm.client.HttpClientFactory;
+import com.smart.rag.infrastructure.llm.client.protocol.OpenAiCompatibleChatProtocol;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
@@ -18,13 +18,13 @@ import static org.mockito.Mockito.mock;
 /**
  * BailianChatClientFactory 单元测试（设计 §4.3 engagement 守卫）
  * <p>
- * DB/BYOK 行 {@code provider_code='bailian'} + 自定义 baseUrl 不得被 SDK 客户端劫持
+ * yml 配置的 {@code provider: bailian} + 自定义 baseUrl 不得被 SDK 客户端劫持
  * （DashScope 原生协议打私有网关会静默打挂）——域名白名单 + 显式 sdk-client 开关。
  */
 @DisplayName("BailianChatClientFactory engagement 守卫")
 class BailianChatClientFactoryTest {
 
-    private final BailianChatClientFactory factory = new BailianChatClientFactory(mock(HttpClientFactory.class));
+    private final BailianChatClientFactory factory = new BailianChatClientFactory(mock(OpenAiCompatibleChatProtocol.class));
 
     private static ChatCandidate candidate(Map<String, Object> params) {
         ChatCandidate c = new ChatCandidate();

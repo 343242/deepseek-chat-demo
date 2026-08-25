@@ -2,7 +2,7 @@ package com.smart.rag.infrastructure.llm;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.smart.rag.infrastructure.llm.client.generic.GenericChatClient;
+import com.smart.rag.infrastructure.llm.client.protocol.OpenAiCompatibleChatProtocol;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 
@@ -13,7 +13,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * TokenUsage cache hit 解析单测（Phase 10.12）。
  * <p>
- * 验证 {@code GenericChatClient.parseTokenUsage} 正确读取 DeepSeek
+ * 验证 {@code OpenAiCompatibleChatProtocol.parseTokenUsage} 正确读取 DeepSeek
  * {@code prompt_cache_hit_tokens} 与百炼 {@code prompt_tokens_details.cached_tokens}，
  * 以及 {@link LlmResponse.TokenUsage} 新字段 / 3-arg 兼容构造器。
  */
@@ -23,7 +23,7 @@ class TokenUsageCacheHitTest {
 
     /** 反射调用 private static parseTokenUsage（无状态方法，可静态调用） */
     private static LlmResponse.TokenUsage parse(JsonNode usage) throws Exception {
-        Method m = GenericChatClient.class.getDeclaredMethod("parseTokenUsage", JsonNode.class);
+        Method m = OpenAiCompatibleChatProtocol.class.getDeclaredMethod("parseTokenUsage", JsonNode.class);
         m.setAccessible(true);
         return (LlmResponse.TokenUsage) m.invoke(null, usage);
     }

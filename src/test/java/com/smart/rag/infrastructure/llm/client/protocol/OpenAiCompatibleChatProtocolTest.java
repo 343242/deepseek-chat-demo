@@ -1,4 +1,4 @@
-package com.smart.rag.infrastructure.llm.client.generic;
+package com.smart.rag.infrastructure.llm.client.protocol;
 
 import com.smart.rag.infrastructure.llm.ChatCandidate;
 import com.smart.rag.infrastructure.llm.ChatRequest;
@@ -17,13 +17,14 @@ import java.util.Map;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
- * GenericChatClient 请求体注入与阻塞响应提取单测 —— AC1/AC2/AC3/AC4/AC5/AC9/AC10。
+ * OpenAI 兼容协议请求体注入与阻塞响应提取单测（自 GenericChatClientTest 随协议原样搬迁）——
+ * AC1/AC2/AC3/AC4/AC5/AC9/AC10。
  */
-@DisplayName("GenericChatClient 思考参数（请求体注入 + 阻塞响应提取）")
-class GenericChatClientTest {
+@DisplayName("OpenAiCompatibleChatProtocol 思考参数（请求体注入 + 阻塞响应提取）")
+class OpenAiCompatibleChatProtocolTest {
 
     private ChatCandidate candidate;
-    private GenericChatClient client;
+    private OpenAiCompatibleChatProtocol protocol;
 
     @BeforeEach
     void setUp() {
@@ -32,13 +33,12 @@ class GenericChatClientTest {
         candidate.setProvider("test-provider");
         candidate.setModel("test-model");
         candidate.setCapability(LlmCapability.CHAT);
-        // 共享 OkHttpClient 走实例方法（内部按超时 key 缓存），真实实例即可
-        client = new GenericChatClient("http://localhost:1", "/v1/chat/completions",
-            "test-key", candidate, new HttpClientFactory());
+        // 共享传输走实例方法（内部按超时 key 缓存），真实 HttpClientFactory 即可
+        protocol = new OpenAiCompatibleChatProtocol(new HttpClientFactory());
     }
 
     private Map<String, Object> body(ChatRequest request) {
-        return client.buildRequestBody(request, false);
+        return protocol.buildRequestBody(request, candidate, false);
     }
 
     // ====== AC3：未配 params.thinking 零注入 ======
@@ -162,7 +162,7 @@ class GenericChatClientTest {
     @Test
     @DisplayName("AC5：阻塞响应含 reasoning_content → LlmResponse.reasoningContent() 返回完整文本")
     void parseResponseExtractsReasoningContent() {
-        LlmResponse resp = client.parseResponse("""
+        LlmResponse resp = protocol.parseResponse("""
             {"choices":[{"index":0,"message":{"role":"assistant",
               "reasoning_content":"让我先分析问题本质。",
               "content":"答案是42"},"finish_reason":"stop"}],
@@ -176,7 +176,7 @@ class GenericChatClientTest {
     @Test
     @DisplayName("AC5：阻塞响应无 reasoning_content → reasoningContent() 为空串")
     void parseResponseWithoutReasoningContentReturnsEmpty() {
-        LlmResponse resp = client.parseResponse("""
+        LlmResponse resp = protocol.parseResponse("""
             {"choices":[{"index":0,"message":{"role":"assistant","content":"普通回答"},"finish_reason":"stop"}]}
             """);
 

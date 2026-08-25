@@ -1,6 +1,7 @@
 package com.smart.rag.infrastructure.llm.config;
 
 import com.smart.rag.infrastructure.llm.LlmCapability;
+import com.smart.rag.infrastructure.security.HostSafetyValidator;
 import org.springframework.lang.Nullable;
 
 import java.util.Map;
@@ -43,11 +44,18 @@ public record ProviderConfig(
         return new ProviderConfig(url, apiKey, EndpointConfig.of(endpoints));
     }
 
-    /** 供应商是否可用（url 非空；apiKey 可为空仅限本地供应商如 Ollama） */
+    /**
+     * 供应商是否可用（url 非空；apiKey 可为空仅限服务器本地无鉴权端点，如同机部署 Ollama）。
+     * <p>
+     * 免 key 豁免经 {@link HostSafetyValidator#isLoopbackEndpoint} host 字面回环判定
+     * （localhost / 127.0.0.0/8 字面 / [::1] 字面；纯字面解析不发 DNS，解析失败 fail-safe 拒绝）。
+     * "本地"以应用服务器为视角：应用发出的回环请求只落在服务器自身；子串反例
+     * （{@code x.localhost.evil.com}、path 含 localhost）不豁免 → 候选跳过。
+     */
     public boolean isAvailable() {
         if (url == null || url.isBlank()) return false;
         if (apiKey == null || apiKey.isBlank()) {
-            return url.contains("localhost") || url.contains("127.0.0.1");
+            return HostSafetyValidator.isLoopbackEndpoint(url);
         }
         return true;
     }

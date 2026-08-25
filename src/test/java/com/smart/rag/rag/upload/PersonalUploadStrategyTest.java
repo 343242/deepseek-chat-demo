@@ -9,6 +9,7 @@ import com.smart.rag.rag.service.EtlDispatchService;
 import com.smart.rag.rag.service.FileStorageService;
 import com.smart.rag.rag.service.impl.DocumentValidator;
 import com.smart.rag.rag.service.impl.ValidatedDocumentFile;
+import com.smart.rag.rag.upload.UploadDocumentPersistence;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
@@ -68,8 +69,8 @@ class PersonalUploadStrategyTest {
             MultipartFile file = inv.getArgument(0);
             return new ValidatedDocumentFile(file.getOriginalFilename(), file.getSize(), "application/pdf");
         });
-        strategy = new PersonalUploadStrategy(fileStorageService, etlDispatchService,
-                ragDocumentMapper, bucketResolver, documentValidator, eventPublisher, null);
+        strategy = new PersonalUploadStrategy(fileStorageService, bucketResolver, documentValidator,
+                new UploadDocumentPersistence(ragDocumentMapper, eventPublisher, etlDispatchService, null));
     }
 
     private MultipartFile mockFile(String name) {
@@ -154,8 +155,8 @@ class PersonalUploadStrategyTest {
         // dedup 抛异常 —— 模拟 persist 之后的低概率失败（add 返回 void，用 doThrow）
         DocumentDedupService dedup = mock(DocumentDedupService.class);
         doThrow(new RuntimeException("dedup store down")).when(dedup).add(anyString());
-        PersonalUploadStrategy s = new PersonalUploadStrategy(fileStorageService, etlDispatchService,
-                ragDocumentMapper, bucketResolver, documentValidator, eventPublisher, dedup);
+        PersonalUploadStrategy s = new PersonalUploadStrategy(fileStorageService, bucketResolver,
+                documentValidator, new UploadDocumentPersistence(ragDocumentMapper, eventPublisher, etlDispatchService, dedup));
 
         MultipartFile f1 = mockFile("c.pdf");
         List<DocumentUploadResponse> result = s.uploadBatch(List.of(f1), null, null, USER_ID);

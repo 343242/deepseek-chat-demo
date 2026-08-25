@@ -4,14 +4,13 @@ import com.smart.rag.common.util.ChecksumUtils;
 import com.smart.rag.infrastructure.exception.ClientException;
 import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;
 import com.smart.rag.rag.upload.UploadStrategy;
-import com.smart.rag.rag.event.DocumentCreatedEvent;
 import com.smart.rag.rag.dto.DocumentUploadResponse;
 import com.smart.rag.rag.etl.EtlStatus;
 import com.smart.rag.rag.upload.BucketResolver;
+import com.smart.rag.rag.upload.UploadDocumentPersistence;
 import com.smart.rag.rag.entity.RagDocument;
 import com.smart.rag.rag.mapper.RagDocumentMapper;
 import com.smart.rag.rag.service.FileStorageService;
-import com.smart.rag.rag.service.EtlDispatchService;
 import com.smart.rag.rag.service.impl.DocumentValidator;
 import com.smart.rag.rag.service.impl.ValidatedDocumentFile;
 import com.smart.rag.team.entity.TeamMember;
@@ -23,7 +22,6 @@ import com.smart.rag.team.mapper.TeamUploadApprovalMapper;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Component;
 import org.springframework.web.multipart.MultipartFile;
 
@@ -42,6 +40,7 @@ import java.util.UUID;
  *   <li>管理员/创建者上传自动通过（PROCESSING），普通成员需审批（PENDING_APPROVAL）</li>
  *   <li>普通成员上传时创建审批记录</li>
  *   <li>校验成员上传额度（UPLOAD_QUOTA_EXCEEDED）</li>
+ *   <li>落库/事件/ETL 经 {@link UploadDocumentPersistence} 共享组件（与直传 commit 同源）</li>
  * </ul>
  */
 @Component
@@ -53,27 +52,24 @@ public class TeamUploadStrategy implements UploadStrategy {
     private final FileStorageService fileStorageService;
     private final BucketResolver bucketResolver;
     private final RagDocumentMapper ragDocumentMapper;
-    private final EtlDispatchService etlDispatchService;
     private final TeamMemberMapper teamMemberMapper;
     private final TeamUploadApprovalMapper approvalMapper;
-    private final ApplicationEventPublisher eventPublisher;
+    private final UploadDocumentPersistence persistence;
 
     public TeamUploadStrategy(DocumentValidator documentValidator,
                               FileStorageService fileStorageService,
                               BucketResolver bucketResolver,
                               RagDocumentMapper ragDocumentMapper,
-                              EtlDispatchService etlDispatchService,
                               TeamMemberMapper teamMemberMapper,
                               TeamUploadApprovalMapper approvalMapper,
-                              ApplicationEventPublisher eventPublisher) {
+                              UploadDocumentPersistence persistence) {
         this.documentValidator = documentValidator;
         this.fileStorageService = fileStorageService;
         this.bucketResolver = bucketResolver;
         this.ragDocumentMapper = ragDocumentMapper;
-        this.etlDispatchService = etlDispatchService;
         this.teamMemberMapper = teamMemberMapper;
         this.approvalMapper = approvalMapper;
-        this.eventPublisher = eventPublisher;
+        this.persistence = persistence;
     }
 
     @Override
@@ -96,9 +92,10 @@ public class TeamUploadStrategy implements UploadStrategy {
 
         boolean autoApproved = isAutoApproved(teamId, userId);
         String fileChecksum = computeChecksum(file);
-        RagDocument ragDoc = persistDocument(validated.fileName(), validated.fileSize(),
-                mimeType, storageKey, bucket, userId, teamId, autoApproved, fileChecksum);
-        eventPublisher.publishEvent(new DocumentCreatedEvent(ragDoc.getId(), replaceDocumentId, userId, teamId));
+        RagDocument ragDoc = persistence.insert(new UploadDocumentPersistence.Insert(
+                validated.fileName(), validated.fileSize(), mimeType, storageKey, bucket, userId, teamId,
+                fileChecksum, autoApproved ? EtlStatus.PROCESSING : EtlStatus.PENDING_APPROVAL));
+        persistence.publishCreated(ragDoc.getId(), replaceDocumentId, userId, teamId);
 
         if (!autoApproved) {
             createApprovalRecord(teamId, ragDoc.getId(), userId);
@@ -106,7 +103,7 @@ public class TeamUploadStrategy implements UploadStrategy {
 
         // 管理员/创建者直接触发 ETL，普通成员等审批
         if (ragDoc.getStatus() == EtlStatus.PROCESSING) {
-            etlDispatchService.dispatchAsync(ragDoc.getId(), bucket, storageKey,
+            persistence.dispatchEtl(ragDoc.getId(), bucket, storageKey,
                     validated.fileName(), mimeType, validated.fileSize(), userId, teamId);
         }
 
@@ -135,9 +132,10 @@ public class TeamUploadStrategy implements UploadStrategy {
             String storageKey = UUID.randomUUID().toString();
             fileStorageService.upload(bucket, storageKey, file.getResource(), mimeType);
 
-            RagDocument ragDoc = persistDocument(validated.fileName(), validated.fileSize(),
-                    mimeType, storageKey, bucket, userId, teamId, autoApproved, computeChecksum(file));
-            eventPublisher.publishEvent(new DocumentCreatedEvent(ragDoc.getId(), null, userId, teamId));
+            RagDocument ragDoc = persistence.insert(new UploadDocumentPersistence.Insert(
+                    validated.fileName(), validated.fileSize(), mimeType, storageKey, bucket, userId, teamId,
+                    computeChecksum(file), autoApproved ? EtlStatus.PROCESSING : EtlStatus.PENDING_APPROVAL));
+            persistence.publishCreated(ragDoc.getId(), null, userId, teamId);
 
             if (!autoApproved) {
                 createApprovalRecord(teamId, ragDoc.getId(), userId);
@@ -150,7 +148,7 @@ public class TeamUploadStrategy implements UploadStrategy {
         }
 
         for (RagDocument doc : autoApprovedDocs) {
-            etlDispatchService.dispatchAsync(doc.getId(), doc.getBucket(), doc.getStorageKey(),
+            persistence.dispatchEtl(doc.getId(), doc.getBucket(), doc.getStorageKey(),
                     doc.getFileName(), doc.getMimeType(), doc.getFileSize(), userId, teamId);
         }
 
@@ -197,7 +195,7 @@ public class TeamUploadStrategy implements UploadStrategy {
     private long getUsedBytes(Long teamId, Long userId) {
         Long totalBytes = ragDocumentMapper.selectFileSizeSum(teamId, userId,
                 EtlStatus.REJECTED.getCode());
-        return totalBytes != null ? totalBytes : 0;
+        return totalBytes != null ? totalBytes : 0L;
     }
 
     /**
@@ -212,26 +210,6 @@ public class TeamUploadStrategy implements UploadStrategy {
         approval.setCreatedAt(OffsetDateTime.now());
         approvalMapper.insert(approval);
         log.info("Approval created: teamId={}, documentId={}, uploaderId={}", teamId, documentId, uploaderId);
-    }
-
-    /**
-     * 持久化文档记录
-     */
-    private RagDocument persistDocument(String fileName, long fileSize, String mimeType,
-                                        String storageKey, String bucket, Long userId,
-                                        Long teamId, boolean autoApproved, String fileChecksum) {
-        RagDocument doc = new RagDocument();
-        doc.setFileName(fileName);
-        doc.setFileSize(fileSize);
-        doc.setMimeType(mimeType);
-        doc.setStorageKey(storageKey);
-        doc.setBucket(bucket);
-        doc.setUserId(userId);
-        doc.setTeamId(teamId);
-        doc.setFileChecksum(fileChecksum);
-        doc.setStatus(autoApproved ? EtlStatus.PROCESSING : EtlStatus.PENDING_APPROVAL);
-        ragDocumentMapper.insert(doc);
-        return doc;
     }
 
     /**

@@ -1,42 +1,31 @@
 package com.smart.rag.rag.upload;
 
 import com.smart.rag.common.util.ChecksumUtils;
-import com.smart.rag.infrastructure.exception.AbstractException;
 import com.smart.rag.infrastructure.exception.errorcode.ClientErrorCode;
 import com.smart.rag.infrastructure.exception.ClientException;
-import com.smart.rag.rag.event.DocumentCreatedEvent;
 import com.smart.rag.rag.dto.DocumentUploadResponse;
+import com.smart.rag.rag.entity.RagDocument;
 import com.smart.rag.rag.etl.EtlCandidate;
 import com.smart.rag.rag.etl.EtlStatus;
-import com.smart.rag.rag.entity.RagDocument;
-import com.smart.rag.rag.mapper.RagDocumentMapper;
-import com.smart.rag.rag.service.EtlDispatchService;
 import com.smart.rag.rag.service.FileStorageService;
-import com.smart.rag.rag.service.DocumentDedupService;
 import com.smart.rag.rag.service.impl.DocumentValidator;
 import com.smart.rag.rag.service.impl.ValidatedDocumentFile;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Component;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.InputStream;
-import java.time.OffsetDateTime;
 import java.util.ArrayList;
 import java.util.List;
 
 /**
  * 个人文档上传策略 — 封装现有上传逻辑
- * <p>
- * 将原 {@code DocumentApplicationServiceImpl} 中 {@code upload()}/{@code uploadBatch()}
- * 的全部逻辑搬至此类，包括：
  * <ul>
  *   <li>文件校验（{@link DocumentValidator}）</li>
  *   <li>MinIO 存储（{@link FileStorageService}）</li>
- *   <li>数据库元数据写入（{@link RagDocumentMapper}）</li>
- *   <li>ETL 触发（{@link EtlDispatchService}）</li>
+ *   <li>落库/事件/dedup/ETL 经 {@link UploadDocumentPersistence} 共享组件（与直传 commit 同源）</li>
  * </ul>
  * <p>
  * teamId 参数传入但忽略——个人上传不关心团队。
@@ -47,27 +36,18 @@ public class PersonalUploadStrategy implements UploadStrategy {
     private static final Logger log = LoggerFactory.getLogger(PersonalUploadStrategy.class);
 
     private final FileStorageService fileStorageService;
-    private final EtlDispatchService etlDispatchService;
-    private final RagDocumentMapper ragDocumentMapper;
     private final BucketResolver bucketResolver;
     private final DocumentValidator documentValidator;
-    private final ApplicationEventPublisher eventPublisher;
-    private final @Nullable DocumentDedupService documentDedupService;
+    private final UploadDocumentPersistence persistence;
 
     public PersonalUploadStrategy(FileStorageService fileStorageService,
-                                   EtlDispatchService etlDispatchService,
-                                   RagDocumentMapper ragDocumentMapper,
                                    BucketResolver bucketResolver,
                                    DocumentValidator documentValidator,
-                                   ApplicationEventPublisher eventPublisher,
-                                   @Nullable DocumentDedupService documentDedupService) {
+                                   UploadDocumentPersistence persistence) {
         this.fileStorageService = fileStorageService;
-        this.etlDispatchService = etlDispatchService;
-        this.ragDocumentMapper = ragDocumentMapper;
         this.bucketResolver = bucketResolver;
         this.documentValidator = documentValidator;
-        this.eventPublisher = eventPublisher;
-        this.documentDedupService = documentDedupService;
+        this.persistence = persistence;
     }
 
     @Override
@@ -87,14 +67,14 @@ public class PersonalUploadStrategy implements UploadStrategy {
         fileStorageService.upload(bucket, storageKey, file.getResource(), mimeType);
 
         String fileChecksum = computeChecksum(file);
-        RagDocument ragDoc = persistDocument(originalFilename, validated.fileSize(), mimeType, storageKey, bucket, userId, fileChecksum);
-        if (documentDedupService != null && ragDoc.getFileChecksum() != null) {
-            documentDedupService.add(ragDoc.getFileChecksum());
-        }
-        eventPublisher.publishEvent(new DocumentCreatedEvent(ragDoc.getId(), replaceDocumentId, userId, ragDoc.getTeamId()));
+        var ragDoc = persistence.insert(new UploadDocumentPersistence.Insert(
+                originalFilename, validated.fileSize(), mimeType, storageKey, bucket, userId, null,
+                fileChecksum, EtlStatus.UPLOADED));
+        persistence.registerDedup(ragDoc.getFileChecksum());
+        persistence.publishCreated(ragDoc.getId(), replaceDocumentId, userId, ragDoc.getTeamId());
         log.info("Document uploaded: id={}, file={}, size={}, userId={}", ragDoc.getId(), originalFilename, validated.fileSize(), userId);
 
-        etlDispatchService.dispatchAsync(ragDoc.getId(), bucket, storageKey, originalFilename, mimeType, validated.fileSize(), userId, ragDoc.getTeamId());
+        persistence.dispatchEtl(ragDoc.getId(), bucket, storageKey, originalFilename, mimeType, validated.fileSize(), userId, ragDoc.getTeamId());
 
         return new DocumentUploadResponse(ragDoc.getId(), originalFilename, EtlStatus.PROCESSING);
     }
@@ -130,14 +110,14 @@ public class PersonalUploadStrategy implements UploadStrategy {
                 uploaded = true;
 
                 String fileChecksum = computeChecksum(file);
-                ragDoc = persistDocument(originalFilename, validated.fileSize(), mimeType, storageKey, bucket, userId, fileChecksum);
+                ragDoc = persistence.insert(new UploadDocumentPersistence.Insert(
+                        originalFilename, validated.fileSize(), mimeType, storageKey, bucket, userId, null,
+                        fileChecksum, EtlStatus.UPLOADED));
                 // persist 成功后立即登记 dispatch 候选 —— 即使后续 dedup/event 抛异常，
                 // 该文档仍会被 dispatch，避免落入 UPLOADED 死状态。
                 candidates.add(new EtlCandidate(ragDoc.getId(), bucket, storageKey, originalFilename, mimeType, validated.fileSize(), userId, ragDoc.getTeamId()));
-                if (documentDedupService != null && ragDoc.getFileChecksum() != null) {
-                    documentDedupService.add(ragDoc.getFileChecksum());
-                }
-                eventPublisher.publishEvent(new DocumentCreatedEvent(ragDoc.getId(), null, userId, ragDoc.getTeamId()));
+                persistence.registerDedup(ragDoc.getFileChecksum());
+                persistence.publishCreated(ragDoc.getId(), null, userId, ragDoc.getTeamId());
                 log.debug("Document uploaded (batch): id={}, file={}, size={}, userId={}", ragDoc.getId(), originalFilename, file.getSize(), userId);
                 responses.add(new DocumentUploadResponse(ragDoc.getId(), originalFilename, EtlStatus.PROCESSING));
             } catch (RuntimeException e) {
@@ -157,7 +137,7 @@ public class PersonalUploadStrategy implements UploadStrategy {
         // 逐文件 dispatchAsync：经 outbox → Redis Stream 异步消费，HTTP 请求落库后立即返回，
         // 不再阻塞 ETL；单文档失败进重试/DLQ，与整批其余文档错误隔离（对齐 TeamUploadStrategy）。
         for (EtlCandidate c : candidates) {
-            etlDispatchService.dispatchAsync(c.documentId(), c.bucket(), c.objectKey(),
+            persistence.dispatchEtl(c.documentId(), c.bucket(), c.objectKey(),
                     c.fileName(), c.mimeType(), c.fileSize(), c.userId(), c.teamId());
         }
 
@@ -189,28 +169,6 @@ public class PersonalUploadStrategy implements UploadStrategy {
      */
     private String buildStorageKey(Long userId, String originalFilename) {
         return StorageKeys.documentObjectKey(userId, originalFilename);
-    }
-
-    /**
-     * 持久化文档元数据到数据库
-     */
-    private RagDocument persistDocument(String fileName, long fileSize, String mimeType,
-                                        String storageKey, String bucket, Long userId, String fileChecksum) {
-        RagDocument ragDoc = new RagDocument();
-        ragDoc.setFileName(fileName);
-        ragDoc.setFileSize(fileSize);
-        ragDoc.setMimeType(mimeType);
-        ragDoc.setStorageKey(storageKey);
-        ragDoc.setBucket(bucket);
-        ragDoc.setUserId(userId);
-        ragDoc.setFileChecksum(fileChecksum);
-        ragDoc.setStatus(EtlStatus.UPLOADED);
-        ragDoc.setDeleted(0);
-        OffsetDateTime now = OffsetDateTime.now();
-        ragDoc.setCreateTime(now);
-        ragDoc.setUpdateTime(now);
-        ragDocumentMapper.insert(ragDoc);
-        return ragDoc;
     }
 
     /**

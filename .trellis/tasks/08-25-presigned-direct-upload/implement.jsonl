@@ -1,0 +1,7 @@
+{"file": "docs/design/presigned-direct-upload.md", "reason": "权威技术方案：API 契约、SDK 承载、key/会话/状态机/校验/cleaner/错误码/测试策略全在此文档"}
+{"file": ".trellis/spec/backend/index.md", "reason": "后端层开发前置清单与质量检查入口"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "新增 ServiceErrorCode 204010-204016 与 ClientException/ServiceException/RemoteException 抛出惯例"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "后端代码质量与测试约定"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "前端层开发前置清单"}
+{"file": ".trellis/spec/frontend/data-and-state.md", "reason": "react-query/localStorage/状态管理惯例（config 拉取、direct-upload 编排）"}
+{"file": ".trellis/spec/frontend/quality-and-testing.md", "reason": "vitest 组织、mock 惯例（api-fetch mock 模板）"}

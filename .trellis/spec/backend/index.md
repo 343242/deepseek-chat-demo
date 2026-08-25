@@ -23,6 +23,7 @@ Spring Boot 3.5 + MyBatis-Plus + PostgreSQL + Redis 的 DeepSeek 聊天助手后
 - [ ] [LLM SPI](./llm-spi.md) — 基础设施层 LLM 客户端契约（禁止注入 `ChatClient.Builder`）
 - [ ] [RAG 引用与上下文工程](./rag-citation-context.md) — RetrievedDocument 契约、检索段 SystemMessage 注入、静态/动态 prompt 拆分（改 RAG 检索/prompt/DTO 前必读）
 - [ ] [MCP Integration](./mcp-integration.md) — DB 驱动的工具身份、token、迁移与 client 所有权契约（改 MCP 前必读）
+- [ ] [MinIO SDK 实测坑](./minio-sdk-quirks.md) — copyObject 丢条件头、ListMultipartUploads 双重不可用、ListParts 构建器缺陷（改 MinIO 交互前必读）
 
 ---
 

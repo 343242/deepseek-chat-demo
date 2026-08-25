@@ -1,0 +1,5 @@
+{"file": "docs/design/presigned-direct-upload.md", "reason": "对照设计的 API/校验/状态机/错误码/测试策略逐项验收"}
+{"file": ".trellis/spec/backend/code-review-checklist.md", "reason": "后端改动评审清单"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "错误码与异常语义合规"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "测试与质量门槛"}
+{"file": ".trellis/spec/frontend/quality-and-testing.md", "reason": "前端测试与类型检查门槛"}

@@ -32,6 +32,29 @@ public interface TeamAccessGate {
     boolean isTeamActive(Long teamId);
 
     /**
+     * 校验成员上传额度（语义对齐 team 侧 {@code TeamUploadStrategy.verifyUploadQuota}）：
+     * 已用（排除 REJECTED）+ extraSize 超过成员配额即抛 UPLOAD_QUOTA_EXCEEDED。
+     * <p>
+     * presigned 直传路径使用（init 预检 + commit 复核，防 init 后额度被并发占满）。
+     *
+     * @param teamId    团队 ID
+     * @param userId    用户 ID
+     * @param extraSize 本次上传的额外字节数
+     * @throws com.smart.rag.infrastructure.exception.ClientException 配额超限 / 非成员
+     */
+    void verifyUploadQuota(Long teamId, Long userId, long extraSize);
+
+    /**
+     * 创建团队上传待审批记录（普通成员上传落库后调用；语义对齐
+     * {@code TeamUploadStrategy.createApprovalRecord}）。
+     *
+     * @param teamId     团队 ID
+     * @param documentId 文档 ID
+     * @param uploaderId 上传者 ID
+     */
+    void createUploadApproval(Long teamId, Long documentId, Long uploaderId);
+
+    /**
      * 团队访问上下文。
      *
      * @param manager 是否为管理者（团队 ADMIN / CREATOR）

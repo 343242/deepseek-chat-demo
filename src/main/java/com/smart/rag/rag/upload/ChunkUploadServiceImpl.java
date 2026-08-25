@@ -50,8 +50,11 @@ import java.util.regex.Pattern;
  *   <li>{@link ChunkMergeService} — 分片合并流程</li>
  * </ul>
  * <p>
- * MinIO SDK 9.0.0 不对外暴露 Multipart Upload API（createMultipartUpload/uploadPart/completeMultipartUpload），
- * 因此采用 composeObject 方案：
+ * 历史注记（已被推翻，见 docs/design/presigned-direct-upload.md「SDK 承载」）：早期版本认为
+ * MinIO SDK 不公开 Multipart Upload API 而采用 composeObject 方案——自 SDK 8.5.15（PR #1607）
+ * 起 MPU 原语（createMultipartUpload/uploadPart/completeMultipartUpload 等）已 public（9.0.3
+ * 位于 {@code BaseS3Client}）。新上传路径（presigned 直传）已改用原生 MPU；本类为兼容存量的
+ * 代理分片路径，阶段 3 退役（设计文档「迁移路径」）。现方案：
  * <ol>
  *   <li>每个分片 putObject 到临时路径 chunks/{uploadId}/part-{chunkIndex}</li>
  *   <li>所有分片上传完后，composeObject 合并所有临时对象为目标对象</li>

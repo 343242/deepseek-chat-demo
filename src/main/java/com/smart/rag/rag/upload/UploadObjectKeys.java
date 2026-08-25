@@ -18,6 +18,15 @@ public final class UploadObjectKeys {
     /** 合并后文档对象前缀：documents/{userId}/{shortId}_{fileName} */
     public static final String DOCUMENTS_PREFIX = "documents/";
 
+    /**
+     * 直传中转前缀：uploads/pending/{userId}/{sessionId}/{shortId}_{fileName}。
+     * <p>
+     * 直传（presigned URL）两阶段提交的 pending 中转区：commit 校验通过前对象只落此处，
+     * 保证 documents/ 下「有对象必有 DB 记录」不变式；key 含 sessionId 段供
+     * {@code DirectUploadOrphanCleaner} 做 O(1) 会话存活判定。
+     */
+    public static final String PENDING_PREFIX = "uploads/pending/";
+
     /** 分片对象 key 后缀（拼接在会话 objectName 基路径之后） */
     public static final String PART_SUFFIX = "/part-";
 
@@ -26,5 +35,14 @@ public final class UploadObjectKeys {
      */
     public static String chunkObjectKey(String basePath, int chunkIndex) {
         return basePath + PART_SUFFIX + chunkIndex;
+    }
+
+    /**
+     * 构建直传 pending 对象 key：uploads/pending/{userId}/{sessionId}/{shortId}_{fileName}
+     *（shortId 随机、文件名经 {@link StorageKeys#sanitizeFilename}）
+     */
+    public static String pendingObjectKey(Long userId, String sessionId, String originalFileName) {
+        return PENDING_PREFIX + userId + "/" + sessionId + "/"
+                + StorageKeys.generateShortId(8) + "_" + StorageKeys.sanitizeFilename(originalFileName);
     }
 }

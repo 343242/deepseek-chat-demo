@@ -30,6 +30,13 @@ public enum ServiceErrorCode implements IErrorCode {
     ETL_NO_RESULT(204003, "ETL 处理无结果"),
     ETL_FAILED(204004, "文档处理失败"),
     UPLOAD_SESSION_NOT_FOUND(204005, "上传会话不存在或已过期"),
+    DIRECT_UPLOAD_MODE_INVALID(204010, "直传会话模式与请求不匹配"),
+    DIRECT_UPLOAD_PARTS_INCOMPLETE(204011, "直传分片列表不连续或缺失"),
+    DIRECT_UPLOAD_SIZE_MISMATCH(204012, "实际文件尺寸与声明不符"),
+    DIRECT_UPLOAD_CHECKSUM_MISMATCH(204013, "文件校验和复核失败"),
+    DIRECT_UPLOAD_COMPLETE_FAILED(204014, "分片合并失败"),
+    DIRECT_UPLOAD_COPY_FAILED(204015, "对象存储复制失败"),
+    DIRECT_UPLOAD_UPLOAD_GONE(204016, "直传会话已失效，请重新发起上传"),
 
     // ==================== 团队 205001–205999 ====================
     TEAM_NOT_FOUND(205001, "团队不存在"),

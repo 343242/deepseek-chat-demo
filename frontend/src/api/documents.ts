@@ -14,7 +14,6 @@ import type {
   DirectUploadPartUrlsResult,
   DirectUploadStatusResponse,
   DirectUploadCommitRequest,
-  DirectUploadConfig,
 } from '@/types/document'
 import { UPLOAD_LIMITS } from '@/lib/constants'
 
@@ -158,11 +157,6 @@ export function shouldChunk(fileSize: number): boolean {
 }
 
 /* ============ 直传 DirectUploadController（presigned 浏览器直传，控制面走 /api） ============ */
-
-/** 灰度开关下发（失败按 false 处理，前端回退代理路径） */
-export function fetchDirectUploadConfig(): Promise<DirectUploadConfig> {
-  return api.get('/documents/direct-uploads/config')
-}
 
 /** 直传端点前缀：个人 /documents/direct-uploads，团队 /teams/{teamId}/documents/direct-uploads */
 function directBase(teamId?: number | null): string {

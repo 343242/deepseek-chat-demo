@@ -100,7 +100,6 @@ class DirectUploadServiceTest {
     @BeforeEach
     void setUp() {
         properties = new DirectUploadProperties();
-        properties.setEnabled(true);
         when(documentProperties.getMaxFileSize()).thenReturn("50MB");
         when(mimePolicy.isAllowed(anyString())).thenReturn(true);
         when(bucketResolver.resolve(isNull())).thenReturn(BUCKET);
@@ -171,16 +170,6 @@ class DirectUploadServiceTest {
     }
 
     // ==================== init ====================
-
-    @Test
-    @DisplayName("flag 关闭：所有入口拒绝（NOT_FOUND）")
-    void disabledRejects() {
-        properties.setEnabled(false);
-        assertThatThrownBy(() -> service.init(initRequest(1024)))
-                .isInstanceOf(ServiceException.class)
-                .extracting(e -> ((ServiceException) e).getErrorCode())
-                .isEqualTo(ServiceErrorCode.NOT_FOUND);
-    }
 
     @Test
     @DisplayName("init 秒传：BloomFilter 命中 + DB 确认 → instant")

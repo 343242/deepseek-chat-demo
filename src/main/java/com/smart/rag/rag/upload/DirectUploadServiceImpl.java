@@ -123,16 +123,10 @@ public class DirectUploadServiceImpl implements DirectUploadService {
         this.persistence = persistence;
     }
 
-    @Override
-    public boolean isEnabled() {
-        return properties.isEnabled();
-    }
-
     // ==================== init ====================
 
     @Override
     public DirectUploadInitResult init(DirectUploadInitRequest request) {
-        requireEnabled();
         Long userId = SecurityUtils.getCurrentUserId();
 
         // 声明预检（白名单 + 大小上限）；事实校验后移至 commit
@@ -280,7 +274,6 @@ public class DirectUploadServiceImpl implements DirectUploadService {
     @Override
     public DirectUploadPartUrlsResult partUrls(String sessionId, DirectUploadPartUrlsRequest request,
                                                @Nullable Long expectedTeamId) {
-        requireEnabled();
         Long userId = SecurityUtils.getCurrentUserId();
         Map<String, String> session = validateSession(sessionId, userId, expectedTeamId);
         requireMode(session, DirectUploadInitResult.MODE_MULTIPART);
@@ -318,7 +311,6 @@ public class DirectUploadServiceImpl implements DirectUploadService {
 
     @Override
     public DirectUploadStatusResponse status(String sessionId, @Nullable Long expectedTeamId) {
-        requireEnabled();
         Long userId = SecurityUtils.getCurrentUserId();
         Map<String, String> session = validateSession(sessionId, userId, expectedTeamId);
 
@@ -343,7 +335,6 @@ public class DirectUploadServiceImpl implements DirectUploadService {
     @Override
     public DocumentUploadResponse commit(String sessionId, DirectUploadCommitRequest request,
                                          @Nullable Long expectedTeamId) {
-        requireEnabled();
         Long userId = SecurityUtils.getCurrentUserId();
         Map<String, String> session = validateSession(sessionId, userId, expectedTeamId);
 
@@ -570,7 +561,6 @@ public class DirectUploadServiceImpl implements DirectUploadService {
 
     @Override
     public void abort(String sessionId, @Nullable Long expectedTeamId) {
-        requireEnabled();
         Long userId = SecurityUtils.getCurrentUserId();
         Map<String, String> session = validateSession(sessionId, userId, expectedTeamId);
 
@@ -593,12 +583,6 @@ public class DirectUploadServiceImpl implements DirectUploadService {
     }
 
     // ==================== 公共校验 ====================
-
-    private void requireEnabled() {
-        if (!properties.isEnabled()) {
-            throw new ServiceException(ServiceErrorCode.NOT_FOUND, "直传上传未启用");
-        }
-    }
 
     /**
      * 会话端点入口统一校验：存在 → owner → 团队一致性（防会话劫持，

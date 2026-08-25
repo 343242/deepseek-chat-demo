@@ -14,9 +14,6 @@ import org.jspecify.annotations.Nullable;
  */
 public interface DirectUploadService {
 
-    /** 灰度开关（app.upload.direct.enabled，阶段 1 默认 false）。 */
-    boolean isEnabled();
-
     /** init：秒传命中 / single presigned URL / 创建 MPU 三态。 */
     DirectUploadInitResult init(DirectUploadInitRequest request);
 

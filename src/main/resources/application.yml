@@ -124,9 +124,6 @@ app:
     document-idle-grace-ms: ${SSE_DOC_IDLE_GRACE_MS:60000}
   upload:
     direct:
-      # Presigned 直传三阶段灰度开关（docs/design/presigned-direct-upload.md）：
-      # 阶段1 false（端点上线、前端走代理路径）→ 阶段2 true（默认直传）→ 阶段3 移除
-      enabled: ${UPLOAD_DIRECT_ENABLED:false}
       # presigned URL 有效期（秒）：过期前端重走 part-urls 签发，无状态成本
       presign-expiry: 600s
       # direct init 独立限流（次/分/用户）：每文件一次 init，需高于旧 chunk 会话 10/分

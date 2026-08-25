@@ -20,7 +20,7 @@
 | 小文件（≤5MB） | 单次 presigned PUT 直传（S3 单 PUT 上限 5GB，50MB 上限内无压力） |
 | 断点续传 | 前端本地记录已传分片（SDK `listParts` 在 9.0.3 有构建器缺陷，服务端差集不可用）；MPU 已消亡返回 `UPLOAD_GONE` 重新 init |
 | 预览/下载 | **不动**，维持后端流式代理（CSP 沙箱 + Range + Cookie 鉴权，见 `document-original-file-preview-download.md`） |
-| 交付节奏 | 设计先行；实施按「迁移路径」三阶段灰度 |
+| 交付节奏 | 设计先行；实施落地时灰度计划取消（直传全量默认，见「迁移路径」注记） |
 
 ## 背景与动机
 
@@ -255,7 +255,7 @@ MINIO_API_CORS_ALLOW_ORIGIN: ${MINIO_API_CORS_ALLOW_ORIGIN:-*}
 
 - **控制面指标**：init/commit 成功率与耗时、instant 命中占比、single/multipart 模式分布、part-urls 签发量与 presign 过期重签率、commit 失败按错误码分布（`UPLOAD_GONE`/`CHECKSUM_MISMATCH`/`PARTS_INCOMPLETE` 等）、commit 状态机异常转移次数（COMMITTING 租约接管）、cleaner 清理对象数、**MPU 泄漏扫描数与主动 abort 数**（ILM 不可用后的唯一 MPU 回收通道，需告警）、commit 读放大（Tika + SHA-256 全量读）耗时；
 - **MinIO 侧**：4xx/5xx 比例（`NoSuchUpload`/`InvalidPart` 异常率是 cleaner abort 竞态与前端切片错误的信号）；
-- **前端上报**：PUT 失败率/重试次数、降级代理路径触发率（阶段 2 灰度的关键监控指标）。
+- **前端上报**：PUT 失败率/重试次数、降级代理路径触发率（降级兜底为常驻逻辑，持续监控）。
 
 ## 前端改造（`upload-button.tsx` + `api/documents.ts`）
 
@@ -272,13 +272,17 @@ MINIO_API_CORS_ALLOW_ORIGIN: ${MINIO_API_CORS_ALLOW_ORIGIN:-*}
 - 进度改用 XHR（fetch 无上传进度事件）；single 模式获得真正的字节级进度（现批量端点只有 0→100 跳变，顺带修复）；
 - 上传中断重入：init 秒传判定之外，`direct:file:` 反向索引命中既有未完成会话 → status 取会话元数据 + 本地已传分片记录做差集续传；`UPLOAD_GONE` / 会话失效则全新 init。
 
-## 迁移路径（三阶段）
+## 迁移路径（原三阶段；实施时灰度取消）
 
-| 阶段 | 开关 | 说明 |
-|------|------|------|
-| 1 并存 | `app.upload.direct.enabled=false`（默认） | 新端点上线，前端 flag 关闭，代理路径不动；内部灰度验证 |
-| 2 默认直传 | flag=true | 前端直传为主（**全局开关，无 per-user 灰度**）；直传网络失败（CORS 预检失败/断网/413）时自动降级现有代理路径 |
-| 3 退役 | 移除 flag | 下线 `/multipart` 代理端点与 `ChunkUploadServiceImpl` 数据面（`ChunkSessionStore`/Lua/`OrphanChunkCleaner` 一并退役）；`composeObject` 相关代码随 `document-module-extraction` 的收敛计划处置 |
+> **实施修订（2026-08-25）**：评审后取消灰度——直传自上线即为**默认上传路径（无开关）**，
+> 原阶段 1/2 的 flag 机制（`app.upload.direct.enabled` 与 `/config` 下发端点）未保留。
+> 网络失败自动降级代理路径作为常驻兜底；原阶段 3 的代理数据面退役计划不变。
+
+| 阶段 | 原计划 | 实施现状 |
+|------|--------|----------|
+| 1 并存 | flag=false，前端走代理 | ✅ 已实施后改为无开关全量直传（一次落地） |
+| 2 默认直传 | flag=true，网络失败降级代理 | ✅ 直接落地：降级逻辑常驻 |
+| 3 退役 | 移除 flag，下线 `/multipart` 代理端点与 `ChunkUploadServiceImpl` 数据面（`ChunkSessionStore`/Lua/`OrphanChunkCleaner` 一并退役）；`composeObject` 相关代码随 `document-module-extraction` 的收敛计划处置 | 待实施（flag 已随灰度取消提前移除） |
 
 ## 与现有设计文档的关系
 
@@ -322,7 +326,7 @@ MINIO_API_CORS_ALLOW_ORIGIN: ${MINIO_API_CORS_ALLOW_ORIGIN:-*}
 
 ## 实施记录（阶段 1，2026-08-25）
 
-阶段 1（并存）已落地：后端控制面全量上线 + 前端灰度接入（`app.upload.direct.enabled` 默认 false，前端经 `GET /api/documents/direct-uploads/config` 拉取开关，关闭时行为与改造前完全一致）。验证：后端 `mvn test` 1866 全绿（含 `S3MultipartGatewayIT` 7/7、`DirectUploadServiceTest` 28/28、`DirectUploadOrphanCleanerTest` 4/4），前端 vitest 129 全绿 + tsc 通过。
+已落地并**全量开启（无灰度开关）**：直传为默认上传路径，网络失败自动降级代理路径常驻兜底；原计划的 `app.upload.direct.enabled` 开关与 `/config` 下发端点经评审取消、未保留（见「迁移路径」实施修订）。验证：后端 `mvn test` 全绿（含 `S3MultipartGatewayIT` 7/7、`DirectUploadServiceTest`、`DirectUploadOrphanCleanerTest`），前端 vitest 全绿 + tsc 通过。
 
 ### 实测推翻的设计前提（Testcontainers pgsty/minio + SDK 9.0.3 端到端验证）
 

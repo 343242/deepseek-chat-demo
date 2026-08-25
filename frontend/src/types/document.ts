@@ -159,8 +159,3 @@ export interface DirectUploadPartDeclaration {
 export interface DirectUploadCommitRequest {
   parts?: DirectUploadPartDeclaration[] | null
 }
-
-/** GET /documents/direct-uploads/config —— 灰度开关下发 */
-export interface DirectUploadConfig {
-  enabled: boolean
-}

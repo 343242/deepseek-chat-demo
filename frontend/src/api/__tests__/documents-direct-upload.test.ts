@@ -12,7 +12,6 @@ vi.mock('@/lib/api-fetch', () => ({
 
 import { api } from '@/lib/api-fetch'
 import {
-  fetchDirectUploadConfig,
   directUploadInit,
   directUploadPartUrls,
   directUploadStatus,
@@ -29,12 +28,6 @@ describe('直传 API 封装（DirectUploadController）', () => {
   })
   afterEach(() => {
     vi.restoreAllMocks()
-  })
-
-  it('config：GET /documents/direct-uploads/config', async () => {
-    mockedApi.get.mockResolvedValueOnce({ enabled: true })
-    await expect(fetchDirectUploadConfig()).resolves.toEqual({ enabled: true })
-    expect(mockedApi.get).toHaveBeenCalledWith('/documents/direct-uploads/config')
   })
 
   it('init：个人走 /documents/direct-uploads，请求体含元数据', async () => {

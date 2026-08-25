@@ -8,16 +8,13 @@ import java.time.Duration;
 /**
  * Presigned URL 浏览器直传配置属性（app.upload.direct.*）。
  * <p>
- * 三阶段灰度开关（见 docs/design/presigned-direct-upload.md「迁移路径」）：
- * 阶段 1 默认 false——后端端点上线、前端仍走代理路径；阶段 2 置 true；
- * 阶段 3 移除开关。其余参数为直传链路运行时常量，均有安全缺省值。
+ * 直传为默认上传路径（全量开启，无灰度开关——原三阶段灰度计划经评审后取消：
+ * 直传网络失败自动降级代理路径已覆盖回退需求，代理路径按原阶段 3 计划退役）。
+ * 其余参数为直传链路运行时常量，均有安全缺省值。
  */
 @Component
 @ConfigurationProperties(prefix = "app.upload.direct")
 public class DirectUploadProperties {
-
-    /** 灰度开关：false 时直传端点拒绝服务（前端 config 接口回 false，走代理路径） */
-    private boolean enabled = false;
 
     /** presigned URL 有效期：URL 即短期 bearer 能力，过期重签无状态成本 */
     private Duration presignExpiry = Duration.ofMinutes(10);
@@ -41,9 +38,6 @@ public class DirectUploadProperties {
 
     /** 直传分片大小（固定值，直传路径新约定，非复用 DefaultChunkSizeStrategy 动态分片） */
     private long chunkSizeBytes = 5L * 1024 * 1024;
-
-    public boolean isEnabled() { return enabled; }
-    public void setEnabled(boolean enabled) { this.enabled = enabled; }
 
     public Duration getPresignExpiry() { return presignExpiry; }
     public void setPresignExpiry(Duration presignExpiry) { this.presignExpiry = presignExpiry; }

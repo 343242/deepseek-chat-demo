@@ -13,7 +13,6 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.Map;
 
 /**
  * Presigned 直传 REST 控制器（个人空间）。
@@ -25,7 +24,6 @@ import java.util.Map;
  *   <li>GET  /api/documents/direct-uploads/{id}                 — 会话状态（续传元数据）</li>
  *   <li>POST /api/documents/direct-uploads/{id}/commit          — 确认：校验+落库+ETL</li>
  *   <li>POST /api/documents/direct-uploads/{id}/abort           — 取消（204）</li>
- *   <li>GET  /api/documents/direct-uploads/config               — 灰度开关下发（前端分流）</li>
  * </ul>
  * 团队镜像：{@code TeamDirectUploadController}（/api/teams/{teamId}/documents/direct-uploads）。
  */
@@ -38,12 +36,6 @@ public class DirectUploadController {
 
     public DirectUploadController(DirectUploadService directUploadService) {
         this.directUploadService = directUploadService;
-    }
-
-    /** 灰度开关下发：前端拉取一次决定直传/代理分流（flag 关闭时前端全走代理路径）。 */
-    @GetMapping("/config")
-    public GlobalResponse<Map<String, Boolean>> config() {
-        return GlobalResponse.ok(Map.of("enabled", directUploadService.isEnabled()));
     }
 
     /** init：声明文件元数据 → 秒传命中 / 签发 single URL / 创建 MPU。 */

@@ -5,7 +5,7 @@ import { Progress } from '@/components/ui/progress'
 import { toast } from 'sonner'
 import {
   uploadDirect, uploadBatch, shouldChunk, chunkUploadInit, uploadChunk, chunkUploadComplete, chunkUploadDelete,
-  fetchDirectUploadConfig, directUploadAbort,
+  directUploadAbort,
   docKeys,
 } from '@/api/documents'
 import { queryClient } from '@/lib/query-client'
@@ -19,15 +19,6 @@ import { FileTypeIcon } from './file-icon'
 
 /** 扩展名白名单（Set 成员判定，消除 as const 元组 × includes 的变差断言，FE-020） */
 const ALLOWED_EXTENSIONS = new Set<string>(UPLOAD_LIMITS.allowedExtensions)
-
-/** 直传灰度开关：进程内缓存一次（GET /config）；请求失败按 false 处理走代理路径 */
-let directEnabledPromise: Promise<boolean> | null = null
-function directUploadEnabled(): Promise<boolean> {
-  directEnabledPromise ??= fetchDirectUploadConfig()
-    .then((c) => c.enabled)
-    .catch(() => false)
-  return directEnabledPromise
-}
 
 interface UploadTask {
   id: string
@@ -168,10 +159,10 @@ export function UploadButton({
         }
       }
 
-      /* ---- Presigned 直传（灰度 flag 开启时）：单/分片统一走 direct-uploads 会话，
-       * 网络层失败（CORS 预检失败/断网/入口 413）自动降级既有代理路径（阶段 2 行为）。
+      /* ---- Presigned 直传（默认路径，无灰度开关）：单/分片统一走 direct-uploads 会话，
+       * 网络层失败（CORS 预检失败/断网/入口 413）自动降级既有代理路径。
        * 批量在 direct 模式下消解为逐文件会话（init 429 由编排层指数退避）。 */
-      if (await directUploadEnabled()) {
+      {
         const userId = useAuthStore.getState().user?.id
         if (userId != null) {
           for (const file of valid) {

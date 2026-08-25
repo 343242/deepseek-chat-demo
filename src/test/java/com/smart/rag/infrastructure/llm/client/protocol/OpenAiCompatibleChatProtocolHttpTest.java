@@ -6,6 +6,9 @@ import com.smart.rag.infrastructure.llm.LlmCapability;
 import com.smart.rag.infrastructure.llm.LlmResponse;
 import com.smart.rag.infrastructure.llm.ResolvedEndpoint;
 import com.smart.rag.infrastructure.llm.StreamChunk;
+import com.smart.rag.infrastructure.exception.RateLimitedException;
+import com.smart.rag.infrastructure.exception.RemoteException;
+import com.smart.rag.infrastructure.exception.errorcode.RemoteErrorCode;
 import com.smart.rag.infrastructure.llm.client.HttpClientFactory;
 import com.smart.rag.infrastructure.llm.client.generic.GenericChatClient;
 import okhttp3.OkHttpClient;
@@ -68,6 +71,64 @@ class OpenAiCompatibleChatProtocolHttpTest {
             .setBody("{\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\","
                 + "\"content\":\"你好\"},\"finish_reason\":\"stop\"}],"
                 + "\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":2,\"total_tokens\":3}}");
+    }
+
+    // ====== 流式错误映射对齐（WS1：P1） ======
+
+    @Test
+    @DisplayName("流式·429 + Retry-After → RateLimitedException 携带毫秒值（与阻塞路径映射一致）")
+    void streaming429MapsToRateLimited() {
+        server.enqueue(new MockResponse().setResponseCode(429)
+            .setHeader("Retry-After", "25")
+            .setBody("{\"error\":{\"message\":\"rate limited\"}}"));
+
+        Throwable error = reactorStepAwait(() ->
+            protocol.chatStream(ChatRequest.of("hi"), candidate, endpoint("sk-test-key"))
+                .collectList().block());
+
+        assertThat(error).isInstanceOf(RateLimitedException.class);
+        assertThat(((RateLimitedException) error).retryAfterMs()).isEqualTo(25_000L);
+    }
+
+    @Test
+    @DisplayName("流式·5xx → LLM_TRANSIENT_ERROR（可重试，与阻塞路径一致）")
+    void streaming5xxMapsToTransient() {
+        server.enqueue(new MockResponse().setResponseCode(503).setBody("unavailable"));
+
+        Throwable error = reactorStepAwait(() ->
+            protocol.chatStream(ChatRequest.of("hi"), candidate, endpoint("sk-test-key"))
+                .collectList().block());
+
+        assertThat(error).isInstanceOf(RemoteException.class);
+        assertThat(((RemoteException) error).getErrorCode()).isEqualTo(RemoteErrorCode.LLM_TRANSIENT_ERROR);
+    }
+
+    @Test
+    @DisplayName("流式·其余 4xx → LLM_STREAM_ERROR 且消息携带错误体详情")
+    void streamingOther4xxMapsToStreamErrorWithBody() {
+        server.enqueue(new MockResponse().setResponseCode(400).setBody("{\"error\":\"bad request\"}}"));
+
+        Throwable error = reactorStepAwait(() ->
+            protocol.chatStream(ChatRequest.of("hi"), candidate, endpoint("sk-test-key"))
+                .collectList().block());
+
+        assertThat(error).isInstanceOf(RemoteException.class);
+        assertThat(((RemoteException) error).getErrorCode()).isEqualTo(RemoteErrorCode.LLM_STREAM_ERROR);
+        assertThat(error.getMessage()).contains("bad request");
+    }
+
+    /** 协议流式在 boundedElastic 上执行，collectList().block() 抛出的可能是 Reactor 包装——解包取根因 */
+    private static Throwable reactorStepAwait(java.util.function.Supplier<?> action) {
+        try {
+            action.get();
+            throw new AssertionError("Expected error");
+        } catch (Throwable t) {
+            Throwable cur = t;
+            while (cur.getCause() != null && cur.getCause() != cur) {
+                cur = cur.getCause();
+            }
+            return cur;
+        }
     }
 
     // ====== 阻塞路径：URL/路径/Authorization 头 ======

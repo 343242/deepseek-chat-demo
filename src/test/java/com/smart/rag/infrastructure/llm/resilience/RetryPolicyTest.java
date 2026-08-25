@@ -1,5 +1,6 @@
 package com.smart.rag.infrastructure.llm.resilience;
 
+import com.smart.rag.infrastructure.exception.RateLimitedException;
 import com.smart.rag.infrastructure.exception.RemoteException;
 import com.smart.rag.infrastructure.exception.errorcode.RemoteErrorCode;
 import com.smart.rag.infrastructure.fallback.CircuitOpenException;
@@ -307,6 +308,96 @@ class RetryPolicyTest {
             // Should not retry — error propagates (reactor wraps checked exceptions as ReactiveException)
             assertThatThrownBy(() -> flux.collectList().block())
                 .hasCauseInstanceOf(IOException.class);
+            assertThat(subscribes.get()).isEqualTo(1);
+        }
+    }
+
+    // ==================== computeDelay / Retry-After（WS1） ====================
+
+    @Nested
+    @DisplayName("computeDelay（退避计算）")
+    class ComputeDelayTests {
+
+        @Test
+        @DisplayName("普通退避带 jitter：延迟 ∈ [0.5×, 1.5×) 计算值")
+        void jitterBounds() {
+            // base=1000, max=5000, multiplier=2 → attempt 0 计算值 1000，jitter ∈ [500, 1500)
+            RetryPolicy p = new RetryPolicy(new RetryConfig(3, 1000L, 5000L, 2.0));
+            for (int i = 0; i < 200; i++) {
+                long d = p.computeDelay(new IOException("io"), 0);
+                assertThat(d).isGreaterThanOrEqualTo(500L).isLessThan(1500L);
+            }
+        }
+
+        @Test
+        @DisplayName("指数退避 cap 到 maxDelayMs 后 jitter 仍生效")
+        void jitterAppliesAfterCap() {
+            RetryPolicy p = new RetryPolicy(new RetryConfig(3, 1000L, 2000L, 10.0));
+            for (int i = 0; i < 100; i++) {
+                long d = p.computeDelay(new IOException("io"), 5);
+                assertThat(d).isGreaterThanOrEqualTo(1000L).isLessThan(3000L);
+            }
+        }
+
+        @Test
+        @DisplayName("RateLimitedException 携带 Retry-After → 原样延迟，不叠 jitter、不受 maxDelayMs 约束")
+        void retryAfterUsedAsIs() {
+            RetryPolicy p = new RetryPolicy(new RetryConfig(3, 1L, 1L, 1.0));
+            long d = p.computeDelay(new RateLimitedException("429", 30_000L), 0);
+            assertThat(d).isEqualTo(30_000L);
+        }
+
+        @Test
+        @DisplayName("RateLimitedException 无 Retry-After → 走普通指数退避 + jitter")
+        void nullRetryAfterFallsBackToBackoff() {
+            RetryPolicy p = new RetryPolicy(new RetryConfig(3, 1000L, 5000L, 2.0));
+            for (int i = 0; i < 100; i++) {
+                long d = p.computeDelay(new RateLimitedException("429", null), 0);
+                assertThat(d).isGreaterThanOrEqualTo(500L).isLessThan(1500L);
+            }
+        }
+    }
+
+    @Nested
+    @DisplayName("Retry-After 放弃阈值（决策 15）")
+    class RetryAfterAbandonTests {
+
+        @Test
+        @DisplayName("Retry-After ≤ 60s 的 RateLimitedException 可重试")
+        void retryAfterWithinThresholdIsRetryable() {
+            assertThat(policy.isRetryable(new RateLimitedException("429", 60_000L))).isTrue();
+        }
+
+        @Test
+        @DisplayName("Retry-After > 60s 不可重试（直接降级），普通 LLM_RATE_LIMITED 仍可重试")
+        void retryAfterBeyondThresholdNotRetryable() {
+            assertThat(policy.isRetryable(new RateLimitedException("429", 60_001L))).isFalse();
+            assertThat(policy.isRetryable(new RateLimitedException("429", 3_600_000L))).isFalse();
+            assertThat(policy.isRetryable(new RemoteException(RemoteErrorCode.LLM_RATE_LIMITED, "429"))).isTrue();
+        }
+
+        @Test
+        @DisplayName("Retry-After > 60s 时 executeWithBackoff 不重试直接抛出")
+        void executeWithBackoffAbandonsLargeRetryAfter() {
+            AtomicInteger calls = new AtomicInteger(0);
+            assertThatThrownBy(() -> policy.executeWithBackoff(() -> {
+                calls.incrementAndGet();
+                throw new RateLimitedException("429", 3_600_000L);
+            })).isInstanceOf(RateLimitedException.class);
+            assertThat(calls.get()).isEqualTo(1);
+        }
+
+        @Test
+        @DisplayName("流式路径 Retry-After > 60s 不重试（退避同源）")
+        void retryStreamAbandonsLargeRetryAfter() {
+            AtomicInteger subscribes = new AtomicInteger(0);
+            var flux = policy.retryStream(() -> {
+                subscribes.incrementAndGet();
+                return reactor.core.publisher.Flux.<String>error(new RateLimitedException("429", 3_600_000L));
+            });
+
+            assertThatThrownBy(() -> flux.collectList().block())
+                .isInstanceOf(RateLimitedException.class);
             assertThat(subscribes.get()).isEqualTo(1);
         }
     }

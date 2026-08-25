@@ -1,15 +1,18 @@
 package com.smart.rag.infrastructure.llm.resilience;
 
+import com.smart.rag.infrastructure.exception.RateLimitedException;
 import com.smart.rag.infrastructure.exception.RemoteException;
 import com.smart.rag.infrastructure.exception.errorcode.RemoteErrorCode;
 import com.smart.rag.infrastructure.fallback.CircuitOpenException;
 import com.smart.rag.infrastructure.fallback.ProbeTimeoutException;
 import com.smart.rag.infrastructure.llm.config.RetryConfig;
 import reactor.core.publisher.Flux;
+import reactor.core.publisher.Mono;
 import reactor.util.retry.Retry;
 
 import java.io.IOException;
 import java.time.Duration;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Supplier;
 
@@ -72,10 +75,7 @@ public class RetryPolicy {
                         RemoteErrorCode.LLM_TRANSIENT_ERROR,
                         "LLM call failed after " + maxAttempts + " attempts: " + e.getMessage(), e);
                 }
-                long delay = Math.min(
-                    baseDelayMs * (long) Math.pow(multiplier, attempt),
-                    maxDelayMs
-                );
+                long delay = computeDelay(e, attempt);
                 Thread.sleep(delay);
             }
         }
@@ -91,12 +91,36 @@ public class RetryPolicy {
      */
     public <T> Flux<T> retryStream(Supplier<Flux<T>> streamSupplier) {
         AtomicBoolean emitted = new AtomicBoolean(false);
+        // 与阻塞路径 executeWithBackoff 同源的退避计算（WS1）：自定义 companion 取代
+        // Retry.backoff（Reactor 默认 jitter），保证阻塞/流式退避行为一致。
+        Retry companion = Retry.from(signalFlux -> signalFlux.flatMap(context -> {
+            Throwable failure = context.failure();
+            if (context.totalRetries() < maxAttempts - 1
+                    && isRetryable(failure) && !emitted.get()) {
+                return Mono.delay(Duration.ofMillis(computeDelay(failure, (int) context.totalRetries())));
+            }
+            return Mono.error(failure);
+        }));
         return Flux.defer(streamSupplier)
             .doOnNext(__ -> emitted.set(true))
-            .retryWhen(Retry.backoff(maxAttempts, Duration.ofMillis(baseDelayMs))
-                .maxBackoff(Duration.ofMillis(maxDelayMs))
-                .filter(e -> isRetryable(e) && !emitted.get())
-                .onRetryExhaustedThrow((spec, signal) -> signal.failure()));
+            .retryWhen(companion);
+    }
+
+    /**
+     * 统一退避延迟计算（阻塞/流式同源，WS1）：
+     * <ul>
+     *   <li>RateLimitedException 携带 Retry-After：服务端指示原样生效——不叠 jitter、
+     *       不受 maxDelayMs 约束（决策 15；&gt;60s 的放弃判定在 {@link #isRetryable}）</li>
+     *   <li>其余可重试错误：指数退避（cap maxDelayMs）× U(0.5, 1.5) jitter——
+     *       对齐 LockRetryExecutor 先例，防多请求同步重试（雷群）</li>
+     * </ul>
+     */
+    long computeDelay(Throwable e, int attempt) {
+        if (e instanceof RateLimitedException rle && rle.retryAfterMs() != null) {
+            return rle.retryAfterMs();
+        }
+        long base = Math.min(baseDelayMs * (long) Math.pow(multiplier, attempt), maxDelayMs);
+        return (long) (base * ThreadLocalRandom.current().nextDouble(0.5, 1.5));
     }
 
     /** 空操作重试（不需要重试的场景直接透传） */
@@ -118,8 +142,11 @@ public class RetryPolicy {
             return false;
         }
         if (e instanceof RemoteException re) {
-            return re.getErrorCode() == RemoteErrorCode.LLM_RATE_LIMITED
-                || re.getErrorCode() == RemoteErrorCode.LLM_TRANSIENT_ERROR;
+            if (re.getErrorCode() == RemoteErrorCode.LLM_RATE_LIMITED) {
+                // Retry-After > 60s：服务端明示长时间限流，同模型等待无意义 → 放弃重试直接降级（决策 15）
+                return !(e instanceof RateLimitedException rle && rle.shouldAbandonRetry());
+            }
+            return re.getErrorCode() == RemoteErrorCode.LLM_TRANSIENT_ERROR;
         }
         if (e instanceof IOException
             || e instanceof ProbeTimeoutException

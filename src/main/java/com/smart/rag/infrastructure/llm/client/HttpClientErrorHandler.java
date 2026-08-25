@@ -1,5 +1,6 @@
 package com.smart.rag.infrastructure.llm.client;
 
+import com.smart.rag.infrastructure.exception.RateLimitedException;
 import com.smart.rag.infrastructure.exception.RemoteException;
 import com.smart.rag.infrastructure.exception.errorcode.RemoteErrorCode;
 import org.slf4j.Logger;
@@ -8,6 +9,9 @@ import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestClientResponseException;
 
 import java.io.IOException;
+import java.time.Instant;
+import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 
 /**
  * HTTP 客户端异常处理器
@@ -58,22 +62,9 @@ public final class HttpClientErrorHandler {
                 operation + " IO failed: " + url + " - " + io.getMessage(), io);
         }
         if (e instanceof RestClientResponseException rcre) {
-            int status = rcre.getStatusCode().value();
-            String body = rcre.getResponseBodyAsString();
-            RemoteErrorCode code;
-            if (status == 429) {
-                // 429 is transient/retriable — WARN is appropriate
-                code = RemoteErrorCode.LLM_RATE_LIMITED;
-                log.warn("{} 请求被限流: HTTP 429 from {} - {}", operation, url, body);
-            } else if (status >= 500) {
-                // 5xx is a server-side fault (business-visible) — ERROR for ops alerting
-                code = RemoteErrorCode.LLM_TRANSIENT_ERROR;
-                log.error("{} 请求服务端错误: HTTP {} from {} - {}", operation, status, url, body);
-            } else {
-                code = RemoteErrorCode.LLM_STREAM_ERROR;
-            }
-            return new RemoteException(code,
-                operation + " failed: HTTP " + status + " from " + url + ": " + body, rcre);
+            return translateStatus(operation, url, rcre.getStatusCode().value(),
+                rcre.getResponseBodyAsString(),
+                rcre.getResponseHeaders() != null ? rcre.getResponseHeaders().getFirst("Retry-After") : null);
         }
         // Unwrap RestClientException（含 ResourceAccessException）的 IOException cause → LLM_TRANSIENT_ERROR。
         // 约束：RestClient 的 HttpMessageConverterExtractor 读响应体超时/被重置时抛
@@ -84,5 +75,68 @@ public final class HttpClientErrorHandler {
         }
         return new RemoteException(RemoteErrorCode.LLM_STREAM_ERROR,
             operation + " failed: " + url + " - " + e.getMessage(), e);
+    }
+
+    /**
+     * 按 HTTP 状态码映射为对应的 {@link RemoteException}（阻塞/流式两路共用的公共出口，
+     * design llm-resilience-optimization WS1）。
+     * <ul>
+     * <li>429 → {@link RateLimitedException}（携带 Retry-After 毫秒数，可解析时）</li>
+     * <li>5xx → RemoteException(LLM_TRANSIENT_ERROR)，ERROR 日志</li>
+     * <li>其余 4xx → RemoteException(LLM_STREAM_ERROR)</li>
+     * </ul>
+     *
+     * @param retryAfterHeader 原始 Retry-After 响应头（秒数整数或 HTTP-date），可为 null
+     */
+    public static RuntimeException translateStatus(String operation, String url,
+            int status, String body, String retryAfterHeader) {
+        if (status == 429) {
+            // 429 is transient/retriable — WARN is appropriate
+            Long retryAfterMs = parseRetryAfter(retryAfterHeader);
+            log.warn("{} 请求被限流: HTTP 429 from {} - {} (Retry-After: {})",
+                operation, url, body, retryAfterHeader);
+            return new RateLimitedException(
+                operation + " failed: HTTP 429 from " + url + ": " + body, retryAfterMs);
+        }
+        if (status >= 500) {
+            // 5xx is a server-side fault (business-visible) — ERROR for ops alerting
+            log.error("{} 请求服务端错误: HTTP {} from {} - {}", operation, status, url, body);
+            return new RemoteException(RemoteErrorCode.LLM_TRANSIENT_ERROR,
+                operation + " failed: HTTP " + status + " from " + url + ": " + body);
+        }
+        return new RemoteException(RemoteErrorCode.LLM_STREAM_ERROR,
+            operation + " failed: HTTP " + status + " from " + url + ": " + body);
+    }
+
+    /**
+     * 解析 Retry-After 头：秒数整数或 HTTP-date（RFC 1123 / ISO-8601）。
+     * 解析失败或日期已过去 → null（调用方按无限流指示的普通 429 处理）。
+     * {@code >60s} 不截断——保留原值交由 {@code RetryPolicy.isRetryable} 判定放弃（决策 15）。
+     */
+    static Long parseRetryAfter(String header) {
+        if (header == null || header.isBlank()) {
+            return null;
+        }
+        String trimmed = header.trim();
+        try {
+            return Long.parseLong(trimmed) * 1000L;
+        } catch (NumberFormatException ignored) {
+            // fall through to HTTP-date
+        }
+        try {
+            Instant date = parseHttpDate(trimmed);
+            long ms = date.toEpochMilli() - System.currentTimeMillis();
+            return ms > 0 ? ms : null;
+        } catch (DateTimeParseException ignored) {
+            return null;
+        }
+    }
+
+    private static Instant parseHttpDate(String value) {
+        try {
+            return Instant.parse(value);
+        } catch (DateTimeParseException e) {
+            return DateTimeFormatter.RFC_1123_DATE_TIME.parse(value, Instant::from);
+        }
     }
 }

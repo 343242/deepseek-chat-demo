@@ -134,8 +134,14 @@ public class OpenAiCompatibleChatProtocol implements ChatProtocol {
 
             try (Response response = call.execute()) {
                 if (!response.isSuccessful()) {
-                    sink.error(new RemoteException(RemoteErrorCode.LLM_STREAM_ERROR,
-                        "Stream request failed: HTTP " + response.code()));
+                    // 阻塞/流式错误映射对齐（WS1）：读错误体 + Retry-After → translateStatus，
+                    // 429 → RateLimitedException（可重试）、5xx → LLM_TRANSIENT_ERROR
+                    String errBody = "";
+                    try (ResponseBody peek = response.peekBody(4096)) {
+                        if (peek != null) errBody = peek.string();
+                    }
+                    sink.error(HttpClientErrorHandler.translateStatus("Chat Stream", url,
+                        response.code(), errBody, response.header("Retry-After")));
                     return;
                 }
                 ResponseBody responseBody = response.body();

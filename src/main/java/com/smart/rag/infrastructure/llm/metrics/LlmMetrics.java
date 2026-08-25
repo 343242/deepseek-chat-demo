@@ -106,27 +106,6 @@ public class LlmMetrics {
             .increment();
     }
 
-    // ==================== BYOK ====================
-
-    /**
-     * BYOK fallback 触发（design §5.4 / R1 / AC29）：
-     * 用户有 BYOK 配置但全部 status=0（disabled）→ fallback yml 时计数，
-     * 区别于"从未配置"（无行 → 无 counter，正常 fallback）。
-     */
-    public void recordByokFallback(String reason) {
-        if (registry == null) return;
-        registry.counter("llm.byok.fallback", "reason", reason).increment();
-    }
-
-    /**
-     * BYOK 异步 close 失败计数（design §5.3 / R3 / AC31）：
-     * invalidate/淘汰时异步 close 旧 client 异常 → counter + WARN（不抛，不影响 invalidateUser 调用方）。
-     */
-    public void recordByokCloseError() {
-        if (registry == null) return;
-        registry.counter("llm.byok.close.errors").increment();
-    }
-
     // ==================== Retry ====================
 
     public void recordRetryAttempt(String candidateId, String result) {

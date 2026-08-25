@@ -11,7 +11,7 @@ import org.springframework.stereotype.Component;
  * <p>
  * <b>缺失 master-key 时的行为</b>：{@link SecretCipher} 构造时 <b>不 fail-fast</b>，
  * {@code isAvailable()} 返回 false，encrypt/decrypt 抛 {@link ServiceException}。
- * 是否在启动期 fail-fast 由消费方决定（如 {@code ApiKeyCipher} 在 BYOK enabled=true 时 fail-fast）。
+ * 是否在启动期 fail-fast 由消费方决定（当前消费方 {@code McpBearerTokenCodec} 运行时失败）。
  */
 @Component
 @ConfigurationProperties(prefix = "app.security.crypto")

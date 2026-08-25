@@ -37,7 +37,7 @@ public class ChatController {
 
     @GetMapping("/models")
     public GlobalResponse<List<String>> listModels() {
-        // 聊天端点仅暴露 CHAT 模型；Embedding/Rerank 通过 /api/admin/llm-config（user:manage）审计
+        // 聊天端点仅暴露 CHAT 模型；Embedding/Rerank 仅 model:config 持有者可见（目录详情端点按能力分流）
         return GlobalResponse.ok(modelService.listChatModelIds());
     }
 

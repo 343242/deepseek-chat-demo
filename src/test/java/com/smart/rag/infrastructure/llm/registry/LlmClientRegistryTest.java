@@ -3,10 +3,6 @@ package com.smart.rag.infrastructure.llm.registry;
 import com.smart.rag.infrastructure.concurrent.ScopedTasks;
 import com.smart.rag.infrastructure.llm.CapabilityClient;
 import com.smart.rag.infrastructure.llm.LlmCapability;
-import com.smart.rag.infrastructure.llm.config.LlmByokProperties;
-import com.smart.rag.infrastructure.llm.config.ByokConfigSource;
-import com.smart.rag.infrastructure.llm.metrics.LlmMetrics;
-import com.smart.rag.infrastructure.llm.resilience.LlmCircuitBreakerAdapterRegistry;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -18,35 +14,27 @@ import java.util.Map;
 import java.util.Set;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.ArgumentMatchers.anyList;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /**
- * LlmClientRegistry BYOK 单元测试（design §5.3 / Step 10）—
- * cache-aside lazy 构建、缓存命中、空链 delegate 不缓存、invalidate 重建、disabledSet 归一化。
+ * LlmClientRegistry 系统级单元测试 — 纯系统快照（design llm-client-stateless v3.0 决策 5
+ * registry 收窄后的全量回归）：查询 API、refresh 失效替换、disable/enable 禁用集。
  */
 @ExtendWith(MockitoExtension.class)
 class LlmClientRegistryTest {
 
     @Mock private LlmClientFactory factory;
-    @Mock private ByokConfigSource configSource;
-    @Mock private LlmCircuitBreakerAdapterRegistry circuitBreakerRegistry;
     @Mock private ScopedTasks scopedTasks;
-    @Mock private LlmMetrics metrics;
 
-    private LlmByokProperties byokProperties;
     private LlmClientRegistry registry;
 
     @BeforeEach
     void setUp() {
-        byokProperties = new LlmByokProperties();
-        byokProperties.setEnabled(true);
-        registry = new LlmClientRegistry(factory, scopedTasks, configSource,
-            byokProperties, circuitBreakerRegistry, metrics);
+        registry = new LlmClientRegistry(factory, scopedTasks);
     }
 
     private void initSystem(RegistrySnapshot systemSnap) {
@@ -68,120 +56,81 @@ class LlmClientRegistryTest {
             Map.of(), Map.of(), Set.of());
     }
 
-    /** 非空 resolved（内容不重要，factory.buildSnapshot 已 mock 返回预设 userSnap） */
-    private static List<LlmClientFactory.ResolvedCandidate> resolved() {
-        return List.of(mock(LlmClientFactory.ResolvedCandidate.class));
-    }
-
-    // ===== delegate（非 BYOK 场景）=====
+    // ===== 查询 API =====
 
     @Test
-    void getUserChain_byokDisabled_delegates_system() {
-        byokProperties.setEnabled(false);
+    void getChain_returns_system_chain() {
         CapabilityClient sys = client("sys-chat");
         initSystem(snap(LlmCapability.CHAT, "sys-chat", sys));
 
-        List<CapabilityClient> result = registry.getUserChain(LlmCapability.CHAT, 7L);
-
-        assertThat(result).containsExactly(sys);
-        verifyNoInteractions(configSource);
+        assertThat(registry.getChain(LlmCapability.CHAT)).containsExactly(sys);
     }
 
     @Test
-    void getUserChain_nullUserId_delegates_system() {
+    void getDefault_returns_system_default() {
         CapabilityClient sys = client("sys-chat");
         initSystem(snap(LlmCapability.CHAT, "sys-chat", sys));
 
-        List<CapabilityClient> result = registry.getUserChain(LlmCapability.CHAT, null);
-
-        assertThat(result).containsExactly(sys);
-        verifyNoInteractions(configSource);
+        assertThat(registry.getDefault(LlmCapability.CHAT)).isSameAs(sys);
     }
 
     @Test
-    void getUserChain_nonChat_delegates_system() {
-        CapabilityClient sys = client("sys-embed");
-        initSystem(snap(LlmCapability.EMBEDDING, "sys-embed", sys));
-
-        List<CapabilityClient> result = registry.getUserChain(LlmCapability.EMBEDDING, 7L);
-
-        assertThat(result).containsExactly(sys);
-        verifyNoInteractions(configSource);
-    }
-
-    // ===== cache-aside lazy + 缓存命中 =====
-
-    @Test
-    void getUserChain_cacheMiss_lazy_builds_and_caches() {
-        CapabilityClient userClient = client("u:7:deepseek-chat");
-        RegistrySnapshot userSnap = snap(LlmCapability.CHAT, "u:7:deepseek-chat", userClient);
-        when(configSource.userChain(7L, LlmCapability.CHAT)).thenReturn(resolved());
-        when(factory.buildSnapshot(anyList())).thenReturn(userSnap);
+    void get_unknownCandidate_throws() {
         initSystem(RegistrySnapshot.empty());
 
-        List<CapabilityClient> r1 = registry.getUserChain(LlmCapability.CHAT, 7L);
-        List<CapabilityClient> r2 = registry.getUserChain(LlmCapability.CHAT, 7L);
-
-        assertThat(r1).containsExactly(userClient);
-        assertThat(r2).containsExactly(userClient);
-        verify(configSource, times(1)).userChain(7L, LlmCapability.CHAT); // 第二次命中缓存
+        assertThatThrownBy(() -> registry.get("missing"))
+            .isInstanceOf(com.smart.rag.infrastructure.exception.RemoteException.class);
     }
 
     @Test
-    void getUserChain_emptyResolved_delegates_system_without_caching() {
-        when(configSource.userChain(7L, LlmCapability.CHAT)).thenReturn(List.of());
-        CapabilityClient sys = client("sys-chat");
-        initSystem(snap(LlmCapability.CHAT, "sys-chat", sys));
-
-        List<CapabilityClient> r1 = registry.getUserChain(LlmCapability.CHAT, 7L);
-        List<CapabilityClient> r2 = registry.getUserChain(LlmCapability.CHAT, 7L);
-
-        assertThat(r1).containsExactly(sys);
-        assertThat(r2).containsExactly(sys);
-        verify(configSource, times(2)).userChain(7L, LlmCapability.CHAT); // 空链不缓存，每次调
-    }
-
-    @Test
-    void invalidateUser_clears_cache_next_call_rebuilds() {
-        CapabilityClient c1 = client("u:7:m1");
-        CapabilityClient c2 = client("u:7:m1-v2");
-        RegistrySnapshot snap1 = snap(LlmCapability.CHAT, "u:7:m1", c1);
-        RegistrySnapshot snap2 = snap(LlmCapability.CHAT, "u:7:m1-v2", c2);
-        when(configSource.userChain(7L, LlmCapability.CHAT)).thenReturn(resolved());
-        when(factory.buildSnapshot(anyList())).thenReturn(snap1).thenReturn(snap2);
+    void find_unknownCandidate_returnsNull() {
         initSystem(RegistrySnapshot.empty());
 
-        List<CapabilityClient> before = registry.getUserChain(LlmCapability.CHAT, 7L);
-        registry.invalidateUser(7L);
-        List<CapabilityClient> after = registry.getUserChain(LlmCapability.CHAT, 7L);
+        assertThat(registry.find("missing")).isNull();
+    }
 
-        assertThat(before).containsExactly(c1);
-        assertThat(after).containsExactly(c2); // invalidate 后重建新 client
-        verify(configSource, times(2)).userChain(7L, LlmCapability.CHAT);
+    // ===== refresh 失效替换 =====
+
+    @Test
+    void refresh_replaces_snapshot_and_closes_removed_clients() {
+        CapabilityClient old = client("m1");
+        initSystem(snap(LlmCapability.CHAT, "m1", old));
+
+        CapabilityClient fresh = client("m2");
+        RegistrySnapshot freshSnap = snap(LlmCapability.CHAT, "m2", fresh);
+        when(factory.buildSnapshot()).thenReturn(freshSnap);
+        registry.refresh();
+
+        assertThat(registry.find("m1")).isNull();
+        assertThat(registry.find("m2")).isSameAs(fresh);
+        verify(old).close(); // 不再存在的旧 client 被关闭
     }
 
     @Test
-    void getUserChain_disabledSet_normalization_strips_user_prefix() {
-        CapabilityClient userClient = client("u:7:deepseek-chat");
-        RegistrySnapshot userSnap = snap(LlmCapability.CHAT, "u:7:deepseek-chat", userClient);
-        when(configSource.userChain(7L, LlmCapability.CHAT)).thenReturn(resolved());
-        when(factory.buildSnapshot(anyList())).thenReturn(userSnap);
-        initSystem(RegistrySnapshot.empty());
-        // 运行时紧急禁用 modelCode（系统级 disable 作用于所有用户同名 BYOK candidate，P1-5 归一化）
-        registry.disable("deepseek-chat");
+    void refresh_preserves_disabledSet() {
+        CapabilityClient c = client("m1");
+        initSystem(snap(LlmCapability.CHAT, "m1", c));
+        registry.disable("m1");
 
-        List<CapabilityClient> result = registry.getUserChain(LlmCapability.CHAT, 7L);
+        RegistrySnapshot rebuilt = snap(LlmCapability.CHAT, "m1", c);
+        when(factory.buildSnapshot()).thenReturn(rebuilt);
+        registry.refresh();
 
-        // u:7:deepseek-chat 剥前缀 → deepseek-chat ∈ 系统级 disabledSet → 被过滤（P1-5）
-        assertThat(result).isEmpty();
+        // disabledSet 跨 refresh 保留：链被过滤
+        assertThat(registry.getChain(LlmCapability.CHAT)).isEmpty();
     }
 
-    // ===== stripUserPrefix 静态 =====
+    // ===== disable/enable =====
 
     @Test
-    void stripUserPrefix_strips_namespaced_prefix() {
-        assertThat(LlmClientRegistry.stripUserPrefix("u:7:deepseek-chat")).isEqualTo("deepseek-chat");
-        assertThat(LlmClientRegistry.stripUserPrefix("u:12345:gpt-4")).isEqualTo("gpt-4");
-        assertThat(LlmClientRegistry.stripUserPrefix("deepseek-chat")).isEqualTo("deepseek-chat");
+    void disable_filters_chain_until_enable() {
+        CapabilityClient c = client("m1");
+        initSystem(snap(LlmCapability.CHAT, "m1", c));
+
+        registry.disable("m1");
+        assertThat(registry.getChain(LlmCapability.CHAT)).isEmpty();
+
+        registry.enable("m1");
+        assertThat(registry.getChain(LlmCapability.CHAT)).containsExactly(c);
     }
 }

@@ -90,8 +90,7 @@ class ChatServiceImplResolveCandidateIdTest {
     @DisplayName("resolveCandidateId_withNull_returnsDefault")
     void resolveCandidateId_withNull_returnsDefault() {
         ChatRequest request = new ChatRequest(null, "hello", "conv-test", false, "SIMPLE", false, null);
-        when(userContextProvider.getCurrentUserId()).thenReturn(7L);
-        when(llmRegistry.getUserDefault(LlmCapability.CHAT, 7L)).thenReturn(defaultClient);
+        when(llmRegistry.getDefault(LlmCapability.CHAT)).thenReturn(defaultClient);
         when(defaultClient.candidateId()).thenReturn(DEFAULT_CANDIDATE_ID);
 
         String result = createService().resolveCandidateId(request);
@@ -103,8 +102,7 @@ class ChatServiceImplResolveCandidateIdTest {
     @DisplayName("resolveCandidateId_withBlank_returnsDefault")
     void resolveCandidateId_withBlank_returnsDefault() {
         ChatRequest request = requestWithModel("   ");
-        when(userContextProvider.getCurrentUserId()).thenReturn(7L);
-        when(llmRegistry.getUserDefault(LlmCapability.CHAT, 7L)).thenReturn(defaultClient);
+        when(llmRegistry.getDefault(LlmCapability.CHAT)).thenReturn(defaultClient);
         when(defaultClient.candidateId()).thenReturn(DEFAULT_CANDIDATE_ID);
 
         String result = createService().resolveCandidateId(request);

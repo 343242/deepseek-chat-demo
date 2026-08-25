@@ -39,10 +39,10 @@ import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
 /**
- * Tests for BYOK model selection: user-requested model should be prioritized in fallback chain.
+ * Tests for model selection: user-requested model should be prioritized in fallback chain.
  */
 @ExtendWith(MockitoExtension.class)
-@DisplayName("ChatServiceImpl — BYOK model selection")
+@DisplayName("ChatServiceImpl — model selection")
 class ChatServiceImplModelSelectionTest {
 
     @Mock private LlmClientRegistry llmRegistry;
@@ -104,19 +104,19 @@ class ChatServiceImplModelSelectionTest {
     }
 
     @Test
-    @DisplayName("User-requested model is prioritized to chain head even if BYOK chain has different order")
+    @DisplayName("User-requested model is prioritized to chain head even if system chain has different order")
     void requestedModel_prioritizedToChainHead() {
         String requestedModel = "deepseek-v4-flash";
-        String byokDefault = "qwen-plus";
+        String chainDefault = "qwen-plus";
 
         ChatRequest request = new ChatRequest(requestedModel, "hello", RAW_CONV_ID, false, "SIMPLE", false, null);
         setupCommonMocks(requestedModel);
 
-        // BYOK chain has qwen-plus first, deepseek-v4-flash second
-        ChatCapable byokClient = mockChatClient(byokDefault);
+        // Chain has qwen-plus first, deepseek-v4-flash second
+        ChatCapable chainClient = mockChatClient(chainDefault);
         ChatCapable requestedClient = mockChatClient(requestedModel);
-        when(llmRegistry.getUserChain(LlmCapability.CHAT, USER_ID))
-                .thenReturn(List.of(byokClient, requestedClient));
+        when(llmRegistry.getChain(LlmCapability.CHAT))
+                .thenReturn(List.of(chainClient, requestedClient));
         // find() returns the requested client (it exists in registry)
         when(llmRegistry.find(requestedModel)).thenReturn(requestedClient);
 
@@ -133,20 +133,20 @@ class ChatServiceImplModelSelectionTest {
     }
 
     @Test
-    @DisplayName("Requested model not in BYOK chain but in registry is prepended")
+    @DisplayName("Requested model not in chain but in registry is prepended")
     void requestedModel_notInChain_prepended() {
         String requestedModel = "deepseek-v4-flash";
-        String byokDefault = "qwen-plus";
+        String chainDefault = "qwen-plus";
 
         ChatRequest request = new ChatRequest(requestedModel, "hello", RAW_CONV_ID, false, "SIMPLE", false, null);
         setupCommonMocks(requestedModel);
 
-        // BYOK chain only has qwen-plus
-        ChatCapable byokClient = mockChatClient(byokDefault);
+        // Chain only has qwen-plus
+        ChatCapable chainClient = mockChatClient(chainDefault);
         ChatCapable requestedClient = mockChatClient(requestedModel);
-        when(llmRegistry.getUserChain(LlmCapability.CHAT, USER_ID))
-                .thenReturn(List.of(byokClient));
-        // find() returns the requested client (it exists in registry but not in BYOK chain)
+        when(llmRegistry.getChain(LlmCapability.CHAT))
+                .thenReturn(List.of(chainClient));
+        // find() returns the requested client (it exists in registry but not in chain)
         when(llmRegistry.find(requestedModel)).thenReturn(requestedClient);
 
         when(modeStrategy.execute(any(StrategyExecutionContext.class)))
@@ -161,17 +161,17 @@ class ChatServiceImplModelSelectionTest {
     }
 
     @Test
-    @DisplayName("Invalid requested model falls back to BYOK chain")
-    void requestedModel_invalid_fallsBackToByokChain() {
+    @DisplayName("Invalid requested model falls back to system chain")
+    void requestedModel_invalid_fallsBackToSystemChain() {
         String requestedModel = "nonexistent-model";
-        String byokDefault = "qwen-plus";
+        String chainDefault = "qwen-plus";
 
         ChatRequest request = new ChatRequest(requestedModel, "hello", RAW_CONV_ID, false, "SIMPLE", false, null);
         setupCommonMocks(requestedModel);
 
-        ChatCapable byokClient = mockChatClient(byokDefault);
-        when(llmRegistry.getUserChain(LlmCapability.CHAT, USER_ID))
-                .thenReturn(List.of(byokClient));
+        ChatCapable chainClient = mockChatClient(chainDefault);
+        when(llmRegistry.getChain(LlmCapability.CHAT))
+                .thenReturn(List.of(chainClient));
         // find() returns null (model doesn't exist in registry)
         when(llmRegistry.find(requestedModel)).thenReturn(null);
 
@@ -199,7 +199,7 @@ class ChatServiceImplModelSelectionTest {
         // Chain already has requested model first
         ChatCapable requestedClient = mockChatClient(requestedModel);
         ChatCapable otherClient = mockChatClient("qwen-plus");
-        when(llmRegistry.getUserChain(LlmCapability.CHAT, USER_ID))
+        when(llmRegistry.getChain(LlmCapability.CHAT))
                 .thenReturn(List.of(requestedClient, otherClient));
         // find() should NOT be called since model is already at head
 
@@ -237,14 +237,14 @@ class ChatServiceImplModelSelectionTest {
     @DisplayName("Requested embedding model is rejected with MODEL_CAPABILITY_NOT_CHAT")
     void requestedModel_embeddingCapability_rejected() {
         String embeddingModel = "bailian-embed";
-        String byokDefault = "qwen-plus";
+        String chainDefault = "qwen-plus";
 
         ChatRequest request = new ChatRequest(embeddingModel, "hello", RAW_CONV_ID, false, "SIMPLE", false, null);
         setupCommonMocks(embeddingModel);
 
-        ChatCapable byokClient = mockChatClient(byokDefault);
-        when(llmRegistry.getUserChain(LlmCapability.CHAT, USER_ID))
-                .thenReturn(List.of(byokClient));
+        ChatCapable chainClient = mockChatClient(chainDefault);
+        when(llmRegistry.getChain(LlmCapability.CHAT))
+                .thenReturn(List.of(chainClient));
         // find() 返回一个 EMBEDDING 能力的 client（前端被绕过后直传 embedding id）
         when(llmRegistry.find(embeddingModel))
                 .thenReturn(mockClientWithCapability(embeddingModel, LlmCapability.EMBEDDING));
@@ -261,14 +261,14 @@ class ChatServiceImplModelSelectionTest {
     @DisplayName("Requested reranking model is rejected with MODEL_CAPABILITY_NOT_CHAT")
     void requestedModel_rerankingCapability_rejected() {
         String rerankingModel = "bge-reranker";
-        String byokDefault = "qwen-plus";
+        String chainDefault = "qwen-plus";
 
         ChatRequest request = new ChatRequest(rerankingModel, "hello", RAW_CONV_ID, false, "SIMPLE", false, null);
         setupCommonMocks(rerankingModel);
 
-        ChatCapable byokClient = mockChatClient(byokDefault);
-        when(llmRegistry.getUserChain(LlmCapability.CHAT, USER_ID))
-                .thenReturn(List.of(byokClient));
+        ChatCapable chainClient = mockChatClient(chainDefault);
+        when(llmRegistry.getChain(LlmCapability.CHAT))
+                .thenReturn(List.of(chainClient));
         when(llmRegistry.find(rerankingModel))
                 .thenReturn(mockClientWithCapability(rerankingModel, LlmCapability.RERANKING));
 

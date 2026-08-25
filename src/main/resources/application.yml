@@ -352,13 +352,9 @@ app:
       # gate OPEN 时顺延 next_retry_at（冻结 attempts）
       gate-defer-interval: ${MESSAGING_OUTBOX_GATE_DEFER_INTERVAL:5s}
   llm:
-    byok:
-      # BYOK 总开关；默认 false（未配 master-key 时不 fail-fast 阻断启动）。
-      # 启用需 env LLM_BYOK_ENABLED=true 且 SECURITY_CRYPTO_MASTER_KEY=<base64-32B>
-      enabled: ${LLM_BYOK_ENABLED:false}
     providers:
       bailian:
-        # 专属 maas 实例（非 dashscope 公共端点），SDK 原生路由守卫不命中，全走 GenericChatClient
+        # 专属 maas 实例（业务空间专属域名 *.maas.aliyuncs.com），SDK 原生路由守卫命中，chat 候选实走 DashScope SDK（BailianChatClient）
         url: https://llm-l3buonxbvhgk4qiy.cn-beijing.maas.aliyuncs.com
         api-key: ${DASHSCOPE_API_KEY}
         endpoints:
@@ -444,14 +440,14 @@ app:
         enabled: true
         probe-timeout-ms: 3000
 
-  # 通用安全原语（LLM BYOK + MCP admin 共用）
+  # 通用安全原语（MCP admin 消费）
   security:
     ssrf:
       # SSRF 防护端口白名单；默认 80/443
       allowed-ports: [80, 443]
     crypto:
-      # AES/GCM master-key（base64 32B），env 注入，不入 git；LLM ApiKey 与 MCP Token 加密共用。
-      # 缺失时 BYOK enabled=true 会 fail-fast，MCP Bearer Token 加密运行时失败
+      # AES/GCM master-key（base64 32B），env 注入，不入 git；MCP Bearer Token 加密使用。
+      # 缺失时 MCP Bearer Token 加密运行时失败
       master-key: ${SECURITY_CRYPTO_MASTER_KEY:}
 
 # MCP：DB 是运行时事实源，YAML connections 仅用于首次 bootstrap。

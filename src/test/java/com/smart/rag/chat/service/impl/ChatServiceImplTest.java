@@ -114,7 +114,7 @@ class ChatServiceImplTest {
             setupCommonMocks(request);
 
             ChatCapable client = mockChatClient(CANDIDATE_ID);
-            when(llmRegistry.getUserChain(LlmCapability.CHAT, USER_ID)).thenReturn(List.of(client));
+            when(llmRegistry.getChain(LlmCapability.CHAT)).thenReturn(List.of(client));
 
             when(modeStrategy.execute(any(StrategyExecutionContext.class)))
                     .thenReturn(StrategyExecuteResult.standard(null, "Hi there!"));
@@ -149,7 +149,7 @@ class ChatServiceImplTest {
             ChatCapable primaryClient = mockChatClient(CANDIDATE_ID);
             ChatCapable fallbackClient = mockChatClient(fallbackCandidate);
 
-            when(llmRegistry.getUserChain(LlmCapability.CHAT, USER_ID))
+            when(llmRegistry.getChain(LlmCapability.CHAT))
                     .thenReturn(List.of(primaryClient, fallbackClient));
             when(fallbackEligibility.isEligible(any(RuntimeException.class))).thenReturn(true);
 
@@ -174,7 +174,7 @@ class ChatServiceImplTest {
             setupCommonMocks(request);
 
             ChatCapable client = mockChatClient(CANDIDATE_ID);
-            when(llmRegistry.getUserChain(LlmCapability.CHAT, USER_ID)).thenReturn(List.of(client));
+            when(llmRegistry.getChain(LlmCapability.CHAT)).thenReturn(List.of(client));
             when(fallbackEligibility.isEligible(any(ContentFilteredException.class))).thenReturn(false);
 
             when(modeStrategy.execute(any(StrategyExecutionContext.class)))
@@ -193,7 +193,7 @@ class ChatServiceImplTest {
 
             ChatCapable client1 = mockChatClient(CANDIDATE_ID);
             ChatCapable client2 = mockChatClient("deepseek-v4-flash");
-            when(llmRegistry.getUserChain(LlmCapability.CHAT, USER_ID)).thenReturn(List.of(client1, client2));
+            when(llmRegistry.getChain(LlmCapability.CHAT)).thenReturn(List.of(client1, client2));
             when(fallbackEligibility.isEligible(any(RuntimeException.class))).thenReturn(true);
 
             when(modeStrategy.execute(any(StrategyExecutionContext.class)))

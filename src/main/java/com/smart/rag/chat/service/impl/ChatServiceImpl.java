@@ -260,14 +260,14 @@ public class ChatServiceImpl implements ChatService {
     // ==================== 内部辅助 ====================
 
     /**
-     * 构建 fallback 链：用户请求的模型优先（链首），其余按 BYOK/系统配置顺序。
+     * 构建 fallback 链：用户请求的模型优先（链首），其余按系统配置顺序。
      * <p>
-     * 修复：原 getUserChain 不考虑 ChatRequest.model，用户指定的模型可能不在链中。
+     * 修复：原 getChain 不考虑 ChatRequest.model，用户指定的模型可能不在链中。
      * 现在：如果用户指定的模型在 registry 中存在，放到链首；不在链中的从 registry 补入。
      * 如果指定模型不存在（无效 ID），跳过，用原始链兜底。
      */
     private List<CapabilityClient> buildChain(PreparedContext pctx) {
-        List<CapabilityClient> baseChain = llmRegistry.getUserChain(LlmCapability.CHAT, pctx.userId);
+        List<CapabilityClient> baseChain = llmRegistry.getChain(LlmCapability.CHAT);
         String requestedId = pctx.requestedCandidateId;
 
         // 用户指定模型已在链首 → 直接返回
@@ -344,9 +344,8 @@ public class ChatServiceImpl implements ChatService {
             }
             return model;
         }
-        // BYOK：用户未指定 model 时用其 BYOK 默认（无 BYOK → getUserDefault 内部 delegate 系统级 default）
-        Long userId = userContextProvider.getCurrentUserId();
-        return llmRegistry.getUserDefault(LlmCapability.CHAT, userId).candidateId();
+        // 用户未指定 model 时用系统默认
+        return llmRegistry.getDefault(LlmCapability.CHAT).candidateId();
     }
 
     private ChatResponse processResult(StrategyExecuteResult result,

@@ -13,7 +13,7 @@ import java.util.Set;
 /**
  * 通用 host 安全校验器（SSRF 防护）。
  * <p>
- * <b>威胁模型</b>：调用方（LLM BYOK / MCP server URL / 任意 user-supplied URL）让用户提交任意 URL，
+ * <b>威胁模型</b>：调用方（MCP server URL / 任意 user-supplied URL）让用户提交任意 URL，
  * 服务端用该 URL 发请求。恶意用户可填内网地址（云 metadata {@code 169.254.169.254}、Redis、内网服务）
  * → SSRF 探测/攻击内网、窃取云 IAM 凭证。本组件在配置入库前 fail-fast（不落库、不发请求）。
  * <p>
@@ -28,6 +28,10 @@ import java.util.Set;
  * 重定向兜底（{@code followRedirects=false}）在 HTTP 客户端构建层，不在本组件。
  * <p>
  * 非法 URL 抛 {@link IllegalArgumentException}，由 ControllerAdvice 映射 HTTP 400。
+ * <p>
+ * <b>不适用面</b>：{@link #validate()} 不适用于 LLM provider URL——其内网/回环一律拒绝
+ * 与端口白名单会误杀回环同机部署（Ollama）与内网网关；LLM 免 key 豁免走
+ * {@link #isLoopbackEndpoint(String)} 字面回环判定。
  *
  * @see DnsResolver
  */

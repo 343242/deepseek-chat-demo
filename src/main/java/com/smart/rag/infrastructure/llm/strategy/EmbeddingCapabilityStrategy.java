@@ -4,6 +4,7 @@ import com.smart.rag.infrastructure.llm.CapabilityClient;
 import com.smart.rag.infrastructure.llm.EmbeddingCapable;
 import com.smart.rag.infrastructure.llm.LlmCapability;
 import com.smart.rag.infrastructure.llm.ModelCandidate;
+import com.smart.rag.infrastructure.llm.client.HttpClientFactory;
 import com.smart.rag.infrastructure.llm.client.generic.GenericEmbeddingClient;
 import com.smart.rag.infrastructure.llm.metrics.LlmMetrics;
 import com.smart.rag.infrastructure.llm.resilience.CircuitBreaker;
@@ -25,8 +26,12 @@ import java.util.List;
 @Component
 public class EmbeddingCapabilityStrategy extends AbstractProviderFactoryAwareStrategy {
 
-    public EmbeddingCapabilityStrategy(List<ProviderClientFactory> factories) {
+    private final HttpClientFactory httpClientFactory;
+
+    public EmbeddingCapabilityStrategy(List<ProviderClientFactory> factories,
+                                       HttpClientFactory httpClientFactory) {
         super(factories);
+        this.httpClientFactory = httpClientFactory;
     }
 
     @Override public LlmCapability capability() { return LlmCapability.EMBEDDING; }
@@ -34,7 +39,7 @@ public class EmbeddingCapabilityStrategy extends AbstractProviderFactoryAwareStr
     @Override
     protected CapabilityClient createGenericClient(String baseUrl, String endpoint,
                                                     String apiKey, ModelCandidate candidate) {
-        return new GenericEmbeddingClient(baseUrl, endpoint, apiKey, candidate);
+        return new GenericEmbeddingClient(httpClientFactory, baseUrl, endpoint, apiKey, candidate);
     }
 
     @Override

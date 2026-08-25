@@ -8,9 +8,10 @@ import com.smart.rag.infrastructure.llm.*;
 import com.smart.rag.infrastructure.llm.client.AbstractEmbeddingClient;
 import com.smart.rag.infrastructure.llm.client.HttpClientErrorHandler;
 import com.smart.rag.infrastructure.llm.client.HttpClientFactory;
+import com.smart.rag.infrastructure.llm.client.TimeoutParams;
+import okhttp3.OkHttpClient;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.web.client.RestClient;
 
 import java.io.IOException;
 import java.time.Duration;
@@ -19,32 +20,35 @@ import java.util.*;
 /**
  * 通用 Embedding 客户端（OpenAI 兼容 API）
  * <p>
- * 基于 OpenAI 兼容的 /v1/embeddings 端点。
+ * 基于 OpenAI 兼容的 /v1/embeddings 端点。阻塞路径走共享 OkHttp 传输（WS3 统一），
+ * 超时经 {@link TimeoutParams} 从 candidate params 配置化。
  */
 public class GenericEmbeddingClient extends AbstractEmbeddingClient {
 
     private static final Logger log = LoggerFactory.getLogger(GenericEmbeddingClient.class);
     private static final int BATCH_SIZE = 10;
-    private static final int CONNECT_TIMEOUT_SECONDS = 10;
-    private static final int READ_TIMEOUT_SECONDS = 30;
+    private static final long READ_TIMEOUT_MS = 30_000;
 
     private final String baseUrl;
     private final String endpoint;
-    private final RestClient restClient;
+    private final String apiKey;
+    private final OkHttpClient okClient;
     private final ObjectMapper objectMapper;
-    private final HttpClientFactory.HttpHandles http;
 
-    public GenericEmbeddingClient(String baseUrl, String endpoint,
+    public GenericEmbeddingClient(HttpClientFactory httpClientFactory, String baseUrl, String endpoint,
                                   String apiKey, ModelCandidate candidate) {
         super(Objects.requireNonNull(candidate, "candidate must not be null"), candidate.provider());
         this.baseUrl = Objects.requireNonNull(baseUrl, "baseUrl must not be null");
         Objects.requireNonNull(endpoint, "endpoint must not be null");
         Objects.requireNonNull(apiKey, "apiKey must not be null");
         this.endpoint = endpoint;
+        this.apiKey = apiKey;
         this.objectMapper = new ObjectMapper();
-        this.http = HttpClientFactory.buildRestClient(baseUrl, apiKey,
-            Duration.ofSeconds(CONNECT_TIMEOUT_SECONDS), Duration.ofSeconds(READ_TIMEOUT_SECONDS));
-        this.restClient = http.restClient();
+        TimeoutParams timeouts = TimeoutParams.otherDefaults(READ_TIMEOUT_MS).mergeWithParams(candidate.params());
+        this.okClient = httpClientFactory.sharedOkHttpClient(
+            Duration.ofMillis(timeouts.connectTimeoutMs()),
+            Duration.ofMillis(timeouts.readTimeoutMs()),
+            Duration.ofMillis(timeouts.callTimeoutMs()));
 
         log.info("GenericEmbeddingClient initialized: model={}, endpoint={}", candidate.model(), endpoint);
     }
@@ -95,22 +99,22 @@ public class GenericEmbeddingClient extends AbstractEmbeddingClient {
 
     private String callApi(Map<String, Object> body) {
         try {
-            return restClient.post()
-                .uri(endpoint)
-                .body(body)
-                .retrieve()
-                .body(String.class);
+            String json = objectMapper.writeValueAsString(body);
+            return HttpClientFactory.executePostJson(okClient, url(), apiKey, json, "Embedding");
         } catch (RemoteException e) {
             throw e;
         } catch (Exception e) {
-            throw HttpClientErrorHandler.translate("Embedding",
-                baseUrl + (endpoint.startsWith("/") ? endpoint : "/" + endpoint), e);
+            throw HttpClientErrorHandler.translate("Embedding", url(), e);
         }
+    }
+
+    private String url() {
+        return baseUrl + (endpoint.startsWith("/") ? endpoint : "/" + endpoint);
     }
 
     @Override
     public void close() {
-        http.close();
+        // 共享 OkHttp 实例由 HttpClientFactory.closeAll() 统一管理，不在此关闭（WS3）
     }
 
     private float[] extractEmbedding(String json, int index) {

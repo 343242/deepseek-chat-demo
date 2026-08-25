@@ -4,6 +4,7 @@ import com.smart.rag.infrastructure.llm.CapabilityClient;
 import com.smart.rag.infrastructure.llm.LlmCapability;
 import com.smart.rag.infrastructure.llm.ModelCandidate;
 import com.smart.rag.infrastructure.llm.RerankCapable;
+import com.smart.rag.infrastructure.llm.client.HttpClientFactory;
 import com.smart.rag.infrastructure.llm.client.generic.GenericRerankClient;
 import com.smart.rag.infrastructure.llm.metrics.LlmMetrics;
 import com.smart.rag.infrastructure.llm.resilience.CircuitBreaker;
@@ -25,8 +26,12 @@ import java.util.List;
 @Component
 public class RerankCapabilityStrategy extends AbstractProviderFactoryAwareStrategy {
 
-    public RerankCapabilityStrategy(List<ProviderClientFactory> factories) {
+    private final HttpClientFactory httpClientFactory;
+
+    public RerankCapabilityStrategy(List<ProviderClientFactory> factories,
+                                    HttpClientFactory httpClientFactory) {
         super(factories);
+        this.httpClientFactory = httpClientFactory;
     }
 
     @Override public LlmCapability capability() { return LlmCapability.RERANKING; }
@@ -34,7 +39,7 @@ public class RerankCapabilityStrategy extends AbstractProviderFactoryAwareStrate
     @Override
     protected CapabilityClient createGenericClient(String baseUrl, String endpoint,
                                                     String apiKey, ModelCandidate candidate) {
-        return new GenericRerankClient(baseUrl, endpoint, apiKey, candidate);
+        return new GenericRerankClient(httpClientFactory, baseUrl, endpoint, apiKey, candidate);
     }
 
     @Override

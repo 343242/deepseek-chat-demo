@@ -19,7 +19,6 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
-import org.springframework.web.client.RestClient;
 import reactor.core.publisher.Flux;
 
 import java.time.Duration;
@@ -211,14 +210,50 @@ class OpenAiCompatibleChatProtocolHttpTest {
     // ====== 共享传输（同超时签名同实例，无 per-candidate 构造） ======
 
     @Test
-    @DisplayName("sharedRestClient：同超时签名同实例，不同签名不同实例")
-    void sharedRestClientCachedByTimeoutSignature() {
-        RestClient a = httpClientFactory.sharedRestClient(Duration.ofSeconds(10), Duration.ofSeconds(120));
-        RestClient b = httpClientFactory.sharedRestClient(Duration.ofSeconds(10), Duration.ofSeconds(120));
-        RestClient c = httpClientFactory.sharedRestClient(Duration.ofSeconds(10), Duration.ofSeconds(60));
+    @DisplayName("sharedOkHttpClient（含 call 签名）：同签名同实例，不同 call 签名不同实例")
+    void sharedOkHttpClientCachedByFullSignature() {
+        var a = httpClientFactory.sharedOkHttpClient(Duration.ofSeconds(10), Duration.ofSeconds(120), Duration.ofMillis(150_000));
+        var b = httpClientFactory.sharedOkHttpClient(Duration.ofSeconds(10), Duration.ofSeconds(120), Duration.ofMillis(150_000));
+        var c = httpClientFactory.sharedOkHttpClient(Duration.ofSeconds(10), Duration.ofSeconds(120), Duration.ofMillis(300_000));
 
         assertThat(a).isSameAs(b);
         assertThat(c).isNotSameAs(a);
+    }
+
+    @Test
+    @DisplayName("阻塞·301 重定向不跟随（followRedirects(false) 防漂移断言，决策 11）")
+    void blocking301NotFollowed() {
+        server.enqueue(new MockResponse().setResponseCode(301)
+            .setHeader("Location", server.url("/v1/other").toString()));
+
+        Throwable error = catchRoot(() ->
+            protocol.chat(ChatRequest.of("hi"), candidate, endpoint("sk-test-key")));
+
+        assertThat(error).isInstanceOf(RemoteException.class);
+        assertThat(((RemoteException) error).getErrorCode()).isEqualTo(RemoteErrorCode.LLM_STREAM_ERROR);
+    }
+
+    @Test
+    @DisplayName("阻塞·429 + Retry-After → RateLimitedException（OkHttp 阻塞路径映射与流式一致）")
+    void blocking429MapsToRateLimited() {
+        server.enqueue(new MockResponse().setResponseCode(429)
+            .setHeader("Retry-After", "7")
+            .setBody("rate limited"));
+
+        Throwable error = catchRoot(() ->
+            protocol.chat(ChatRequest.of("hi"), candidate, endpoint("sk-test-key")));
+
+        assertThat(error).isInstanceOf(RateLimitedException.class);
+        assertThat(((RateLimitedException) error).retryAfterMs()).isEqualTo(7_000L);
+    }
+
+    private static Throwable catchRoot(java.util.function.Supplier<?> action) {
+        try {
+            action.get();
+            throw new AssertionError("Expected error");
+        } catch (Throwable t) {
+            return t;
+        }
     }
 
     @Test

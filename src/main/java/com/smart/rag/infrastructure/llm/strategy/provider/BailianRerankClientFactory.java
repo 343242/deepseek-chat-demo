@@ -3,6 +3,7 @@ package com.smart.rag.infrastructure.llm.strategy.provider;
 import com.smart.rag.infrastructure.llm.CapabilityClient;
 import com.smart.rag.infrastructure.llm.LlmCapability;
 import com.smart.rag.infrastructure.llm.ModelCandidate;
+import com.smart.rag.infrastructure.llm.client.HttpClientFactory;
 import com.smart.rag.infrastructure.llm.client.bailian.BailianRerankClient;
 import com.smart.rag.infrastructure.llm.strategy.ProviderClientFactory;
 import org.springframework.stereotype.Component;
@@ -18,6 +19,12 @@ import org.springframework.stereotype.Component;
  */
 @Component
 public class BailianRerankClientFactory implements ProviderClientFactory {
+
+    private final HttpClientFactory httpClientFactory;
+
+    public BailianRerankClientFactory(HttpClientFactory httpClientFactory) {
+        this.httpClientFactory = httpClientFactory;
+    }
 
     /** qwen3-rerank 专用兼容端点（默认值；profile 可经 endpoints.rerank 覆盖） */
     static final String DEFAULT_RERANK_ENDPOINT = "/compatible-api/v1/reranks";
@@ -36,6 +43,6 @@ public class BailianRerankClientFactory implements ProviderClientFactory {
     public CapabilityClient create(String baseUrl, String endpoint, String apiKey, ModelCandidate candidate) {
         String domain = DashScopeUrls.domainBase(baseUrl);
         String rerankEndpoint = endpoint != null && !endpoint.isBlank() ? endpoint : DEFAULT_RERANK_ENDPOINT;
-        return new BailianRerankClient(domain, rerankEndpoint, apiKey, candidate);
+        return new BailianRerankClient(httpClientFactory, domain, rerankEndpoint, apiKey, candidate);
     }
 }

@@ -1,125 +1,45 @@
 package com.smart.rag.infrastructure.llm.client;
 
 import jakarta.annotation.PreDestroy;
+import okhttp3.Call;
+import okhttp3.MediaType;
 import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.RequestBody;
+import okhttp3.Response;
+import okhttp3.ResponseBody;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.http.client.JdkClientHttpRequestFactory;
+import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Component;
-import org.springframework.web.client.RestClient;
 
-import java.net.http.HttpClient;
+import java.io.IOException;
 import java.time.Duration;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * HTTP 客户端工厂 — 封装 RestClient + HttpClient 的标准构建模板
+ * HTTP 客户端工厂 — OkHttp 统一传输栈（design llm-resilience-optimization WS3，P6）
  * <p>
- * 5 个 LLM 客户端（Generic/Bailian × Chat/Embedding/Rerank）共享相同的 HTTP 构建模式，
- * 仅有超时值差异。本工厂统一封装该模式，返回 {@link HttpHandles} 持有者。
- * <p>
- * <b>OkHttpClient 共享单例</b>（实例方法 {@link #sharedOkHttpClient}）：按
- * (connectTimeout, readTimeout) 缓存 OkHttpClient 实例。OkHttp 官方建议单例复用
- * （每实例持有独立连接池 + dispatcher 线程池），N 个 Generic Chat candidate 共享
- * 同一个 OkHttpClient 可避免连接池/dispatcher 资源放大 N 倍。生命周期由本工厂
+ * 全部自研客户端（阻塞 + 流式）走 {@link #sharedOkHttpClient} 共享池，
+ * 按 (connect, read, call) 超时签名缓存。OkHttp 官方建议单例复用（每实例持有独立
+ * 连接池 + dispatcher 线程池），共享避免资源随候选数放大。生命周期由本工厂
  * {@link #closeAll()} 统一管理，使用方 {@code close()} 不应关闭共享实例。
  * <p>
- * <b>RestClient 共享单例</b>（实例方法 {@link #sharedRestClient}）：与 sharedOkHttpClient
- * 同型，按超时签名缓存。协议层（openai-compatible）阻塞路径使用——实例不绑
- * baseUrl/凭据，每请求绝对 URL + 显式 Authorization 头。
+ * <b>followRedirects(false)</b>：对齐被替换的 JDK HttpClient 默认语义（不跟随重定向），
+ * 防迁移引入行为差异（决策 11）。
  * <p>
- * <b>buildRestClient 为何保持 static</b>：该方法无状态、返回 per-candidate 的
- * RestClient（每 candidate 独立 baseUrl/apiKey/timeout 必须独立实例）。static 调用
- * 减少注入成本，5 个客户端已有调用点无需改动。
- * <p>
- * 设计原则：
- * <ul>
- *   <li>SRP — Abstract*Client 基类仅管 LLM 能力契约，HTTP 传输由本工厂负责</li>
- *   <li>组合优于继承 — 客户端持有 HttpHandles，而非继承传输实现</li>
- *   <li>OCP — 新增传输配置（代理、连接池）只改本工厂，不动基类层级</li>
- * </ul>
+ * 共享实例不绑 baseUrl/凭据：每请求绝对 URL + 显式 {@code Authorization: Bearer} 头
+ * （apiKey 缺省时省略该头，见 {@link ResolvedEndpoint} 无鉴权端点支持）。
  */
 @Component
 public class HttpClientFactory {
 
     private static final Logger log = LoggerFactory.getLogger(HttpClientFactory.class);
+    private static final MediaType JSON_MEDIA = MediaType.get("application/json; charset=utf-8");
 
-    /** Shared OkHttp clients keyed by "connect_read" timeout signature */
+    /** Shared OkHttp clients keyed by "connect_read_call" timeout signature */
     private final ConcurrentHashMap<String, OkHttpClient> sharedOkHttpClients = new ConcurrentHashMap<>();
-
-    /** Shared (RestClient + underlying HttpClient) holders keyed by "connect_read" timeout signature */
-    private final ConcurrentHashMap<String, HttpHandles> sharedRestClients = new ConcurrentHashMap<>();
-
-    /**
-     * 构建 RestClient + HttpClient 持有者，含标准 Bearer + JSON 头。
-     * <p>
-     * 调用方负责在 {@link AutoCloseable#close()} 中调用 {@link HttpHandles#close()}。
-     * <p>
-     * 保持 static：该方法无状态，且每个 candidate 的 baseUrl/apiKey/timeout 不同，
-     * 必须返回独立实例，不存在共享语义。
-     *
-     * @param baseUrl        基础 URL
-     * @param apiKey         Bearer token
-     * @param connectTimeout 连接超时
-     * @param readTimeout    读取超时
-     * @return 持有 HttpClient + RestClient 的不可变记录，AutoCloseable
-     */
-    public static HttpHandles buildRestClient(String baseUrl, String apiKey,
-                                              Duration connectTimeout, Duration readTimeout) {
-        Objects.requireNonNull(baseUrl, "baseUrl must not be null");
-        Objects.requireNonNull(apiKey, "apiKey must not be null");
-        Objects.requireNonNull(connectTimeout, "connectTimeout must not be null");
-        Objects.requireNonNull(readTimeout, "readTimeout must not be null");
-
-        HttpClient httpClient = HttpClient.newBuilder()
-            .connectTimeout(connectTimeout)
-            .build();
-        JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(httpClient);
-        requestFactory.setReadTimeout(readTimeout);
-        RestClient restClient = RestClient.builder()
-            .baseUrl(baseUrl)
-            .defaultHeader("Authorization", "Bearer " + apiKey)
-            .defaultHeader("Content-Type", "application/json")
-            .requestFactory(requestFactory)
-            .build();
-        return new HttpHandles(httpClient, restClient);
-    }
-
-    /**
-     * 获取共享的 RestClient 实例（按超时参数缓存）— 协议层阻塞路径传输
-     * （design llm-client-stateless §1 决策 3）。
-     * <p>
-     * 实例<b>不绑 baseUrl、不设默认 Authorization</b>（保留默认
-     * {@code Content-Type: application/json} 头）：每请求绝对 URL + 显式
-     * {@code Authorization: Bearer} 头（apiKey 缺省时省略该头）。相同
-     * (connectTimeout, readTimeout) 组合返回同一实例；生命周期由本工厂
-     * {@link #closeAll()} 统一管理，调用方不应关闭。
-     *
-     * @param connectTimeout 连接超时
-     * @param readTimeout    读取超时
-     * @return 共享 RestClient
-     */
-    public RestClient sharedRestClient(Duration connectTimeout, Duration readTimeout) {
-        Objects.requireNonNull(connectTimeout, "connectTimeout must not be null");
-        Objects.requireNonNull(readTimeout, "readTimeout must not be null");
-        String key = connectTimeout.toMillis() + "_" + readTimeout.toMillis();
-        HttpHandles handles = sharedRestClients.computeIfAbsent(key, k -> {
-            log.info("Creating shared RestClient: connectTimeout={}ms, readTimeout={}ms",
-                connectTimeout.toMillis(), readTimeout.toMillis());
-            HttpClient httpClient = HttpClient.newBuilder()
-                .connectTimeout(connectTimeout)
-                .build();
-            JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(httpClient);
-            requestFactory.setReadTimeout(readTimeout);
-            RestClient restClient = RestClient.builder()
-                .defaultHeader("Content-Type", "application/json")
-                .requestFactory(requestFactory)
-                .build();
-            return new HttpHandles(httpClient, restClient);
-        });
-        return handles.restClient();
-    }
 
     /**
      * 获取共享的 OkHttpClient 实例（按超时参数缓存）。
@@ -160,12 +80,56 @@ public class HttpClientFactory {
                 .connectTimeout(connectTimeout)
                 .readTimeout(readTimeout)
                 .callTimeout(callTimeout)
+                .followRedirects(false)
                 .build();
         });
     }
 
     /**
-     * 关闭所有共享 HTTP 客户端实例（OkHttp + RestClient 底层 HttpClient）。由 Spring @PreDestroy 自动调用。
+     * OkHttp 同步 POST JSON 统一模板（WS3）：阻塞路径标准出口。
+     * <ul>
+     *   <li>非 2xx → {@code HttpClientErrorHandler.translateStatus}（读错误体 4KB + Retry-After）</li>
+     *   <li>IOException → {@code HttpClientErrorHandler.translate}（LLM_TRANSIENT_ERROR）</li>
+     *   <li>2xx → 响应体字符串（调用方自行 Jackson 解析）</li>
+     * </ul>
+     *
+     * @param client    共享 OkHttpClient（超时已由签名决定）
+     * @param url       绝对 URL
+     * @param apiKey    Bearer token；null/blank 时不发送 Authorization 头
+     * @param jsonBody  请求体 JSON 字符串
+     * @param operation 操作描述（异常消息用，如 "Embedding"）
+     * @return 响应体字符串
+     */
+    public static String executePostJson(OkHttpClient client, String url, @Nullable String apiKey,
+            String jsonBody, String operation) {
+        Request.Builder builder = new Request.Builder()
+            .url(url)
+            .post(RequestBody.create(jsonBody, JSON_MEDIA));
+        if (apiKey != null && !apiKey.isBlank()) {
+            builder.header("Authorization", "Bearer " + apiKey);
+        }
+        Call call = client.newCall(builder.build());
+        try (Response response = call.execute()) {
+            if (!response.isSuccessful()) {
+                String body = "";
+                try (ResponseBody peek = response.peekBody(4096)) {
+                    if (peek != null) body = peek.string();
+                }
+                throw HttpClientErrorHandler.translateStatus(operation, url,
+                    response.code(), body, response.header("Retry-After"));
+            }
+            ResponseBody responseBody = response.body();
+            if (responseBody == null) {
+                return "";
+            }
+            return responseBody.string();
+        } catch (IOException e) {
+            throw HttpClientErrorHandler.translate(operation, url, e);
+        }
+    }
+
+    /**
+     * 关闭所有共享 HTTP 客户端实例。由 Spring @PreDestroy 自动调用。
      */
     @PreDestroy
     public void closeAll() {
@@ -181,29 +145,6 @@ public class HttpClientFactory {
             });
             sharedOkHttpClients.clear();
             log.info("Closed {} shared OkHttpClient instances", okCount);
-        }
-
-        int restCount = sharedRestClients.size();
-        if (restCount > 0) {
-            sharedRestClients.forEach((key, handles) -> {
-                try {
-                    handles.close();
-                } catch (Exception e) {
-                    log.warn("Failed to close shared RestClient HttpClient (key={}): {}", key, e.getMessage());
-                }
-            });
-            sharedRestClients.clear();
-            log.info("Closed {} shared RestClient instances", restCount);
-        }
-    }
-
-    /**
-     * HTTP 资源持有者 — 持有 RestClient 及其底层 HttpClient，统一 close 生命周期。
-     */
-    public record HttpHandles(HttpClient httpClient, RestClient restClient) implements AutoCloseable {
-        @Override
-        public void close() {
-            httpClient.close();
         }
     }
 }

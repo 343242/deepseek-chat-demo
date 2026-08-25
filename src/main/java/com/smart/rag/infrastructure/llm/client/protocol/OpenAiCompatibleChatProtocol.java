@@ -27,7 +27,6 @@ import okio.BufferedSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
-import org.springframework.web.client.RestClient;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.FluxSink;
 import reactor.core.scheduler.Schedulers;
@@ -43,16 +42,13 @@ import java.util.Map;
  * OpenAI 兼容 Chat 协议实现（/chat/completions）— 无状态单例，自 {@code GenericChatClient}
  * 原样抽出（design llm-client-stateless §4 WS-A）。
  * <p>
- * 协议不持有任何凭据/端点字段：全部来自方法入参。阻塞与流式两路均走共享传输
- * （{@code HttpClientFactory.sharedRestClient} / {@code sharedOkHttpClient}，按超时签名缓存），
+ * 协议不持有任何凭据/端点字段：全部来自方法入参。阻塞与流式两路均走共享 OkHttp 传输
+ * （{@code HttpClientFactory.sharedOkHttpClient}，按超时签名缓存，WS3 全面 OkHttp 化），
  * 每请求绝对 URL + 显式 Authorization 头（apiKey 缺省时不发送该头）。
  * <p>
- * <b>Dual HTTP client libraries:</b> RestClient requires java.net.http.HttpClient as its underlying
- * transport (via {@code JdkClientHttpRequestFactory}), while OkHttp is used for SSE streaming because
- * it provides superior Server-Sent Events support (line-by-line reading with cancellation) compared
- * to the JDK's HttpURLConnection. This is an accepted tradeoff — the blocking path stays on
- * RestClient for consistency with the rest of the Spring ecosystem, and the streaming path uses
- * OkHttp's battle-tested SSE handling.
+ * <b>双实例结构（WS2 决策 12）：</b>阻塞持 (connect, read, call) 签名实例、流式持
+ * (connect, stream-read, stream-call) 签名实例——超时经 candidate params 的
+ * {@link TimeoutParams} 配置化。
  */
 @Component
 public class OpenAiCompatibleChatProtocol implements ChatProtocol {
@@ -61,9 +57,6 @@ public class OpenAiCompatibleChatProtocol implements ChatProtocol {
 
     private static final Logger log = LoggerFactory.getLogger(OpenAiCompatibleChatProtocol.class);
     private static final MediaType JSON_MEDIA = MediaType.get("application/json; charset=utf-8");
-    private static final int CONNECT_TIMEOUT_SECONDS = 10;
-    /** 阻塞补全对长 chunk 的抽取（DeepSeek 等）可超 60s，读超时需覆盖慢请求；流式超时经 TimeoutParams 配置（WS2） */
-    private static final int READ_TIMEOUT_SECONDS = 120;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final HttpClientFactory httpClientFactory;
@@ -81,19 +74,17 @@ public class OpenAiCompatibleChatProtocol implements ChatProtocol {
     public LlmResponse chat(ChatRequest request, ModelCandidate candidate, ResolvedEndpoint endpoint) {
         Map<String, Object> body = buildRequestBody(request, candidate, false);
         String url = buildUrl(endpoint);
-        // 共享 RestClient：实例不绑 baseUrl/凭据，每请求绝对 URL + 显式 Authorization（缺省不发送）
-        RestClient restClient = httpClientFactory.sharedRestClient(
-            Duration.ofSeconds(CONNECT_TIMEOUT_SECONDS), Duration.ofSeconds(READ_TIMEOUT_SECONDS));
+        // 阻塞双实例结构（WS2 决策 12 / WS3 OkHttp 统一）：阻塞 client = (connect, read, call)，
+        // 与流式实例 (connect, stream-read, stream-call) 天然分签名，不得合用
+        TimeoutParams timeouts = TimeoutParams.chatDefaults().mergeWithParams(candidate.params());
+        OkHttpClient blockingClient = httpClientFactory.sharedOkHttpClient(
+            Duration.ofMillis(timeouts.connectTimeoutMs()),
+            Duration.ofMillis(timeouts.readTimeoutMs()),
+            Duration.ofMillis(timeouts.callTimeoutMs()));
 
         try {
-            RestClient.RequestBodySpec spec = restClient.post().uri(url);
-            if (endpoint.hasApiKey()) {
-                spec = spec.header("Authorization", "Bearer " + endpoint.apiKey());
-            }
-            String responseJson = spec.body(body)
-                .retrieve()
-                .body(String.class);
-
+            String responseJson = HttpClientFactory.executePostJson(
+                blockingClient, url, endpoint.apiKey(), objectMapper.writeValueAsString(body), "Chat");
             return parseResponse(responseJson);
         } catch (RemoteException e) {
             throw e;

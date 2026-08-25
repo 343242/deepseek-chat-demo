@@ -9,6 +9,12 @@ import type {
   EtlStatus,
   ChunkUploadInitRequest,
   ChunkUploadResult,
+  DirectUploadInitRequest,
+  DirectUploadInitResult,
+  DirectUploadPartUrlsResult,
+  DirectUploadStatusResponse,
+  DirectUploadCommitRequest,
+  DirectUploadConfig,
 } from '@/types/document'
 import { UPLOAD_LIMITS } from '@/lib/constants'
 
@@ -149,6 +155,43 @@ export function chunkUploadDelete(uploadId: string) {
 /** 上传策略：> chunkThreshold 走分片，否则直传 */
 export function shouldChunk(fileSize: number): boolean {
   return fileSize > UPLOAD_LIMITS.chunkThreshold
+}
+
+/* ============ 直传 DirectUploadController（presigned 浏览器直传，控制面走 /api） ============ */
+
+/** 灰度开关下发（失败按 false 处理，前端回退代理路径） */
+export function fetchDirectUploadConfig(): Promise<DirectUploadConfig> {
+  return api.get('/documents/direct-uploads/config')
+}
+
+/** 直传端点前缀：个人 /documents/direct-uploads，团队 /teams/{teamId}/documents/direct-uploads */
+function directBase(teamId?: number | null): string {
+  return teamId ? `/teams/${teamId}/documents/direct-uploads` : '/documents/direct-uploads'
+}
+
+/** 直传 init：声明元数据 → instant 秒传 / single presigned PUT / multipart MPU */
+export function directUploadInit(req: DirectUploadInitRequest, teamId?: number | null): Promise<DirectUploadInitResult> {
+  return api.post(directBase(teamId), req)
+}
+
+/** 批量签发分片 presigned URL（单批 ≤20） */
+export function directUploadPartUrls(sessionId: string, partNumbers: number[], teamId?: number | null): Promise<DirectUploadPartUrlsResult> {
+  return api.post(`${directBase(teamId)}/${sessionId}/part-urls`, { partNumbers })
+}
+
+/** 会话状态（断点续传元数据） */
+export function directUploadStatus(sessionId: string, teamId?: number | null): Promise<DirectUploadStatusResponse> {
+  return api.get(`${directBase(teamId)}/${sessionId}`)
+}
+
+/** commit：回传 parts（multipart），返回文档 */
+export function directUploadCommit(sessionId: string, body: DirectUploadCommitRequest, teamId?: number | null): Promise<DocumentUploadResponse> {
+  return api.post(`${directBase(teamId)}/${sessionId}/commit`, body)
+}
+
+/** 取消：Abort + 会话清理 */
+export function directUploadAbort(sessionId: string, teamId?: number | null): Promise<void> {
+  return api.post(`${directBase(teamId)}/${sessionId}/abort`)
 }
 
 /* ============ 原文件预览 / 下载（KB-2 / KB-3，design §1 · §4.3） ============ */

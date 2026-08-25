@@ -95,3 +95,72 @@ export interface ChunkUploadResult {
   uploadedChunks?: number[]
   documentId?: number
 }
+
+/* ============ 直传 DirectUploadController（presigned 浏览器直传 MinIO） ============ */
+
+/** 直传 init 请求（fileChecksum 为前端流式 SHA-256，与 ChunkUploadInitRequest 同款 64 hex） */
+export interface DirectUploadInitRequest {
+  readonly fileName: string
+  readonly fileSize: number
+  readonly mimeType: string
+  readonly fileChecksum: string
+  readonly teamId?: number | null
+  readonly replaceDocumentId?: number | null
+}
+
+/** 直传 init 结果三态：instant 秒传 / single presigned PUT / multipart MPU */
+export interface DirectUploadInitResult {
+  mode: 'instant' | 'single' | 'multipart'
+  documentId?: number
+  fileName?: string
+  sessionId?: string
+  uploadUrl?: string
+  /** presigned URL 过期时刻（epoch ms），过期重签 */
+  expiresAt?: number
+  /** single 模式 PUT 应携带的 Content-Type */
+  contentType?: string
+  uploadId?: string
+  chunkSize?: number
+  totalChunks?: number
+}
+
+export interface DirectUploadPartUrl {
+  partNumber: number
+  url: string
+}
+
+/** 批量签发分片 URL 响应（单批 ≤20） */
+export interface DirectUploadPartUrlsResult {
+  expiresAt: number
+  urls: DirectUploadPartUrl[]
+}
+
+/** 会话状态（断点续传元数据；分片差集由前端本地记录） */
+export interface DirectUploadStatusResponse {
+  sessionId: string
+  status: 'ACTIVE' | 'COMMITTING' | 'COMMITTED' | 'ABORTED'
+  mode: 'single' | 'multipart'
+  fileName: string
+  fileSize: number
+  mimeType: string
+  uploadId?: string | null
+  chunkSize: number
+  totalChunks: number
+  documentId?: number | null
+}
+
+/** commit 回传分片声明（ETag 取自各 UploadPart 响应头，S3 Complete 侧校验） */
+export interface DirectUploadPartDeclaration {
+  partNumber: number
+  etag: string
+  size: number
+}
+
+export interface DirectUploadCommitRequest {
+  parts?: DirectUploadPartDeclaration[] | null
+}
+
+/** GET /documents/direct-uploads/config —— 灰度开关下发 */
+export interface DirectUploadConfig {
+  enabled: boolean
+}

@@ -5,17 +5,29 @@ import { Progress } from '@/components/ui/progress'
 import { toast } from 'sonner'
 import {
   uploadDirect, uploadBatch, shouldChunk, chunkUploadInit, uploadChunk, chunkUploadComplete, chunkUploadDelete,
+  fetchDirectUploadConfig, directUploadAbort,
   docKeys,
 } from '@/api/documents'
 import { queryClient } from '@/lib/query-client'
 import { computeChecksum } from '@/lib/checksum'
 import { UPLOAD_LIMITS } from '@/lib/constants'
+import { uploadViaDirect, DirectNetworkError } from '@/lib/direct-upload'
+import { useAuthStore } from '@/stores/auth-store'
 import { extOf, formatFileSize, formatSpeed } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { FileTypeIcon } from './file-icon'
 
 /** 扩展名白名单（Set 成员判定，消除 as const 元组 × includes 的变差断言，FE-020） */
 const ALLOWED_EXTENSIONS = new Set<string>(UPLOAD_LIMITS.allowedExtensions)
+
+/** 直传灰度开关：进程内缓存一次（GET /config）；请求失败按 false 处理走代理路径 */
+let directEnabledPromise: Promise<boolean> | null = null
+function directUploadEnabled(): Promise<boolean> {
+  directEnabledPromise ??= fetchDirectUploadConfig()
+    .then((c) => c.enabled)
+    .catch(() => false)
+  return directEnabledPromise
+}
 
 interface UploadTask {
   id: string
@@ -28,6 +40,8 @@ interface UploadTask {
   lastBytes: number
   lastTime: number
   uploadId?: string
+  /** uploadId 为 direct-uploads 会话（取消走 directUploadAbort） */
+  direct?: boolean
   error?: string
 }
 
@@ -154,6 +168,53 @@ export function UploadButton({
         }
       }
 
+      /* ---- Presigned 直传（灰度 flag 开启时）：单/分片统一走 direct-uploads 会话，
+       * 网络层失败（CORS 预检失败/断网/入口 413）自动降级既有代理路径（阶段 2 行为）。
+       * 批量在 direct 模式下消解为逐文件会话（init 429 由编排层指数退避）。 */
+      if (await directUploadEnabled()) {
+        const userId = useAuthStore.getState().user?.id
+        if (userId != null) {
+          for (const file of valid) {
+            const taskId = makeTask(file)
+            const startedAt = Date.now()
+            try {
+              const resp = await uploadViaDirect({
+                file, userId, teamId, replaceDocumentId,
+                onSession: (sessionId) => {
+                  setTasks((t) => t.map((x) => (x.id === taskId ? { ...x, uploadId: sessionId, direct: true } : x)))
+                },
+                onProgress: (uploadedBytes) => {
+                  const progress = Math.min(100, Math.round((uploadedBytes / file.size) * 100))
+                  const speed = uploadedBytes / ((Date.now() - startedAt) / 1000)
+                  setTasks((t) => t.map((x) => (x.id === taskId ? { ...x, progress, speed } : x)))
+                },
+              })
+              void resp
+              markSuccess(taskId)
+              void queryClient.invalidateQueries({ queryKey: docKeys.all })
+              onDone?.()
+            } catch (e) {
+              if (e instanceof DirectNetworkError) {
+                // 降级：代理路径完整接管该文件（进度卡复用，错误态只在两条路径都失败时呈现）
+                try {
+                  if (!shouldChunk(file.size)) await uploadDirect(file, teamId, replaceDocumentId)
+                  else await uploadViaChunks(file, taskId)
+                  markSuccess(taskId)
+                  void queryClient.invalidateQueries({ queryKey: docKeys.all })
+                  onDone?.()
+                } catch (fallbackErr) {
+                  markError(taskId, (fallbackErr as Error).message, file.name)
+                }
+              } else {
+                markError(taskId, (e as Error).message, file.name)
+              }
+            }
+          }
+          return
+        }
+        // userId 缺失（未就绪）：落到代理路径
+      }
+
       if (replaceDocumentId) {
         for (const file of valid) await uploadOne(file)
         return
@@ -192,7 +253,10 @@ export function UploadButton({
   )
 
   function cancel(task: UploadTask) {
-    if (task.uploadId) void chunkUploadDelete(task.uploadId).catch(() => {})
+    if (task.uploadId) {
+      if (task.direct) void directUploadAbort(task.uploadId, teamId).catch(() => {})
+      else void chunkUploadDelete(task.uploadId).catch(() => {})
+    }
     setTasks((t) => t.filter((x) => x.id !== task.id))
   }
 

@@ -438,7 +438,7 @@
         <dependency>
             <groupId>org.opendataloader</groupId>
             <artifactId>opendataloader-pdf-core</artifactId>
-            <version>2.5.0</version>
+            <version>2.5.5</version>
             <exclusions>
                 <!-- 其传递的 okhttp-jvm 5.4.0 与本项目 okhttp 4.12.0（dashscope-sdk-java 对齐版）
                      在 classpath 形成重复 okhttp3.* 类；排除后由项目侧 4.12.0 统一供给 -->
@@ -526,5 +526,20 @@
             </plugin>
         </plugins>
     </build>
+
+    <repositories>
+        <!--
+            OSS 直连仓库：id 刻意不用 central —— 本机/CI 的阿里云镜像只拦截 mirrorOf=central，
+            该 id 的请求直通 Maven Central。用途：opendataloader-pdf-core 等新发布（<1 天）构件
+            在阿里云同步空窗期内的可拉取性（M8：否则 CI dependency:get 直连手法不可复现）。
+        -->
+        <repository>
+            <id>oss-direct</id>
+            <name>Maven Central (direct, mirror-bypass)</name>
+            <url>https://repo1.maven.org/maven2</url>
+            <releases><enabled>true</enabled></releases>
+            <snapshots><enabled>false</enabled></snapshots>
+        </repository>
+    </repositories>
 
 </project>

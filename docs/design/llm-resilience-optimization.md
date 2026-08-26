@@ -1,6 +1,6 @@
 # LLM 模块弹性与传输层重构设计
 
-> 状态：**设计定稿，待实施**（2026-08-25，v1.2 评审修订）
+> 状态：**已实施**（2026-08-26，WS1–WS8 落地；AC11 压测标定与灰度属上线流程，未含在代码提交内）
 > 范围：`src/main/java/com/smart/rag/infrastructure/llm/` 模块 + `chat`/`mode` 层的流式降级协议 + application.yml 弹性配置
 > **前置依赖：`docs/design/llm-client-stateless.md`（客户端无状态化 + BYOK 重构，WS0）必须先于本方案 WS1–WS8 完成**
 > 关联文档：`docs/design/bailian-sdk-integration.md`（SDK 化决策 6 的 response_format 双路径互补）；`docs/design/llm-client-stateless.md`（前置架构矫正，含 pi-ai 调研摘要）

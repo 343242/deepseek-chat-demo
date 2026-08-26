@@ -214,7 +214,7 @@ public class LlmClientFactory {
                                                 ProbeProperties probeProps) {
         CapabilityStrategy strategy = strategyRegistry.get(capability);
         CircuitBreaker cb = circuitBreakerRegistry.getOrCreate(raw.candidateId());
-        RetryPolicy retry = new RetryPolicy(retryConfig);
+        RetryPolicy retry = new RetryPolicy(retryConfig, raw.candidateId(), metrics); // WS7 重试打点
 
         // 并发准入闸门（WS4，仅系统链路——用户自带 key 链路已随 WS0 移除，天然不进闸门，决策 14）：
         // 三级解析 candidate params.max-concurrent（终态覆盖，仅数量）> capability override > global

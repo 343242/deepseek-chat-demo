@@ -108,6 +108,13 @@ public class LlmMetrics {
 
     // ==================== Retry ====================
 
+    /** 流式首 token 延迟（TTFT，WS7）：起点 = 订阅时捕获（非组装时） */
+    public void recordTtft(String candidateId, long startNanos) {
+        if (registry == null) return;
+        registry.timer("llm.chat.ttft", "candidateId", candidateId)
+            .record(System.nanoTime() - startNanos, TimeUnit.NANOSECONDS);
+    }
+
     public void recordRetryAttempt(String candidateId, String result) {
         if (registry == null) return;
         registry.counter("llm.retry.attempts", "candidateId", candidateId, "result", result)

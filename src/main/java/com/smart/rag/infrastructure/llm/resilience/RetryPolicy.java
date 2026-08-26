@@ -6,6 +6,7 @@ import com.smart.rag.infrastructure.exception.errorcode.RemoteErrorCode;
 import com.smart.rag.infrastructure.fallback.CircuitOpenException;
 import com.smart.rag.infrastructure.fallback.ProbeTimeoutException;
 import com.smart.rag.infrastructure.llm.config.RetryConfig;
+import org.springframework.lang.Nullable;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
 import reactor.util.retry.Retry;
@@ -33,12 +34,30 @@ public class RetryPolicy {
     private final long baseDelayMs;
     private final long maxDelayMs;
     private final double multiplier;
+    /** WS7 观测：重试决策打点（llm.retry.attempts{candidateId, result}）；null = 不打点 */
+    private final String candidateId;
+    @Nullable
+    private final com.smart.rag.infrastructure.llm.metrics.LlmMetrics metrics;
 
     public RetryPolicy(RetryConfig properties) {
+        this(properties, null, null);
+    }
+
+    public RetryPolicy(RetryConfig properties, @Nullable String candidateId,
+                       @Nullable com.smart.rag.infrastructure.llm.metrics.LlmMetrics metrics) {
         this.maxAttempts = properties.effectiveMaxAttempts();
         this.baseDelayMs = properties.effectiveBaseDelayMs();
         this.maxDelayMs = properties.effectiveMaxDelayMs();
         this.multiplier = properties.effectiveMultiplier();
+        this.candidateId = candidateId;
+        this.metrics = metrics;
+    }
+
+    /** 重试决策打点（result: retry / exhausted，WS7 接线此前未用的 recordRetryAttempt） */
+    private void recordRetry(String result) {
+        if (metrics != null && candidateId != null) {
+            metrics.recordRetryAttempt(candidateId, result);
+        }
     }
 
     /**
@@ -71,10 +90,12 @@ public class RetryPolicy {
                 }
                 lastException = e;
                 if (attempt == maxAttempts - 1) {
+                    recordRetry("exhausted");
                     throw new RemoteException(
                         RemoteErrorCode.LLM_TRANSIENT_ERROR,
                         "LLM call failed after " + maxAttempts + " attempts: " + e.getMessage(), e);
                 }
+                recordRetry("retry");
                 long delay = computeDelay(e, attempt);
                 Thread.sleep(delay);
             }
@@ -97,7 +118,11 @@ public class RetryPolicy {
             Throwable failure = context.failure();
             if (context.totalRetries() < maxAttempts - 1
                     && isRetryable(failure) && !emitted.get()) {
+                recordRetry("retry");
                 return Mono.delay(Duration.ofMillis(computeDelay(failure, (int) context.totalRetries())));
+            }
+            if (context.totalRetries() >= maxAttempts - 1) {
+                recordRetry("exhausted");
             }
             return Mono.error(failure);
         }));

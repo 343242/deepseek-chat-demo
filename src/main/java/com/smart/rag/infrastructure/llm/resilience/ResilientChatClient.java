@@ -10,6 +10,7 @@ import org.springframework.lang.Nullable;
 import reactor.core.publisher.Flux;
 
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * ResilientChatClient — Chat 能力的弹性装饰器（实现 ChatCapable）
@@ -87,6 +88,8 @@ public class ResilientChatClient extends AbstractResilientClient<ChatCapable>
         long start = metrics != null ? metrics.startNanos() : 0;
         // P0a 占位：SPI 已改 Flux<StreamChunk>，但 ProbeHandler/retryStream 仍是 Flux<String>（P2 泛型化 ProbeHandler）。
         // 内部 .map(StreamChunk::text) 回 String 走弹性层，末端再 .map 回 StreamChunk。占位阶段无 tool delta，语义无损。
+        // TTFT（WS7）：起点 = 订阅时捕获（非组装时），首包一次性打点
+        AtomicBoolean firstChunkRecorded = new AtomicBoolean(false);
         Flux<StreamChunk> body = circuitBreaker.executeStream(() ->
             retryPolicy.retryStream(() -> {
                 // P2：ProbeHandler/retryStream/executeStream 已泛型化，透传 Flux<StreamChunk>。
@@ -96,7 +99,16 @@ public class ResilientChatClient extends AbstractResilientClient<ChatCapable>
                     ? probeHandler.wrap(candidateId(), raw, circuitBreaker::recordProbeSuccess)
                     : raw;
             })
-        ).doOnComplete(() -> {
+).doOnNext(chunk -> {
+            if (metrics != null && firstChunkRecorded.compareAndSet(false, true)) {
+                metrics.recordTtft(candidateId(), start);
+            }
+            // 流式 cache_hit 打点（WS7）：轮末汇总包（tokenUsage != null）覆盖流式主路径
+            if (metrics != null && chunk.usage() != null
+                && chunk.usage().cacheHitTokens() != null && chunk.usage().cacheHitTokens() > 0) {
+                metrics.recordTokens(candidateId(), "cache_hit", chunk.usage().cacheHitTokens());
+            }
+        }).doOnComplete(() -> {
             if (metrics != null) metrics.recordChatLatency(candidateId(), start, "success");
         }).doOnError(e -> {
             if (metrics != null) metrics.recordChatLatency(candidateId(), start, "error");
@@ -125,6 +137,11 @@ public class ResilientChatClient extends AbstractResilientClient<ChatCapable>
         if (metrics == null || response.tokenUsage() == null) return;
         metrics.recordTokens(candidateId(), "prompt", response.tokenUsage().promptTokens());
         metrics.recordTokens(candidateId(), "completion", response.tokenUsage().completionTokens());
+        // 阻塞路径 cache_hit 打点（WS7）：DeepSeek prompt_cache_hit_tokens / 百炼 cached_tokens 已在协议层解析
+        Integer cacheHit = response.tokenUsage().cacheHitTokens();
+        if (cacheHit != null && cacheHit > 0) {
+            metrics.recordTokens(candidateId(), "cache_hit", cacheHit);
+        }
     }
 
     @Override

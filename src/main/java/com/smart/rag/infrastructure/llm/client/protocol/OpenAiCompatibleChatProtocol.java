@@ -58,6 +58,12 @@ public class OpenAiCompatibleChatProtocol implements ChatProtocol {
     private static final Logger log = LoggerFactory.getLogger(OpenAiCompatibleChatProtocol.class);
     private static final MediaType JSON_MEDIA = MediaType.get("application/json; charset=utf-8");
 
+    /** extraParams 白名单（WS6 决策 4）：OpenAI 兼容端点安全可透传的顶层参数 */
+    private static final java.util.Set<String> EXTRA_PARAM_ALLOWLIST =
+        java.util.Set.of("response_format", "stop", "seed", "frequency_penalty", "presence_penalty");
+    /** 已告警过的未知键（每键首见 WARN，防逐请求刷屏） */
+    private static final java.util.Set<String> WARNED_UNKNOWN_KEYS = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
     private final ObjectMapper objectMapper = new ObjectMapper();
     private final HttpClientFactory httpClientFactory;
 
@@ -344,7 +350,29 @@ public class OpenAiCompatibleChatProtocol implements ChatProtocol {
             ThinkingDialect dialect = ThinkingBodyResolver.extractDialect(candidate.params());
             body.putAll(ThinkingBodyResolver.resolve(cfg, dialect));
         }
+        mergeExtraParams(body, request.extraParams());
         return body;
+    }
+
+    /**
+     * extraParams 白名单透传（design llm-resilience-optimization WS6，P2）。
+     * <p>
+     * 不做任意透传（决策 4）：OpenAI 对未知顶层参数 400（"Unrecognized request argument"），
+     * 仅白名单 5 键合入 body（打通 JSON mode：{@code response_format: {"type":"json_object"}}，
+     * Map 形态原样透传）。非白名单键不透传且<b>每键首见 WARN</b>（防逐请求刷屏）。
+     */
+    private static void mergeExtraParams(Map<String, Object> body, Map<String, Object> extraParams) {
+        if (extraParams == null || extraParams.isEmpty()) {
+            return;
+        }
+        for (Map.Entry<String, Object> entry : extraParams.entrySet()) {
+            if (EXTRA_PARAM_ALLOWLIST.contains(entry.getKey())) {
+                body.put(entry.getKey(), entry.getValue());
+            } else if (WARNED_UNKNOWN_KEYS.add(entry.getKey())) {
+                log.warn("extraParams key '{}' not in allowlist {} — dropped (OpenAI 400s unknown params)",
+                    entry.getKey(), EXTRA_PARAM_ALLOWLIST);
+            }
+        }
     }
 
     LlmResponse parseResponse(String json) {

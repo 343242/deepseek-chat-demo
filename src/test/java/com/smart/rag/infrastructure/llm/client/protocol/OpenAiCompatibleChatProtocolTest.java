@@ -223,4 +223,45 @@ class OpenAiCompatibleChatProtocolTest {
         Map<?, ?> assistantMsg = (Map<?, ?>) messages.get(0);
         assertThat(assistantMsg.containsKey("reasoning_content")).isFalse();
     }
+
+    // ====== WS6：extraParams 白名单透传 ======
+
+    @Test
+    @org.junit.jupiter.api.DisplayName("extraParams 白名单键合入 body（response_format 打通 JSON mode）")
+    void extraParamsAllowlistedMerged() {
+        ChatRequest request = ChatRequest.builder("hi")
+            .extraParams(java.util.Map.of(
+                "response_format", java.util.Map.of("type", "json_object"),
+                "stop", java.util.List.of("\n\n"),
+                "seed", 42))
+            .build();
+        Map<String, Object> body = body(request);
+        org.assertj.core.api.Assertions.assertThat(body)
+            .containsEntry("response_format", java.util.Map.of("type", "json_object"))
+            .containsEntry("stop", java.util.List.of("\n\n"))
+            .containsEntry("seed", 42);
+    }
+
+    @Test
+    @org.junit.jupiter.api.DisplayName("非白名单键丢弃且每键首见 WARN（第二次同键不再打）")
+    void extraParamsUnknownKeysDroppedAndWarnedOnce() {
+        String uniqueKey = "unknown_param_" + System.nanoTime();
+        ChatRequest request = ChatRequest.builder("hi")
+            .extraParams(java.util.Map.of(uniqueKey, "x"))
+            .build();
+        Map<String, Object> body = body(request);
+        org.assertj.core.api.Assertions.assertThat(body).doesNotContainKey(uniqueKey);
+
+        // 第二次携带同键：已被 WARNED_UNKNOWN_KEYS 去重（无断言手段，仅验证不抛错且仍丢弃）
+        Map<String, Object> body2 = body(request);
+        org.assertj.core.api.Assertions.assertThat(body2).doesNotContainKey(uniqueKey);
+    }
+
+    @Test
+    @org.junit.jupiter.api.DisplayName("空 extraParams 不打日志、body 不变")
+    void emptyExtraParamsNoop() {
+        Map<String, Object> body = body(ChatRequest.of("hi"));
+        org.assertj.core.api.Assertions.assertThat(body).doesNotContainKeys(
+            "response_format", "stop", "seed", "frequency_penalty", "presence_penalty");
+    }
 }

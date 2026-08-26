@@ -209,6 +209,25 @@ class S3MultipartGatewayIT {
         gateway.removeObjectQuietly(BUCKET, key);
     }
 
+    @Test
+    @Order(8)
+    @DisplayName("回归：中文文件名（含空格/&/括号）pending 对象条件 copy 正常（XMinioInvalidObjectName）")
+    void conditionalCopyWithChineseFilename() throws Exception {
+        String key = "uploads/pending/1/session-cjk/eWs3kQQ7_HUAWEI MateBook 14 鸿蒙版 用户指南-(MNTXM-24A&24B&32A,HarmonyOS 6.1_01,zh-cn).pdf";
+        String destKey = "documents/1/MEa1GhSu_HUAWEI MateBook 14 鸿蒙版 用户指南-(MNTXM-24A&24B&32A,HarmonyOS 6.1_01,zh-cn).pdf";
+
+        byte[] body = new byte[64];
+        body[0] = 0x25;
+        put(gateway.presignPutUrl(BUCKET, key, EXPIRY), body);
+
+        var stat = gateway.statObject(BUCKET, key);
+        gateway.copyObjectIfMatch(BUCKET, key, destKey, stat.etag(), "application/pdf");
+
+        var destStat = gateway.statObject(BUCKET, destKey);
+        assertThat(destStat.size()).isEqualTo(body.length);
+        assertThat(destStat.contentType()).isEqualTo("application/pdf");
+    }
+
     // ==================== 工具 ====================
 
     /** PUT 字节并返回响应 ETag 头（可带引号，由网关归一化） */

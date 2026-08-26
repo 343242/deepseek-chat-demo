@@ -25,6 +25,7 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
 
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
@@ -268,11 +269,15 @@ public class S3MultipartGateway {
         }
     }
 
-    /** x-amz-copy-source 的 key 需 URL 编码（保留 / 分隔；空格等字符 okhttp 头值不接受裸传输） */
-    private static String encodeCopySource(String key) {
+    /**
+     * x-amz-copy-source 的 key 需 URL 编码（保留 / 分隔；空格等字符 okhttp 头值不接受裸传输）。
+     * 必须按 UTF-8 字节而非 char 转义：百分号转义固定两位 hex，逐 char 编码会把多字节字符
+     * （如中文）编成 %9E3F 这类非法序列，MinIO 解出乱码后以 XMinioInvalidObjectName 拒绝。
+     */
+    static String encodeCopySource(String key) {
         StringBuilder sb = new StringBuilder(key.length() + 16);
-        for (int i = 0; i < key.length(); i++) {
-            char c = key.charAt(i);
+        for (byte b : key.getBytes(StandardCharsets.UTF_8)) {
+            char c = (char) (b & 0xFF);
             if (c == '/' || (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
                     || c == '-' || c == '.' || c == '_' || c == '~') {
                 sb.append(c);

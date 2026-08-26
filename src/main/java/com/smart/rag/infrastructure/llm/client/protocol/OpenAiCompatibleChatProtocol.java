@@ -181,7 +181,7 @@ public class OpenAiCompatibleChatProtocol implements ChatProtocol {
 
             String data = line.substring(5).trim();
             if ("[DONE]".equals(data)) {
-                // [DONE] 兜底：finish_reason 未到 / usage 块未到的极端情况也发轮末汇总包（必须携带累积 reasoning，勿漏）
+                // [DONE] 兜底：finish_reason 未到 / usage 块未到的极端情况也发轮末汇总包
                 emitRoundEnd(sink, acc, pendingFinishReason, null, reasoningBuf.toString());
                 return;
             }
@@ -201,7 +201,7 @@ public class OpenAiCompatibleChatProtocol implements ChatProtocol {
                 JsonNode choice0 = choices.get(0);
                 JsonNode delta = choice0.path("delta");
 
-                // 0) reasoning_content delta → 即时下发（保 TTFT）+ 累积（轮末汇总包携带完整值供 R6 回传）
+                // 0) reasoning_content delta → 即时下发（保 TTFT，前端唯一显示来源）+ 累积（工具轮汇总包携带完整值供 R6 回传）
                 JsonNode reasoningNode = delta.path("reasoning_content");
                 if (reasoningNode.isTextual() && !reasoningNode.asText().isEmpty()) {
                     reasoningBuf.append(reasoningNode.asText());
@@ -246,16 +246,25 @@ public class OpenAiCompatibleChatProtocol implements ChatProtocol {
         emitRoundEnd(sink, acc, pendingFinishReason, null, reasoningBuf.toString());
     }
 
-    /** 轮末汇总包：完整 toolCalls（若累积到）+ finishReason + usage + 完整累积 reasoning（R6 回传）。Poc6 防御式契约，供 ChatModelAdapter 检测工具调用。 */
+    /**
+     * 轮末汇总包：完整 toolCalls（若累积到）+ finishReason + usage + 完整累积 reasoning（R6 回传）。
+     * Poc6 防御式契约，供 ChatModelAdapter 检测工具调用。
+     * <p>
+     * 累积 reasoning <b>仅随工具轮汇总包下发</b>（R6：DeepSeek 要求 tool_calls 轮完整回传上一轮
+     * reasoning_content，否则 400）。非工具轮不携带——reasoning delta 已即时增量下发，此处再带
+     * 完整累积值会被 {@code AbstractModeStrategy.splitIntoFrames} 当作新增片段重复发帧，
+     * 导致前端思考过程整段重复。
+     */
     private static void emitRoundEnd(FluxSink<StreamChunk> sink, ToolCallAccumulator acc,
                                      String finishReason, LlmResponse.TokenUsage usage,
                                      String accumulatedReasoning) {
         List<StreamChunk.ToolCallDelta> toolCalls = acc.drain();
         StreamChunk.FinishReason fr = mapFinishReason(finishReason);
-        boolean noReasoning = accumulatedReasoning == null || accumulatedReasoning.isEmpty();
-        // guard 含 reasoning：[DONE] 场景下 fr/usage/toolCalls 皆 null 但 accumulatedReasoning 可能非空，不能跳过
-        if (toolCalls.isEmpty() && fr == null && usage == null && noReasoning) return;
-        sink.next(new StreamChunk(null, toolCalls.isEmpty() ? null : toolCalls, fr, usage, accumulatedReasoning));
+        // fr/usage/toolCalls 全空时无内容可发（非工具轮 reasoning 已增量下发，不再补发）
+        if (toolCalls.isEmpty() && fr == null && usage == null) return;
+        String reasoning = toolCalls.isEmpty() || accumulatedReasoning == null || accumulatedReasoning.isEmpty()
+            ? null : accumulatedReasoning;
+        sink.next(new StreamChunk(null, toolCalls.isEmpty() ? null : toolCalls, fr, usage, reasoning));
     }
 
     private static StreamChunk.FinishReason mapFinishReason(String raw) {

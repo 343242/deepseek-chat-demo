@@ -202,7 +202,7 @@ class OpenAiCompatibleChatProtocolSseTest {
     }
 
     @Test
-    @DisplayName("AC6：reasoning_content delta 以独立 chunk 即时下发，先于 content")
+    @DisplayName("AC6：reasoning_content delta 以独立 chunk 即时下发，先于 content；非工具轮汇总包不重复携带")
     void reasoningContentStreamed() {
         List<StreamChunk> chunks = parse(
             reasoning("首先分析问题"),
@@ -217,8 +217,9 @@ class OpenAiCompatibleChatProtocolSseTest {
         assertThat(r.reasoningContent()).isEqualTo("首先分析问题");
         assertThat(chunks.get(1).hasText()).isTrue();
         assertThat(chunks.get(1).text()).isEqualTo("量子计算");
-        // 轮末汇总包携带累积 reasoning（供 R6 回传）
-        assertThat(chunks.get(2).reasoningContent()).isEqualTo("首先分析问题");
+        // 非工具轮汇总包不携带累积 reasoning——增量片段已下发，重复携带会被
+        // splitIntoFrames 再发一帧，前端思考过程整段重复
+        assertThat(chunks.get(2).reasoningContent()).isNull();
     }
 
     @Test
@@ -243,20 +244,18 @@ class OpenAiCompatibleChatProtocolSseTest {
     }
 
     @Test
-    @DisplayName("AC6 扩展：[DONE] 兜底路径同样携带完整累积 reasoning（guard 不跳过）")
-    void reasoningAccumulatedThroughDoneFallback() {
+    @DisplayName("AC6 扩展：[DONE] 兜底无 fr/usage/toolCalls → 不发 reasoning-only 汇总包（防重复发帧）")
+    void reasoningNotDuplicatedThroughDoneFallback() {
         List<StreamChunk> chunks = parse(
             reasoning("A段"),
             reasoning("B段"),
             "[DONE]");
 
-        // 2 个即时片段 + 1 个 [DONE] 轮末汇总包（fr/usage/toolCalls 皆 null，但 reasoning 非空 → guard 不跳过）
-        assertThat(chunks).hasSize(3);
-        StreamChunk end = chunks.get(2);
-        assertThat(end.finishReason()).isNull();
-        assertThat(end.usage()).isNull();
-        assertThat(end.hasToolCall()).isFalse();
-        assertThat(end.reasoningContent()).isEqualTo("A段B段");
+        // 仅 2 个即时片段：非工具轮 [DONE] 兜底无内容可发——reasoning 已增量下发，
+        // 再发携带完整累积值的汇总包会导致前端思考过程整段重复
+        assertThat(chunks).hasSize(2);
+        assertThat(chunks.get(0).reasoningContent()).isEqualTo("A段");
+        assertThat(chunks.get(1).reasoningContent()).isEqualTo("B段");
     }
 
     @Test
@@ -266,13 +265,13 @@ class OpenAiCompatibleChatProtocolSseTest {
             + "\"content\":\"回答\"},\"finish_reason\":null}]}";
         List<StreamChunk> chunks = parse(frame, finish("stop", null));
 
-        // reasoning chunk（即时，先于 content）+ text chunk + STOP 汇总包（携带累积 reasoning）
+        // reasoning chunk（即时，先于 content）+ text chunk + STOP 汇总包（非工具轮不携带累积 reasoning）
         assertThat(chunks).hasSize(3);
         assertThat(chunks.get(0).hasReasoning()).isTrue();
         assertThat(chunks.get(0).reasoningContent()).isEqualTo("思考");
         assertThat(chunks.get(0).hasText()).isFalse();
         assertThat(chunks.get(1).text()).isEqualTo("回答");
         assertThat(chunks.get(1).hasReasoning()).isFalse();
-        assertThat(chunks.get(2).reasoningContent()).isEqualTo("思考");
+        assertThat(chunks.get(2).reasoningContent()).isNull();
     }
 }

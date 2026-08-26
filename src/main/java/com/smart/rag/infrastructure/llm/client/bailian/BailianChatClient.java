@@ -597,7 +597,7 @@ public class BailianChatClient extends AbstractChatClient implements ToolCalling
             if (usage != null) lastUsage = usage;
             if (view == null) return; // usage-only 块（choices 空）
 
-            // 0) reasoning delta → 即时下发（保 TTFT）+ 累积（轮末汇总包携带完整值供 R6 回传）
+            // 0) reasoning delta → 即时下发（保 TTFT，前端唯一显示来源）+ 累积（工具轮汇总包携带完整值供 R6 回传）
             if (view.reasoning() != null && !view.reasoning().isEmpty()) {
                 reasoningBuf.append(view.reasoning());
                 sink.next(new StreamChunk(null, null, null, null, view.reasoning()));
@@ -639,17 +639,23 @@ public class BailianChatClient extends AbstractChatClient implements ToolCalling
             }
         }
 
-        /** 轮末汇总包：完整 toolCalls + finishReason + usage + 完整累积 reasoning（ChatModelAdapter ReAct 依赖） */
+        /**
+         * 轮末汇总包：完整 toolCalls + finishReason + usage + 完整累积 reasoning（ChatModelAdapter ReAct 依赖）。
+         * <p>
+         * 累积 reasoning 仅随工具轮汇总包下发（R6 回传：DeepSeek 要求 tool_calls 轮完整回传上一轮
+         * reasoning_content）。非工具轮不携带——reasoning delta 已即时增量下发，再带完整累积值会被
+         * {@code AbstractModeStrategy.splitIntoFrames} 当作新增片段重复发帧（前端思考过程整段重复）。
+         */
         void emitRoundEnd(FluxSink<StreamChunk> sink, String finishReason) {
             if (roundEndEmitted) return;
             List<StreamChunk.ToolCallDelta> toolCalls = drain();
             StreamChunk.FinishReason fr = mapFinishReason(finishReason);
-            boolean noReasoning = reasoningBuf.isEmpty();
-            // guard 含 reasoning：finishReason 未到但累积 reasoning 非空时仍需发（对齐 GenericChatClient）
-            if (toolCalls.isEmpty() && fr == null && lastUsage == null && noReasoning) return;
+            // fr/usage/toolCalls 全空时无内容可发（非工具轮 reasoning 已增量下发，不再补发）
+            if (toolCalls.isEmpty() && fr == null && lastUsage == null) return;
             roundEndEmitted = true;
-            sink.next(new StreamChunk(null, toolCalls.isEmpty() ? null : toolCalls, fr, lastUsage,
-                noReasoning ? null : reasoningBuf.toString()));
+            String reasoning = toolCalls.isEmpty() || reasoningBuf.isEmpty()
+                ? null : reasoningBuf.toString();
+            sink.next(new StreamChunk(null, toolCalls.isEmpty() ? null : toolCalls, fr, lastUsage, reasoning));
         }
 
         private List<StreamChunk.ToolCallDelta> drain() {

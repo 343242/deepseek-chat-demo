@@ -39,7 +39,7 @@ function mockApi(initResults: Array<ReturnType<typeof vi.fn> extends never ? nev
     partUrls: vi.fn(async (_s: string, partNumbers: number[]) => ({
       urls: partNumbers.map((n) => ({ partNumber: n, url: `http://minio/put?part=${n}` })),
     })),
-    commit: vi.fn(async () => ({ id: 42, fileName: 'report.pdf', status: 'PROCESSING' })),
+    commit: vi.fn(async () => ({ id: 42, fileName: 'report.pdf', status: 'PROCESSING' as const })),
     status: vi.fn(async () => ({ chunkSize: CHUNK, totalChunks: 1 })),
   }
   for (const r of initResults) (api.init as ReturnType<typeof vi.fn>).mockResolvedValueOnce(r)
@@ -145,7 +145,7 @@ describe('uploadViaDirect 编排', () => {
     await uploadViaDirect({ ...baseOpts(file, api, putFn, store) })
 
     expect(calls).toHaveLength(1)
-    expect(calls[0].url).toContain('part=3')
+    expect(calls[0]?.url).toContain('part=3')
     expect(api.partUrls).toHaveBeenCalledWith('sess-r', [3], null)
   })
 

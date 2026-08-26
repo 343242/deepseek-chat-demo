@@ -26,9 +26,11 @@ export const RATE_LIMITED = 100005
 
 /** 直传网络层错误（CORS 预检失败/断网/413 等）——调用方据此降级代理路径 */
 export class DirectNetworkError extends Error {
-  constructor(message: string, readonly cause?: unknown) {
+  readonly cause?: unknown
+  constructor(message: string, cause?: unknown) {
     super(message)
     this.name = 'DirectNetworkError'
+    this.cause = cause
   }
 }
 
@@ -43,7 +45,7 @@ export type PutFn = (
   url: string,
   body: Blob,
   contentType: string | undefined,
-  onProgress: (loadedBytes: number) => void,
+  onProgress?: (loadedBytes: number) => void,
 ) => Promise<PutResult>
 
 /** 默认 XHR 实现：404/403 等数据面异常视为网络层错误（触发降级），其余透传 ETag */
@@ -52,7 +54,7 @@ export const xhrPut: PutFn = (url, body, contentType, onProgress) =>
     const xhr = new XMLHttpRequest()
     xhr.open('PUT', url)
     if (contentType) xhr.setRequestHeader('Content-Type', contentType)
-    xhr.upload.onprogress = (e) => onProgress(e.loaded)
+    xhr.upload.onprogress = (e) => onProgress?.(e.loaded)
     xhr.onerror = () => reject(new DirectNetworkError('直传网络错误（CORS/断网/入口限额）'))
     xhr.onload = () => {
       if (xhr.status >= 200 && xhr.status < 300) {
@@ -169,7 +171,7 @@ export async function uploadViaDirect(opts: DirectUploadOptions): Promise<Docume
   const sessionId = init.sessionId!
   announceSession(sessionId)
   try {
-    return await uploadPartsAndCommit(sessionId, init, { file, userId, teamId, putFn, api, store, checksum, onProgress, shouldStop: opts.shouldStop })
+    return await uploadPartsAndCommit(sessionId, init, { file, userId, teamId, putFn, api, store, onProgress, shouldStop: opts.shouldStop })
   } catch (e) {
     if (e instanceof ApiError && e.code === DIRECT_UPLOAD_GONE) {
       const retry = await initWithBackoff(() => api.init({
@@ -182,7 +184,7 @@ export async function uploadViaDirect(opts: DirectUploadOptions): Promise<Docume
       }
       announceSession(retry.sessionId!)
       if (retry.mode === 'multipart') {
-        return await uploadPartsAndCommit(retry.sessionId!, retry, { file, userId, teamId, putFn, api, store, checksum, onProgress, shouldStop: opts.shouldStop })
+        return await uploadPartsAndCommit(retry.sessionId!, retry, { file, userId, teamId, putFn, api, store, onProgress, shouldStop: opts.shouldStop })
       }
       await putFn(retry.uploadUrl!, file, retry.contentType, onProgress)
       return await commitSession(retry.sessionId!, [], { userId, teamId, api, store })
@@ -214,11 +216,11 @@ async function uploadPartsAndCommit(
   ctx: {
     file: File; userId: number; teamId?: number | null
     putFn: PutFn; api: DirectUploadApi; store: PartStore
-    checksum: string; onProgress?: (b: number) => void
+    onProgress?: (b: number) => void
     shouldStop?: () => boolean
   },
 ): Promise<DocumentUploadResponse> {
-  const { file, userId, teamId, putFn, api, store, checksum, onProgress, shouldStop } = ctx
+  const { file, userId, teamId, putFn, api, store, onProgress, shouldStop } = ctx
   const chunkSize = init.chunkSize ?? UPLOAD_LIMITS.chunkSize
   const totalChunks = init.totalChunks ?? Math.ceil(file.size / chunkSize)
 
@@ -276,9 +278,9 @@ async function runPool<T>(items: T[], concurrency: number, worker: (item: T) => 
   let next = 0
   const runners = Array.from({ length: Math.min(concurrency, items.length) }, async () => {
     for (;;) {
-      const idx = next++
-      if (idx >= items.length) return
-      await worker(items[idx])
+      const item = items[next++]
+      if (item === undefined) return
+      await worker(item)
     }
   })
   await Promise.all(runners)

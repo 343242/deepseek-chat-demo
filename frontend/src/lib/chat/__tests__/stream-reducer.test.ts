@@ -42,6 +42,17 @@ describe('applyFrame', () => {
     expect(out2[1]?.reasoning).toBe('think more')
   })
 
+  it('reset：清空累积 content/reasoning 并记录模型切换，新模型内容重新累积（WS5）', () => {
+    const msgs = makeMessages({ content: '旧模型半截', reasoning: '旧思考' })
+    const out = applyFrame(msgs, { type: 'reset', from: 'model-a', to: 'model-b' }, ASSISTANT_ID)
+    expect(out[1]?.content).toBe('')
+    expect(out[1]?.reasoning).toBe('')
+    expect(out[1]?.modelReset).toEqual({ from: 'model-a', to: 'model-b' })
+
+    const out2 = applyFrame(out, { type: 'content', chunk: '新' }, ASSISTANT_ID)
+    expect(out2[1]?.content).toBe('新')
+  })
+
   it('references：替换字段', () => {
     const out = applyFrame(makeMessages(), { type: 'references', references: [REF] }, ASSISTANT_ID)
     expect(out[1]?.references).toEqual([REF])

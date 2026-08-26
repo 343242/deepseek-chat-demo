@@ -23,6 +23,7 @@ function patch(
 /**
  * 将一帧 SSE 应用到消息数组。
  * - content / reasoning：追加文本
+ * - reset：清空已累积 content/reasoning 并记录模型切换（WS5，新模型从头生成）
  * - references / agentMetadata / fallback：替换字段
  * - canceled：消息转 FINISHED
  * - error：消息转 ERROR（错误文本属顶层态，由 send 写入 store.error，不在此处理）
@@ -39,6 +40,14 @@ export function applyFrame(
       return patch(messages, assistantId, (m) => ({
         ...m,
         reasoning: (m.reasoning ?? '') + frame.chunk,
+      }))
+    case 'reset':
+      // 模型切换（WS5）：旧模型的半截回答/思考已失效，清空后由新模型内容重新累积
+      return patch(messages, assistantId, (m) => ({
+        ...m,
+        content: '',
+        reasoning: '',
+        modelReset: { from: frame.from, to: frame.to },
       }))
     case 'references':
       return patch(messages, assistantId, (m) => ({ ...m, references: frame.references }))

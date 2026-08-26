@@ -24,6 +24,11 @@ export function mapFrame(event: string | null, data: string): SseFrame | null {
   switch (event) {
     case 'reasoning':
       return { type: 'reasoning', chunk: data }
+    case 'reset': {
+      // WS5 模型切换标记：from/to 解析失败兜底空串（与 fallback 帧同风格）
+      const r = parseJson<{ from?: string; to?: string }>(data)
+      return { type: 'reset', from: r?.from ?? '', to: r?.to ?? '' }
+    }
     case 'usage': {
       const usage = parseJson<{ tokenUsage?: number | null; durationMs?: number | null }>(data)
       return { type: 'usage', tokenUsage: usage?.tokenUsage ?? null, durationMs: usage?.durationMs ?? null }
@@ -85,6 +90,9 @@ function dispatch(frame: SseFrame, h: SseHandlers) {
       break
     case 'reasoning':
       h.onReasoning?.(frame.chunk)
+      break
+    case 'reset':
+      h.onReset?.(frame.from, frame.to)
       break
     case 'usage':
       h.onUsage?.(frame)

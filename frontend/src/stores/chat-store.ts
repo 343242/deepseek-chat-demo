@@ -146,6 +146,10 @@ export const useChatStore = create<ChatState>((set, get) => {
             set((s) => ({
               messages: applyFrame(s.messages, { type: 'reasoning', chunk }, assistantId),
             })),
+          onReset: (from, to) =>
+            set((s) => ({
+              messages: applyFrame(s.messages, { type: 'reset', from, to }, assistantId),
+            })),
           onUsage: (usage) =>
             set((s) => ({
               messages: applyFrame(

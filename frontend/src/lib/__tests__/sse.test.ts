@@ -18,6 +18,19 @@ describe('mapFrame', () => {
     expect(mapFrame('reasoning', '思考')).toEqual({ type: 'reasoning', chunk: '思考' })
   })
 
+  describe('reset 帧（WS5 模型切换标记）', () => {
+    it('合法 JSON → 解析 from/to', () => {
+      expect(mapFrame('reset', '{"from": "a", "to": "b"}')).toEqual({
+        type: 'reset',
+        from: 'a',
+        to: 'b',
+      })
+    })
+    it('非法 JSON → 空串兜底', () => {
+      expect(mapFrame('reset', 'bad')).toEqual({ type: 'reset', from: '', to: '' })
+    })
+  })
+
   describe('references 帧', () => {
     it('合法 JSON → 解析', () => {
       const refs = [{ refNumber: 1, chunkId: 'c1', documentId: 'd1', fileName: 'a.pdf' }]

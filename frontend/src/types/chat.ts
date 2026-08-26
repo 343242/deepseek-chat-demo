@@ -48,6 +48,8 @@ export interface RenderMessage extends MessageVO {
   references?: Reference[]
   agentMetadata?: AgentMetadata
   fallback?: FallbackMeta
+  /** 模型切换重试标记（event:reset，WS5）：旧模型内容已清空，随后内容来自新模型 */
+  modelReset?: { from: string; to: string }
   reasoning?: string
   /** 本地临时消息（未持久化） */
   pending?: boolean
@@ -102,6 +104,12 @@ export interface SseReasoningFrame {
   type: 'reasoning'
   chunk: string
 }
+/** 模型切换标记帧 event:reset —— 清空已累积回答/reasoning 缓冲，随后内容来自新模型（WS5） */
+export interface SseResetFrame {
+  type: 'reset'
+  from: string
+  to: string
+}
 /** 引用终端帧 event:references */
 export interface SseReferencesFrame {
   type: 'references'
@@ -139,6 +147,7 @@ export interface SseErrorFrame {
 export type SseFrame =
   | SseContentFrame
   | SseReasoningFrame
+  | SseResetFrame
   | SseUsageFrame
   | SseReferencesFrame
   | SseAgentMetadataFrame
@@ -150,6 +159,7 @@ export type SseFrame =
 export interface SseHandlers {
   onContent?: (chunk: string) => void
   onReasoning?: (chunk: string) => void
+  onReset?: (from: string, to: string) => void
   onUsage?: (usage: SseUsageFrame) => void
   onReferences?: (refs: Reference[]) => void
   onAgentMetadata?: (meta: AgentMetadata) => void

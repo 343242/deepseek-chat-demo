@@ -94,6 +94,16 @@ export const ChatMessage = memo(function ChatMessage({ message, onOpenRefs, onOp
             </details>
           )}
 
+          {/* 模型切换重试提示（WS5 event:reset）：流中瞬态提示，结束后由 fallback 横幅接力 */}
+          {message.modelReset && streaming && (
+            <div className="mt-1.5 flex items-center gap-1.5 text-xs text-warning-700">
+              <RotateCcw className="size-3.5 shrink-0" />
+              <span>
+                已切换模型重试：{message.modelReset.from} → {message.modelReset.to}，正在重新生成
+              </span>
+            </div>
+          )}
+
           {/* 降级提示（DS §11.3.6）：消息底部小字 */}
           {message.fallback && (
             <div className="mt-1.5 flex items-center gap-1.5 text-xs text-warning-700">

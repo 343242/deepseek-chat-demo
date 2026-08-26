@@ -14,6 +14,7 @@ import org.slf4j.Logger;
 import org.jspecify.annotations.Nullable;
 import org.slf4j.LoggerFactory;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
@@ -63,6 +64,7 @@ public class DirectUploadOrphanCleaner {
     private final BucketResolver bucketResolver;
     private final DirectUploadSessionStore sessionStore;
 
+    @Autowired
     public DirectUploadOrphanCleaner(StringRedisTemplate redisTemplate,
                                      MinioClient minioClient,
                                      S3MultipartGateway gateway,

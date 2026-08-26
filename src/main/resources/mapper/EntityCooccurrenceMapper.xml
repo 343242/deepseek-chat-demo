@@ -34,17 +34,20 @@
          契约（§3.1，由 ScopeLockTemplate 运行时断言固化）：必须在事务内、且在取任何行锁之前
          调用（R1）；pg_advisory_xact_lock 在自动提交下立即释放、静默失去串行化。
          调用点仅限三个持锁事务模板（写路径 / 删除路径 / 对账锁内重写）+ derive/embedding 写回短事务。 -->
-    <select id="lockScope">
+    <!-- <update> 而非 <select>：pg_advisory_xact_lock 返回 PG void 列，query 路径的构造器映射不成立 -->
+    <update id="lockScope">
         SELECT pg_advisory_xact_lock(
             hashtextextended(#{userId,jdbcType=BIGINT}::text || ':' ||
                              COALESCE(#{teamId,jdbcType=BIGINT}::text, '-1'), 0))
-    </select>
+    </update>
 
     <!-- 持锁事务的锁等待上限（等价 SET LOCAL lock_timeout；set_config 第三参 true = 事务级）。
          必须在 lockScope 之前执行：既约束 advisory 队列等待，也约束事务内行锁等待（§8-4）。 -->
-    <select id="setLockTimeout">
+    <!-- <update> 而非 <select>：set_config 返回 text，void 返回类型下 query 路径会抛
+         "No constructor found in void matching [java.lang.String]"；update 路径走 execute()，忽略返回值 -->
+    <update id="setLockTimeout">
         SELECT set_config('lock_timeout', #{millis}::text, true)
-    </select>
+    </update>
 
     <!-- ==================== 增量维护（V30 写/删路径）==================== -->
 

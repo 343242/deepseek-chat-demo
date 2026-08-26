@@ -158,11 +158,6 @@ app:
   chat:
     memory:
       max-messages: ${CHAT_MEMORY_MAX_MESSAGES:20}
-    candidates:
-      probe-timeout-seconds: 10
-      probe-cache-ttl-seconds: 30
-      pre-probe-interval-ms: 20000
-      # 填充 list 激活 DynamicModelSelector + ProbeStreamHandler（候选结构见 app.llm.capabilities.chat.candidates）
   rag:
     fts-config: ${RAG_FTS_CONFIG:jiebacfg}
     entity:

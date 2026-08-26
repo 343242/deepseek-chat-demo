@@ -214,8 +214,9 @@ public class SseStreamBridge {
     }
 
     /**
-     * 按帧种类分发：CONTENT → 默认 data 帧（逐字正文）；REASONING → {@code event:reasoning} 帧（思考过程）。
-     * 前端据此区分渲染：正文流式拼接，思考过程折叠展示。时序忠实于模型产出顺序（思考先于作答）。
+     * 按帧种类分发：CONTENT → 默认 data 帧（逐字正文）；REASONING → {@code event:reasoning} 帧
+     * （思考过程）；RESET → {@code event:reset} 独立命名事件（模型切换，前端清空已累积缓冲，
+     * design llm-resilience-optimization WS5）。
      */
     private void sendFrame(SseEmitter emitter, StreamFrame frame, AtomicBoolean terminated) {
         try {
@@ -223,9 +224,14 @@ public class SseStreamBridge {
                 if (terminated.get()) {
                     return;
                 }
-                SseEmitter.SseEventBuilder event = frame.isReasoning()
-                    ? SseEmitter.event().name("reasoning").data(frame.payload())
-                    : SseEmitter.event().data(frame.payload());
+                SseEmitter.SseEventBuilder event;
+                if (frame.isReasoning()) {
+                    event = SseEmitter.event().name("reasoning").data(frame.payload());
+                } else if (frame.isReset()) {
+                    event = SseEmitter.event().name("reset").data(frame.payload());
+                } else {
+                    event = SseEmitter.event().data(frame.payload());
+                }
                 emitter.send(event);
             }
         } catch (IOException | IllegalStateException e) {

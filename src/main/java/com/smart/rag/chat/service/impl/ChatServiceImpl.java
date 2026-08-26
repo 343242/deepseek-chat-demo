@@ -150,6 +150,8 @@ public class ChatServiceImpl implements ChatService {
         AtomicReference<AtomicReference<StreamUsageSnapshot>> usageRef = new AtomicReference<>();
         // 降级链已尝试模型（每次 lambda 执行追加；error 帧在降级链耗尽时携带，供前端提示）
         List<String> attempted = Collections.synchronizedList(new ArrayList<>());
+        // 降级重入标记：前一模型是否已向下游发过任何帧（含 reasoning——reasoning 缓冲同需 reset 清空）
+        AtomicBoolean emittedAny = new AtomicBoolean(false);
 
         Flux<StreamFrame> stream = fallbackExecutor.executeStream(chain, client -> {
             ChatClient chatClient = chatModelAssembler.chatClient(
@@ -159,6 +161,11 @@ public class ChatServiceImpl implements ChatService {
                 pctx.conversationId, pctx.rawConversationId, pctx.userId,
                 pctx.cagCtx, System.currentTimeMillis());
 
+            // 模型切换且前一模型已发帧（含仅 reasoning）→ 前置 reset 标记（WS5）：
+            // 前端清空已累积回答/reasoning 缓冲，消除降级内容重复。零帧失败（如探测超时）不发 reset。
+            boolean switched = !attempted.isEmpty();
+            String fromCandidate = switched ? attempted.get(attempted.size() - 1) : null;
+
             attempted.add(client.candidateId());
             StreamResult sr = pctx.modeStrategy.executeStream(execCtx);
             refsRef.set(sr.references());                  // 标准模式同步 references
@@ -167,7 +174,11 @@ public class ChatServiceImpl implements ChatService {
             usageRef.set(sr.usageRef());                   // 每轮用量快照（成功流 doOnComplete 写入 → event:usage 尾帧）
             boolean isFallback = !client.candidateId().equals(pctx.requestedCandidateId);
             fallbackRef.set(isFallback ? new FallbackMeta(pctx.requestedCandidateId, true) : null);
-            Flux<StreamFrame> flux = sr.frames();
+            Flux<StreamFrame> flux = sr.frames()
+                .doOnNext(__ -> emittedAny.set(true));
+            if (switched && emittedAny.get()) {
+                flux = Flux.concat(Flux.just(StreamFrame.reset(fromCandidate, client.candidateId())), flux);
+            }
             if (parentMdc != null) {
                 flux = flux.doOnSubscribe(s -> MdcPropagator.restore(parentMdc))
                            .doFinally(signal -> MdcPropagator.clear());

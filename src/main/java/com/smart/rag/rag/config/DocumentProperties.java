@@ -38,6 +38,22 @@ public class DocumentProperties {
     /** 段落最小长度（低于此值合并到上一段） */
     private int paragraphMinLength = 100;
 
+    // === ODL 前台/后台图片提取参数（design §6.6） ===
+    /** 前台每文档逐页并行度（多文档并发部署建议 ≈ cores/8，专机可放宽至 cores/2） */
+    private int odlThreads = Math.max(1, Runtime.getRuntime().availableProcessors() / 2);
+    /** 后台图片提取并发——1:1 映射 ConsumerConfig.concurrency（runner 处理池线程数 = in-flight 许可数） */
+    private int odlImageConcurrency = 1;
+    /** PAGE_RENDER 渲染 DPI（2.5.5 getPageSubImage(bbox, dpi)） */
+    private int odlImageRenderDpi = 144;
+    /** 渲染图 JPEG 质量（控制 MinIO 存储体积） */
+    private double odlImageJpegQuality = 0.85;
+    /** 单图上传上限（编码前像素规模预判 + 编码后精确复核双闸） */
+    private long odlImageMaxBytes = 20 * 1024 * 1024;
+    /** 单文档图片对象预算：消费侧 seq 超限行 SKIPPED(doc-image-budget) 不上传 */
+    private int odlImageMaxPerDoc = 500;
+    /** H3 断言失败档位：true=严格失败（fail-closed）；false=降级剥离占位符纯文本索引+告警 */
+    private boolean odlPlaceholderStrict = true;
+
     public String getMaxFileSize() { return maxFileSize; }
     public void setMaxFileSize(String maxFileSize) { this.maxFileSize = maxFileSize; }
     public int getMaxBatchFiles() { return maxBatchFiles; }
@@ -60,4 +76,18 @@ public class DocumentProperties {
     public void setParagraphMinLength(int paragraphMinLength) { this.paragraphMinLength = paragraphMinLength; }
     public int getExcelRowsPerChunk() { return excelRowsPerChunk; }
     public void setExcelRowsPerChunk(int excelRowsPerChunk) { this.excelRowsPerChunk = excelRowsPerChunk; }
+    public int getOdlThreads() { return odlThreads; }
+    public void setOdlThreads(int odlThreads) { this.odlThreads = odlThreads; }
+    public int getOdlImageConcurrency() { return odlImageConcurrency; }
+    public void setOdlImageConcurrency(int odlImageConcurrency) { this.odlImageConcurrency = odlImageConcurrency; }
+    public int getOdlImageRenderDpi() { return odlImageRenderDpi; }
+    public void setOdlImageRenderDpi(int odlImageRenderDpi) { this.odlImageRenderDpi = odlImageRenderDpi; }
+    public double getOdlImageJpegQuality() { return odlImageJpegQuality; }
+    public void setOdlImageJpegQuality(double odlImageJpegQuality) { this.odlImageJpegQuality = odlImageJpegQuality; }
+    public long getOdlImageMaxBytes() { return odlImageMaxBytes; }
+    public void setOdlImageMaxBytes(long odlImageMaxBytes) { this.odlImageMaxBytes = odlImageMaxBytes; }
+    public int getOdlImageMaxPerDoc() { return odlImageMaxPerDoc; }
+    public void setOdlImageMaxPerDoc(int odlImageMaxPerDoc) { this.odlImageMaxPerDoc = odlImageMaxPerDoc; }
+    public boolean isOdlPlaceholderStrict() { return odlPlaceholderStrict; }
+    public void setOdlPlaceholderStrict(boolean odlPlaceholderStrict) { this.odlPlaceholderStrict = odlPlaceholderStrict; }
 }

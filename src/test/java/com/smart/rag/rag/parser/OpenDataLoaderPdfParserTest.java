@@ -18,7 +18,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 @DisplayName("OpenDataLoaderPdfParser")
 class OpenDataLoaderPdfParserTest {
 
-    private final OpenDataLoaderPdfParser parser = new OpenDataLoaderPdfParser(new DocumentProperties());
+    private final OpenDataLoaderPdfParser parser = new OpenDataLoaderPdfParser(new DocumentProperties(), mockImageMetrics(), new io.micrometer.core.instrument.simple.SimpleMeterRegistry());
+
+    private static com.smart.rag.rag.etl.ImageMetrics mockImageMetrics() {
+        return org.mockito.Mockito.mock(com.smart.rag.rag.etl.ImageMetrics.class);
+    }
 
     @TempDir
     Path tempDir;
@@ -140,7 +144,7 @@ class OpenDataLoaderPdfParserTest {
             // 用 1KB 上限构造解析器，喂入 2KB 内容
             DocumentProperties props = new DocumentProperties();
             props.setMaxFileSize("1KB");
-            OpenDataLoaderPdfParser boundedParser = new OpenDataLoaderPdfParser(props);
+            OpenDataLoaderPdfParser boundedParser = new OpenDataLoaderPdfParser(props, mockImageMetrics(), new io.micrometer.core.instrument.simple.SimpleMeterRegistry());
 
             byte[] oversized = new byte[2 * 1024];
             java.util.Arrays.fill(oversized, (byte) 'A');

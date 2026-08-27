@@ -59,7 +59,7 @@ class DocumentParserFactoryTest {
         @Test
         @DisplayName("application/pdf → OpenDataLoaderPdfParser")
         void pdf_routes_to_odl_parser() {
-            OpenDataLoaderPdfParser pdfParser = new OpenDataLoaderPdfParser(new com.smart.rag.rag.config.DocumentProperties());
+            OpenDataLoaderPdfParser pdfParser = new OpenDataLoaderPdfParser(new com.smart.rag.rag.config.DocumentProperties(), org.mockito.Mockito.mock(com.smart.rag.rag.etl.ImageMetrics.class), new io.micrometer.core.instrument.simple.SimpleMeterRegistry());
             DocumentParserFactory factory = createFactory(pdfParser);
 
             assertThat(factory.getParser("application/pdf")).isSameAs(pdfParser);

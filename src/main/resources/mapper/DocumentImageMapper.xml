@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.smart.rag.rag.mapper.DocumentImageMapper">
+
+    <delete id="deleteByDocumentId">
+        DELETE FROM document_image WHERE document_id = #{documentId}
+    </delete>
+
+    <insert id="insertBatch">
+        INSERT INTO document_image
+            (document_id, page_number, seq, img_type, bbox, object_num, object_gen,
+             x_object_name, storage_key, producer_version, status, created_at, updated_at)
+        VALUES
+        <foreach collection="rows" item="r" separator=",">
+            (#{r.documentId}, #{r.pageNumber}, #{r.seq}, #{r.imgType}, #{r.bbox}::jsonb,
+             #{r.objectNum}, #{r.objectGen}, #{r.xObjectName}, #{r.storageKey},
+             #{r.producerVersion}, 'PENDING', now(), now())
+        </foreach>
+    </insert>
+
+    <select id="findPending" resultType="com.smart.rag.rag.entity.DocumentImage">
+        SELECT * FROM document_image
+        WHERE document_id = #{documentId} AND status = 'PENDING'
+        ORDER BY page_number, seq
+    </select>
+
+    <update id="markUploadedConditionally">
+        UPDATE document_image
+        SET status = 'UPLOADED', file_size = #{fileSize}, updated_at = now()
+        WHERE id = #{id} AND status = 'PENDING'
+    </update>
+
+    <update id="markSkippedConditionally">
+        UPDATE document_image
+        SET status = 'SKIPPED', fail_reason = #{failReason}, updated_at = now()
+        WHERE id = #{id} AND status = 'PENDING'
+    </update>
+
+    <update id="resetPendingByIds">
+        UPDATE document_image
+        SET fail_reason = #{failReason}, updated_at = now()
+        WHERE status = 'PENDING' AND id IN
+        <foreach collection="ids" item="id" open="(" separator="," close=")">#{id}</foreach>
+    </update>
+
+    <select id="countPending" resultType="long">
+        SELECT count(*) FROM document_image
+        WHERE document_id = #{documentId} AND status = 'PENDING'
+    </select>
+
+    <update id="failStalePending">
+        UPDATE document_image
+        SET status = 'FAILED', fail_reason = 'stale-pending', updated_at = now()
+        WHERE id IN (
+            SELECT id FROM document_image
+            WHERE status = 'PENDING' AND created_at &lt; #{olderThan}
+            ORDER BY created_at
+            LIMIT #{limit}
+        )
+    </update>
+
+    <delete id="deleteOrphanRows">
+        DELETE FROM document_image WHERE document_id IN
+        <foreach collection="docIds" item="id" open="(" separator="," close=")">#{id}</foreach>
+    </delete>
+
+    <select id="countByStatus" resultType="com.smart.rag.rag.mapper.DocumentImageMapper$StatusCount">
+        SELECT status, count(*) AS cnt FROM document_image GROUP BY status
+    </select>
+
+    <select id="oldestPendingCreatedAt" resultType="java.time.OffsetDateTime">
+        SELECT min(created_at) FROM document_image WHERE status = 'PENDING'
+    </select>
+
+</mapper>

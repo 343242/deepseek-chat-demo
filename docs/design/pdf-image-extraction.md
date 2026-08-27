@@ -1,9 +1,35 @@
 # PDF 解析性能优化与图片提取后台化设计（OpenDataLoader 2.5.5）
 
-> **版本**: v1.6（第五轮评审修订）
+> **版本**: v1.7（第六轮评审修订）
 > **日期**: 2026-08-27
-> **状态**: 设计方案（五轮评审意见已处结，待复审）
+> **状态**: 设计方案（六轮评审意见已处结，待复审）
 > **依赖升级**: `opendataloader-pdf-core` 2.5.0 → **2.5.5**（已实施，见 §2）
+>
+> **v1.7 修订摘要**（第六轮评审，编号沿用评审原文；全部经源码复核属实）：
+> - **高-1（§6.4 ack/nack 契约映射与平台实态不符）**：属实——`RedisStreamConsumerRunner.handle`
+>   的可重试白名单是**封闭集合**（RemoteException/ServiceException/MessageConsumeException/
+>   MessagingException/TransientDataAccessException/DataAccessResourceFailureException，
+>   `:339-356`），白名单外首错**直接 DLQ**（reason=UNKNOWN）；`RetryableException`/
+>   `GenerationInvalidException` 在代码库零命中——照伪代码新建独立类型 = tryLock 超时、
+>   下载抖动等预期瞬时失败**第一次即 DLQ**，M6"瞬时→重放"整体塌陷。机制描述同错：实际
+>   路径 = XACK + RetrySweeper ZSET 延迟回灌 + BackoffSchedule 16 档（1s..1800s），预算 =
+>   `redis.max-attempts`（默认 16）；`RetryPolicy` 经全库复核为**零消费死配置**，
+>   invisibleDuration 仅参与 pel-min-idle 启动断言。已修：§6.4 契约段按实态改写 + 类型
+>   映射落定（伪代码 RetryableException ≙ MessageConsumeException；新建类型必须
+>   extends ServiceException；GenerationInvalid 严格内部捕获不得逃逸）；平台先例：
+>   `EtlDispatchServiceImpl:97` 锁竞争即抛 ServiceException 实现重投。
+> - **中-1（验收 3 崩溃恢复时延未校准）**：属实——消费中途被杀的消息停留 PEL，回收阈值
+>   是 `pel-min-idle-ms` 默认 **40min**（yml），不是 §6.9 配的 invisible-duration。已修：
+>   §6.9 补联动约束，且断言语义按源码校准——断言基准是**固定常量** 30m+5m
+>   （`MessagingProperties:32-34`），不感知各 consumer 的 invisible-duration 覆写：调大
+>   超过 30m **不会**触发 fail-fast，但 40min 阈值会让 XAUTOCLAIM 抢走仍在处理的消息
+>   （重复消费由行级条件更新收敛）——须同步上调 pel-min-idle；验收 3 写明测试 profile
+>   覆写或 ≥40min 等待。
+> - **低-1（M6"DLQ 后置 FAILED"无执行者）**：属实——DLQ 写入时行已是 PENDING（回置发生在
+>   抛异常前），FAILED 终态化实际由 P3 超龄扫描执行，P2 窗口内表现为 `extract_stale` 而非
+>   `extract_dead`。§6.4 M6 表与 §6.7 矩阵行改写，杜绝实现者找不存在的挂点。
+> - **低-2（§6.3.1 asyncVectorize 启动点指代含混）**：已明确为"**该文档**短事务提交之后
+>   （循环内）"——与现状每文档独立异步的语义一致，非整批所有文档事务之后。
 >
 > **v1.6 修订摘要**（第五轮评审，编号沿用评审原文；全部经源码复核属实）：
 > - **严重-1（FastTrack 完全未纳入）**：属实——`EtlFastTrackProperties` 默认
@@ -865,8 +891,10 @@ UPDATE document_image SET status='UPLOADED', file_size=:n, updated_at=now()
        ② statusManager.completeDocument(id, 0)   -- REQUIRED 并入本事务；事件 afterCommit（H2）
        ③ DELETE + INSERT document_image          -- 幂等重建，同 Standard（含 producer_version）
        ④ outboxMessageBus.sendInTransaction(...) -- 同 H1 新 API，消息不设 dedupKey（严重-2）
-   → 事务提交后：asyncVectorize（现状不变：transform → load → updateChunkCount →
-      deleteFastTrackRows；启动点移到 execute() 返回之后，避免与未提交的 BM25 行竞争）；
+   → 该文档短事务提交后（循环内，v1.7 低-2 明确指代——与现状每文档独立异步的语义一致，
+      不是整批所有文档事务之后；也不得在事务回调内启动）：asyncVectorize（现状不变：
+      transform → load → updateChunkCount → deleteFastTrackRows，避免
+      deleteFastTrackRows 删未提交 BM25 行的竞争）；
       异步分块的 ChunkMetadataEnricher 同步记 imagePlaceholderCount（计数自
       manifest.size()，随异步闭包传递——中-7 对账数据基础）
    ```
@@ -921,10 +949,24 @@ public record ImageExtractJob(Long documentId, String bucket, String objectKey,
 //   与 rag_index_document 的池互不共享线程）。consume() 内不再自设 Semaphore——
 //   v1.5 写法与 runner inflight 双重限流、且阻塞的是处理线程，语义冲突已删。
 //
-// ack/nack 契约映射（v1.4 低-5③）：本伪代码的 ack(job) = MessageHandler 正常返回
-// （RedisStream SIMPLE 模式自动 ACK，对齐 EtlDocumentConsumer 的异常驱动契约——
-// 该消费侧无显式 ack API）；nack(job) = 向 handler 外抛异常 → invisibleDuration 后重投，
-// 重试预算由 RetryPolicy 管，耗尽进 DLQ。实现不得自行发明第二套 ACK 机制。
+// ack/nack 契约映射（v1.4 低-5③提出；v1.7 高-1 按平台实态全面改写）：
+//   ack(job) = MessageHandler 正常返回 → handle 内 XACK（SIMPLE/PUSH 同）。
+//   nack(job) 的实际机制【不是"invisibleDuration 后重投"】——是 handle 的可重试白名单
+//   （封闭集合，runner :339-356）：RemoteException / ServiceException /
+//   MessageConsumeException / MessagingException / TransientDataAccessException /
+//   DataAccessResourceFailureException。
+//     · 白名单内 → XACK + RetrySweeper ZSET 延迟回灌，BackoffSchedule 16 档
+//       （1s..1800s 逐档拉长），预算 = redis.max-attempts（默认 16，
+//       MESSAGING_MAX_ATTEMPTS），耗尽写 DLQ；
+//     · 白名单外（NPE/非法状态等 bug）→ 首错直接 DLQ（reason=UNKNOWN），不重试。
+//   佐证：RetryPolicy 配置在消息层零消费（死配置，全库复核——EtlDocumentConsumer:67 的
+//   设置同样无效）；invisibleDuration 仅参与 pel-min-idle 启动断言（§6.9）。
+//   【类型映射，关键约束】伪代码中 RetryableException ≙ MessageConsumeException（白名单内）；
+//   若确要新建项目内异常类型，必须 extends ServiceException——否则 tryLock 超时、下载抖动
+//   等预期内瞬时失败第一次即 DLQ、行滞留 PENDING 直至 P3。GenerationInvalidException 同理
+//   须保证白名单内或严格内部捕获不逃逸（本伪代码已内部捕获）。平台先例：
+//   EtlDispatchServiceImpl:97 锁竞争即抛 ServiceException 实现重投。
+//   实现不得自行发明第二套 ACK 机制。
 public void consume(ImageExtractJob job) {
     // （v1.6：v1.5 的 semaphore.tryAcquire(30s) 已删——并发上限由 ConsumerConfig.concurrency
     //  表达，见上；本方法整体跑在 redis-process-{topic}-N 处理线程上）
@@ -1011,7 +1053,9 @@ public void consume(ImageExtractJob job) {
         // M6 + 中-1：瞬时 → 回置仅限非终态行（条件化：WHERE status='PENDING'，终态
         // UPLOADED/SKIPPED/FAILED 不可回退——无条件按 id 回置会把已终态行拉回重传，破坏状态机）
         repository.resetUnfinishedToPending(rows, sanitize(e));
-        throw new RetryableException(sanitize(e));                 // 映射 nack：重试预算 → DLQ → FAILED 终态
+        throw new MessageConsumeException(sanitize(e));              // 映射 nack（≙伪代码 RetryableException，
+                                                                     // 白名单内）：XACK+ZSET 退避重投，max-attempts=16
+                                                                     // 耗尽 DLQ（行留 PENDING，P3 扫描终态化，v1.7 低-1）
     } finally {
         if (tempPdf != null) { cleanupMirror(); safeDelete(tempPdf); }
         if (locked && lock.isHeldByCurrentThread()) lock.unlock();
@@ -1030,7 +1074,7 @@ public void consume(ImageExtractJob job) {
 | `seq > odlImageMaxPerDoc`（v1.6 L3 单文档对象预算） | `SKIPPED`（`doc-image-budget`） | 结构性：行保留、仅不产生存储对象；预算调大后重置 PENDING 重投可补传 |
 | 行条件更新影响 0 行 | 本批中止（`GenerationInvalid`），不判行死 | 高-2：代际失效，新消息接管新清单 |
 | 其他异常（下载/预处理/上传/资源压力） | 行回置 `PENDING` + 异常驱动重投 | 瞬时：重放可能成功 |
-| 重试预算耗尽（DLQ 后仍失败） | `FAILED`（终态）+ `rag.image.extract_dead` | 防无限重放 |
+| 重试预算耗尽（max-attempts=16 次，写 DLQ） | DLQ 写入时行留 **PENDING**（行回置发生在抛异常之前）——**FAILED 终态化无即时挂点，由 P3 超龄扫描执行**；P2 窗口内表现为 `rag.image.extract_stale` 而非 `extract_dead`（v1.7 低-1：勿找"DLQ 时置 FAILED"的不存在挂点） | 防无限重放；终态化由 P3 收口 |
 
 > `DecodeUnsupportedException` 为本项目分类器类型：包装 PDFBox `ImageIO` 层对
 > JPEG2000/CMYK 变体等的不支持异常（按异常类型与消息特征映射，白名单式；未匹配的一律
@@ -1102,7 +1146,7 @@ token（与非目标一致，不额外处理）。
 | outbox 投递失败 | 计数 `rag.etl.publish_failed`（对齐现状） | 图片滞留 PENDING | P2 起超龄告警可观测；P3 扫描重投 / 手动重投 |
 | 后台下载/预处理/解码/上传异常 | 未完成行回置 PENDING，RedisStream 重试 → DLQ | 图片不在 MinIO（占位符为惰性文本，端点未实现，无 404 语义） | 重放消息，行级幂等（M6：不判死） |
 | `getXObjectImage` 返回 null（结构性） | 行 SKIPPED（终态） | 该图无存储对象 | 不可恢复 |
-| 重放超限（DLQ 后仍失败） | 行 FAILED（终态）+ `rag.image.extract_dead` | 相关图无存储对象 | 运维介入 |
+| 重放超限（max-attempts 耗尽进 DLQ） | 行留 PENDING（v1.7 低-1）——终态化由 P3 扫描置 FAILED + `rag.image.extract_dead`（P2 窗口内先表现为 `extract_stale`） | 相关图无存储对象 | 运维介入 |
 | 消费者进程崩溃 | 行停留 PENDING | 图片暂缺 | RedisStream 未 ACK 重投（**前提：消息不设 dedupKey，§6.3 严重-2**——SETNX 幂等层对带 key 的重投会判重静默 ACK） |
 | 文档被删除 **或被 supersede（严重-2：新版本=新 id，旧文档 SUPERSEDED 终态）** | 消费前校验 isProcessable：清行 + 清前缀对象 best-effort，正常 ACK | 旧文档图片资产回收 | 同删除路径；best-effort 失败归 §6.8 对账 |
 | 行条件更新 0 行（前台重建清单，高-2） | `GenerationInvalid` 中止本批；复查 PENDING>0 则重投不 ACK（中-2） | 跨代已传对象成孤儿 | 新消息驱动新清单；§6.8 对账清理 |
@@ -1167,6 +1211,17 @@ app:
         invisible-duration: ${ETL_IMAGE_INVISIBLE_DURATION:30m}
       # concurrency 不单独配置——odlImageConcurrency（§6.6）1:1 映射 ConsumerConfig.concurrency
 ```
+
+**`pel-min-idle` 联动约束（v1.7 中-1，按源码校准断言语义）**：消费中途被杀的消息停留
+PEL，回收者是 PelRecoverySweeper（XAUTOCLAIM 转移），阈值 `pel-min-idle-ms` 默认
+**40min**（`MESSAGING_PEL_MIN_IDLE_MS`）——**不是**本节配的 invisible-duration。启动断言
+的实际语义：`pel-min-idle > MAX_EXPECTED_INVISIBLE_DURATION + margin`，其中基准是
+**固定常量 30m + 5m**（`MessagingProperties:32-34`），**不感知**各 consumer 的
+invisible-duration 覆写。推论（运维须知）：把 `ETL_IMAGE_INVISIBLE_DURATION` 调大到
+>30m **不会**触发 fail-fast（断言不读它），但 40min 的 pel-min-idle 会让 XAUTOCLAIM 抢走
+仍在处理中的长消息（重复消费，靠 image:lock + 行级条件更新收敛，浪费工作）——**调大
+invisible-duration 必须同步上调 `MESSAGING_PEL_MIN_IDLE_MS`**；反之测试 profile 想缩短
+崩溃恢复等待，直接覆写 pel-min-idle 即可（见验收 3）。
 
 **`messaging.ordered-topics` 决策：不纳入 `rag_extract_images`**。依据：
 
@@ -1314,8 +1369,10 @@ P2 落地顺序：契约测试先行（**TOC-CASE 原型补跑为其前置**，�
    作为 P1 放行门槛先行验证；
 3. 图片任务最终一致：全部 `document_image` 行到达 `UPLOADED/SKIPPED/FAILED` 终态；杀掉消费者
    进程后重启，PENDING 行被重新消费完成（RedisStream 重投验证）；**v1.6 前置**：消息不设
-   dedupKey（§6.3 严重-2）——否则重投被 SETNX 幂等层判重静默 ACK，本验收必挂；验收 3/4/5
-   以 **FastTrack（≤5MB 用例）与 Standard（>5MB 用例）双路径**分别执行（§6.3.1）；
+   dedupKey（§6.3 严重-2）——否则重投被 SETNX 幂等层判重静默 ACK，本验收必挂；**崩溃恢复
+   时延期望（v1.7 中-1）**：PEL 回收需等 `pel-min-idle`（默认 **40min**）+ 扫描周期——实测
+   用测试 profile 覆写 `MESSAGING_PEL_MIN_IDLE_MS` 缩短等待，否则须等 ≥40min；
+   验收 3/4/5 以 **FastTrack（≤5MB 用例）与 Standard（>5MB 用例）双路径**分别执行（§6.3.1）；
 4. 幂等：同消息重放 N 次，MinIO 对象数与行数不变，无重复上传副作用；
 5. **数据完整性（H3）**：Markdown 中占位符与 manifest/MinIO 对象一一对应（双射断言在线拦截 +
    抽样 20 图人工核对页码/序号/内容）；构造 miss 场景时文档 ETL 整体失败而非索引残缺文本；

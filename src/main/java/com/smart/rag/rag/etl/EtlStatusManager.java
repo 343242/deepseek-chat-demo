@@ -8,6 +8,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 
 import java.time.OffsetDateTime;
@@ -19,8 +21,9 @@ import java.time.OffsetDateTime;
  * 被 {@link StandardStrategy} 和 {@link FastTrackStrategy} 共享，
  * 消除重复的状态管理代码。
  * <p>
- * 每个写状态方法在事务提交后发布 {@link DocumentStatusChangedEvent}（驱动 SSE 实时推送）。
- * 事件发送失败仅告警，不影响状态写入——DB 状态是事实来源，SSE 是 best-effort 推送。
+ * 事件发布是<b>事务感知</b>的（design §6.3 H2）：同步器激活时（如并入图片 manifest
+ * 短事务的场景）afterCommit 发布，否则立即发布——事务回滚时 UI 不会收到 COMPLETED
+ * 假状态。无事务的既有调用路径行为不变。
  */
 @Component
 public class EtlStatusManager {
@@ -57,7 +60,8 @@ public class EtlStatusManager {
     }
 
     /**
-     * 标记文档完成（独立事务）
+     * 标记文档完成（独立事务；被短事务包裹时事务已激活——状态更新并入外层，
+     * 事件 afterCommit 发布）
      */
     public void completeDocument(Long documentId, int chunkCount) {
         transactionTemplate.executeWithoutResult(ts -> {
@@ -90,18 +94,21 @@ public class EtlStatusManager {
     public void failDocument(Long documentId, Exception e) {
         log.error("ETL failed for document: id={}", documentId, e);
         try {
+            String message = truncate(e.getMessage(), MAX_ERROR_MESSAGE_LENGTH);
             transactionTemplate.executeWithoutResult(ts -> {
                 RagDocument doc = ragDocumentMapper.selectById(documentId);
                 if (doc != null) {
                     doc.setStatus(EtlStatus.FAILED);
-                    doc.setErrorMessage(truncate(e.getMessage(), MAX_ERROR_MESSAGE_LENGTH));
+                    doc.setErrorMessage(message);
                     doc.setUpdateTime(OffsetDateTime.now());
                     ragDocumentMapper.updateById(doc);
                 }
             });
             // 事务已提交、DB 状态可见 → 发布失败事件，供下游（pendingSupersede 加速层等）清理
-            eventPublisher.publishEvent(new EtlFailedEvent(documentId, truncate(e.getMessage(), MAX_ERROR_MESSAGE_LENGTH)));
-            publishStatusEvent(documentId, EtlStatus.FAILED);
+            publishAfterCommitOrNow(() -> {
+                eventPublisher.publishEvent(new EtlFailedEvent(documentId, message));
+                doPublishStatusEvent(documentId, EtlStatus.FAILED);
+            });
         } catch (Exception txEx) {
             log.error("Failed to persist FAILED status for document: id={}", documentId, txEx);
             // 事务失败 → 不发事件，保持「DB=FAILED ⟺ 发 EtlFailedEvent」一致
@@ -130,12 +137,14 @@ public class EtlStatusManager {
     }
 
     /**
-     * 事务提交后发布状态变更事件（驱动 SSE 实时推送）。
-     * <p>
-     * 查 DB 拿 userId/teamId 作为 SSE 路由键（按 userId 推给上传者）。
-     * 状态变更低频（每文档整个生命周期 4-6 次），多一次 selectById 可忽略。
+     * 发布状态变更事件（事务感知）。事务同步器激活（调用方持有事务，REQUIRED 并入）时
+     * afterCommit 发布；否则立即发布（H2）。
      */
     private void publishStatusEvent(Long documentId, EtlStatus status) {
+        publishAfterCommitOrNow(() -> doPublishStatusEvent(documentId, status));
+    }
+
+    private void doPublishStatusEvent(Long documentId, EtlStatus status) {
         try {
             RagDocument doc = ragDocumentMapper.selectById(documentId);
             if (doc != null) {
@@ -144,6 +153,22 @@ public class EtlStatusManager {
             }
         } catch (Exception e) {
             log.warn("Failed to publish status event: doc={}, status={}", documentId, status, e);
+        }
+    }
+
+    /**
+     * 事务感知发布 helper（H2）：同步器激活 → afterCommit；否则立即执行。
+     */
+    private static void publishAfterCommitOrNow(Runnable action) {
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    action.run();
+                }
+            });
+        } else {
+            action.run();
         }
     }
 

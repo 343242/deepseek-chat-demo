@@ -14,6 +14,8 @@ import jakarta.annotation.PreDestroy;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.lang.Nullable;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
@@ -93,6 +95,37 @@ public class OutboxMessageBus implements MessageBus {
     private static final AtomicInteger counter = new AtomicInteger();
 
     // ==================== Send（托管） ====================
+
+    /**
+     * 事务内投递（design §6.3 H1 契约）：在当前事务中 INSERT outbox 行（复用 {@code insert()}
+     * 全部构造语义，同连接），并注册 {@code TransactionSynchronization.afterCommit → tryImmediate}。
+     * <p>
+     * 解决"即时投递先于提交"的丢消息窗口：直接在事务内调 {@code send()} 时，
+     * {@code tryImmediate} 投递内存态消息，消费者可在提交前收到 → findPending 读已提交
+     * 快照为空 → ACK → outbox 行按已投递删除 → 提交后的新 PENDING 行失去驱动器。
+     * afterCommit 触发时 manifest 必已提交可见；afterCommit 投递失败则行留 relay 兜底。
+     * <p>
+     * 前置：调用方必须持有活动事务，否则 IllegalStateException fail-fast
+     * （无事务时 insert 走自动提交 + afterCommit 永不触发 = 行滞留至 relay 的静默错误）。
+     *
+     * @return outbox 行 ID（与 {@link #send} 一致）
+     */
+    public String sendInTransaction(MessageEnvelope<?> message) {
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            throw new IllegalStateException(
+                "sendInTransaction requires an active transaction (design §6.3 H1) — "
+                    + "otherwise the outbox row is stranded until relay");
+        }
+        OutboxEntry entry = insert(message);
+        Long outboxId = entry.getId();
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+                tryImmediate(outboxId, message);
+            }
+        });
+        return String.valueOf(outboxId);
+    }
 
     @Override
     public String send(MessageEnvelope<?> message) {

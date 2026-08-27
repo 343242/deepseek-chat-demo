@@ -135,6 +135,19 @@ app:
       group: ${ETL_CONSUMER_GROUP:index-group}
       batch-size: ${ETL_CONSUMER_BATCH_SIZE:5}
       invisible-duration: ${ETL_CONSUMER_INVISIBLE_DURATION:30m}
+    image:
+      consumer:
+        # 图片提取触发消息（design §6.9）。注意：rag_extract_images 刻意【不】纳入
+        # messaging.ordered-topics 白名单——该白名单是声明式纪律非运行时机制，且总线
+        # 不分区、投递序不构成消费序；同 documentId 的实际串行由 image:lock:{id} +
+        # 行级条件更新保证，不纳入换取 relay 并行投递吞吐。
+        topic: ${ETL_IMAGE_CONSUMER_TOPIC:rag_extract_images}
+        group: ${ETL_IMAGE_CONSUMER_GROUP:image-group}
+        batch-size: 1          # 逐条消费：消息仅是触发器（manifest 在 DB），批语义无收益
+        # 调大 invisible-duration >30m 须同步上调 MESSAGING_PEL_MIN_IDLE_MS（§6.9 v1.7 中-1：
+        # PEL 回收阈值是 pel-min-idle 默认 40min，不感知本覆写；否则 XAUTOCLAIM 会抢走
+        # 仍在处理的长消息）
+        invisible-duration: ${ETL_IMAGE_INVISIBLE_DURATION:30m}
     # 线程池生产级容量；dev 在 profile 中缩容
     executor:
       io:

@@ -41,6 +41,14 @@ public interface RagDocumentMapper extends BaseMapper<RagDocument> {
     int updateGroupIdAndVersion(@Param("id") Long id, @Param("groupId") String groupId, @Param("version") int version);
 
     /**
+     * 图片提取消费前置校验（design §6.4 严重-2a）：文档存在且状态可处理
+     * （SUPERSEDED 视同已删除——新版本=新 documentId，旧 id 原文件已被 supersede 清理，
+     * existsById 会误放行 → 下载 404 烧预算误报 dead）。
+     * @return 1=可处理；0=不存在/SUPERSEDED/已逻辑删除
+     */
+    int countProcessable(@Param("id") Long id);
+
+    /**
      * 将旧文档标记为 SUPERSEDED
      */
     int updateSuperseded(@Param("oldDocId") Long oldDocId, @Param("newDocId") Long newDocId);

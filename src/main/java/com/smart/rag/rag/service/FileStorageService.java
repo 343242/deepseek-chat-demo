@@ -41,4 +41,19 @@ public interface FileStorageService {
      * @param objectKey 对象 key
      */
     void delete(String bucket, String objectKey);
+
+    /**
+     * 列出指定前缀下的对象 key（design §6.8 图片孤儿清理/对账用）。
+     */
+    default java.util.List<String> listKeysByPrefix(String bucket, String prefix) {
+        throw new UnsupportedOperationException("listKeysByPrefix not supported by this storage");
+    }
+
+    /**
+     * 按前缀批量删除对象（ListObjects + RemoveObjects，design §6.8——文档删除/supersede
+     * 时回收 {@code images/{documentId}/} 前缀图片对象）。
+     */
+    default void deleteByPrefix(String bucket, String prefix) {
+        throw new UnsupportedOperationException("deleteByPrefix not supported by this storage");
+    }
 }

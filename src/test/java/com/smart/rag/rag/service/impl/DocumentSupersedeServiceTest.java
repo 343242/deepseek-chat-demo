@@ -61,7 +61,8 @@ class DocumentSupersedeServiceTest {
     @BeforeEach
     void setUp() {
         service = new DocumentSupersedeService(ragDocumentMapper, vectorStoreMapper, vectorStoreLoader,
-                fileStorageService, transactionTemplate, teamAccessGate, entityIndexCleanupService);
+                fileStorageService, transactionTemplate, teamAccessGate, entityIndexCleanupService,
+                mock(com.smart.rag.rag.etl.ImageCleanupService.class));
         // 模拟 TransactionTemplate：立即执行 Consumer 回调
         lenient().doAnswer(invocation -> {
             @SuppressWarnings("unchecked")

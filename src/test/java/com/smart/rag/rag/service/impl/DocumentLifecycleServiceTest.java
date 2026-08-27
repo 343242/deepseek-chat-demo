@@ -45,7 +45,8 @@ class DocumentLifecycleServiceTest {
     @org.junit.jupiter.api.BeforeEach
     void setUp() {
         service = new DocumentLifecycleService(vectorStoreLoader, fileStorageService,
-                ragDocumentMapper, eventPublisher, entityIndexCleanupService);
+                ragDocumentMapper, eventPublisher, entityIndexCleanupService,
+                mock(com.smart.rag.rag.etl.ImageCleanupService.class));
     }
 
     @Test

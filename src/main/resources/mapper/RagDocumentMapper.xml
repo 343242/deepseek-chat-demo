@@ -23,6 +23,11 @@
         UPDATE rag_document SET document_group_id = #{groupId}, version = #{version} WHERE id = #{id}
     </update>
 
+    <select id="countProcessable" resultType="int">
+        SELECT count(*) FROM rag_document
+        WHERE id = #{id} AND deleted = 0 AND status != 'SUPERSEDED'
+    </select>
+
     <update id="updateSuperseded">
         UPDATE rag_document SET status = 'SUPERSEDED', superseded_by = #{newDocId} WHERE id = #{oldDocId} AND superseded_by IS NULL
     </update>

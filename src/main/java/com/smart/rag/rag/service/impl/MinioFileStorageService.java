@@ -11,12 +11,15 @@ import com.smart.rag.rag.service.StoredObjectHandle;
 import io.minio.BucketExistsArgs;
 import io.minio.GetObjectArgs;
 import io.minio.GetObjectResponse;
+import io.minio.ListObjectsArgs;
 import io.minio.MakeBucketArgs;
 import io.minio.MinioClient;
 import io.minio.PutObjectArgs;
 import io.minio.RemoveObjectArgs;
+import io.minio.Result;
 import io.minio.StatObjectArgs;
 import io.minio.StatObjectResponse;
+import io.minio.messages.Item;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.slf4j.MDC;
@@ -99,6 +102,34 @@ public class MinioFileStorageService implements FileStorageService {
     }
 
     // ==================== 句柄与惰性内容 ====================
+
+    @Override
+    public java.util.List<String> listKeysByPrefix(String bucket, String prefix) {
+        try {
+            java.util.List<String> keys = new java.util.ArrayList<>();
+            Iterable<Result<Item>> results = minioClient.listObjects(
+                    ListObjectsArgs.builder().bucket(bucket).prefix(prefix).recursive(true).build());
+            for (Result<Item> result : results) {
+                keys.add(result.get().objectName());
+            }
+            return keys;
+        } catch (Exception e) {
+            throw storageFailure("listByPrefix", e);
+        }
+    }
+
+    @Override
+    public void deleteByPrefix(String bucket, String prefix) {
+        try {
+            java.util.List<String> keys = listKeysByPrefix(bucket, prefix);
+            for (String key : keys) {
+                minioClient.removeObject(RemoveObjectArgs.builder().bucket(bucket).object(key).build());
+            }
+            log.debug("Deleted {} objects by prefix", keys.size());
+        } catch (Exception e) {
+            throw storageFailure("deleteByPrefix", e);
+        }
+    }
 
     private final class MinioStoredObjectHandle implements StoredObjectHandle {
 

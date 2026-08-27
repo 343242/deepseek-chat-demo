@@ -47,6 +47,7 @@ public class DocumentSupersedeService {
     private final TransactionTemplate transactionTemplate;
     private final TeamAccessGate teamAccessGate;
     private final EntityIndexCleanupService entityIndexCleanupService;
+    private final com.smart.rag.rag.etl.ImageCleanupService imageCleanupService;
 
     /** 待替换关系：newDocId → oldDocId（ETL 完成后执行替换）— 内存加速层 */
     private final ConcurrentHashMap<Long, Long> pendingSupersede = new ConcurrentHashMap<>();
@@ -57,7 +58,8 @@ public class DocumentSupersedeService {
                                     FileStorageService fileStorageService,
                                     TransactionTemplate transactionTemplate,
                                     TeamAccessGate teamAccessGate,
-                                    EntityIndexCleanupService entityIndexCleanupService) {
+                                    EntityIndexCleanupService entityIndexCleanupService,
+                                    com.smart.rag.rag.etl.ImageCleanupService imageCleanupService) {
         this.ragDocumentMapper = ragDocumentMapper;
         this.vectorStoreMapper = vectorStoreMapper;
         this.vectorStoreLoader = vectorStoreLoader;
@@ -65,6 +67,7 @@ public class DocumentSupersedeService {
         this.transactionTemplate = transactionTemplate;
         this.teamAccessGate = teamAccessGate;
         this.entityIndexCleanupService = entityIndexCleanupService;
+        this.imageCleanupService = imageCleanupService;
     }
 
     /**
@@ -305,6 +308,9 @@ public class DocumentSupersedeService {
         cleanupEntityIndex(oldDocId);
         cleanupVectors(oldDocId);
         cleanupStorageFile(oldDocId);
+        // v1.5 严重-2：旧 documentId 的图片资产处置与删除路径同构（best-effort，
+        // 行 + images/{oldDocId}/ 前缀对象），不对账留置
+        imageCleanupService.cleanupByDocumentId(oldDocId);
         log.info("Document superseded: oldDocId={} → newDocId={}", oldDocId, newDocId);
     }
 

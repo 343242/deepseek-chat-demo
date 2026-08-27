@@ -1,5 +1,6 @@
 package com.smart.rag.rag.service.impl;
 
+import com.smart.rag.rag.etl.ImageCleanupService;
 import com.smart.rag.rag.etl.Loader;
 import com.smart.rag.rag.entity.RagDocument;
 import com.smart.rag.rag.event.DocumentDeletedEvent;
@@ -32,17 +33,20 @@ public class DocumentLifecycleService {
     private final RagDocumentMapper ragDocumentMapper;
     private final ApplicationEventPublisher eventPublisher;
     private final EntityIndexCleanupService entityIndexCleanupService;
+    private final ImageCleanupService imageCleanupService;
 
     public DocumentLifecycleService(Loader vectorStoreLoader,
                                     FileStorageService fileStorageService,
                                     RagDocumentMapper ragDocumentMapper,
                                     ApplicationEventPublisher eventPublisher,
-                                    EntityIndexCleanupService entityIndexCleanupService) {
+                                    EntityIndexCleanupService entityIndexCleanupService,
+                                    ImageCleanupService imageCleanupService) {
         this.vectorStoreLoader = vectorStoreLoader;
         this.fileStorageService = fileStorageService;
         this.ragDocumentMapper = ragDocumentMapper;
         this.eventPublisher = eventPublisher;
         this.entityIndexCleanupService = entityIndexCleanupService;
+        this.imageCleanupService = imageCleanupService;
     }
 
     /**
@@ -78,7 +82,10 @@ public class DocumentLifecycleService {
             log.error("Failed to delete file for documentId={}, storageKey={}: {}", id, doc.getStorageKey(), e);
         }
 
-        // 3. 逻辑删除数据库记录
+        // 3. 图片资产回收（design §6.8 同步路径：best-effort 追加步，不阻断删除主流程）
+        imageCleanupService.cleanupByDocumentId(id);
+
+        // 4. 逻辑删除数据库记录
         ragDocumentMapper.deleteById(id);
 
         // DB 删除后发布事件，供下游（pendingSupersede 加速层等）清理该文档相关内存状态

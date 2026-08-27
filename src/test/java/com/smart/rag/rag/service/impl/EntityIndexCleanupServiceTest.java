@@ -63,7 +63,7 @@ class EntityIndexCleanupServiceTest {
 
     @BeforeEach
     void setUp() {
-        properties = new RagEntityProperties(10, 500, 0.85, 50, 20, 10, 1, 0.7,
+        properties = new RagEntityProperties(20, 500, 32, 0.85, 50, 20, 10, 1, 0.7,
                 0.5, 0.3, 0.2, true, null, true, 0, 0, 0, 0, null);
         service = new EntityIndexCleanupService(chunkEntityMapper, eventMapper, entityMapper,
                 cooccurrenceMapper, documentMapper, vectorStoreMapper, transactionTemplate,

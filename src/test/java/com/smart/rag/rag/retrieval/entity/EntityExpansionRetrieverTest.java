@@ -33,7 +33,7 @@ class EntityExpansionRetrieverTest {
 
     @BeforeEach
     void setUp() {
-        properties = new RagEntityProperties(10, 500, 0.85, 50, 20, 10, 1, 0.7, 0.5, 0.3, 0.2, true, null, true, 0, 0, 0, 0, null);
+        properties = new RagEntityProperties(10, 500,32, 0.85, 50, 20, 10, 1, 0.7, 0.5, 0.3, 0.2, true, null, true, 0, 0, 0, 0, null);
         retriever = new EntityExpansionRetriever(entityMapper, properties);
     }
 
@@ -44,7 +44,7 @@ class EntityExpansionRetrieverTest {
         @Test
         @DisplayName("expansionHops=0 → 返回空列表，不调用 mapper")
         void retrieve_hopsZero_emptyNoSql() {
-            properties = new RagEntityProperties(10, 500, 0.85, 50, 20, 10, 0, 0.7, 0.5, 0.3, 0.2, true, null, true, 0, 0, 0, 0, null);
+            properties = new RagEntityProperties(10, 500,32, 0.85, 50, 20, 10, 0, 0.7, 0.5, 0.3, 0.2, true, null, true, 0, 0, 0, 0, null);
             retriever = new EntityExpansionRetriever(entityMapper, properties);
 
             List<ExpandedChunk> result = retriever.retrieve(frontier(), 1L, null);

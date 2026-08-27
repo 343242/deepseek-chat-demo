@@ -46,6 +46,9 @@ public class EntityCanonicalizationService {
     /** 分批插入大小（MyBatis foreach 限制） */
     private static final int INSERT_BATCH_SIZE = 500;
 
+    /** description 拼接硬上限倍数：cap = 倍数 × descriptionMaxLength */
+    private static final int DESCRIPTION_CAP_FACTOR = 4;
+
     private final EntityMapper entityMapper;
     private final ChunkEntityMapper chunkEntityMapper;
     private final EntityCooccurrenceMapper cooccurrenceMapper;
@@ -119,6 +122,7 @@ public class EntityCanonicalizationService {
                                               @Nullable Long teamId,
                                               Long documentId) {
         // 1. 按 name_norm 分组，拼接 description（锁外纯内存）
+        int descCap = properties.descriptionMaxLength() * DESCRIPTION_CAP_FACTOR;
         Map<String, AggregatedEntity> aggregated = new LinkedHashMap<>();
         for (ParsedExtraction ext : extractions) {
             for (ParsedEntity pe : ext.entities()) {
@@ -128,7 +132,7 @@ public class EntityCanonicalizationService {
                 }
                 aggregated.compute(nameNorm, (key, existing) -> {
                     if (existing == null) {
-                        return new AggregatedEntity(pe.name(), pe.description());
+                        return new AggregatedEntity(pe.name(), pe.description(), descCap);
                     }
                     existing.appendDescription(pe.description());
                     return existing;
@@ -341,11 +345,17 @@ public class EntityCanonicalizationService {
      * 聚合中的中间结构
      */
     private static class AggregatedEntity {
+        /**
+         * description 拼接硬上限（= 4 × descriptionMaxLength，由调用方传入）。
+         * 同一实体跨 chunk 描述高度冗余且下游必压缩到 ≤ maxLen；无限拼接只会徒增压缩调用量。
+         */
+        private final int descriptionHardCap;
         private final String nameNorm;
         private final String nameDisplay;
         private final StringBuilder descriptionBuilder;
 
-        AggregatedEntity(String nameDisplay, String firstDescription) {
+        AggregatedEntity(String nameDisplay, String firstDescription, int descriptionHardCap) {
+            this.descriptionHardCap = Math.max(1, descriptionHardCap);
             this.nameNorm = Normalizer.normalize(
                     nameDisplay.trim(), Normalizer.Form.NFC).toLowerCase();
             this.nameDisplay = nameDisplay;
@@ -357,12 +367,13 @@ public class EntityCanonicalizationService {
         String description() { return descriptionBuilder.toString(); }
 
         void appendDescription(String desc) {
-            if (desc != null && !desc.isEmpty()) {
-                if (!descriptionBuilder.isEmpty()) {
-                    descriptionBuilder.append("。");
-                }
-                descriptionBuilder.append(desc);
+            if (desc == null || desc.isEmpty() || descriptionBuilder.length() >= descriptionHardCap) {
+                return;
             }
+            if (!descriptionBuilder.isEmpty()) {
+                descriptionBuilder.append("。");
+            }
+            descriptionBuilder.append(desc);
         }
     }
 

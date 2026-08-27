@@ -161,8 +161,12 @@ app:
   rag:
     fts-config: ${RAG_FTS_CONFIG:jiebacfg}
     entity:
-      embedding-batch-size: ${RAG_ENTITY_EMBEDDING_BATCH_SIZE:10}
+      embedding-batch-size: ${RAG_ENTITY_EMBEDDING_BATCH_SIZE:20}
+      # 与 bailian 同步接口单请求行数上限（20）对齐
       description-max-length: ${RAG_ENTITY_DESCRIPTION_MAX_LENGTH:500}
+      # 实体管线 LLM 调用并发上限（chunk 抽取/描述压缩/embedding 批次），约束提供商 QPM 配额；
+      # 经 TaskScope maxConcurrency 限流，虚拟线程不池化（JEP 444）
+      llm-concurrency: ${RAG_ENTITY_LLM_CONCURRENCY:32}
       # === Path C 在线检索 ===
       match-threshold: ${RAG_ENTITY_MATCH_THRESHOLD:0.85}
       frontier-budget: ${RAG_ENTITY_FRONTIER_BUDGET:50}

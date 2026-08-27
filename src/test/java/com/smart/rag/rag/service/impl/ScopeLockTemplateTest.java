@@ -33,7 +33,7 @@ class ScopeLockTemplateTest {
     @BeforeEach
     void setUp() {
         template = new ScopeLockTemplate(cooccurrenceMapper,
-                new RagEntityProperties(10, 500, 0.85, 50, 20, 10, 1, 0.7,
+                new RagEntityProperties(10, 500,32, 0.85, 50, 20, 10, 1, 0.7,
                         0.5, 0.3, 0.2, true, null, true, 12345, 3, 0, 0, null));
     }
 

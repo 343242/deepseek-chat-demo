@@ -39,6 +39,12 @@ public interface ChunkEntityMapper extends BaseMapper<RagChunkEntity> {
     List<ChunkLink> selectByChunkIds(@Param("chunkIds") List<String> chunkIds);
 
     /**
+     * 命中既有链接的 chunkId 去重集合（抽取增量过滤的 rag_chunk_entity 侧完成判定源；
+     * IN 列表由 Java 侧按 500 分批）
+     */
+    List<String> selectExistingChunkIds(@Param("chunkIds") List<String> chunkIds);
+
+    /**
      * 链接插入：ON CONFLICT DO NOTHING + RETURNING（§4.2）。
      * 真正落库的行才出现在 RETURNING 中——增量由数据库实际接受的行决定，跨调用幂等。
      *

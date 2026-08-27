@@ -28,6 +28,16 @@ public interface EventMapper extends BaseMapper<RagEvent> {
     void insertIgnore(@Param("event") RagEvent event);
 
     /**
+     * 多值批量插入（chunk_id 冲突忽略；调用方分批 ≤500 行，自动提交单语句，§3.2.1 白名单安全）
+     */
+    void insertIgnoreBatch(@Param("events") List<RagEvent> events);
+
+    /**
+     * 该文档已写事件的 chunkId 集合（抽取增量过滤的 rag_event 侧完成判定源）
+     */
+    List<String> selectChunkIdsByDocumentId(@Param("documentId") Long documentId);
+
+    /**
      * 孤儿事件清扫（§6 对账阶段一）：rag_event 自带 scope 列直接限定。
      */
     int deleteOrphanEventsByScope(@Param("userId") Long userId, @Param("teamId") @Nullable Long teamId);

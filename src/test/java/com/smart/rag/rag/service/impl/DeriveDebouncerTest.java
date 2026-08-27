@@ -28,7 +28,7 @@ class DeriveDebouncerTest {
 
     private DeriveDebouncer debouncer(long windowMillis) {
         return new DeriveDebouncer(communityDetectionJob,
-                new RagEntityProperties(10, 500, 0.85, 50, 20, 10, 1, 0.7,
+                new RagEntityProperties(10, 500,32, 0.85, 50, 20, 10, 1, 0.7,
                         0.5, 0.3, 0.2, true, null, true, 0, 3, 0, windowMillis, null));
     }
 

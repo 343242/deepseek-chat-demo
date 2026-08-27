@@ -1,5 +1,6 @@
 package com.smart.rag.rag.service.impl;
 
+import com.smart.rag.infrastructure.concurrent.DefaultScopedTasks;
 import com.smart.rag.infrastructure.llm.ChatCapable;
 import com.smart.rag.infrastructure.llm.ChatRequest;
 import com.smart.rag.infrastructure.llm.EmbeddingCapable;
@@ -15,7 +16,6 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.transaction.TransactionStatus;
@@ -37,6 +37,8 @@ class EntityEmbeddingServiceTest {
     @Mock
     private LlmClientRegistry llmClientRegistry;
     @Mock
+    private EntityChatClientResolver chatClientResolver;
+    @Mock
     private EntityMapper entityMapper;
     @Mock
     private EmbeddingCapable embeddingCapable;
@@ -51,14 +53,13 @@ class EntityEmbeddingServiceTest {
 
     private RagEntityProperties properties;
 
-    @InjectMocks
     private EntityEmbeddingService service;
 
     @BeforeEach
     void setUp() {
-        properties = new RagEntityProperties(10, 500, 0.85, 50, 20, 10, 1, 0.7, 0.5, 0.3, 0.2, true, null, true, 0, 0, 0, 0, null);
-        service = new EntityEmbeddingService(llmClientRegistry, entityMapper, properties,
-                scopeLockTemplate, lockRetryExecutor, transactionTemplate);
+        properties = new RagEntityProperties(20, 500, 32, 0.85, 50, 20, 10, 1, 0.7, 0.5, 0.3, 0.2, true, null, true, 0, 0, 0, 0, null);
+        service = new EntityEmbeddingService(llmClientRegistry, chatClientResolver, entityMapper, properties,
+                scopeLockTemplate, lockRetryExecutor, transactionTemplate, new DefaultScopedTasks());
 
         // 写回经 advisory 短事务（V30 §3.2.1）：替身直接执行临界区
         lenient().doAnswer(invocation -> {
@@ -185,8 +186,7 @@ class EntityEmbeddingServiceTest {
         @Test
         @DisplayName("description 超 500 字符时尝试 LLM 压缩")
         void longDescriptionCompress() {
-            when(llmClientRegistry.getDefault(LlmCapability.CHAT, ChatCapable.class))
-                    .thenReturn(chatCapable);
+            when(chatClientResolver.resolve()).thenReturn(chatCapable);
             when(llmClientRegistry.getDefault(LlmCapability.EMBEDDING, EmbeddingCapable.class))
                     .thenReturn(embeddingCapable);
             when(chatCapable.chat(any(ChatRequest.class)))
@@ -194,9 +194,9 @@ class EntityEmbeddingServiceTest {
             when(embeddingCapable.embedBatch(anyList(), eq(EmbeddingType.DOCUMENT)))
                     .thenReturn(List.of(new float[]{0.3f, 0.7f}));
 
-            properties = new RagEntityProperties(10, 10, 0.85, 50, 20, 10, 1, 0.7, 0.5, 0.3, 0.2, true, null, true, 0, 0, 0, 0, null);
-            service = new EntityEmbeddingService(llmClientRegistry, entityMapper, properties,
-                    scopeLockTemplate, lockRetryExecutor, transactionTemplate);
+            properties = new RagEntityProperties(20, 10, 32, 0.85, 50, 20, 10, 1, 0.7, 0.5, 0.3, 0.2, true, null, true, 0, 0, 0, 0, null);
+            service = new EntityEmbeddingService(llmClientRegistry, chatClientResolver, entityMapper, properties,
+                    scopeLockTemplate, lockRetryExecutor, transactionTemplate, new DefaultScopedTasks());
 
             RagEntity entity = new RagEntity();
             entity.setId(1L);

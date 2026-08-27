@@ -24,6 +24,23 @@
         ON CONFLICT (chunk_id) DO NOTHING
     </insert>
 
+    <!-- 多值批量插入（冲突忽略）；调用方按 500 行分批，自动提交单语句 -->
+    <insert id="insertIgnoreBatch">
+        INSERT INTO rag_event (chunk_id, summary, user_id, team_id, document_id)
+        VALUES
+        <foreach collection="events" item="event" separator=",">
+            (#{event.chunkId}::uuid, #{event.summary}, #{event.userId}, #{event.teamId}, #{event.documentId})
+        </foreach>
+        ON CONFLICT (chunk_id) DO NOTHING
+    </insert>
+
+    <!-- 该文档已写事件的 chunkId（抽取增量过滤：rag_event 侧完成判定源） -->
+    <select id="selectChunkIdsByDocumentId" resultType="string">
+        SELECT chunk_id::text
+        FROM rag_event
+        WHERE document_id = #{documentId}
+    </select>
+
     <!-- 孤儿事件清扫（§6 对账阶段一）：rag_event 自带 scope 列直接限定；逻辑删除行视同不存在。
          同步修复 SAG 检索层（expandChunks）的僵尸事件。 -->
     <delete id="deleteOrphanEventsByScope">

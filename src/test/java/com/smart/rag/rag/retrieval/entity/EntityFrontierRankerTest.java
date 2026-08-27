@@ -44,7 +44,7 @@ class EntityFrontierRankerTest {
 
     @BeforeEach
     void setUp() {
-        properties = new RagEntityProperties(10, 500, 0.85, 50, 20, 10, 1, 0.7, 0.5, 0.3, 0.2, true, null, true, 0, 0, 0, 0, null);
+        properties = new RagEntityProperties(10, 500,32, 0.85, 50, 20, 10, 1, 0.7, 0.5, 0.3, 0.2, true, null, true, 0, 0, 0, 0, null);
         ranker = new EntityFrontierRanker(entityMapper, llmClientRegistry, properties);
     }
 
@@ -55,7 +55,7 @@ class EntityFrontierRankerTest {
         @Test
         @DisplayName("weakTieEnabled=false → γ 强制为 0（AC8）")
         void rank_weakTieDisabled_gammaForcedZero() {
-            properties = new RagEntityProperties(10, 500, 0.85, 50, 20, 10, 1, 0.7, 0.5, 0.3, 0.2, false, null, true, 0, 0, 0, 0, null);
+            properties = new RagEntityProperties(10, 500,32, 0.85, 50, 20, 10, 1, 0.7, 0.5, 0.3, 0.2, false, null, true, 0, 0, 0, 0, null);
             ranker = new EntityFrontierRanker(entityMapper, llmClientRegistry, properties);
 
             stubEmbedding();
@@ -70,7 +70,7 @@ class EntityFrontierRankerTest {
         @Test
         @DisplayName("communityDetectionEnabled=false → β 强制为 0（AC9）")
         void rank_communityDisabled_betaForcedZero() {
-            properties = new RagEntityProperties(10, 500, 0.85, 50, 20, 10, 1, 0.7, 0.5, 0.3, 0.2, true, null, false, 0, 0, 0, 0, null);
+            properties = new RagEntityProperties(10, 500,32, 0.85, 50, 20, 10, 1, 0.7, 0.5, 0.3, 0.2, true, null, false, 0, 0, 0, 0, null);
             ranker = new EntityFrontierRanker(entityMapper, llmClientRegistry, properties);
 
             stubEmbedding();

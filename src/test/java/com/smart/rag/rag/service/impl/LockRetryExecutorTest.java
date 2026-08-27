@@ -25,7 +25,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class LockRetryExecutorTest {
 
     private LockRetryExecutor executorWithAttempts(int attempts) {
-        return new LockRetryExecutor(new RagEntityProperties(10, 500, 0.85, 50, 20, 10, 1, 0.7,
+        return new LockRetryExecutor(new RagEntityProperties(10, 500,32, 0.85, 50, 20, 10, 1, 0.7,
                 0.5, 0.3, 0.2, true, null, true, 0, attempts, 0, 0, null));
     }
 

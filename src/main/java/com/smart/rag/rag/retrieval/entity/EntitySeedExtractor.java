@@ -6,8 +6,8 @@ import com.smart.rag.infrastructure.llm.ChatCapable;
 import com.smart.rag.infrastructure.llm.ChatRequest;
 import com.smart.rag.infrastructure.llm.LlmCapability;
 import com.smart.rag.infrastructure.llm.LlmResponse;
-import com.smart.rag.infrastructure.llm.registry.LlmClientRegistry;
 import com.smart.rag.rag.config.RagEntityProperties;
+import com.smart.rag.rag.service.impl.EntityChatClientResolver;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -19,7 +19,7 @@ import java.util.List;
  * PC1：query → LLM 抽取 seed entities（§6.1）。
  * <p>
  * SRP：仅负责"query → seed entity 名称列表"，不含向量匹配/排序/回链。
- * DIP：依赖 {@link ChatCapable} 接口（经 {@link LlmClientRegistry} 解析），不注入具体客户端。
+ * DIP：依赖 {@link ChatCapable} 接口（经 {@link EntityChatClientResolver} 按 extraction-model 解析），不注入具体客户端。
  * <p>
  * 失败隔离（§8.3）：LLM 调用失败或解析失败返回空列表，不阻塞 query（Path A/B 仍可召回）。
  */
@@ -40,11 +40,11 @@ public class EntitySeedExtractor {
             输出：["PostgreSQL", "向量检索", "MySQL", "全文检索"]
             无实体时输出空数组 []。""";
 
-    private final LlmClientRegistry llmClientRegistry;
+    private final EntityChatClientResolver chatClientResolver;
     private final RagEntityProperties properties;
 
-    public EntitySeedExtractor(LlmClientRegistry llmClientRegistry, RagEntityProperties properties) {
-        this.llmClientRegistry = llmClientRegistry;
+    public EntitySeedExtractor(EntityChatClientResolver chatClientResolver, RagEntityProperties properties) {
+        this.chatClientResolver = chatClientResolver;
         this.properties = properties;
     }
 
@@ -56,13 +56,7 @@ public class EntitySeedExtractor {
      */
     public List<String> extract(String query) {
         try {
-            ChatCapable chatClient;
-            String model = properties.extractionModel();
-            if (model != null && !model.isBlank()) {
-                chatClient = llmClientRegistry.get(model, ChatCapable.class);
-            } else {
-                chatClient = llmClientRegistry.getDefault(LlmCapability.CHAT, ChatCapable.class);
-            }
+            ChatCapable chatClient = chatClientResolver.resolve();
 
             ChatRequest request = ChatRequest.withSystem(SEED_SYSTEM_PROMPT, query);
             LlmResponse response = chatClient.chat(request);

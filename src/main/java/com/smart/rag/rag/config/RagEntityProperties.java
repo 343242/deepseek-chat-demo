@@ -17,6 +17,12 @@ public record RagEntityProperties(
         // === 抽取 ===
         int embeddingBatchSize,
         int descriptionMaxLength,
+        /**
+         * 实体管线 LLM 调用并发上限（chunk 抽取 / 描述压缩 / embedding 批次）。
+         * 主要约束是提供商 QPM/连接数配额；经 ScopeOptions.maxConcurrency 在 TaskScope 内限流，
+         * 与 EvaluationExecutorConfig 的"虚拟线程 + 高层信号量限并发"模式一致（JEP 444 不池化虚拟线程）。
+         */
+        int llmConcurrency,
         // === 在线检索（§7.1）===
         double matchThreshold,
         int frontierBudget,
@@ -55,9 +61,10 @@ public record RagEntityProperties(
     }
 
     public RagEntityProperties {
-        // 抽取默认值
-        if (embeddingBatchSize <= 0) embeddingBatchSize = 10;
+        // 抽取默认值（embedding-batch-size 20 与 bailian 同步接口单请求行数上限对齐）
+        if (embeddingBatchSize <= 0) embeddingBatchSize = 20;
         if (descriptionMaxLength <= 0) descriptionMaxLength = 500;
+        if (llmConcurrency <= 0) llmConcurrency = 32;
         // 检索默认值（§7.1）
         if (matchThreshold <= 0) matchThreshold = 0.85;
         if (frontierBudget <= 0) frontierBudget = 50;

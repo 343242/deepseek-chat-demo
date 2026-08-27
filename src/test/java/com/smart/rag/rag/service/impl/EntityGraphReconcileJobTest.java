@@ -64,7 +64,7 @@ class EntityGraphReconcileJobTest {
 
     @BeforeEach
     void setUp() {
-        properties = new RagEntityProperties(10, 500, 0.85, 50, 20, 10, 1, 0.7,
+        properties = new RagEntityProperties(10, 500,32, 0.85, 50, 20, 10, 1, 0.7,
                 0.5, 0.3, 0.2, true, null, true, 0, 3, 0, 0,
                 new RagEntityProperties.Reconcile(true, "0 0 8 * * *",
                         LocalDate.now().getDayOfWeek() == DayOfWeek.MONDAY
@@ -176,7 +176,7 @@ class EntityGraphReconcileJobTest {
             RagEntityProperties.Reconcile monday =
                     new RagEntityProperties.Reconcile(true, "0 0 8 * * *",
                             LocalDate.now().getDayOfWeek(), 0);
-            RagEntityProperties forceProps = new RagEntityProperties(10, 500, 0.85, 50, 20, 10, 1, 0.7,
+            RagEntityProperties forceProps = new RagEntityProperties(10, 500,32, 0.85, 50, 20, 10, 1, 0.7,
                     0.5, 0.3, 0.2, true, null, true, 0, 3, 0, 0, monday);
             EntityGraphReconcileJob mondayJob = new EntityGraphReconcileJob(entityMapper, chunkEntityMapper,
                     eventMapper, cooccurrenceMapper, documentMapper, transactionTemplate, scopeLockTemplate,
@@ -253,7 +253,7 @@ class EntityGraphReconcileJobTest {
         void disabled_scheduleSkips() {
             RagEntityProperties.Reconcile off =
                     new RagEntityProperties.Reconcile(false, "0 0 8 * * *", DayOfWeek.MONDAY, 0);
-            RagEntityProperties disabledProps = new RagEntityProperties(10, 500, 0.85, 50, 20, 10, 1, 0.7,
+            RagEntityProperties disabledProps = new RagEntityProperties(10, 500,32, 0.85, 50, 20, 10, 1, 0.7,
                     0.5, 0.3, 0.2, true, null, true, 0, 3, 0, 0, off);
             EntityGraphReconcileJob offJob = new EntityGraphReconcileJob(entityMapper, chunkEntityMapper,
                     eventMapper, cooccurrenceMapper, documentMapper, transactionTemplate, scopeLockTemplate,

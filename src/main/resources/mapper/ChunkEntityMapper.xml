@@ -41,6 +41,14 @@
         <foreach collection="chunkIds" item="cid" open="(" separator="," close=")">#{cid}::uuid</foreach>
     </select>
 
+    <!-- 抽取增量过滤：候选 chunk 中已有链接者的去重 chunkId（完成判定源之二，events ∪ links） -->
+    <select id="selectExistingChunkIds" resultType="string">
+        SELECT DISTINCT chunk_id::text
+        FROM rag_chunk_entity
+        WHERE chunk_id IN
+        <foreach collection="chunkIds" item="cid" open="(" separator="," close=")">#{cid}::uuid</foreach>
+    </select>
+
     <!-- 链接插入：ON CONFLICT DO NOTHING + RETURNING（§4.2 幂等 + 落库真值；MyBatis 以 select 承载
          INSERT...RETURNING）。document_id 为权威文档归属（V30 新列）。 -->
     <select id="insertBatchReturning" resultMap="newLinkRow">

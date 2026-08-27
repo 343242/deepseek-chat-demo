@@ -18,4 +18,18 @@ public interface Extractor {
      * @return 解析后的文档列表
      */
     List<Document> extract(String bucket, String objectKey, String mimeType);
+
+    /**
+     * manifest 载体（design §6.3 中-2；v1.6 L4 命名避开策略类私有 record ExtractOutput）：
+     * 文档列表 + 前台编号的图片清单。manifest 不进 Document.metadata（避免向量库
+     * 元数据污染），经本载体透传给策略层在短事务内落库。
+     */
+    record ExtractWithManifest(List<Document> documents, List<com.smart.rag.rag.parser.odl.ImageManifest.ImageEntry> imageManifest) {}
+
+    /**
+     * 携带文档身份的提取（design §6.3）。默认委托旧签名（manifest 为空，兼容非 PDF 链路）。
+     */
+    default ExtractWithManifest extractWithManifest(String bucket, String objectKey, String mimeType, Long documentId) {
+        return new ExtractWithManifest(extract(bucket, objectKey, mimeType), List.of());
+    }
 }

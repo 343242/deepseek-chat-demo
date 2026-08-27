@@ -55,6 +55,7 @@ public class FastTrackStrategy implements EtlRouteStrategy {
     private final EtlFastTrackProperties fastTrackProperties;
     private final VectorStoreMapper vectorStoreMapper;
     private final EtlStrategyContext ctx;
+    private final ImageManifestService imageManifestService;
 
     /** 追踪进行中的异步向量化任务，支持优雅停机 */
     private final Set<CompletableFuture<?>> activeAsyncTasks = ConcurrentHashMap.newKeySet();
@@ -65,7 +66,8 @@ public class FastTrackStrategy implements EtlRouteStrategy {
                              EtlStatusManager statusManager,
                              EtlFastTrackProperties fastTrackProperties,
                              VectorStoreMapper vectorStoreMapper,
-                             EtlStrategyContext etlStrategyContext) {
+                             EtlStrategyContext etlStrategyContext,
+                            ImageManifestService imageManifestService) {
         this.extractor = extractor;
         this.transformer = transformer;
         this.loader = loader;
@@ -73,6 +75,7 @@ public class FastTrackStrategy implements EtlRouteStrategy {
         this.fastTrackProperties = fastTrackProperties;
         this.vectorStoreMapper = vectorStoreMapper;
         this.ctx = etlStrategyContext;
+        this.imageManifestService = imageManifestService;
     }
 
     @Override
@@ -98,33 +101,42 @@ public class FastTrackStrategy implements EtlRouteStrategy {
     public List<EtlResult> execute(List<EtlCandidate> candidates) {
         log.info("FastTrack strategy: processing {} documents (BM25 first, async vectorize)", candidates.size());
 
-        // === 阶段 1: IO 池并行 Extract ===
-        Map<Long, List<Document>> extractedMap = extractAll(candidates);
+        // === 阶段 1: IO 池并行 Extract（携带文档身份产出图片清单，§6.3.1） ===
+        Map<Long, Extractor.ExtractWithManifest> extractedMap = extractAll(candidates);
 
         List<EtlResult> results = new ArrayList<>();
 
         for (EtlCandidate c : candidates) {
-            List<Document> docs = extractedMap.get(c.documentId());
+            Extractor.ExtractWithManifest extracted = extractedMap.get(c.documentId());
+            List<Document> docs = extracted != null ? extracted.documents() : null;
             if (docs == null || docs.isEmpty()) {
                 results.add(EtlResult.failed(c.documentId(), "Extract failed"));
                 continue;
             }
 
-            // === 阶段 2: 合并原文，写入 BM25 ===
+            // === 阶段 2: 短事务（BM25 原文行 + 状态 + manifest 重建 + outbox，§6.3.1） ===
             try {
                 String fullContent = docs.stream()
                         .map(Document::getText)
                         .collect(Collectors.joining("\n\n"));
+                int placeholderCount = extracted.imageManifest().size();
 
-                writeBm25Row(c.documentId(), fullContent, c.userId(), c.teamId(), c.fileName());
-                statusManager.completeDocument(c.documentId(), 0);
+                // 短事务提交前不启动 asyncVectorize（§6.3.1 低-2：事务回调内不得启动，
+                // 避免异步分块读不到已提交状态/与 deleteFastTrackRows 竞争未提交 BM25 行）
+                imageManifestService.rebuildAndDispatch(c.documentId(),
+                        extracted.imageManifest(), c,
+                        () -> {
+                            writeBm25Row(c.documentId(), fullContent, c.userId(), c.teamId(),
+                                    c.fileName(), placeholderCount);
+                            statusManager.completeDocument(c.documentId(), 0);
+                        });
 
                 results.add(EtlResult.success(c.documentId(), 0));
 
-                // === 阶段 3: 异步 Transform + Load ===
+                // === 阶段 3: 该文档短事务提交后（循环内）异步 Transform + Load（现状不变） ===
                 // 防御性拷贝：异步任务持有独立的 docs 列表引用
                 List<Document> docsCopy = new ArrayList<>(docs);
-                asyncVectorize(c, docsCopy);
+                asyncVectorize(c, docsCopy, placeholderCount);
 
             } catch (Exception e) {
                 log.error("FastTrack BM25 write failed: id={}", c.documentId(), e);
@@ -167,8 +179,9 @@ public class FastTrackStrategy implements EtlRouteStrategy {
      * 将原文直接写入 vector_store 表，content_tsv 由触发器自动填充。
      * embedding 设为 NULL（无向量），BM25 检索仍可通过 content_tsv 命中。
      */
-    private void writeBm25Row(Long documentId, String content, Long userId, @Nullable Long teamId, String fileName) {
-        vectorStoreMapper.insertFastTrackRow(documentId, content, userId, teamId, fileName);
+    private void writeBm25Row(Long documentId, String content, Long userId, @Nullable Long teamId,
+                              String fileName, int imagePlaceholderCount) {
+        vectorStoreMapper.insertFastTrackRow(documentId, content, userId, teamId, fileName, imagePlaceholderCount);
     }
 
     // ==================== 异步向量化（P0 修复：直接指定 executor） ====================
@@ -179,10 +192,13 @@ public class FastTrackStrategy implements EtlRouteStrategy {
      * Transform 提交到 CPU 池，Load 提交到 IO 池。
      * 失败时标记 VECTOR_FAILED（BM25 仍可用）。
      */
-    private void asyncVectorize(EtlCandidate c, List<Document> docs) {
+    private void asyncVectorize(EtlCandidate c, List<Document> docs, int imagePlaceholderCount) {
         CompletableFuture<Void> future = CompletableFuture
                 .runAsync(() -> {
                     List<Document> chunks = transformChunks(c, docs);
+                    // 中-7 对账数据基础：异步分块的 ChunkMetadataEnricher 同步记 imagePlaceholderCount
+                    chunks.forEach(ch -> ch.getMetadata().putIfAbsent(
+                            "imagePlaceholderCount", imagePlaceholderCount));
 
                     loader.load(chunks);
                     eventComplete(c, chunks);
@@ -231,14 +247,15 @@ public class FastTrackStrategy implements EtlRouteStrategy {
 
     // ==================== Extract ====================
 
-    private Map<Long, List<Document>> extractAll(List<EtlCandidate> candidates) {
+    private Map<Long, Extractor.ExtractWithManifest> extractAll(List<EtlCandidate> candidates) {
         try (TaskScope scope = openExternalScope("fast-track-extract", ctx.ioExecutor())) {
             for (EtlCandidate c : candidates) {
                 scope.fork("extract-" + c.documentId(), () -> {
                     try {
                         statusManager.updateStatus(c.documentId(), EtlStatus.PARSING);
-                        List<Document> docs = extractor.extract(c.bucket(), c.objectKey(), c.mimeType());
-                        return new ExtractOutput(c.documentId(), docs);
+                        var extracted = extractor.extractWithManifest(
+                                c.bucket(), c.objectKey(), c.mimeType(), c.documentId());
+                        return new ExtractOutput(c.documentId(), extracted);
                     } catch (Exception e) {
                         log.error("FastTrack extract failed: id={}, file={}", c.documentId(), c.fileName(), e);
                         statusManager.failDocument(c.documentId(), e);
@@ -248,8 +265,8 @@ public class FastTrackStrategy implements EtlRouteStrategy {
             }
 
             return scope.join(ScopeJoiner.successfulResults(ExtractOutput.class)).stream()
-                    .filter(o -> o.documents != null)
-                    .collect(Collectors.toMap(ExtractOutput::documentId, ExtractOutput::documents));
+                    .filter(o -> o.extracted != null)
+                    .collect(Collectors.toMap(ExtractOutput::documentId, ExtractOutput::extracted));
         }
     }
 
@@ -263,5 +280,5 @@ public class FastTrackStrategy implements EtlRouteStrategy {
         return ctx.scopedTasks().open(name, options, executor);
     }
 
-    private record ExtractOutput(Long documentId, List<Document> documents) {}
+    private record ExtractOutput(Long documentId, Extractor.ExtractWithManifest extracted) {}
 }

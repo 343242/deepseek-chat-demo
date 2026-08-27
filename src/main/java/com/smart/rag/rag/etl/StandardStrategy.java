@@ -34,17 +34,20 @@ public class StandardStrategy implements EtlRouteStrategy {
     private final Loader loader;
     private final EtlStatusManager statusManager;
     private final EtlStrategyContext ctx;
+    private final ImageManifestService imageManifestService;
 
     public StandardStrategy(Extractor extractor,
                             Transformer transformer,
                             Loader loader,
                             EtlStatusManager statusManager,
-                            EtlStrategyContext etlStrategyContext) {
+                            EtlStrategyContext etlStrategyContext,
+                            ImageManifestService imageManifestService) {
         this.extractor = extractor;
         this.transformer = transformer;
         this.loader = loader;
         this.statusManager = statusManager;
         this.ctx = etlStrategyContext;
+        this.imageManifestService = imageManifestService;
     }
 
     @Override
@@ -61,14 +64,14 @@ public class StandardStrategy implements EtlRouteStrategy {
     public List<EtlResult> execute(List<EtlCandidate> candidates) {
         log.info("Standard strategy: processing {} documents concurrently", candidates.size());
 
-        // === 阶段 1: Extract（IO 池并行） ===
-        Map<Long, List<Document>> extractedMap = extractAll(candidates);
+        // === 阶段 1: Extract（IO 池并行，携带文档身份产出图片清单 §6.3） ===
+        Map<Long, Extractor.ExtractWithManifest> extractedMap = extractAll(candidates);
 
         // === 阶段 2: Transform（CPU 池并行） ===
-        Map<Long, List<Document>> chunkMap = transformAll(candidates, extractedMap);
+        Map<Long, List<Document>> chunkMap = transformAll(candidates, toDocuments(extractedMap));
 
         // === 阶段 3: Load（IO 池并行） ===
-        Map<Long, Integer> loadResultMap = loadAll(candidates, chunkMap);
+        Map<Long, Integer> loadResultMap = loadAll(candidates, chunkMap, extractedMap);
 
         // === 汇总结果 ===
         return candidates.stream()
@@ -78,26 +81,32 @@ public class StandardStrategy implements EtlRouteStrategy {
 
     // ==================== Extract ====================
 
-    private Map<Long, List<Document>> extractAll(List<EtlCandidate> candidates) {
+    private Map<Long, Extractor.ExtractWithManifest> extractAll(List<EtlCandidate> candidates) {
         try (TaskScope scope = openExternalScope("standard-extract", ctx.ioExecutor())) {
             for (EtlCandidate c : candidates) {
                 scope.fork("extract-" + c.documentId(), () -> {
                     try {
                         statusManager.updateStatus(c.documentId(), EtlStatus.PARSING);
-                        List<Document> docs = extractor.extract(c.bucket(), c.objectKey(), c.mimeType());
-                        return new ExtractOutput(c.documentId(), docs, null);
+                        var extracted = extractor.extractWithManifest(
+                                c.bucket(), c.objectKey(), c.mimeType(), c.documentId());
+                        return new ExtractOutput(c.documentId(), extracted, null);
                     } catch (Exception e) {
                         log.error("Extract failed: id={}, file={}", c.documentId(), c.fileName(), e);
                         statusManager.failDocument(c.documentId(), e);
-                        return new ExtractOutput(c.documentId(), List.of(), e);
+                        return new ExtractOutput(c.documentId(), EMPTY_EXTRACT, e);
                     }
                 });
             }
 
             return scope.join(ScopeJoiner.successfulResults(ExtractOutput.class)).stream()
                     .filter(o -> o.error == null)
-                    .collect(Collectors.toMap(ExtractOutput::documentId, ExtractOutput::documents, (a, b) -> a));
+                    .collect(Collectors.toMap(ExtractOutput::documentId, ExtractOutput::extracted, (a, b) -> a));
         }
+    }
+
+    private static Map<Long, List<Document>> toDocuments(Map<Long, Extractor.ExtractWithManifest> extractedMap) {
+        return extractedMap.entrySet().stream()
+                .collect(Collectors.toMap(Map.Entry::getKey, e -> e.getValue().documents()));
     }
 
     // ==================== Transform ====================
@@ -129,7 +138,8 @@ public class StandardStrategy implements EtlRouteStrategy {
     // ==================== Load ====================
 
     private Map<Long, Integer> loadAll(List<EtlCandidate> candidates,
-                                        Map<Long, List<Document>> chunkMap) {
+                                        Map<Long, List<Document>> chunkMap,
+                                        Map<Long, Extractor.ExtractWithManifest> extractedMap) {
         try (TaskScope scope = openExternalScope("standard-load", ctx.ioExecutor())) {
             candidates.stream()
                     .filter(c -> chunkMap.containsKey(c.documentId()))
@@ -137,8 +147,14 @@ public class StandardStrategy implements EtlRouteStrategy {
                         try {
                             statusManager.updateStatus(c.documentId(), EtlStatus.VECTORIZING);
                             List<Document> chunks = chunkMap.get(c.documentId());
+                            // 向量库写（外部系统）在短事务之外、保持现状顺序（§6.3 中-1）
                             loader.load(chunks);
-                            statusManager.completeDocument(c.documentId(), chunks.size());
+                            // 显式短事务：状态更新 + manifest 幂等重建 + outbox INSERT 同 tx（§6.3）
+                            imageManifestService.rebuildAndDispatch(
+                                    c.documentId(),
+                                    extractedMap.get(c.documentId()).imageManifest(),
+                                    c,
+                                    () -> statusManager.completeDocument(c.documentId(), chunks.size()));
                             return new LoadOutput(c.documentId(), chunks.size(), null);
                         } catch (Exception e) {
                             log.error("Load failed: id={}, file={}", c.documentId(), c.fileName(), e);
@@ -156,7 +172,7 @@ public class StandardStrategy implements EtlRouteStrategy {
     // ==================== 结果汇总 ====================
 
     private EtlResult buildResult(EtlCandidate c,
-                                   Map<Long, List<Document>> extractedMap,
+                                   Map<Long, Extractor.ExtractWithManifest> extractedMap,
                                    Map<Long, List<Document>> chunkMap,
                                    Map<Long, Integer> loadResultMap) {
         if (!extractedMap.containsKey(c.documentId())) {
@@ -183,7 +199,10 @@ public class StandardStrategy implements EtlRouteStrategy {
         return ctx.scopedTasks().open(name, options, executor);
     }
 
-    private record ExtractOutput(Long documentId, List<Document> documents, Exception error) {}
+    private static final Extractor.ExtractWithManifest EMPTY_EXTRACT =
+            new Extractor.ExtractWithManifest(List.of(), List.of());
+
+    private record ExtractOutput(Long documentId, Extractor.ExtractWithManifest extracted, Exception error) {}
     private record TransformOutput(Long documentId, List<Document> chunks, Exception error) {}
     private record LoadOutput(Long documentId, int chunkCount, Exception error) {}
 }

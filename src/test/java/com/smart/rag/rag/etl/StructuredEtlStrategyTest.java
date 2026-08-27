@@ -18,6 +18,8 @@ import java.util.concurrent.TimeUnit;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -40,13 +42,16 @@ class StructuredEtlStrategyTest {
         Document document = new Document("raw");
         Document chunk = new Document("chunk");
 
-        when(extractor.extract("bucket", "object-1", "text/plain")).thenReturn(List.of(document));
+        when(extractor.extractWithManifest("bucket", "object-1", "text/plain", 1L))
+                .thenReturn(new Extractor.ExtractWithManifest(List.of(document), List.of()));
         when(transformer.transform(List.of(document), "file-1.txt")).thenReturn(List.of(chunk));
+        ImageManifestService imageManifestService = manifestService();
 
         try {
             StandardStrategy strategy = new StandardStrategy(
                     extractor, transformer, loader, statusManager,
-                    new EtlStrategyContext(ioExecutor, cpuExecutor, scopedTasks, eventPublisher));
+                    new EtlStrategyContext(ioExecutor, cpuExecutor, scopedTasks, eventPublisher),
+                    imageManifestService);
 
             List<EtlResult> results = strategy.execute(List.of(candidate));
 
@@ -75,8 +80,10 @@ class StructuredEtlStrategyTest {
         Document document = new Document("raw");
         Document chunk = new Document("chunk");
 
-        when(extractor.extract("bucket", "object-2", "text/plain")).thenReturn(List.of(document));
+        when(extractor.extractWithManifest("bucket", "object-2", "text/plain", 2L))
+                .thenReturn(new Extractor.ExtractWithManifest(List.of(document), List.of()));
         when(transformer.transform(List.of(document), "file-2.txt")).thenReturn(List.of(chunk));
+        ImageManifestService imageManifestService = manifestService();
 
         try {
             FastTrackStrategy strategy = new FastTrackStrategy(
@@ -87,13 +94,14 @@ class StructuredEtlStrategyTest {
                     new EtlFastTrackProperties(),
                     vectorStoreMapper,
                     new EtlStrategyContext(ioExecutor, cpuExecutor, scopedTasks,
-                            mock(ApplicationEventPublisher.class)));
+                            mock(ApplicationEventPublisher.class)),
+                    imageManifestService);
 
             List<EtlResult> results = strategy.execute(List.of(candidate));
             strategy.awaitAsyncCompletion();
 
             assertThat(results).containsExactly(EtlResult.success(2L, 0));
-            verify(vectorStoreMapper).insertFastTrackRow(2L, "raw", 10L, null, "file-2.txt");
+            verify(vectorStoreMapper).insertFastTrackRow(2L, "raw", 10L, null, "file-2.txt", 0);
             verify(vectorStoreMapper).deleteFastTrackRows(2L);
             assertThat(scopedTasks.scopeNames())
                     .containsExactly("fast-track-extract", "fast-track-vectorize");
@@ -101,6 +109,17 @@ class StructuredEtlStrategyTest {
             ioExecutor.shutdown();
             cpuExecutor.shutdown();
         }
+    }
+
+    /** 短事务桩：立即执行状态更新 Runnable（TransactionTemplate 语义） */
+    private static ImageManifestService manifestService() {
+        ImageManifestService svc = mock(ImageManifestService.class);
+        doAnswer(inv -> {
+            Runnable statusUpdates = inv.getArgument(3);
+            statusUpdates.run();
+            return null;
+        }).when(svc).rebuildAndDispatch(any(), anyList(), any(), any());
+        return svc;
     }
 
     private static ExecutorService executor(String prefix) {

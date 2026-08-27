@@ -53,6 +53,9 @@ class DocumentExtractorTest {
         // parser 解析中途抛异常 —— 底层 MinIO 连接不能泄漏
         when(parser.parse(any(Resource.class), anyString()))
                 .thenThrow(new RuntimeException("parser boom"));
+        // extract 现经 parseWithManifest（三参默认方法）——mock 拦截默认方法，需单独打桩
+        when(parser.parseWithManifest(any(Resource.class), anyString(), any()))
+                .thenThrow(new RuntimeException("parser boom"));
     }
 
     @Test

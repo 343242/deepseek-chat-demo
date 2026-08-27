@@ -114,11 +114,21 @@ public interface VectorStoreMapper {
      * embedding 设为 NULL，BM25 检索通过 content_tsv 命中。
      */
     default void insertFastTrackRow(Long documentId, String content, Long userId, Long teamId, String fileName) {
+        insertFastTrackRow(documentId, content, userId, teamId, fileName, 0);
+    }
+
+    /**
+     * 写入 FastTrack BM25 原文行（携带图片占位符计数，design §6.3.1/中-7：
+     * P3 对账维度"metadata 的 imagePlaceholderCount > 0 但 document_image 零行"的数据基础）。
+     */
+    default void insertFastTrackRow(Long documentId, String content, Long userId, Long teamId,
+                                    String fileName, int imagePlaceholderCount) {
         Map<String, Object> metadata = new HashMap<>();
         metadata.put("documentId", String.valueOf(documentId));
         metadata.put("userId", String.valueOf(userId));
         metadata.put("fastTrack", true);
         metadata.put("fileName", (fileName != null && !fileName.isBlank()) ? fileName : String.valueOf(documentId));
+        metadata.put("imagePlaceholderCount", imagePlaceholderCount);
         if (teamId != null) {
             metadata.put("teamId", String.valueOf(teamId));
         }

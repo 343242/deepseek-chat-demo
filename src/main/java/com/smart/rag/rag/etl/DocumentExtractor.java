@@ -2,6 +2,7 @@ package com.smart.rag.rag.etl;
 
 import com.smart.rag.rag.parser.DocumentParser;
 import com.smart.rag.rag.parser.DocumentParserFactory;
+import com.smart.rag.rag.parser.ParseContext;
 import com.smart.rag.rag.service.FileStorageService;
 import com.smart.rag.rag.service.ObjectReadRange;
 import com.smart.rag.rag.service.StoredObjectContent;
@@ -36,14 +37,21 @@ public class DocumentExtractor implements Extractor {
 
     @Override
     public List<Document> extract(String bucket, String objectKey, String mimeType) {
+        return extractWithManifest(bucket, objectKey, mimeType, null).documents();
+    }
+
+    @Override
+    public ExtractWithManifest extractWithManifest(String bucket, String objectKey, String mimeType, Long documentId) {
         StoredObjectHandle handle = fileStorageService.open(bucket, objectKey);
         StoredObjectContent content = handle.content(new ObjectReadRange.Full());
         Resource fileResource = content.resource();
         DocumentParser parser = parserFactory.getParser(mimeType);
         try {
-            List<Document> documents = parser.parse(fileResource, mimeType);
-            log.info("Extracted {} segments (mime={})", documents.size(), mimeType);
-            return documents;
+            var parsed = parser.parseWithManifest(fileResource, mimeType,
+                    new ParseContext(documentId, bucket, objectKey, objectKey));
+            log.info("Extracted {} segments, {} image entries (mime={})",
+                    parsed.documents().size(), parsed.imageManifest().size(), mimeType);
+            return new ExtractWithManifest(parsed.documents(), parsed.imageManifest().entries());
         } finally {
             // 确保解析抛异常时也关闭底层 MinIO GetObjectResponse，防止 HTTP 连接泄漏
             if (fileResource instanceof java.io.Closeable closeable) {
